@@ -1,0 +1,178 @@
+"""Parse agent log files: stream JSONL, verdict JSON, employee reports."""
+
+import json
+import logging
+import re
+import os
+from datetime import datetime
+from pathlib import Path
+from typing import Optional, Dict, Any, List, Tuple
+
+from app.config import settings
+
+logger = logging.getLogger(__name__)
+
+# Matches: run-20260308T130028Z-employee-ai-portainer-dashboard.stream.jsonl
+# Also:    run-20260307T203444Z-github-issues.stream.jsonl (old format)
+# Also:    run-20260308T130028Z-employee-ai-portainer-dashboard.stderr.log
+RUN_ID_RE = re.compile(r"run-(\d{8}T\d{6}Z)")
+REPO_FROM_EMPLOYEE_RE = re.compile(r"employee-(.+?)\.(?:stream\.jsonl|stderr\.log)")
+REPO_FROM_OLD_FORMAT_RE = re.compile(r"run-\d{8}T\d{6}Z-(.+?)\.(?:stream\.jsonl|json|stderr\.log)")
+
+
+def parse_run_id_from_filename(filename: str) -> Optional[str]:
+    """Extract run ID (e.g. '20260308T130028Z') from a log filename."""
+    m = RUN_ID_RE.search(filename)
+    return m.group(1) if m else None
+
+
+def parse_repo_from_filename(filename: str) -> Optional[str]:
+    """Extract repo name from employee log filename.
+
+    'run-20260308T130028Z-employee-ai-portainer-dashboard.stream.jsonl'
+    -> 'ai-portainer-dashboard'
+    """
+    m = REPO_FROM_EMPLOYEE_RE.search(filename)
+    if m:
+        return m.group(1)
+    # Old format: task name (not a repo, but useful for matching)
+    m = REPO_FROM_OLD_FORMAT_RE.search(filename)
+    if m:
+        name = m.group(1)
+        if name not in ("employee",):
+            return name
+    return None
+
+
+def parse_run_timestamp(run_id: str) -> Optional[datetime]:
+    """Parse '20260308T130028Z' into a datetime."""
+    try:
+        return datetime.strptime(run_id, "%Y%m%dT%H%M%SZ")
+    except ValueError:
+        return None
+
+
+def parse_result_json(filepath: str) -> Optional[Dict[str, Any]]:
+    """Parse a run result .json file (the old format summary).
+
+    Returns dict with: cost_usd, turns, duration_ms, status, model.
+    """
+    try:
+        with open(filepath, "r") as f:
+            data = json.load(f)
+        if data.get("type") != "result":
+            return None
+        return {
+            "cost_usd": data.get("total_cost_usd"),
+            "turns": data.get("num_turns"),
+            "duration_ms": data.get("duration_ms"),
+            "status": "success" if data.get("subtype") == "success" else "failed",
+            "model": _extract_model(data),
+        }
+    except Exception as e:
+        logger.warning("Failed to parse result JSON %s: %s", filepath, e)
+        return None
+
+
+def parse_stream_result(filepath: str) -> Optional[Dict[str, Any]]:
+    """Parse the 'result' event from a stream JSONL file (last line usually).
+
+    Returns dict with: cost_usd, turns, duration_ms, status, model.
+    """
+    try:
+        result_line = None
+        with open(filepath, "r") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    data = json.loads(line)
+                    if data.get("type") == "result":
+                        result_line = data
+                except json.JSONDecodeError:
+                    continue
+
+        if not result_line:
+            return None
+
+        return {
+            "cost_usd": result_line.get("total_cost_usd"),
+            "turns": result_line.get("num_turns"),
+            "duration_ms": result_line.get("duration_ms"),
+            "status": "success" if result_line.get("subtype") == "success" else "failed",
+            "model": _extract_model(result_line),
+        }
+    except Exception as e:
+        logger.warning("Failed to parse stream JSONL %s: %s", filepath, e)
+        return None
+
+
+def parse_verdicts_file(filepath: str) -> Optional[Dict[str, Any]]:
+    """Parse a verdicts JSON file.
+
+    Returns dict with: verdicts list, summary.
+    """
+    try:
+        with open(filepath, "r") as f:
+            data = json.load(f)
+        return data
+    except Exception as e:
+        logger.warning("Failed to parse verdicts %s: %s", filepath, e)
+        return None
+
+
+def parse_employee_report(repo_name: str) -> Optional[Dict[str, Any]]:
+    """Read employee report from workspace directory."""
+    report_path = Path(settings.workspaces_dir) / repo_name / ".claude-employee-report.json"
+    if not report_path.exists():
+        return None
+    try:
+        with open(report_path, "r") as f:
+            return json.load(f)
+    except Exception as e:
+        logger.warning("Failed to parse employee report %s: %s", report_path, e)
+        return None
+
+
+def discover_run_files(log_dir: str) -> Dict[str, Dict[str, List[str]]]:
+    """Scan log directory and group files by run_id.
+
+    Returns: {run_id: {"streams": [...], "results": [...], "verdicts": [...], "stderr": [...]}}
+    """
+    runs: Dict[str, Dict[str, List[str]]] = {}
+
+    try:
+        filenames = os.listdir(log_dir)
+    except OSError as e:
+        logger.error("Cannot list log directory %s: %s", log_dir, e)
+        return runs
+
+    for fname in filenames:
+        run_id = parse_run_id_from_filename(fname)
+        if not run_id:
+            continue
+
+        if run_id not in runs:
+            runs[run_id] = {"streams": [], "results": [], "verdicts": [], "stderr": []}
+
+        full_path = os.path.join(log_dir, fname)
+
+        if fname.endswith(".stream.jsonl"):
+            runs[run_id]["streams"].append(full_path)
+        elif fname.endswith("-verdicts.json"):
+            runs[run_id]["verdicts"].append(full_path)
+        elif fname.endswith(".json") and not fname.endswith("-verdicts.json"):
+            runs[run_id]["results"].append(full_path)
+        elif fname.endswith(".stderr.log"):
+            runs[run_id]["stderr"].append(full_path)
+
+    return runs
+
+
+def _extract_model(data: Dict[str, Any]) -> Optional[str]:
+    """Extract model name from result data."""
+    model_usage = data.get("modelUsage", {})
+    if model_usage:
+        return list(model_usage.keys())[0]
+    return None
