@@ -1,0 +1,116 @@
+<script lang="ts">
+  import type { Run, Project } from '../lib/types';
+  import { listRuns, listProjects } from '../lib/api';
+  import { formatDuration, formatCost } from '../lib/format';
+  import { toastError } from '../lib/toast.svelte';
+  import StatusBadge from '../components/StatusBadge.svelte';
+  import LoadingSpinner from '../components/LoadingSpinner.svelte';
+  import EmptyState from '../components/EmptyState.svelte';
+  import TimeAgo from '../components/TimeAgo.svelte';
+  import RunFilters from '../components/RunFilters.svelte';
+
+  let runs = $state<Run[]>([]);
+  let total = $state(0);
+  let projects = $state<Project[]>([]);
+  let loading = $state(true);
+  let offset = $state(0);
+  const limit = 20;
+
+  let verdict = $state('');
+  let status = $state('');
+  let projectId = $state('');
+
+  async function load() {
+    loading = true;
+    try {
+      const [runsRes, projectsRes] = await Promise.all([
+        listRuns({
+          limit,
+          offset,
+          verdict: verdict || undefined,
+          status: status || undefined,
+          project_id: projectId ? Number(projectId) : undefined,
+        }),
+        listProjects(),
+      ]);
+      runs = runsRes.runs;
+      total = runsRes.total;
+      projects = projectsRes;
+    } catch (e: any) {
+      toastError(e.message);
+    } finally {
+      loading = false;
+    }
+  }
+
+  function applyFilters() {
+    offset = 0;
+    load();
+  }
+
+  function prevPage() {
+    offset = Math.max(0, offset - limit);
+    load();
+  }
+
+  function nextPage() {
+    if (offset + limit < total) {
+      offset += limit;
+      load();
+    }
+  }
+
+  $effect(() => { load(); });
+
+  let projectMap = $derived(Object.fromEntries(projects.map(p => [p.id, p.repo])));
+</script>
+
+<div class="space-y-6">
+  <h1 class="text-2xl font-bold">Runs</h1>
+
+  <RunFilters bind:verdict bind:status bind:projectId {projects} onchange={applyFilters} />
+
+  {#if loading}
+    <div class="flex justify-center py-12"><LoadingSpinner /></div>
+  {:else if runs.length === 0}
+    <EmptyState message="No runs match the filters" />
+  {:else}
+    <div class="bg-surface rounded-xl border border-border overflow-hidden">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="border-b border-border text-left text-text-dim">
+            <th class="px-5 py-3 font-medium">Run ID</th>
+            <th class="px-5 py-3 font-medium">Project</th>
+            <th class="px-5 py-3 font-medium">Verdict</th>
+            <th class="px-5 py-3 font-medium">Mode</th>
+            <th class="px-5 py-3 font-medium">Duration</th>
+            <th class="px-5 py-3 font-medium">Cost</th>
+            <th class="px-5 py-3 font-medium">Started</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-border">
+          {#each runs as run}
+            <tr class="hover:bg-surface-2/30 transition-colors cursor-pointer" onclick={() => window.location.hash = `/runs/${run.run_id}`}>
+              <td class="px-5 py-3 font-mono text-xs">{run.run_id}</td>
+              <td class="px-5 py-3 text-text-dim">{run.project_id ? (projectMap[run.project_id] ?? `#${run.project_id}`) : '-'}</td>
+              <td class="px-5 py-3"><StatusBadge value={run.verdict} /></td>
+              <td class="px-5 py-3"><StatusBadge value={run.mode} variant="mode" /></td>
+              <td class="px-5 py-3 text-text-dim">{formatDuration(run.duration_ms)}</td>
+              <td class="px-5 py-3 text-text-dim">{formatCost(run.cost_usd)}</td>
+              <td class="px-5 py-3"><TimeAgo date={run.started_at} /></td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Pagination -->
+    <div class="flex items-center justify-between text-sm text-text-dim">
+      <span>Showing {offset + 1}-{Math.min(offset + limit, total)} of {total}</span>
+      <div class="flex gap-2">
+        <button onclick={prevPage} disabled={offset === 0} class="px-3 py-1 bg-surface-2 rounded disabled:opacity-30 cursor-pointer">Prev</button>
+        <button onclick={nextPage} disabled={offset + limit >= total} class="px-3 py-1 bg-surface-2 rounded disabled:opacity-30 cursor-pointer">Next</button>
+      </div>
+    </div>
+  {/if}
+</div>
