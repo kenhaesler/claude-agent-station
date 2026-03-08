@@ -1,0 +1,18 @@
+[Unit]
+Description=Claude Agent Station Dashboard Backend
+Documentation=https://github.com/VAMFI/claude-agent-station
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=claude-agent
+Group=claude-agent
+WorkingDirectory=/opt/git/claude-agent-station/dashboard/backend
+ExecStart=/opt/git/claude-agent-station/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8420
+Restart=on-failure
+RestartSec=5
+Environment=PYTHONPATH=/opt/git/claude-agent-station/dashboard/backend
+
+[Install]
+WantedBy=multi-user.target

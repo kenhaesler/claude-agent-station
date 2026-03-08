@@ -1,0 +1,37 @@
+module claude-agent 1.0;
+
+require {
+    type user_home_t;
+    type http_port_t;
+    type https_port_t;
+    type var_log_t;
+    type bin_t;
+    type shell_exec_t;
+    type usr_t;
+    type tmp_t;
+    class file { read write create unlink open getattr setattr append rename };
+    class dir { read write create search add_name remove_name open getattr };
+    class tcp_socket { create connect getopt setopt getattr name_connect };
+    class process { signal fork };
+}
+
+# Allow claude-agent process to access workspace files
+allow user_home_t self:file { read write create unlink open getattr setattr append rename };
+allow user_home_t self:dir { read write create search add_name remove_name open getattr };
+
+# Allow outbound HTTPS connections (for API calls)
+allow user_home_t http_port_t:tcp_socket name_connect;
+allow user_home_t https_port_t:tcp_socket name_connect;
+
+# Allow writing to log directory
+allow user_home_t var_log_t:file { write create open append };
+allow user_home_t var_log_t:dir { write add_name search };
+
+# Allow executing binaries (node, claude, git, etc.)
+allow user_home_t bin_t:file { read open getattr };
+allow user_home_t shell_exec_t:file { read open getattr };
+allow user_home_t usr_t:file { read open getattr };
+
+# Allow temporary files
+allow user_home_t tmp_t:file { read write create unlink open };
+allow user_home_t tmp_t:dir { read write create search add_name remove_name };

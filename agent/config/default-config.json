@@ -18,7 +18,8 @@
   },
   "dashboard": {
     "port": 8420,
-    "bind": "127.0.0.1"
+    "bind": "127.0.0.1",
+    "webhook_url": ""
   },
   "notifications": {
     "enabled": true,

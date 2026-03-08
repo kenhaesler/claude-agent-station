@@ -1,0 +1,48 @@
+[Unit]
+Description=Claude Agent Station - Autonomous Agent
+Documentation=https://github.com/VAMFI/claude-agent-station
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=claude-agent
+Group=claude-agent
+SupplementaryGroups=docker
+WorkingDirectory=/home/claude-agent/workspaces
+
+# Load API key from secure storage
+Environment=HOME=/home/claude-agent
+Environment=PATH=/home/claude-agent/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=STATION_CONFIG=/opt/claude-agent-station/agent/config/station-config.json
+EnvironmentFile=-/home/claude-agent/.config/claude-agent/environment
+
+# Execute the manager/employee orchestrator
+ExecStart=/opt/claude-agent-station/agent/scripts/run-manager.sh
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectHome=read-only
+ReadWritePaths=/home/claude-agent/workspace /home/claude-agent/workspaces /var/log/claude-agent /home/claude-agent/.claude /home/claude-agent/.config /home/claude-agent/.cache /home/claude-agent/.local /var/lib/claude-agent-station
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=no
+RestrictRealtime=yes
+
+# Resource limits
+MemoryMax=2G
+CPUQuota=80%
+TimeoutStartSec=7200
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=claude-agent
+
+[Install]
+WantedBy=multi-user.target

@@ -14,6 +14,7 @@ dashboard/frontend/dist/
 *.db
 *.db-journal
 *.db-wal
+*.db-shm
 
 # Environment
 .env
@@ -30,6 +31,9 @@ dashboard/frontend/dist/
 # OS
 .DS_Store
 Thumbs.db
+
+# Instance config (contains project-specific settings)
+agent/config/station-config.json
 
 # Secrets
 credentials.json
