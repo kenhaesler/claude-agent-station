@@ -1,0 +1,32 @@
+{
+  "projects": [],
+  "schedule": "1h",
+  "models": {
+    "employee": "claude-opus-4-6",
+    "manager": "claude-sonnet-4-6",
+    "analyst": "claude-sonnet-4-6"
+  },
+  "limits": {
+    "max_employee_turns": 200,
+    "max_employee_budget_usd": 25.00,
+    "max_analyst_turns": 50,
+    "max_analyst_budget_usd": 5.00,
+    "max_manager_turns": 30,
+    "max_manager_budget_usd": 3.00,
+    "session_limit_24h": 50,
+    "max_session_percent": 80
+  },
+  "dashboard": {
+    "port": 8420,
+    "bind": "127.0.0.1"
+  },
+  "notifications": {
+    "enabled": true,
+    "method": "file",
+    "notification_file": "/var/log/claude-agent/notifications.log"
+  },
+  "logging": {
+    "log_dir": "/var/log/claude-agent",
+    "digest_dir": "/var/log/claude-agent/digests"
+  }
+}
