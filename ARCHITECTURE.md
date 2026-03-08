@@ -410,6 +410,29 @@ Frontend renders: thinking blocks, tool calls, results
 
 ---
 
+## Deployment Model: Bare Metal + systemd
+
+Everything runs directly on the VM. No Docker.
+
+**Why not Docker**:
+- The Claude CLI agent needs real filesystem access (git workspaces, SSH keys, OAuth credentials, bubblewrap sandbox). Containerizing it would require `--privileged` and 10+ volume mounts, defeating the purpose.
+- The dashboard is a simple FastAPI app — a Python venv provides the same isolation without the overhead.
+- SELinux + Docker on Rocky Linux adds unnecessary friction.
+- Single-VM, single-user system doesn't benefit from container orchestration.
+- `git pull && systemctl restart` is simpler than `docker compose pull && docker compose up`.
+
+**What manages processes**: systemd (two units)
+- `claude-agent.timer` + `claude-agent.service` — hourly agent runs
+- `claude-station-dashboard.service` — persistent dashboard (uvicorn)
+
+**What isolates dependencies**: Python venv at `/opt/claude-agent-station/venv/`
+
+**What handles updates**: `git pull origin main && systemctl restart claude-station-dashboard`
+
+**Docker becomes worthwhile if**: distributing to many users on different distros, running multiple instances, or adding heavy dependencies (Postgres, Redis, workers). Add it later if needed — the architecture doesn't preclude it.
+
+---
+
 ## Future Ideas (not in v1)
 
 - **Multi-VM support**: Central dashboard managing agents on multiple VMs
