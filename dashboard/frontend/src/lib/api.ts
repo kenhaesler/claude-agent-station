@@ -1,4 +1,4 @@
-import type { Project, ProjectCreate, ProjectUpdate, Run, RunList, SystemStatus, AuthStatus, LogSearchResult, RunLogs, UsageData } from './types';
+import type { Project, ProjectCreate, ProjectUpdate, Run, RunList, SystemStatus, AuthStatus, LogSearchResult, RunLogs, UsageData, OAuthStartResponse, OAuthCallbackResponse } from './types';
 
 const BASE = import.meta.env.VITE_API_URL || '';
 
@@ -55,6 +55,15 @@ export const serviceAction = (action: string, unit?: string) => {
   return request<Record<string, unknown>>(`/api/system/service/${action}${q}`, { method: 'POST' });
 };
 export const getAuthStatus = () => request<AuthStatus>('/api/system/auth');
+
+// OAuth
+export const startOAuthLogin = () =>
+  request<OAuthStartResponse>('/api/oauth/start', { method: 'POST' });
+export const submitOAuthCode = (code: string, state: string) =>
+  request<OAuthCallbackResponse>('/api/oauth/callback', {
+    method: 'POST',
+    body: JSON.stringify({ code, state }),
+  });
 
 // Logs
 export const searchLogs = (q: string, runId?: string, limit?: number) => {

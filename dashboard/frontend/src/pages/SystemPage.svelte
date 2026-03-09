@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { SystemStatus, AuthStatus } from '../lib/types';
-  import { getSystemStatus, getAuthStatus, serviceAction, triggerRun } from '../lib/api';
+  import { getSystemStatus, getAuthStatus, serviceAction, triggerRun, startOAuthLogin, submitOAuthCode } from '../lib/api';
   import { toastSuccess, toastError } from '../lib/toast.svelte';
   import LoadingSpinner from '../components/LoadingSpinner.svelte';
   import ResourceMeter from '../components/ResourceMeter.svelte';
@@ -8,6 +8,13 @@
   let system = $state<SystemStatus | null>(null);
   let auth = $state<AuthStatus | null>(null);
   let loading = $state(true);
+
+  // OAuth flow state
+  type OAuthFlowState = 'idle' | 'waiting_for_code' | 'submitting' | 'done';
+  let oauthFlow = $state<OAuthFlowState>('idle');
+  let oauthState = $state('');
+  let oauthCode = $state('');
+  let oauthError = $state('');
 
   async function load() {
     try {
@@ -19,6 +26,47 @@
     } finally {
       loading = false;
     }
+  }
+
+  async function handleOAuthStart() {
+    oauthError = '';
+    try {
+      const res = await startOAuthLogin();
+      oauthState = res.state;
+      oauthFlow = 'waiting_for_code';
+      oauthCode = '';
+      window.open(res.auth_url, '_blank');
+    } catch (e: any) {
+      oauthError = e.message;
+    }
+  }
+
+  async function handleOAuthSubmit() {
+    if (!oauthCode.trim()) return;
+    oauthError = '';
+    oauthFlow = 'submitting';
+    try {
+      const res = await submitOAuthCode(oauthCode.trim(), oauthState);
+      if (res.success) {
+        oauthFlow = 'done';
+        toastSuccess('Authentication successful');
+        await load();
+        setTimeout(() => { oauthFlow = 'idle'; }, 2000);
+      } else {
+        oauthError = res.error || 'Token exchange failed';
+        oauthFlow = 'waiting_for_code';
+      }
+    } catch (e: any) {
+      oauthError = e.message;
+      oauthFlow = 'waiting_for_code';
+    }
+  }
+
+  function handleOAuthCancel() {
+    oauthFlow = 'idle';
+    oauthState = '';
+    oauthCode = '';
+    oauthError = '';
   }
 
   async function doServiceAction(action: string, unit: string) {
@@ -141,6 +189,50 @@
       {/if}
       {#if auth?.error}
         <p class="text-xs text-reject">{auth.error}</p>
+      {/if}
+
+      {#if oauthFlow === 'idle'}
+        <button
+          onclick={handleOAuthStart}
+          class="px-3 py-1.5 text-sm bg-pr text-white rounded-lg hover:bg-pr/80 cursor-pointer"
+        >
+          {auth?.logged_in && !auth.expired ? 'Re-authenticate' : 'Login with Claude'}
+        </button>
+      {:else if oauthFlow === 'waiting_for_code'}
+        <div class="space-y-2">
+          <p class="text-sm text-text-dim">
+            A new tab has opened. Authenticate on claude.ai, then click "Copy Code" and paste it below.
+          </p>
+          <div class="flex gap-2">
+            <input
+              type="text"
+              bind:value={oauthCode}
+              placeholder="Paste authorization code"
+              class="flex-1 px-3 py-1.5 text-sm bg-surface-2 border border-border rounded-lg focus:outline-none focus:border-pr"
+              onkeydown={(e: KeyboardEvent) => { if (e.key === 'Enter') handleOAuthSubmit(); }}
+            />
+            <button
+              onclick={handleOAuthSubmit}
+              disabled={!oauthCode.trim()}
+              class="px-3 py-1.5 text-sm bg-pr text-white rounded-lg hover:bg-pr/80 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            >Submit</button>
+            <button
+              onclick={handleOAuthCancel}
+              class="px-3 py-1.5 text-sm bg-surface-2 rounded-lg text-text-dim hover:text-text cursor-pointer"
+            >Cancel</button>
+          </div>
+        </div>
+      {:else if oauthFlow === 'submitting'}
+        <div class="flex items-center gap-2 text-sm text-text-dim">
+          <LoadingSpinner />
+          <span>Exchanging code for tokens...</span>
+        </div>
+      {:else if oauthFlow === 'done'}
+        <p class="text-sm text-approve">Authentication successful!</p>
+      {/if}
+
+      {#if oauthError}
+        <p class="text-xs text-reject">{oauthError}</p>
       {/if}
     </div>
   {/if}

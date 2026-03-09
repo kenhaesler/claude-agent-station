@@ -121,6 +121,16 @@ export interface StationConfig {
   };
 }
 
+export interface OAuthStartResponse {
+  auth_url: string;
+  state: string;
+}
+
+export interface OAuthCallbackResponse {
+  success: boolean;
+  error?: string;
+}
+
 export interface ToastMessage {
   id: number;
   type: 'success' | 'error' | 'info';

@@ -1,0 +1,178 @@
+"""OAuth PKCE login flow for claude-agent user."""
+
+import hashlib
+import base64
+import json
+import logging
+import os
+import secrets
+import tempfile
+import time
+from pathlib import Path
+from typing import Dict, Optional
+from urllib.parse import urlencode, unquote, urlparse, parse_qs
+from urllib.request import Request, urlopen
+from urllib.error import HTTPError, URLError
+
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/api/oauth", tags=["oauth"])
+
+TOKEN_URL = "https://platform.claude.com/v1/oauth/token"
+CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+REDIRECT_URI = "https://platform.claude.com/oauth/code/callback"
+AUTHORIZE_URL = "https://claude.ai/oauth/authorize"
+SCOPES = "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers"
+CREDS_PATH = Path("/home/claude-agent/.claude/.credentials.json")
+
+# In-memory store for pending PKCE flows: {state: code_verifier}
+_pending: Dict[str, str] = {}
+
+
+class OAuthStartResponse(BaseModel):
+    auth_url: str
+    state: str
+
+
+class OAuthCallbackRequest(BaseModel):
+    code: str
+    state: str
+
+
+class OAuthCallbackResponse(BaseModel):
+    success: bool
+    error: Optional[str] = None
+
+
+def _generate_pkce() -> tuple[str, str]:
+    """Generate PKCE code_verifier and code_challenge."""
+    code_verifier = secrets.token_urlsafe(64)
+    digest = hashlib.sha256(code_verifier.encode("ascii")).digest()
+    code_challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+    return code_verifier, code_challenge
+
+
+def _write_credentials(path: Path, data: dict) -> None:
+    """Atomic write: write to temp file then rename."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(data, f, indent=2)
+        os.replace(tmp, path)
+    except Exception:
+        os.unlink(tmp)
+        raise
+
+
+@router.post("/start", response_model=OAuthStartResponse)
+async def start_oauth():
+    """Generate PKCE challenge and return authorization URL."""
+    state = secrets.token_urlsafe(32)
+    code_verifier, code_challenge = _generate_pkce()
+    _pending[state] = code_verifier
+
+    params = urlencode({
+        "code": "true",
+        "client_id": CLIENT_ID,
+        "response_type": "code",
+        "redirect_uri": REDIRECT_URI,
+        "scope": SCOPES,
+        "code_challenge": code_challenge,
+        "code_challenge_method": "S256",
+        "state": state,
+    })
+    auth_url = f"{AUTHORIZE_URL}?{params}"
+
+    logger.info("OAuth flow started (state=%s...)", state[:8])
+    return OAuthStartResponse(auth_url=auth_url, state=state)
+
+
+def _clean_code(raw: str) -> str:
+    """Extract authorization code from various user input formats.
+
+    The callback page at platform.claude.com shows the code as 'code#state'
+    combined with a '#' delimiter. Handle that and other formats.
+    """
+    raw = raw.strip()
+    # If user pasted a full URL, extract the code param
+    if raw.startswith("http"):
+        parsed = urlparse(raw)
+        qs = parse_qs(parsed.query)
+        if "code" in qs:
+            raw = qs["code"][0]
+    # If user pasted code=XXXX or code=XXXX&state=...
+    elif raw.startswith("code="):
+        raw = raw.split("=", 1)[1].split("&")[0]
+    # The callback page shows "code#state" — extract just the code part
+    if "#" in raw:
+        raw = raw.split("#")[0]
+    # URL-decode in case of percent-encoded characters
+    return unquote(raw)
+
+
+@router.post("/callback", response_model=OAuthCallbackResponse)
+async def oauth_callback(req: OAuthCallbackRequest):
+    """Exchange authorization code for tokens and write credentials."""
+    code_verifier = _pending.pop(req.state, None)
+    if not code_verifier:
+        raise HTTPException(status_code=400, detail="Invalid or expired state parameter")
+
+    code = _clean_code(req.code)
+    logger.info(
+        "Token exchange: raw_length=%d clean_length=%d raw_first20=%r clean_first20=%r",
+        len(req.code), len(code), req.code[:20], code[:20],
+    )
+
+    payload = json.dumps({
+        "grant_type": "authorization_code",
+        "code": code,
+        "redirect_uri": REDIRECT_URI,
+        "client_id": CLIENT_ID,
+        "code_verifier": code_verifier,
+        "state": req.state,
+    }).encode("utf-8")
+
+    request = Request(
+        TOKEN_URL,
+        data=payload,
+        headers={
+            "Content-Type": "application/json",
+            "User-Agent": "claude-agent-station/1.0",
+        },
+        method="POST",
+    )
+
+    try:
+        with urlopen(request, timeout=30) as resp:
+            result = json.loads(resp.read())
+    except HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")
+        logger.error("Token exchange failed: HTTP %d: %s", e.code, body)
+        return OAuthCallbackResponse(success=False, error=f"Token exchange failed: {body}")
+    except URLError as e:
+        logger.error("Token exchange failed: %s", e.reason)
+        return OAuthCallbackResponse(success=False, error=f"Token exchange failed: {e.reason}")
+
+    # Build credentials in the expected format
+    expires_at_ms = int((time.time() + result.get("expires_in", 3600)) * 1000)
+    creds = {
+        "claudeAiOauth": {
+            "accessToken": result["access_token"],
+            "refreshToken": result.get("refresh_token", ""),
+            "expiresAt": expires_at_ms,
+            "scopes": SCOPES.split(" "),
+        }
+    }
+
+    try:
+        _write_credentials(CREDS_PATH, creds)
+        logger.info("Credentials written to %s", CREDS_PATH)
+    except Exception as e:
+        logger.error("Failed to write credentials: %s", e)
+        return OAuthCallbackResponse(success=False, error=f"Failed to write credentials: {e}")
+
+    return OAuthCallbackResponse(success=True)
