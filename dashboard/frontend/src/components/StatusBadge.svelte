@@ -8,19 +8,19 @@
 
   const colorMap: Record<string, string> = {
     // Verdicts
-    APPROVE: 'bg-approve/20 text-approve',
-    REJECT: 'bg-reject/20 text-reject',
-    OPEN_PR: 'bg-pr/20 text-pr',
+    APPROVE: 'bg-approve/20 text-approve shadow-[0_0_8px_rgba(34,197,94,0.2)]',
+    REJECT: 'bg-reject/20 text-reject shadow-[0_0_8px_rgba(239,68,68,0.2)]',
+    OPEN_PR: 'bg-pr/20 text-pr shadow-[0_0_8px_rgba(168,85,247,0.2)]',
     // Statuses
-    completed: 'bg-approve/20 text-approve',
-    running: 'bg-info/20 text-info',
-    failed: 'bg-reject/20 text-reject',
+    completed: 'bg-approve/20 text-approve shadow-[0_0_8px_rgba(34,197,94,0.15)]',
+    running: 'bg-info/20 text-info shadow-[0_0_8px_rgba(59,130,246,0.25)]',
+    failed: 'bg-reject/20 text-reject shadow-[0_0_8px_rgba(239,68,68,0.15)]',
     // Modes
-    full: 'bg-pr/20 text-pr',
-    analyze: 'bg-info/20 text-info',
+    full: 'bg-pr/20 text-pr shadow-[0_0_8px_rgba(168,85,247,0.15)]',
+    analyze: 'bg-info/20 text-info shadow-[0_0_8px_rgba(59,130,246,0.15)]',
     // Priorities
-    high: 'bg-reject/20 text-reject',
-    medium: 'bg-warning/20 text-warning',
+    high: 'bg-reject/20 text-reject shadow-[0_0_8px_rgba(239,68,68,0.15)]',
+    medium: 'bg-warning/20 text-warning shadow-[0_0_8px_rgba(245,158,11,0.15)]',
     low: 'bg-text-dim/20 text-text-dim',
   };
 

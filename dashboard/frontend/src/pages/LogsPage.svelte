@@ -4,6 +4,8 @@
   import type { LogSearchResult } from '../lib/types';
   import { toastError } from '../lib/toast.svelte';
   import LoadingSpinner from '../components/LoadingSpinner.svelte';
+  import StatusOrb from '../components/StatusOrb.svelte';
+  import GlassCard from '../components/GlassCard.svelte';
 
   let lines = $state<string[]>([]);
   let connected = $state(false);
@@ -69,11 +71,11 @@
   });
 </script>
 
-<div class="space-y-4">
+<div class="space-y-4 animate-fade-in-up">
   <div class="flex items-center justify-between">
     <h1 class="text-2xl font-bold">Logs</h1>
     <div class="flex items-center gap-2">
-      <span class="w-2 h-2 rounded-full {connected ? 'bg-approve' : 'bg-reject'}"></span>
+      <StatusOrb active={connected} />
       <span class="text-xs text-text-dim">{connected ? 'Connected' : 'Disconnected'}</span>
     </div>
   </div>
@@ -82,22 +84,22 @@
   <div class="flex flex-wrap gap-3 items-center">
     <button
       onclick={switchToLive}
-      class="px-3 py-1.5 text-sm rounded-lg cursor-pointer {mode === 'live' ? 'bg-pr text-white' : 'bg-surface-2 text-text-dim hover:text-text'}"
+      class="px-3 py-1.5 text-sm rounded-lg cursor-pointer transition-all {mode === 'live' ? 'bg-gradient-to-r from-accent-blue to-accent-emerald text-white shadow-[0_0_12px_rgba(59,130,246,0.2)]' : 'glass text-text-dim hover:text-text'}"
     >
       Live
     </button>
     <button
       onclick={() => mode = 'search'}
-      class="px-3 py-1.5 text-sm rounded-lg cursor-pointer {mode === 'search' ? 'bg-pr text-white' : 'bg-surface-2 text-text-dim hover:text-text'}"
+      class="px-3 py-1.5 text-sm rounded-lg cursor-pointer transition-all {mode === 'search' ? 'bg-gradient-to-r from-accent-blue to-accent-emerald text-white shadow-[0_0_12px_rgba(59,130,246,0.2)]' : 'glass text-text-dim hover:text-text'}"
     >
       Search
     </button>
 
     {#if mode === 'live'}
-      <button onclick={togglePause} class="px-3 py-1.5 text-sm bg-surface-2 rounded-lg text-text-dim hover:text-text cursor-pointer">
+      <button onclick={togglePause} class="px-3 py-1.5 text-sm glass rounded-lg text-text-dim hover:text-text cursor-pointer transition-colors">
         {paused ? 'Resume' : 'Pause'}
       </button>
-      <button onclick={() => { lines = []; }} class="px-3 py-1.5 text-sm bg-surface-2 rounded-lg text-text-dim hover:text-text cursor-pointer">
+      <button onclick={() => { lines = []; }} class="px-3 py-1.5 text-sm glass rounded-lg text-text-dim hover:text-text cursor-pointer transition-colors">
         Clear
       </button>
       <label class="flex items-center gap-1 text-xs text-text-dim">
@@ -111,9 +113,9 @@
         <input
           bind:value={searchQuery}
           placeholder="Search log content..."
-          class="flex-1 bg-surface-2 border border-border rounded-lg px-3 py-1.5 text-sm text-text focus:outline-none focus:border-pr"
+          class="flex-1 bg-white/[0.04] border border-border/50 rounded-lg px-3 py-1.5 text-sm text-text focus:outline-none focus:border-accent-blue/50 transition-colors"
         />
-        <button type="submit" disabled={searching} class="px-3 py-1.5 bg-pr text-white rounded-lg text-sm cursor-pointer">
+        <button type="submit" disabled={searching} class="px-3 py-1.5 bg-gradient-to-r from-accent-blue to-accent-emerald text-white rounded-lg text-sm cursor-pointer">
           {searching ? '...' : 'Search'}
         </button>
       </form>
@@ -122,18 +124,17 @@
 
   {#if mode === 'live'}
     <!-- Live Log Viewer -->
-    <div
-      bind:this={logContainer}
-      class="bg-surface rounded-xl border border-border p-3 md:p-4 h-[calc(100vh-200px)] md:h-[calc(100vh-240px)] overflow-auto font-mono text-xs leading-relaxed"
-    >
-      {#if lines.length === 0}
-        <p class="text-text-dim">Waiting for log data...</p>
-      {:else}
-        {#each lines as line}
-          <div class="hover:bg-surface-2/30 py-0.5 break-all">{line}</div>
-        {/each}
-      {/if}
-    </div>
+    <GlassCard class="p-3 md:p-4 h-[calc(100vh-200px)] md:h-[calc(100vh-240px)] overflow-auto font-data text-xs leading-relaxed">
+      <div bind:this={logContainer} class="h-full overflow-auto">
+        {#if lines.length === 0}
+          <p class="text-text-dim">Waiting for log data...</p>
+        {:else}
+          {#each lines as line}
+            <div class="hover:bg-white/[0.02] py-0.5 break-all">{line}</div>
+          {/each}
+        {/if}
+      </div>
+    </GlassCard>
   {:else}
     <!-- Search Results -->
     {#if searching}
@@ -141,18 +142,18 @@
     {:else if searchResults.length === 0}
       <p class="text-text-dim text-sm py-8 text-center">No results</p>
     {:else}
-      <div class="bg-surface rounded-xl border border-border overflow-hidden">
-        <div class="divide-y divide-border">
+      <GlassCard class="overflow-hidden">
+        <div class="divide-y divide-border/30">
           {#each searchResults as result}
             <div class="px-5 py-3">
               <div class="flex items-center gap-2 mb-1">
-                <span class="text-xs text-text-dim font-mono">{result.file}:{result.line}</span>
+                <span class="text-xs text-text-dim font-data">{result.file}:{result.line}</span>
               </div>
               <pre class="text-xs whitespace-pre-wrap break-all text-text-dim">{result.content}</pre>
             </div>
           {/each}
         </div>
-      </div>
+      </GlassCard>
     {/if}
   {/if}
 </div>

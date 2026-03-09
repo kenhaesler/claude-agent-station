@@ -4,6 +4,8 @@
   import { toastSuccess, toastError } from '../lib/toast.svelte';
   import LoadingSpinner from '../components/LoadingSpinner.svelte';
   import ResourceMeter from '../components/ResourceMeter.svelte';
+  import StatusOrb from '../components/StatusOrb.svelte';
+  import GlassCard from '../components/GlassCard.svelte';
 
   let system = $state<SystemStatus | null>(null);
   let auth = $state<AuthStatus | null>(null);
@@ -104,7 +106,7 @@
   }
 </script>
 
-<div class="space-y-6">
+<div class="space-y-6 animate-fade-in-up">
   <h1 class="text-2xl font-bold">System</h1>
 
   {#if loading}
@@ -113,26 +115,26 @@
     <!-- Service Controls -->
     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
       <!-- Agent Service -->
-      <div class="bg-surface rounded-xl border border-border p-5 space-y-4">
+      <GlassCard glow={system?.service.active ? 'blue' : 'none'} class="p-5 space-y-4">
         <div class="flex items-center justify-between">
           <h3 class="font-semibold">Agent Service</h3>
           <div class="flex items-center gap-2">
-            <span class="w-2.5 h-2.5 rounded-full {system?.service.active ? 'bg-approve' : 'bg-reject'}"></span>
+            <StatusOrb active={system?.service.active ?? false} />
             <span class="text-sm">{system?.service.active ? 'Active' : 'Inactive'}</span>
           </div>
         </div>
         <div class="flex flex-wrap gap-2">
-          <button onclick={handleTrigger} class="px-3 py-1.5 text-sm bg-pr text-white rounded-lg hover:bg-pr/80 cursor-pointer">Trigger Run</button>
-          <button onclick={() => doServiceAction('stop', 'claude-agent.service')} class="px-3 py-1.5 text-sm bg-surface-2 rounded-lg text-text-dim hover:text-text cursor-pointer">Stop</button>
+          <button onclick={handleTrigger} class="px-3 py-1.5 text-sm bg-gradient-to-r from-accent-blue to-accent-emerald text-white rounded-lg hover:shadow-[0_0_12px_rgba(59,130,246,0.2)] cursor-pointer transition-all">Trigger Run</button>
+          <button onclick={() => doServiceAction('stop', 'claude-agent.service')} class="px-3 py-1.5 text-sm glass rounded-lg text-text-dim hover:text-text cursor-pointer transition-colors">Stop</button>
         </div>
-      </div>
+      </GlassCard>
 
       <!-- Timer -->
-      <div class="bg-surface rounded-xl border border-border p-5 space-y-4">
+      <GlassCard glow={system?.timer.active ? 'emerald' : 'none'} class="p-5 space-y-4">
         <div class="flex items-center justify-between">
           <h3 class="font-semibold">Timer</h3>
           <div class="flex items-center gap-2">
-            <span class="w-2.5 h-2.5 rounded-full {system?.timer.active ? 'bg-approve' : 'bg-reject'}"></span>
+            <StatusOrb active={system?.timer.active ?? false} color="#10b981" />
             <span class="text-sm">{system?.timer.active ? 'Active' : 'Inactive'}</span>
           </div>
         </div>
@@ -140,14 +142,14 @@
           <p class="text-sm text-text-dim">Next: {system.timer.next_trigger}</p>
         {/if}
         <div class="flex flex-wrap gap-2">
-          <button onclick={() => doServiceAction('start', 'claude-agent.timer')} class="px-3 py-1.5 text-sm bg-surface-2 rounded-lg text-text-dim hover:text-text cursor-pointer">Enable</button>
-          <button onclick={() => doServiceAction('stop', 'claude-agent.timer')} class="px-3 py-1.5 text-sm bg-surface-2 rounded-lg text-text-dim hover:text-text cursor-pointer">Disable</button>
+          <button onclick={() => doServiceAction('start', 'claude-agent.timer')} class="px-3 py-1.5 text-sm glass rounded-lg text-text-dim hover:text-text cursor-pointer transition-colors">Enable</button>
+          <button onclick={() => doServiceAction('stop', 'claude-agent.timer')} class="px-3 py-1.5 text-sm glass rounded-lg text-text-dim hover:text-text cursor-pointer transition-colors">Disable</button>
         </div>
-      </div>
+      </GlassCard>
     </div>
 
     <!-- Resources -->
-    <div class="bg-surface rounded-xl border border-border p-5 space-y-4">
+    <GlassCard class="p-5 space-y-4">
       <h3 class="font-semibold">Resources</h3>
       <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
         <ResourceMeter
@@ -163,17 +165,17 @@
           unit="GB"
         />
       </div>
-      <div class="flex gap-6 text-sm text-text-dim">
+      <div class="flex gap-6 text-sm text-text-dim font-data">
         <span>Load: {system?.resources.load_avg?.map(v => v.toFixed(2)).join(', ') ?? '-'}</span>
         <span>Uptime: {formatUptime(system?.resources.uptime_seconds)}</span>
       </div>
-    </div>
+    </GlassCard>
 
     <!-- Auth Status -->
-    <div class="bg-surface rounded-xl border border-border p-5 space-y-3">
+    <GlassCard glow={auth?.logged_in && !auth.expired ? 'emerald' : 'red'} class="p-5 space-y-3">
       <h3 class="font-semibold">Auth Status</h3>
       <div class="flex items-center gap-3">
-        <span class="w-2.5 h-2.5 rounded-full {auth?.logged_in && !auth.expired ? 'bg-approve' : 'bg-reject'}"></span>
+        <StatusOrb active={auth?.logged_in === true && !auth.expired} />
         <span class="text-sm">
           {#if auth?.logged_in && !auth.expired}
             Authenticated
@@ -194,7 +196,7 @@
       {#if oauthFlow === 'idle'}
         <button
           onclick={handleOAuthStart}
-          class="px-3 py-1.5 text-sm bg-pr text-white rounded-lg hover:bg-pr/80 cursor-pointer"
+          class="px-3 py-1.5 text-sm bg-gradient-to-r from-accent-blue to-accent-emerald text-white rounded-lg hover:shadow-[0_0_12px_rgba(59,130,246,0.2)] cursor-pointer transition-all"
         >
           {auth?.logged_in && !auth.expired ? 'Re-authenticate' : 'Login with Claude'}
         </button>
@@ -208,17 +210,17 @@
               type="text"
               bind:value={oauthCode}
               placeholder="Paste authorization code"
-              class="flex-1 px-3 py-1.5 text-sm bg-surface-2 border border-border rounded-lg focus:outline-none focus:border-pr"
+              class="flex-1 px-3 py-1.5 text-sm bg-white/[0.04] border border-border/50 rounded-lg focus:outline-none focus:border-accent-blue/50 transition-colors"
               onkeydown={(e: KeyboardEvent) => { if (e.key === 'Enter') handleOAuthSubmit(); }}
             />
             <button
               onclick={handleOAuthSubmit}
               disabled={!oauthCode.trim()}
-              class="px-3 py-1.5 text-sm bg-pr text-white rounded-lg hover:bg-pr/80 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              class="px-3 py-1.5 text-sm bg-gradient-to-r from-accent-blue to-accent-emerald text-white rounded-lg cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >Submit</button>
             <button
               onclick={handleOAuthCancel}
-              class="px-3 py-1.5 text-sm bg-surface-2 rounded-lg text-text-dim hover:text-text cursor-pointer"
+              class="px-3 py-1.5 text-sm glass rounded-lg text-text-dim hover:text-text cursor-pointer transition-colors"
             >Cancel</button>
           </div>
         </div>
@@ -228,12 +230,12 @@
           <span>Exchanging code for tokens...</span>
         </div>
       {:else if oauthFlow === 'done'}
-        <p class="text-sm text-approve">Authentication successful!</p>
+        <p class="text-sm text-approve text-glow-emerald">Authentication successful!</p>
       {/if}
 
       {#if oauthError}
         <p class="text-xs text-reject">{oauthError}</p>
       {/if}
-    </div>
+    </GlassCard>
   {/if}
 </div>

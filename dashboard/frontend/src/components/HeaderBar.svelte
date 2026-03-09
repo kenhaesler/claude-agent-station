@@ -1,4 +1,6 @@
 <script lang="ts">
+  import StatusOrb from './StatusOrb.svelte';
+
   interface Props {
     serviceActive: boolean;
     authOk: boolean;
@@ -21,21 +23,18 @@
     onMenuToggle,
   }: Props = $props();
 
-  let authColor = $derived(
-    authOk ? 'bg-approve' : 'bg-reject'
-  );
-
-  let authLabel = $derived(
-    authOk ? 'Auth OK' : 'Auth Error'
-  );
-
   let usageBarColor = $derived(
     usagePercent > 80 ? 'bg-reject' :
-    usagePercent > 60 ? 'bg-warning' : 'bg-approve'
+    usagePercent > 60 ? 'bg-warning' : 'bg-accent-emerald'
+  );
+
+  let usageGlow = $derived(
+    usagePercent > 80 ? 'shadow-[0_0_8px_rgba(239,68,68,0.3)]' :
+    usagePercent > 60 ? '' : 'shadow-[0_0_8px_rgba(16,185,129,0.2)]'
   );
 </script>
 
-<header class="h-12 w-full flex items-center justify-between px-3 md:px-4 bg-surface border-b border-border shrink-0">
+<header class="h-12 w-full flex items-center justify-between px-3 md:px-4 glass-heavy border-b border-border/50 shrink-0">
   <!-- Left: hamburger (mobile) + station name -->
   <div class="flex items-center gap-2">
     <button
@@ -47,7 +46,7 @@
         <path d="M3 5h14M3 10h14M3 15h14" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" />
       </svg>
     </button>
-    <span class="md:hidden text-pr font-bold text-sm">Claude Station</span>
+    <span class="md:hidden text-accent-blue font-bold text-sm text-glow-blue">Claude Station</span>
   </div>
 
   <!-- Spacer on desktop -->
@@ -57,9 +56,7 @@
   <div class="flex items-center gap-2 md:gap-4">
     <!-- Service status -->
     <div class="flex items-center gap-1.5">
-      <span
-        class="inline-block w-2 h-2 rounded-full {serviceActive ? 'bg-approve' : 'bg-reject'}"
-      ></span>
+      <StatusOrb active={serviceActive} />
       <span class="text-xs text-text-dim hidden sm:inline">
         {serviceActive ? 'Active' : 'Down'}
       </span>
@@ -67,16 +64,18 @@
 
     <!-- Auth status -->
     <div class="flex items-center gap-1.5">
-      <span class="inline-block w-2 h-2 rounded-full {authColor}"></span>
-      <span class="text-xs text-text-dim hidden sm:inline">{authLabel}</span>
+      <StatusOrb active={authOk} />
+      <span class="text-xs text-text-dim hidden sm:inline">
+        {authOk ? 'Auth OK' : 'Auth Error'}
+      </span>
     </div>
 
     <!-- Usage meter -->
     <div class="flex items-center gap-1.5 hidden sm:flex">
-      <span class="text-xs text-text-dim">{sessionsUsed}/{sessionLimit}</span>
-      <div class="w-16 md:w-20 h-2 bg-surface-2 rounded-full overflow-hidden">
+      <span class="text-xs text-text-dim font-data">{sessionsUsed}/{sessionLimit}</span>
+      <div class="w-16 md:w-20 h-1.5 bg-white/[0.05] rounded-full overflow-hidden">
         <div
-          class="h-full rounded-full transition-all duration-500 {usageBarColor}"
+          class="h-full rounded-full transition-all duration-500 {usageBarColor} {usageGlow}"
           style:width="{Math.min(usagePercent, 100)}%"
         ></div>
       </div>
@@ -86,8 +85,9 @@
     <button
       onclick={onTrigger}
       disabled={triggering}
-      class="px-2.5 md:px-3 py-1 text-xs font-medium rounded-md bg-pr text-white transition-opacity cursor-pointer
-        {triggering ? 'opacity-50 cursor-not-allowed' : 'hover:opacity-90'}"
+      class="px-2.5 md:px-3 py-1 text-xs font-medium rounded-md text-white transition-all cursor-pointer
+        bg-gradient-to-r from-accent-blue to-accent-emerald hover:shadow-[0_0_16px_rgba(59,130,246,0.3)]
+        {triggering ? 'opacity-50 cursor-not-allowed' : 'hover:opacity-90 active:scale-95'}"
     >
       {triggering ? '...' : 'Run'}
     </button>

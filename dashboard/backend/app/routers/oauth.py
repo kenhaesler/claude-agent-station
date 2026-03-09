@@ -63,6 +63,13 @@ def _write_credentials(path: Path, data: dict) -> None:
         with os.fdopen(fd, "w") as f:
             json.dump(data, f, indent=2)
         os.replace(tmp, path)
+        # Ensure the claude-agent user can read the credentials
+        import shutil
+        try:
+            shutil.chown(path, user="claude-agent", group="claude-agent")
+        except (LookupError, OSError):
+            pass
+        os.chmod(path, 0o600)
     except Exception:
         os.unlink(tmp)
         raise

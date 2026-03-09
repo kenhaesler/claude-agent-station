@@ -28,7 +28,7 @@
 <!-- Mobile backdrop -->
 {#if mobileOpen}
   <div
-    class="fixed inset-0 bg-black/50 z-30 md:hidden"
+    class="fixed inset-0 bg-black/60 backdrop-blur-sm z-30 md:hidden"
     onclick={closeMobile}
     role="presentation"
   ></div>
@@ -36,14 +36,14 @@
 
 <!-- Sidebar -->
 <aside
-  class="flex flex-col bg-surface border-r border-border transition-all duration-200 shrink-0
+  class="flex flex-col glass-heavy transition-all duration-200 shrink-0
     fixed inset-y-0 left-0 z-40 md:relative md:translate-x-0
     {mobileOpen ? 'translate-x-0' : '-translate-x-full'}"
   style:width={collapsed ? '56px' : '220px'}
 >
-  <div class="flex items-center gap-2 px-4 py-4 border-b border-border">
+  <div class="flex items-center gap-2 px-4 py-4 border-b border-border/50">
     {#if !collapsed}
-      <span class="text-pr font-bold text-lg">Claude Station</span>
+      <span class="text-accent-blue font-bold text-lg text-glow-blue">Claude Station</span>
     {/if}
     <!-- Close button on mobile -->
     <button
@@ -69,9 +69,14 @@
       <a
         href="#{link.page === 'dashboard' ? '/' : `/${link.page}`}"
         onclick={closeMobile}
-        class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors no-underline
-          {active ? 'bg-surface-2 text-text font-medium' : 'text-text-dim hover:text-text hover:bg-surface-2/50'}"
+        class="relative flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all duration-200 no-underline
+          {active
+            ? 'bg-accent-blue/10 text-accent-blue font-medium'
+            : 'text-text-dim hover:text-text hover:bg-white/[0.03] hover:translate-x-0.5'}"
       >
+        {#if active}
+          <span class="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 bg-accent-blue rounded-r shadow-[0_0_8px_rgba(59,130,246,0.5)]"></span>
+        {/if}
         <svg class="w-5 h-5 shrink-0" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
           {#if link.page === 'dashboard'}
             <rect x="2" y="2" width="7" height="7" rx="1" /><rect x="11" y="2" width="7" height="7" rx="1" /><rect x="2" y="11" width="7" height="7" rx="1" /><rect x="11" y="11" width="7" height="7" rx="1" />

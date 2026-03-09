@@ -1,10 +1,13 @@
 @import 'tailwindcss';
 
 @theme {
-  --color-bg: #0f172a;
-  --color-surface: #1e293b;
-  --color-surface-2: #334155;
-  --color-border: #475569;
+  --color-bg: #050816;
+  --color-bg-alt: #0a0e1a;
+  --color-surface: rgba(15, 23, 42, 0.6);
+  --color-surface-solid: #0f172a;
+  --color-surface-2: rgba(30, 41, 59, 0.5);
+  --color-border: rgba(71, 85, 105, 0.4);
+  --color-border-glow: rgba(59, 130, 246, 0.2);
   --color-text: #e2e8f0;
   --color-text-dim: #94a3b8;
   --color-approve: #22c55e;
@@ -12,10 +15,17 @@
   --color-pr: #a855f7;
   --color-warning: #f59e0b;
   --color-info: #3b82f6;
+  --color-accent-blue: #3b82f6;
+  --color-accent-emerald: #10b981;
+  --color-accent-cyan: #06b6d4;
+  --color-accent-purple: #a855f7;
 }
 
 html {
   background: var(--color-bg);
+  background-image:
+    radial-gradient(circle at 1px 1px, rgba(59, 130, 246, 0.08) 1px, transparent 0);
+  background-size: 32px 32px;
   color: var(--color-text);
 }
 
@@ -29,7 +39,7 @@ body {
   min-height: 100vh;
 }
 
-/* Prevent iOS Safari zoom on input focus (requires 16px minimum) */
+/* Prevent iOS Safari zoom on input focus */
 @media screen and (max-width: 767px) {
   input, select, textarea {
     font-size: 16px !important;
@@ -38,13 +48,118 @@ body {
 
 /* Scrollbar styling */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: var(--color-bg);
+  background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--color-surface-2);
-  border-radius: 4px;
+  background: rgba(59, 130, 246, 0.2);
+  border-radius: 3px;
 }
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(59, 130, 246, 0.4);
+}
+
+/* Glass utility */
+.glass {
+  background: rgba(15, 23, 42, 0.6);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(71, 85, 105, 0.3);
+}
+
+.glass-heavy {
+  background: rgba(15, 23, 42, 0.8);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(71, 85, 105, 0.3);
+}
+
+/* Monospace data values */
+.font-data {
+  font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', ui-monospace, monospace;
+}
+
+/* Keyframe animations */
+@keyframes pulse-glow {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes scan-line {
+  0% { transform: translateY(-100%); opacity: 0; }
+  10% { opacity: 1; }
+  90% { opacity: 1; }
+  100% { transform: translateY(1000%); opacity: 0; }
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}
+
+@keyframes spin-slow {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes border-glow {
+  0%, 100% { border-color: rgba(59, 130, 246, 0.2); }
+  50% { border-color: rgba(59, 130, 246, 0.5); }
+}
+
+/* Animation utilities */
+.animate-fade-in-up {
+  animation: fade-in-up 0.4s ease-out both;
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+.animate-float {
+  animation: float 3s ease-in-out infinite;
+}
+
+.animate-shimmer {
+  background: linear-gradient(90deg, transparent 0%, rgba(59, 130, 246, 0.06) 50%, transparent 100%);
+  background-size: 200% 100%;
+  animation: shimmer 3s ease-in-out infinite;
+}
+
+/* Staggered entrance delays */
+.stagger-1 { animation-delay: 0.05s; }
+.stagger-2 { animation-delay: 0.1s; }
+.stagger-3 { animation-delay: 0.15s; }
+.stagger-4 { animation-delay: 0.2s; }
+.stagger-5 { animation-delay: 0.25s; }
+
+/* Glow effects */
+.glow-blue { box-shadow: 0 0 20px rgba(59, 130, 246, 0.15), inset 0 0 20px rgba(59, 130, 246, 0.03); }
+.glow-emerald { box-shadow: 0 0 20px rgba(16, 185, 129, 0.15), inset 0 0 20px rgba(16, 185, 129, 0.03); }
+.glow-purple { box-shadow: 0 0 20px rgba(168, 85, 247, 0.15), inset 0 0 20px rgba(168, 85, 247, 0.03); }
+.glow-red { box-shadow: 0 0 20px rgba(239, 68, 68, 0.15), inset 0 0 20px rgba(239, 68, 68, 0.03); }
+.glow-cyan { box-shadow: 0 0 20px rgba(6, 182, 212, 0.15), inset 0 0 20px rgba(6, 182, 212, 0.03); }
+
+/* Text glow */
+.text-glow-blue { text-shadow: 0 0 12px rgba(59, 130, 246, 0.5); }
+.text-glow-emerald { text-shadow: 0 0 12px rgba(16, 185, 129, 0.5); }
+.text-glow-purple { text-shadow: 0 0 12px rgba(168, 85, 247, 0.5); }

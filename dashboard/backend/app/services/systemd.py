@@ -58,8 +58,10 @@ async def get_service_status() -> Dict[str, Any]:
     service_result = await systemctl("status", "claude-agent.service")
     timer_result = await systemctl("status", "claude-agent.timer")
 
-    service_active = "active (running)" in service_result.get("stdout", "") or \
-                     "active (exited)" in service_result.get("stdout", "")
+    service_stdout = service_result.get("stdout", "")
+    service_active = "active (running)" in service_stdout or \
+                     "active (exited)" in service_stdout or \
+                     "activating" in service_stdout
     timer_active = "active (waiting)" in timer_result.get("stdout", "") or \
                    "active (running)" in timer_result.get("stdout", "")
 

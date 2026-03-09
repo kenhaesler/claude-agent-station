@@ -14,14 +14,18 @@
     cost != null && cost > maxCost * 0.8 ? 'bg-reject' :
     cost != null && cost > maxCost * 0.5 ? 'bg-warning' : 'bg-pr'
   );
+  let glowColor = $derived(
+    cost != null && cost > maxCost * 0.8 ? 'shadow-[0_0_6px_rgba(239,68,68,0.2)]' :
+    cost != null && cost > maxCost * 0.5 ? 'shadow-[0_0_6px_rgba(245,158,11,0.2)]' : 'shadow-[0_0_6px_rgba(168,85,247,0.2)]'
+  );
 </script>
 
 <div class="flex items-center gap-3">
   {#if label}
-    <span class="text-xs text-text-dim w-24 truncate">{label}</span>
+    <span class="text-xs text-text-dim w-24 truncate font-data">{label}</span>
   {/if}
-  <div class="flex-1 h-3 bg-surface-2 rounded-full overflow-hidden">
-    <div class="h-full rounded-full transition-all duration-500 {barColor}" style:width="{pct}%"></div>
+  <div class="flex-1 h-2.5 bg-white/[0.04] rounded-full overflow-hidden">
+    <div class="h-full rounded-full transition-all duration-700 ease-out {barColor} {glowColor}" style:width="{pct}%"></div>
   </div>
-  <span class="text-xs text-text-dim w-16 text-right">{formatCost(cost)}</span>
+  <span class="text-xs text-text-dim w-16 text-right font-data">{formatCost(cost)}</span>
 </div>

@@ -6,6 +6,7 @@
   import StatusBadge from '../components/StatusBadge.svelte';
   import LoadingSpinner from '../components/LoadingSpinner.svelte';
   import VerdictDetail from '../components/VerdictDetail.svelte';
+  import GlassCard from '../components/GlassCard.svelte';
 
   interface Props { runId: string; }
   let { runId }: Props = $props();
@@ -27,46 +28,46 @@
   $effect(() => { load(runId); });
 </script>
 
-<div class="space-y-6">
+<div class="space-y-6 animate-fade-in-up">
   <div class="flex items-center gap-3 min-w-0">
     <a href="#/runs" class="text-text-dim hover:text-text shrink-0">&larr; Runs</a>
-    <h1 class="text-lg md:text-2xl font-bold font-mono truncate">{runId}</h1>
+    <h1 class="text-lg md:text-2xl font-bold font-data truncate">{runId}</h1>
   </div>
 
   {#if loading}
     <div class="flex justify-center py-12"><LoadingSpinner /></div>
   {:else if run}
     <!-- Metadata Grid -->
-    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-      <div class="bg-surface rounded-xl p-4 border border-border">
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
+      <GlassCard glow={run.verdict === 'APPROVE' ? 'emerald' : run.verdict === 'REJECT' ? 'red' : 'purple'} class="p-4">
         <span class="text-xs text-text-dim">Verdict</span>
         <div class="mt-1"><StatusBadge value={run.verdict} /></div>
-      </div>
-      <div class="bg-surface rounded-xl p-4 border border-border">
+      </GlassCard>
+      <GlassCard glow="blue" class="p-4">
         <span class="text-xs text-text-dim">Status</span>
         <div class="mt-1"><StatusBadge value={run.status} variant="status" /></div>
-      </div>
-      <div class="bg-surface rounded-xl p-4 border border-border">
+      </GlassCard>
+      <GlassCard class="p-4">
         <span class="text-xs text-text-dim">Duration</span>
         <p class="mt-1 font-medium">{formatDuration(run.duration_ms)}</p>
-      </div>
-      <div class="bg-surface rounded-xl p-4 border border-border">
+      </GlassCard>
+      <GlassCard class="p-4">
         <span class="text-xs text-text-dim">Cost</span>
-        <p class="mt-1 font-medium">{formatCost(run.cost_usd)}</p>
-      </div>
+        <p class="mt-1 font-medium font-data">{formatCost(run.cost_usd)}</p>
+      </GlassCard>
     </div>
 
     <!-- Details Table -->
-    <div class="bg-surface rounded-xl border border-border overflow-hidden overflow-x-auto">
+    <GlassCard class="overflow-hidden overflow-x-auto">
       <table class="w-full text-sm min-w-[320px]">
-        <tbody class="divide-y divide-border">
+        <tbody class="divide-y divide-border/30">
           <tr>
             <td class="px-5 py-3 text-text-dim w-40">Mode</td>
             <td class="px-5 py-3">{run.mode ?? '-'}</td>
           </tr>
           <tr>
             <td class="px-5 py-3 text-text-dim">Model</td>
-            <td class="px-5 py-3 font-mono text-xs">{run.model ?? '-'}</td>
+            <td class="px-5 py-3 font-data text-xs">{run.model ?? '-'}</td>
           </tr>
           <tr>
             <td class="px-5 py-3 text-text-dim">Branch</td>
@@ -91,30 +92,30 @@
           {#if run.log_file}
             <tr>
               <td class="px-5 py-3 text-text-dim">Log File</td>
-              <td class="px-5 py-3 font-mono text-xs">{run.log_file}</td>
+              <td class="px-5 py-3 font-data text-xs">{run.log_file}</td>
             </tr>
           {/if}
         </tbody>
       </table>
-    </div>
+    </GlassCard>
 
     <!-- Employee Report -->
     {#if run.employee_report}
-      <div class="bg-surface rounded-xl border border-border p-5">
+      <GlassCard class="p-5">
         <h2 class="font-semibold mb-3">Employee Report</h2>
         <pre class="text-sm whitespace-pre-wrap text-text-dim">{run.employee_report}</pre>
-      </div>
+      </GlassCard>
     {/if}
 
     <!-- Verdict Detail -->
-    <div class="bg-surface rounded-xl border border-border p-5">
+    <GlassCard class="p-5">
       <h2 class="font-semibold mb-3">Verdict Detail</h2>
       <VerdictDetail detail={run.verdict_detail} />
-    </div>
+    </GlassCard>
 
     <!-- Log Link -->
     <div class="flex gap-3">
-      <a href="#/logs?run={run.run_id}" class="px-4 py-2 bg-surface-2 rounded-lg text-sm hover:bg-border transition-colors">
+      <a href="#/logs?run={run.run_id}" class="px-4 py-2 glass rounded-lg text-sm hover:bg-white/[0.03] transition-colors">
         View Logs
       </a>
     </div>

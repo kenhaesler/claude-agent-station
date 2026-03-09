@@ -3,10 +3,12 @@
   import { listProjects, createProject, updateProject, deleteProject } from '../lib/api';
   import { toastSuccess, toastError } from '../lib/toast.svelte';
   import StatusBadge from '../components/StatusBadge.svelte';
+  import StatusOrb from '../components/StatusOrb.svelte';
   import LoadingSpinner from '../components/LoadingSpinner.svelte';
   import EmptyState from '../components/EmptyState.svelte';
   import Modal from '../components/Modal.svelte';
   import ProjectForm from '../components/ProjectForm.svelte';
+  import GlassCard from '../components/GlassCard.svelte';
 
   let projects = $state<Project[]>([]);
   let loading = $state(true);
@@ -63,10 +65,10 @@
   $effect(() => { load(); });
 </script>
 
-<div class="space-y-6">
+<div class="space-y-6 animate-fade-in-up">
   <div class="flex items-center justify-between">
     <h1 class="text-2xl font-bold">Projects</h1>
-    <button onclick={openCreate} class="px-4 py-2 bg-pr text-white rounded-lg text-sm font-medium hover:bg-pr/80 cursor-pointer">
+    <button onclick={openCreate} class="px-4 py-2 bg-gradient-to-r from-accent-blue to-accent-emerald text-white rounded-lg text-sm font-medium hover:shadow-[0_0_16px_rgba(59,130,246,0.3)] transition-all cursor-pointer">
       Add Project
     </button>
   </div>
@@ -76,10 +78,10 @@
   {:else if projects.length === 0}
     <EmptyState message="No projects configured" />
   {:else}
-    <div class="bg-surface rounded-xl border border-border overflow-hidden overflow-x-auto">
+    <GlassCard class="overflow-hidden overflow-x-auto">
       <table class="w-full text-sm min-w-[500px]">
         <thead>
-          <tr class="border-b border-border text-left text-text-dim">
+          <tr class="border-b border-border/50 text-left text-text-dim">
             <th class="px-3 md:px-5 py-3 font-medium">Repository</th>
             <th class="px-3 md:px-5 py-3 font-medium">Mode</th>
             <th class="px-3 md:px-5 py-3 font-medium hidden sm:table-cell">Priority</th>
@@ -88,26 +90,28 @@
             <th class="px-3 md:px-5 py-3 font-medium text-right">Actions</th>
           </tr>
         </thead>
-        <tbody class="divide-y divide-border">
+        <tbody class="divide-y divide-border/30">
           {#each projects as p}
-            <tr class="hover:bg-surface-2/30 transition-colors">
-              <td class="px-3 md:px-5 py-3 font-mono text-xs md:text-sm truncate max-w-[180px]">{p.repo}</td>
+            <tr class="hover:bg-white/[0.02] transition-colors">
+              <td class="px-3 md:px-5 py-3 font-data text-xs md:text-sm truncate max-w-[180px]">{p.repo}</td>
               <td class="px-3 md:px-5 py-3"><StatusBadge value={p.mode} variant="mode" /></td>
               <td class="px-3 md:px-5 py-3 hidden sm:table-cell"><StatusBadge value={p.priority} variant="status" /></td>
               <td class="px-3 md:px-5 py-3 text-text-dim hidden sm:table-cell">{p.branch}</td>
               <td class="px-3 md:px-5 py-3">
-                <span class="w-2 h-2 rounded-full inline-block {p.enabled ? 'bg-approve' : 'bg-reject'}"></span>
-                <span class="ml-1.5 text-text-dim hidden md:inline">{p.enabled ? 'Enabled' : 'Disabled'}</span>
+                <div class="flex items-center gap-1.5">
+                  <StatusOrb active={p.enabled} />
+                  <span class="text-text-dim hidden md:inline text-xs">{p.enabled ? 'Enabled' : 'Disabled'}</span>
+                </div>
               </td>
               <td class="px-3 md:px-5 py-3 text-right space-x-2">
-                <button onclick={() => openEdit(p)} class="text-info hover:underline cursor-pointer">Edit</button>
-                <button onclick={() => handleDelete(p)} class="text-reject hover:underline cursor-pointer">Delete</button>
+                <button onclick={() => openEdit(p)} class="text-info hover:underline cursor-pointer text-xs">Edit</button>
+                <button onclick={() => handleDelete(p)} class="text-reject hover:underline cursor-pointer text-xs">Delete</button>
               </td>
             </tr>
           {/each}
         </tbody>
       </table>
-    </div>
+    </GlassCard>
   {/if}
 
   <Modal open={showModal} title={editingProject ? 'Edit Project' : 'Add Project'} onclose={() => showModal = false}>
