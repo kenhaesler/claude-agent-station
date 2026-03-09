@@ -76,30 +76,30 @@
   {:else if projects.length === 0}
     <EmptyState message="No projects configured" />
   {:else}
-    <div class="bg-surface rounded-xl border border-border overflow-hidden">
-      <table class="w-full text-sm">
+    <div class="bg-surface rounded-xl border border-border overflow-hidden overflow-x-auto">
+      <table class="w-full text-sm min-w-[500px]">
         <thead>
           <tr class="border-b border-border text-left text-text-dim">
-            <th class="px-5 py-3 font-medium">Repository</th>
-            <th class="px-5 py-3 font-medium">Mode</th>
-            <th class="px-5 py-3 font-medium">Priority</th>
-            <th class="px-5 py-3 font-medium">Branch</th>
-            <th class="px-5 py-3 font-medium">Status</th>
-            <th class="px-5 py-3 font-medium text-right">Actions</th>
+            <th class="px-3 md:px-5 py-3 font-medium">Repository</th>
+            <th class="px-3 md:px-5 py-3 font-medium">Mode</th>
+            <th class="px-3 md:px-5 py-3 font-medium hidden sm:table-cell">Priority</th>
+            <th class="px-3 md:px-5 py-3 font-medium hidden sm:table-cell">Branch</th>
+            <th class="px-3 md:px-5 py-3 font-medium">Status</th>
+            <th class="px-3 md:px-5 py-3 font-medium text-right">Actions</th>
           </tr>
         </thead>
         <tbody class="divide-y divide-border">
           {#each projects as p}
             <tr class="hover:bg-surface-2/30 transition-colors">
-              <td class="px-5 py-3 font-mono">{p.repo}</td>
-              <td class="px-5 py-3"><StatusBadge value={p.mode} variant="mode" /></td>
-              <td class="px-5 py-3"><StatusBadge value={p.priority} variant="status" /></td>
-              <td class="px-5 py-3 text-text-dim">{p.branch}</td>
-              <td class="px-5 py-3">
+              <td class="px-3 md:px-5 py-3 font-mono text-xs md:text-sm truncate max-w-[180px]">{p.repo}</td>
+              <td class="px-3 md:px-5 py-3"><StatusBadge value={p.mode} variant="mode" /></td>
+              <td class="px-3 md:px-5 py-3 hidden sm:table-cell"><StatusBadge value={p.priority} variant="status" /></td>
+              <td class="px-3 md:px-5 py-3 text-text-dim hidden sm:table-cell">{p.branch}</td>
+              <td class="px-3 md:px-5 py-3">
                 <span class="w-2 h-2 rounded-full inline-block {p.enabled ? 'bg-approve' : 'bg-reject'}"></span>
-                <span class="ml-1.5 text-text-dim">{p.enabled ? 'Enabled' : 'Disabled'}</span>
+                <span class="ml-1.5 text-text-dim hidden md:inline">{p.enabled ? 'Enabled' : 'Disabled'}</span>
               </td>
-              <td class="px-5 py-3 text-right space-x-2">
+              <td class="px-3 md:px-5 py-3 text-right space-x-2">
                 <button onclick={() => openEdit(p)} class="text-info hover:underline cursor-pointer">Edit</button>
                 <button onclick={() => handleDelete(p)} class="text-reject hover:underline cursor-pointer">Delete</button>
               </td>

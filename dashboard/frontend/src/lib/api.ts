@@ -1,4 +1,4 @@
-import type { Project, ProjectCreate, ProjectUpdate, Run, RunList, SystemStatus, AuthStatus, LogSearchResult, RunLogs } from './types';
+import type { Project, ProjectCreate, ProjectUpdate, Run, RunList, SystemStatus, AuthStatus, LogSearchResult, RunLogs, UsageData } from './types';
 
 const BASE = import.meta.env.VITE_API_URL || '';
 
@@ -44,6 +44,9 @@ export const triggerRun = () => request<{ status: string; detail: string }>('/ap
 
 // Config
 export const getConfig = () => request<Record<string, unknown>>('/api/config');
+export const getUsage = () => request<UsageData>('/api/config/usage');
+export const updateConfig = (data: Record<string, unknown>) =>
+  request<Record<string, unknown>>('/api/config', { method: 'PUT', body: JSON.stringify(data) });
 
 // System
 export const getSystemStatus = () => request<SystemStatus>('/api/system/status');

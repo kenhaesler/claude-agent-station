@@ -104,16 +104,15 @@
       <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
         <ResourceMeter
           label="Memory"
-          value={system?.resources.memory_mb ?? null}
-          max={4096}
+          value={system?.resources.memory_used_mb ?? null}
+          max={system?.resources.memory_total_mb ?? 4096}
           unit="MB"
         />
         <ResourceMeter
-          label="Disk Free"
-          value={system?.resources.disk_free_gb ?? null}
-          max={100}
+          label="Disk Used"
+          value={system?.resources.disk_used_gb ?? null}
+          max={system?.resources.disk_total_gb ?? 100}
           unit="GB"
-          invert
         />
       </div>
       <div class="flex gap-6 text-sm text-text-dim">

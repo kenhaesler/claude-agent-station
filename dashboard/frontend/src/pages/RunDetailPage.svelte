@@ -28,9 +28,9 @@
 </script>
 
 <div class="space-y-6">
-  <div class="flex items-center gap-3">
-    <a href="#/runs" class="text-text-dim hover:text-text">&larr; Runs</a>
-    <h1 class="text-2xl font-bold font-mono">{runId}</h1>
+  <div class="flex items-center gap-3 min-w-0">
+    <a href="#/runs" class="text-text-dim hover:text-text shrink-0">&larr; Runs</a>
+    <h1 class="text-lg md:text-2xl font-bold font-mono truncate">{runId}</h1>
   </div>
 
   {#if loading}
@@ -57,8 +57,8 @@
     </div>
 
     <!-- Details Table -->
-    <div class="bg-surface rounded-xl border border-border overflow-hidden">
-      <table class="w-full text-sm">
+    <div class="bg-surface rounded-xl border border-border overflow-hidden overflow-x-auto">
+      <table class="w-full text-sm min-w-[320px]">
         <tbody class="divide-y divide-border">
           <tr>
             <td class="px-5 py-3 text-text-dim w-40">Mode</td>

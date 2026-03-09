@@ -75,29 +75,29 @@
   {:else if runs.length === 0}
     <EmptyState message="No runs match the filters" />
   {:else}
-    <div class="bg-surface rounded-xl border border-border overflow-hidden">
-      <table class="w-full text-sm">
+    <div class="bg-surface rounded-xl border border-border overflow-hidden overflow-x-auto">
+      <table class="w-full text-sm min-w-[480px]">
         <thead>
           <tr class="border-b border-border text-left text-text-dim">
-            <th class="px-5 py-3 font-medium">Run ID</th>
-            <th class="px-5 py-3 font-medium">Project</th>
-            <th class="px-5 py-3 font-medium">Verdict</th>
-            <th class="px-5 py-3 font-medium">Mode</th>
-            <th class="px-5 py-3 font-medium">Duration</th>
-            <th class="px-5 py-3 font-medium">Cost</th>
-            <th class="px-5 py-3 font-medium">Started</th>
+            <th class="px-3 md:px-5 py-3 font-medium">Run ID</th>
+            <th class="px-3 md:px-5 py-3 font-medium hidden sm:table-cell">Project</th>
+            <th class="px-3 md:px-5 py-3 font-medium">Verdict</th>
+            <th class="px-3 md:px-5 py-3 font-medium hidden md:table-cell">Mode</th>
+            <th class="px-3 md:px-5 py-3 font-medium">Duration</th>
+            <th class="px-3 md:px-5 py-3 font-medium">Cost</th>
+            <th class="px-3 md:px-5 py-3 font-medium hidden sm:table-cell">Started</th>
           </tr>
         </thead>
         <tbody class="divide-y divide-border">
           {#each runs as run}
             <tr class="hover:bg-surface-2/30 transition-colors cursor-pointer" onclick={() => window.location.hash = `/runs/${run.run_id}`}>
-              <td class="px-5 py-3 font-mono text-xs">{run.run_id}</td>
-              <td class="px-5 py-3 text-text-dim">{run.project_id ? (projectMap[run.project_id] ?? `#${run.project_id}`) : '-'}</td>
-              <td class="px-5 py-3"><StatusBadge value={run.verdict} /></td>
-              <td class="px-5 py-3"><StatusBadge value={run.mode} variant="mode" /></td>
-              <td class="px-5 py-3 text-text-dim">{formatDuration(run.duration_ms)}</td>
-              <td class="px-5 py-3 text-text-dim">{formatCost(run.cost_usd)}</td>
-              <td class="px-5 py-3"><TimeAgo date={run.started_at} /></td>
+              <td class="px-3 md:px-5 py-3 font-mono text-xs truncate max-w-[100px]">{run.run_id.slice(-8)}</td>
+              <td class="px-3 md:px-5 py-3 text-text-dim hidden sm:table-cell truncate max-w-[120px]">{run.project_id ? (projectMap[run.project_id] ?? `#${run.project_id}`) : '-'}</td>
+              <td class="px-3 md:px-5 py-3"><StatusBadge value={run.verdict} /></td>
+              <td class="px-3 md:px-5 py-3 hidden md:table-cell"><StatusBadge value={run.mode} variant="mode" /></td>
+              <td class="px-3 md:px-5 py-3 text-text-dim">{formatDuration(run.duration_ms)}</td>
+              <td class="px-3 md:px-5 py-3 text-text-dim">{formatCost(run.cost_usd)}</td>
+              <td class="px-3 md:px-5 py-3 hidden sm:table-cell"><TimeAgo date={run.started_at} /></td>
             </tr>
           {/each}
         </tbody>
@@ -105,8 +105,8 @@
     </div>
 
     <!-- Pagination -->
-    <div class="flex items-center justify-between text-sm text-text-dim">
-      <span>Showing {offset + 1}-{Math.min(offset + limit, total)} of {total}</span>
+    <div class="flex items-center justify-between text-xs md:text-sm text-text-dim">
+      <span>{offset + 1}-{Math.min(offset + limit, total)} of {total}</span>
       <div class="flex gap-2">
         <button onclick={prevPage} disabled={offset === 0} class="px-3 py-1 bg-surface-2 rounded disabled:opacity-30 cursor-pointer">Prev</button>
         <button onclick={nextPage} disabled={offset + limit >= total} class="px-3 py-1 bg-surface-2 rounded disabled:opacity-30 cursor-pointer">Next</button>

@@ -61,7 +61,9 @@ async def auth_status():
         with open(creds_path, "r") as f:
             creds = json.load(f)
 
-        expires_at = creds.get("expiresAt")
+        # credentials may be nested under claudeAiOauth
+        oauth = creds.get("claudeAiOauth", creds)
+        expires_at = oauth.get("expiresAt")
         if not expires_at:
             return {"logged_in": True, "expired": False, "expires_at": None}
 

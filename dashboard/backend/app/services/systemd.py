@@ -23,6 +23,10 @@ def _run_systemctl(action: str, unit: str) -> subprocess.CompletedProcess:
         raise SystemdError(f"Action not allowed: {action}")
 
     cmd = ["sudo", "systemctl", action, unit]
+    # For oneshot services, 'start' blocks until the service exits.
+    # Use --no-block so the API returns immediately.
+    if action in ("start", "restart"):
+        cmd.insert(3, "--no-block")
     return subprocess.run(
         cmd,
         capture_output=True,

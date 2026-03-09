@@ -12,11 +12,11 @@
   let { verdict = $bindable(), status = $bindable(), projectId = $bindable(), projects, onchange }: Props = $props();
 </script>
 
-<div class="flex flex-wrap gap-3">
+<div class="flex flex-wrap gap-2 md:gap-3">
   <select
     bind:value={verdict}
     onchange={onchange}
-    class="bg-surface-2 border border-border rounded-lg px-3 py-2 text-sm text-text"
+    class="bg-surface-2 border border-border rounded-lg px-3 py-2 text-sm text-text flex-1 min-w-[120px] md:flex-none"
   >
     <option value="">All Verdicts</option>
     <option value="APPROVE">APPROVE</option>
@@ -27,7 +27,7 @@
   <select
     bind:value={status}
     onchange={onchange}
-    class="bg-surface-2 border border-border rounded-lg px-3 py-2 text-sm text-text"
+    class="bg-surface-2 border border-border rounded-lg px-3 py-2 text-sm text-text flex-1 min-w-[120px] md:flex-none"
   >
     <option value="">All Statuses</option>
     <option value="completed">Completed</option>
@@ -38,7 +38,7 @@
   <select
     bind:value={projectId}
     onchange={onchange}
-    class="bg-surface-2 border border-border rounded-lg px-3 py-2 text-sm text-text"
+    class="bg-surface-2 border border-border rounded-lg px-3 py-2 text-sm text-text flex-1 min-w-[120px] md:flex-none"
   >
     <option value="">All Projects</option>
     {#each projects as p}

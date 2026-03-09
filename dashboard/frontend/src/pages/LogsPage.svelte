@@ -124,7 +124,7 @@
     <!-- Live Log Viewer -->
     <div
       bind:this={logContainer}
-      class="bg-surface rounded-xl border border-border p-4 h-[calc(100vh-240px)] overflow-auto font-mono text-xs leading-relaxed"
+      class="bg-surface rounded-xl border border-border p-3 md:p-4 h-[calc(100vh-200px)] md:h-[calc(100vh-240px)] overflow-auto font-mono text-xs leading-relaxed"
     >
       {#if lines.length === 0}
         <p class="text-text-dim">Waiting for log data...</p>

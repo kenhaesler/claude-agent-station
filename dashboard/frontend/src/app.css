@@ -29,6 +29,13 @@ body {
   min-height: 100vh;
 }
 
+/* Prevent iOS Safari zoom on input focus (requires 16px minimum) */
+@media screen and (max-width: 767px) {
+  input, select, textarea {
+    font-size: 16px !important;
+  }
+}
+
 /* Scrollbar styling */
 ::-webkit-scrollbar {
   width: 8px;
