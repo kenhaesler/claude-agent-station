@@ -14,7 +14,7 @@ WorkingDirectory=/home/claude-agent/workspaces
 # Load API key from secure storage
 Environment=HOME=/home/claude-agent
 Environment=PATH=/home/claude-agent/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-Environment=STATION_CONFIG=/opt/claude-agent-station/agent/config/station-config.json
+Environment=STATION_CONFIG=/home/claude-agent/.claude/autonomous/manager-config.json
 EnvironmentFile=-/home/claude-agent/.config/claude-agent/environment
 
 # Execute the manager/employee orchestrator
