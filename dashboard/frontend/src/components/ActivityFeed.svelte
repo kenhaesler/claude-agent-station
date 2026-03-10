@@ -29,10 +29,11 @@
           class="flex items-center gap-2 md:gap-3 px-4 py-2.5 hover:bg-white/[0.02] transition-colors no-underline text-text animate-fade-in-up"
           style="animation-delay: {i * 30}ms"
         >
-          <StatusOrb active={run.status === 'running'} color={
+          <StatusOrb active={run.status === 'running' || run.status === 'reviewing'} color={
             run.verdict === 'APPROVE' ? '#22c55e' :
             run.verdict === 'REJECT' ? '#ef4444' :
             run.verdict === 'PR' ? '#a855f7' :
+            run.status === 'reviewing' ? '#f59e0b' :
             run.status === 'running' ? '#3b82f6' :
             '#64748b'
           } />

@@ -74,20 +74,59 @@ async def receive_run_event(
             run.model = event.model or run.model
 
     elif event_name == "finished":
+        # Normalize status: run-manager.sh sends "success"/"no_reports",
+        # but the frontend expects "completed"/"failed" for styling.
+        raw_status = event.status or "finished"
+        status_map = {"success": "completed", "finished": "completed"}
+        final_status = status_map.get(raw_status, raw_status)
+
         if not run:
             run = Run(
                 run_id=event.run_id,
                 project_id=project_id,
-                status=event.status or "finished",
+                status=final_status,
             )
             db.add(run)
 
-        run.status = event.status or "finished"
+        run.status = final_status
         run.cost_usd = event.cost_usd
         run.turns = event.turns
         run.duration_ms = event.duration_ms
         run.finished_at = datetime.utcnow()
         run.model = event.model or run.model
+
+    elif event_name == "employee_done":
+        # Employee finished working — update employee-specific data but keep
+        # run status as "running" so the dashboard doesn't show it as complete
+        # before the manager review phase.
+        if not run:
+            run = Run(
+                run_id=event.run_id,
+                project_id=project_id,
+                status="running",
+                started_at=datetime.utcnow(),
+            )
+            db.add(run)
+        # Keep status as "running" — do NOT set to finished
+        if event.mode:
+            run.mode = event.mode
+        if event.model:
+            run.model = event.model
+        if project_id:
+            run.project_id = project_id
+
+    elif event_name == "reviewing":
+        # Manager review phase — transition to a meaningful intermediate status
+        if not run:
+            run = Run(
+                run_id=event.run_id,
+                project_id=project_id,
+                status="reviewing",
+                started_at=datetime.utcnow(),
+            )
+            db.add(run)
+        else:
+            run.status = "reviewing"
 
     elif event_name == "verdict":
         if not run:
@@ -146,12 +185,18 @@ def _normalize_event_name(event_name: str) -> str:
 
     run-manager.sh sends: run_start, employee_start, employee_complete,
     manager_review, verdict_execute, run_complete.
-    The handler expects: started, finished, verdict.
+
+    The handler expects: started, employee_done, reviewing, verdict, finished.
+
+    Previously employee_complete mapped to "finished" which prematurely marked
+    runs as done before the manager review phase. Now only run_complete triggers
+    the "finished" handler.
     """
     mapping = {
         "run_start": "started",
         "employee_start": "started",
-        "employee_complete": "finished",
+        "employee_complete": "employee_done",
+        "manager_review": "reviewing",
         "run_complete": "finished",
         "verdict_execute": "verdict",
         # Legacy / direct names pass through
