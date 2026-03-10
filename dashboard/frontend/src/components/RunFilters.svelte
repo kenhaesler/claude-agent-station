@@ -32,6 +32,7 @@
     <option value="">All Statuses</option>
     <option value="completed">Completed</option>
     <option value="running">Running</option>
+    <option value="reviewing">Reviewing</option>
     <option value="failed">Failed</option>
   </select>
 

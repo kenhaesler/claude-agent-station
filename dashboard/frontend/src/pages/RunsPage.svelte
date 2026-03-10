@@ -110,6 +110,7 @@
           <tr class="border-b border-border/50 text-left text-text-dim">
             <th class="px-3 md:px-5 py-3 font-medium">Run ID</th>
             <th class="px-3 md:px-5 py-3 font-medium hidden sm:table-cell">Project</th>
+            <th class="px-3 md:px-5 py-3 font-medium">Status</th>
             <th class="px-3 md:px-5 py-3 font-medium">Verdict</th>
             <th class="px-3 md:px-5 py-3 font-medium hidden md:table-cell">Mode</th>
             <th class="px-3 md:px-5 py-3 font-medium">Duration</th>
@@ -122,6 +123,7 @@
             <tr class="hover:bg-white/[0.02] transition-colors cursor-pointer" onclick={() => window.location.hash = `/runs/${run.run_id}`}>
               <td class="px-3 md:px-5 py-3 font-data text-xs truncate max-w-[100px]">{run.run_id.slice(-8)}</td>
               <td class="px-3 md:px-5 py-3 text-text-dim hidden sm:table-cell truncate max-w-[120px]">{run.project_id ? (projectMap[run.project_id] ?? `#${run.project_id}`) : '-'}</td>
+              <td class="px-3 md:px-5 py-3"><StatusBadge value={run.status} variant="status" /></td>
               <td class="px-3 md:px-5 py-3"><StatusBadge value={run.verdict} /></td>
               <td class="px-3 md:px-5 py-3 hidden md:table-cell"><StatusBadge value={run.mode} variant="mode" /></td>
               <td class="px-3 md:px-5 py-3 text-text-dim">{formatDuration(run.duration_ms)}</td>
