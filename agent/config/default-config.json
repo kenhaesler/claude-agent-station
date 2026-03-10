@@ -1,5 +1,14 @@
 {
   "projects": [],
+  "_project_fields": {
+    "repo": "owner/repo (required)",
+    "priority": "high | medium | low",
+    "mode": "full | analyze",
+    "enabled": true,
+    "branch": "main",
+    "setup_script": "Commands to run before the agent starts, e.g. 'npm install' or 'pip install -r requirements.txt'",
+    "custom_instructions": "Extra instructions appended to the agent prompt"
+  },
   "schedule": "1h",
   "models": {
     "employee": "claude-opus-4-6",

@@ -6,6 +6,7 @@ export interface Project {
   enabled: boolean;
   branch: string;
   custom_instructions: string | null;
+  setup_script: string | null;
   created_at: string | null;
   updated_at: string | null;
 }
@@ -17,6 +18,7 @@ export interface ProjectCreate {
   enabled?: boolean;
   branch?: string;
   custom_instructions?: string | null;
+  setup_script?: string | null;
 }
 
 export interface ProjectUpdate {
@@ -25,6 +27,7 @@ export interface ProjectUpdate {
   enabled?: boolean;
   branch?: string;
   custom_instructions?: string | null;
+  setup_script?: string | null;
 }
 
 export interface Run {

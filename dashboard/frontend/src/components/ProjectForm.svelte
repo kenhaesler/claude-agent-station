@@ -15,6 +15,7 @@
   let branch = $state('main');
   let enabled = $state(true);
   let custom_instructions = $state('');
+  let setup_script = $state('');
 
   $effect(() => {
     repo = project?.repo ?? '';
@@ -23,15 +24,17 @@
     branch = project?.branch ?? 'main';
     enabled = project?.enabled ?? true;
     custom_instructions = project?.custom_instructions ?? '';
+    setup_script = project?.setup_script ?? '';
   });
 
   function handleSubmit(e: Event) {
     e.preventDefault();
     const instructions = custom_instructions.trim() || null;
+    const script = setup_script.trim() || null;
     if (project) {
-      onsubmit({ priority, mode, branch, enabled, custom_instructions: instructions } as ProjectUpdate);
+      onsubmit({ priority, mode, branch, enabled, custom_instructions: instructions, setup_script: script } as ProjectUpdate);
     } else {
-      onsubmit({ repo, priority, mode, branch, enabled, custom_instructions: instructions } as ProjectCreate);
+      onsubmit({ repo, priority, mode, branch, enabled, custom_instructions: instructions, setup_script: script } as ProjectCreate);
     }
   }
 </script>
@@ -75,6 +78,17 @@
       bind:value={branch}
       class="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-pr"
     />
+  </div>
+
+  <div>
+    <label for="setup_script" class="block text-sm text-text-dim mb-1">Setup Script</label>
+    <input
+      id="setup_script"
+      bind:value={setup_script}
+      placeholder="e.g. npm install, pip install -r requirements.txt"
+      class="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-pr font-mono"
+    />
+    <p class="text-xs text-text-dim mt-1">Shell command to run in the workspace before the agent starts (installs dependencies, etc.).</p>
   </div>
 
   <div>

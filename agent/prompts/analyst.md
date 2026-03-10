@@ -31,6 +31,12 @@ You are an **analyst agent** running in autonomous mode. Your job is to **analyz
 5. Understand the tech stack, test coverage, CI/CD setup
 6. Count how many open issues already exist. If there are **15 or more open issues**, focus ONLY on refining existing issues — do NOT create new ones. The employee agent needs to work through the backlog first.
 
+### Step 1c: Install Dependencies (for analysis tools)
+If the project has dependency files (`package.json`, `requirements.txt`, etc.), install them so you can run linters, type checkers, or other analysis tools:
+1. `package.json` exists: `npm install`
+2. `requirements.txt` exists: `pip install -r requirements.txt`
+3. If a tool is missing (e.g., `node`): `sudo dnf install -y nodejs`
+
 ### Step 1b: Signal Analysis on GitHub
 Create a tracking label for analyst runs:
 - `gh label create "autonomous-agent/analyzed" --repo $GITHUB_REPO --color C5DEF5 --description "Analyzed by autonomous agent" --force`

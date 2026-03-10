@@ -360,6 +360,19 @@ run_employee() {
 
     webhook_event "employee_start" "\"project\":\"$repo\",\"mode\":\"$mode\""
 
+    # Run setup script if configured for this project (install dependencies, etc.)
+    local setup_script
+    setup_script=$(get_project_field "$project_index" "setup_script" 2>/dev/null || echo "")
+    if [ -n "$setup_script" ]; then
+        log_info "Running setup script for $repo..."
+        cd "$workspace"
+        if bash -c "$setup_script" 2>&1 | tail -20; then
+            log_ok "Setup script completed"
+        else
+            log_warn "Setup script failed (exit $?), continuing anyway"
+        fi
+    fi
+
     local model max_turns max_budget
     model=$(json_get "$CONFIG_FILE" "models.employee" 2>/dev/null || echo "claude-opus-4-6")
     max_turns=$(json_get "$CONFIG_FILE" "limits.max_employee_turns" 2>/dev/null || echo "200")

@@ -45,6 +45,15 @@ You are an **employee agent** running in autonomous mode on a headless VM. You w
    - You MUST read every comment. Requirements in comments are just as binding as the issue body.
    - Build a **complete requirements checklist** from the body + all comments before writing any code.
 
+### Step 2b: Install Dependencies
+Before writing any code, ensure the project's dependencies are installed so you can build and test:
+1. If `package.json` exists: run `npm install` (or `yarn install` / `pnpm install` if a lockfile indicates the package manager).
+2. If `requirements.txt` exists: run `pip install -r requirements.txt`.
+3. If `pyproject.toml` exists: run `pip install -e .` or the appropriate install command.
+4. If a tool you need is missing (e.g., `node`, `npm`, `python3`), install it: `sudo dnf install -y nodejs` / `sudo dnf install -y python3-pip` etc.
+5. If the project uses other build tools (Cargo, Go modules, etc.), install dependencies accordingly.
+6. **Do not skip this step.** Failing to install dependencies leads to incomplete work (skipped tests, unverified code).
+
 ### Step 3: Implement
 7. Create a branch: `git checkout -b autonomous/issue-<number>`
 8. Read the relevant code in the codebase before changing anything.
