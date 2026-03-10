@@ -1,5 +1,6 @@
 """FastAPI application with lifespan: init DB, sync config, import logs."""
 
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -33,10 +34,26 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Interval (seconds) between periodic log re-scans
+LOG_RESCAN_INTERVAL = 30
+
+
+async def _periodic_log_import() -> None:
+    """Background task: periodically re-scan log directory for new runs."""
+    while True:
+        await asyncio.sleep(LOG_RESCAN_INTERVAL)
+        try:
+            async with async_session() as db:
+                imported = await import_historical_runs(db)
+                if imported > 0:
+                    logger.info("Periodic log import: %d new runs imported", imported)
+        except Exception:
+            logger.exception("Error in periodic log import")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Startup: create tables, sync config, import historical runs."""
+    """Startup: create tables, sync config, import historical runs, start background tasks."""
     logger.info("Starting Claude Agent Station dashboard backend")
     logger.info("DB: %s", settings.db_path)
     logger.info("Log dir: %s", settings.log_dir)
@@ -56,8 +73,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         imported = await import_historical_runs(db)
         logger.info("Log import complete: %d new runs", imported)
 
+    # 4. Start periodic background import so new runs appear without restart
+    rescan_task = asyncio.create_task(_periodic_log_import())
+    logger.info("Started periodic log rescan (every %ds)", LOG_RESCAN_INTERVAL)
+
     yield
 
+    # Cancel background task on shutdown
+    rescan_task.cancel()
+    try:
+        await rescan_task
+    except asyncio.CancelledError:
+        pass
     logger.info("Shutting down dashboard backend")
 
 

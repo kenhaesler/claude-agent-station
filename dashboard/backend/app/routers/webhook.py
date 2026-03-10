@@ -24,8 +24,15 @@ async def receive_run_event(
 ):
     """Receive a run event from the agent's run-manager.sh script.
 
-    Events: started, finished, verdict
+    Events from run-manager.sh:
+      run_start, employee_start, employee_complete, manager_review,
+      verdict_execute, run_complete
+    Also accepts legacy short names:
+      started, finished, verdict
     """
+    # Normalize event names from run-manager.sh to internal names
+    event_name = _normalize_event_name(event.event)
+
     # Find or create Run record
     result = await db.execute(select(Run).where(Run.run_id == event.run_id))
     run = result.scalar_one_or_none()
@@ -49,7 +56,7 @@ async def receive_run_event(
         if proj:
             project_id = proj.id
 
-    if event.event == "started":
+    if event_name == "started":
         if not run:
             run = Run(
                 run_id=event.run_id,
@@ -66,7 +73,7 @@ async def receive_run_event(
             run.mode = event.mode or run.mode
             run.model = event.model or run.model
 
-    elif event.event == "finished":
+    elif event_name == "finished":
         if not run:
             run = Run(
                 run_id=event.run_id,
@@ -82,7 +89,7 @@ async def receive_run_event(
         run.finished_at = datetime.utcnow()
         run.model = event.model or run.model
 
-    elif event.event == "verdict":
+    elif event_name == "verdict":
         if not run:
             run = Run(
                 run_id=event.run_id,
@@ -109,9 +116,50 @@ async def receive_run_event(
         )
         db.add(notification)
 
+    else:
+        # Unknown event — still log it, but create/update the run record
+        if not run:
+            run = Run(
+                run_id=event.run_id,
+                project_id=project_id,
+                status=event.status or "running",
+                started_at=datetime.utcnow(),
+            )
+            db.add(run)
+        # Update fields if provided
+        if event.mode:
+            run.mode = event.mode
+        if event.model:
+            run.model = event.model
+        if event.status:
+            run.status = event.status
+        if project_id:
+            run.project_id = project_id
+
     await db.commit()
-    logger.info("Processed webhook event: %s for %s", event.event, event.run_id)
+    logger.info("Processed webhook event: %s (normalized: %s) for %s", event.event, event_name, event.run_id)
     return {"status": "ok", "run_id": event.run_id, "event": event.event}
+
+
+def _normalize_event_name(event_name: str) -> str:
+    """Map run-manager.sh event names to internal handler names.
+
+    run-manager.sh sends: run_start, employee_start, employee_complete,
+    manager_review, verdict_execute, run_complete.
+    The handler expects: started, finished, verdict.
+    """
+    mapping = {
+        "run_start": "started",
+        "employee_start": "started",
+        "employee_complete": "finished",
+        "run_complete": "finished",
+        "verdict_execute": "verdict",
+        # Legacy / direct names pass through
+        "started": "started",
+        "finished": "finished",
+        "verdict": "verdict",
+    }
+    return mapping.get(event_name, event_name)
 
 
 def _build_notification_message(event: WebhookRunEvent) -> str:

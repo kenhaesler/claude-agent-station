@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.dependencies import get_db
 from app.models import Run
 from app.schemas import RunOut, RunList
+from app.services.log_importer import import_historical_runs
 from app.services.systemd import systemctl
 
 router = APIRouter(prefix="/api/runs", tags=["runs"])
@@ -64,6 +65,13 @@ async def get_run(run_id: str, db: AsyncSession = Depends(get_db)):
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
     return run
+
+
+@router.post("/rescan")
+async def rescan_logs(db: AsyncSession = Depends(get_db)):
+    """Manually trigger a re-scan of log files to import new runs."""
+    imported = await import_historical_runs(db)
+    return {"status": "ok", "imported": imported}
 
 
 @router.post("/trigger")

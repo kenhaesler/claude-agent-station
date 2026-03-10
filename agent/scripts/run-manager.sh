@@ -90,10 +90,11 @@ webhook_event() {
     local payload="$*"
     local webhook_url
     webhook_url=$(json_get "$CONFIG_FILE" "dashboard.webhook_url" 2>/dev/null || echo "")
-    [ -z "$webhook_url" ] && return 0
+    # Default to local dashboard if not configured
+    [ -z "$webhook_url" ] && webhook_url="http://127.0.0.1:8420/api/webhook/run-event"
     curl -s --max-time 3 -X POST "$webhook_url" \
         -H "Content-Type: application/json" \
-        -d "{\"event\":\"$event\",\"run_id\":\"$RUN_ID\",\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",${payload}}" \
+        -d "{\"event\":\"$event\",\"run_id\":\"run-$RUN_ID\",\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",${payload}}" \
         2>/dev/null || true
 }
 

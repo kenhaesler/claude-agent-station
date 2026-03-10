@@ -41,6 +41,7 @@ export const listRuns = (params?: { limit?: number; offset?: number; project_id?
 export const getLatestRun = () => request<Run>('/api/runs/latest');
 export const getRun = (runId: string) => request<Run>(`/api/runs/${runId}`);
 export const triggerRun = () => request<{ status: string; detail: string }>('/api/runs/trigger', { method: 'POST' });
+export const rescanRuns = () => request<{ status: string; imported: number }>('/api/runs/rescan', { method: 'POST' });
 
 // Config
 export const getConfig = () => request<Record<string, unknown>>('/api/config');
