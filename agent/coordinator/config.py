@@ -35,6 +35,10 @@ class CoordinatorConfig:
     max_consecutive_failures: int = 3
     decomposition_model: str = "claude-haiku-4-5-20251001"
 
+    # Plan usage enforcement
+    plan_tier: str = "max_5x"
+    max_usage_percent: float = 85.0
+
     @classmethod
     def from_args(
         cls,
@@ -80,6 +84,8 @@ class CoordinatorConfig:
             cfg.max_consecutive_failures = coordinator.get("max_consecutive_failures", cfg.max_consecutive_failures)
             cfg.decomposition_model = coordinator.get("decomposition_model", cfg.decomposition_model)
             cfg.db_path = coordinator.get("db_path", cfg.db_path)
+            cfg.plan_tier = coordinator.get("plan_tier", cfg.plan_tier)
+            cfg.max_usage_percent = coordinator.get("max_usage_percent", cfg.max_usage_percent)
 
         # Environment overrides
         cfg.db_path = os.environ.get("STATION_DB", cfg.db_path)

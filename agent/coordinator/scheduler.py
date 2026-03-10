@@ -21,6 +21,11 @@ from agent.coordinator.stream_monitor import (
     monitor_stream,
 )
 from agent.coordinator.guidance import send_guidance
+from agent.coordinator.manager import (
+    check_plan_usage_before_spawn,
+    request_graceful_wrapup,
+    DEFAULT_MAX_USAGE_PERCENT,
+)
 from agent.coordinator.reporter import post_task_event, post_conflict, post_guidance
 
 logger = logging.getLogger(__name__)
@@ -37,11 +42,50 @@ async def run_scheduler(dag: TaskDAG, config: CoordinatorConfig) -> None:
 
     logger.info("Scheduler started: %d tasks, max_concurrent=%d", len(dag.tasks), config.max_concurrent)
 
+    # Track usage check interval (don't check every loop iteration)
+    usage_check_counter = 0
+    usage_check_interval = 5  # Check every N loop iterations
+    last_usage_ok = True
+
     while not dag.all_done():
+        # Periodic plan usage check
+        usage_check_counter += 1
+        if usage_check_counter % usage_check_interval == 0 and running:
+            try:
+                can_spawn, reason, snapshot = check_plan_usage_before_spawn(
+                    config,
+                    max_usage_percent=getattr(config, "max_usage_percent", DEFAULT_MAX_USAGE_PERCENT),
+                )
+                if not can_spawn and last_usage_ok:
+                    # Usage just crossed the threshold — notify running employees
+                    running_map = {}
+                    for tid, atask in activities.items():
+                        running_map[tid] = atask.employee_index
+                    request_graceful_wrapup(config, dag, snapshot, running_map)
+                    logger.warning("Plan usage threshold reached: %s", reason)
+                last_usage_ok = can_spawn
+            except Exception as e:
+                logger.debug("Plan usage check failed (non-fatal): %s", e)
+
         # Spawn employees for ready tasks
         for task in dag.ready_tasks():
             if task.id in running:
                 continue
+
+            # Check plan usage before spawning
+            try:
+                can_spawn, reason, snapshot = check_plan_usage_before_spawn(
+                    config,
+                    max_usage_percent=getattr(config, "max_usage_percent", DEFAULT_MAX_USAGE_PERCENT),
+                )
+                if not can_spawn:
+                    logger.warning(
+                        "Skipping task '%s': plan usage too high (%s)",
+                        task.title, reason,
+                    )
+                    continue
+            except Exception as e:
+                logger.debug("Plan usage pre-spawn check failed (non-fatal): %s", e)
 
             await semaphore.acquire()
             employee_index = next_employee_index
