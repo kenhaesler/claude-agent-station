@@ -32,7 +32,7 @@
           <StatusOrb active={run.status === 'running'} color={
             run.verdict === 'APPROVE' ? '#22c55e' :
             run.verdict === 'REJECT' ? '#ef4444' :
-            run.verdict === 'OPEN_PR' ? '#a855f7' :
+            run.verdict === 'PR' ? '#a855f7' :
             run.status === 'running' ? '#3b82f6' :
             '#64748b'
           } />

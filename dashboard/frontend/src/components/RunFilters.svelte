@@ -21,7 +21,7 @@
     <option value="">All Verdicts</option>
     <option value="APPROVE">APPROVE</option>
     <option value="REJECT">REJECT</option>
-    <option value="OPEN_PR">OPEN_PR</option>
+    <option value="PR">PR</option>
   </select>
 
   <select
