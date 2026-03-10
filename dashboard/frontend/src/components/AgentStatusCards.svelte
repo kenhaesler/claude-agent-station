@@ -53,7 +53,7 @@
         <div class="flex items-center gap-2">
           <StatusOrb active={isRunning} color={employeePhaseColor} size="md" />
           <div>
-            <span class="text-xs font-medium">Employee</span>
+            <span class="ai-text font-medium !text-[10px]">Employee</span>
             <span class="text-[10px] text-text-dim ml-1.5">{phaseLabel}</span>
           </div>
         </div>
@@ -108,7 +108,7 @@
             size="md"
           />
           <div>
-            <span class="text-xs font-medium">Manager</span>
+            <span class="ai-text font-medium !text-[10px]">Manager</span>
             <span class="text-[10px] text-text-dim ml-1.5">{managerPhaseLabel}</span>
           </div>
         </div>

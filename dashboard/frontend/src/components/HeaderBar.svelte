@@ -1,5 +1,7 @@
 <script lang="ts">
   import StatusOrb from './StatusOrb.svelte';
+  import ArcGauge from './ArcGauge.svelte';
+  import AiStatusLine from './AiStatusLine.svelte';
 
   interface Props {
     serviceActive: boolean;
@@ -10,6 +12,7 @@
     onTrigger: () => void;
     triggering: boolean;
     onMenuToggle?: () => void;
+    projectCount?: number;
   }
 
   let {
@@ -21,20 +24,22 @@
     onTrigger,
     triggering,
     onMenuToggle,
+    projectCount = 0,
   }: Props = $props();
 
-  let usageBarColor = $derived(
-    usagePercent > 80 ? 'bg-reject' :
-    usagePercent > 60 ? 'bg-warning' : 'bg-accent-emerald'
+  let usageColor = $derived(
+    usagePercent > 80 ? '#ef4444' :
+    usagePercent > 60 ? '#f59e0b' : '#06b6d4'
   );
 
-  let usageGlow = $derived(
-    usagePercent > 80 ? 'shadow-[0_0_8px_rgba(239,68,68,0.3)]' :
-    usagePercent > 60 ? '' : 'shadow-[0_0_8px_rgba(16,185,129,0.2)]'
-  );
+  let statusMessages = $derived([
+    serviceActive ? 'Systems nominal' : 'Systems offline',
+    `Session capacity ${Math.round(100 - usagePercent)}%`,
+    projectCount > 0 ? `Monitoring ${projectCount} projects` : 'Awaiting directives',
+  ]);
 </script>
 
-<header class="h-12 w-full flex items-center justify-between px-3 md:px-4 glass-heavy border-0 border-b border-border/50 shrink-0">
+<header class="header-bar h-12 w-full flex items-center justify-between px-3 md:px-4 glass-hud shrink-0">
   <!-- Left: hamburger (mobile) + station name -->
   <div class="flex items-center gap-2">
     <button
@@ -46,7 +51,11 @@
         <path d="M3 5h14M3 10h14M3 15h14" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" />
       </svg>
     </button>
-    <span class="md:hidden text-accent-blue font-bold text-sm text-glow-blue">Claude Station</span>
+    <span class="md:hidden text-accent-cyan font-bold text-sm text-glow-cyan">Claude Station</span>
+    <!-- AI Status text (desktop only) -->
+    <div class="hidden md:block">
+      <AiStatusLine messages={statusMessages} speed={45} />
+    </div>
   </div>
 
   <!-- Status indicators + trigger button -->
@@ -67,26 +76,28 @@
       </span>
     </div>
 
-    <!-- Usage meter -->
+    <!-- Usage arc gauge (desktop) / text (mobile) -->
     <div class="flex items-center gap-1.5 hidden sm:flex">
-      <span class="text-xs text-text-dim font-data">{sessionsUsed}/{sessionLimit}</span>
-      <div class="w-16 md:w-20 h-1.5 bg-white/[0.05] rounded-full overflow-hidden">
-        <div
-          class="h-full rounded-full transition-all duration-500 {usageBarColor} {usageGlow}"
-          style:width="{Math.min(usagePercent, 100)}%"
-        ></div>
-      </div>
+      <span class="text-xs text-text-dim font-data hidden md:hidden lg:inline">{sessionsUsed}/{sessionLimit}</span>
+      <ArcGauge value={usagePercent} size={32} color={usageColor} />
     </div>
 
     <!-- Trigger Run button -->
     <button
       onclick={onTrigger}
       disabled={triggering}
-      class="px-2.5 md:px-3 py-1 text-xs font-medium rounded-md text-white transition-all cursor-pointer
-        bg-gradient-to-r from-accent-blue to-accent-emerald hover:shadow-[0_0_16px_rgba(59,130,246,0.3)]
-        {triggering ? 'opacity-50 cursor-not-allowed' : 'hover:opacity-90 active:scale-95'}"
+      class="run-btn px-2.5 md:px-3 py-1 text-xs font-medium rounded-md text-white transition-all cursor-pointer
+        bg-gradient-to-r from-accent-cyan to-accent-emerald hover:shadow-[0_0_16px_rgba(6,182,212,0.3)]
+        {triggering ? 'opacity-50 cursor-not-allowed animate-glow-pulse' : 'hover:opacity-90 active:scale-95'}"
     >
       {triggering ? '...' : 'Run'}
     </button>
   </div>
 </header>
+
+<style>
+  .header-bar {
+    border-bottom: 1px solid transparent;
+    border-image: linear-gradient(90deg, transparent, rgba(6, 182, 212, 0.25), transparent) 1;
+  }
+</style>

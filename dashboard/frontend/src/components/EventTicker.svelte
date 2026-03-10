@@ -104,11 +104,11 @@
   });
 </script>
 
-<div class="glass rounded-lg px-3 py-2 text-xs">
+<div class="glass rounded-lg px-3 py-2 text-xs border-l-2 border-l-accent-cyan/20">
   <!-- Header -->
   <div class="flex items-center justify-between mb-1.5">
     <div class="flex items-center gap-1.5">
-      <span class="font-medium text-text-dim uppercase tracking-wider text-[10px]">Live Events</span>
+      <span class="ai-text hud-sweep-line font-medium">Live Events</span>
       <span
         class="w-1.5 h-1.5 rounded-full {connected ? 'bg-accent-emerald animate-pulse' : 'bg-reject'}"
         title={connected ? 'Connected' : 'Disconnected'}
@@ -128,8 +128,8 @@
     <div class="space-y-0.5 max-h-32 overflow-y-auto">
       {#each events as ev (ev.id)}
         <div class="flex items-center gap-1.5 py-0.5 animate-fade-in-up">
-          <span class="font-mono {ev.color} w-3 text-center shrink-0">{ev.icon}</span>
-          <span class="text-text truncate">{ev.message}</span>
+          <span class="font-data {ev.color} w-3 text-center shrink-0">{ev.icon}</span>
+          <span class="text-text truncate font-data">{ev.message}</span>
           <span class="text-text-dim/40 ml-auto shrink-0">
             <TimeAgo date={ev.timestamp.toISOString()} />
           </span>

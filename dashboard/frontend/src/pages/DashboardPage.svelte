@@ -11,12 +11,14 @@
   import LoadingSpinner from '../components/LoadingSpinner.svelte';
   import AgentWorkspace from '../components/AgentWorkspace.svelte';
   import MetricPanel from '../components/MetricPanel.svelte';
+  import GlassCard from '../components/GlassCard.svelte';
   import ActivityFeed from '../components/ActivityFeed.svelte';
   import ScanLine from '../components/ScanLine.svelte';
   import EventTicker from '../components/EventTicker.svelte';
   import PhaseTimeline from '../components/PhaseTimeline.svelte';
   import LiveAgentFeed from '../components/LiveAgentFeed.svelte';
   import AgentStatusCards from '../components/AgentStatusCards.svelte';
+  import ArcGauge from '../components/ArcGauge.svelte';
   import type { RunPhase } from '../lib/workspace-renderer';
 
   let latest = $state<Run | null>(null);
@@ -96,8 +98,13 @@
   {#if loading}
     <div class="flex justify-center py-12"><LoadingSpinner /></div>
   {:else}
+    <!-- Page Header -->
+    <div class="flex items-center justify-between animate-fade-in-up">
+      <h1 class="ai-text hud-sweep-line !text-sm font-bold pb-1">Command Center</h1>
+    </div>
+
     <!-- Live Event Ticker (SSE-powered) -->
-    <div class="animate-fade-in-up">
+    <div class="animate-fade-in-up border-l-2 border-l-accent-cyan/20 rounded-lg">
       <EventTicker onRefresh={load} />
     </div>
 
@@ -110,7 +117,7 @@
     {/if}
 
     <!-- Agent Workspace Visualization -->
-    <div class="relative glass rounded-xl overflow-hidden animate-fade-in-up" style="height: clamp(280px, 50vh, 500px)">
+    <div class="relative glass rounded-lg overflow-hidden animate-fade-in-up" style="height: clamp(280px, 50vh, 500px)">
       <ScanLine />
       <AgentWorkspace
         {projects}
@@ -163,14 +170,17 @@
         subtitle="{recentRuns.length} runs, avg {formatTokens(avgTokens)}"
         class="stagger-3"
       />
-      <MetricPanel
-        label="Usage"
-        value={usage?.usage_percent ?? 0}
-        format={(n) => `${Math.round(n)}%`}
-        glow={usage && usage.usage_percent > 80 ? 'red' : 'emerald'}
-        subtitle={usage ? `${usage.sessions_used}/${usage.session_limit_24h} sessions` : undefined}
-        class="stagger-4"
-      />
+      <GlassCard glow={usage && usage.usage_percent > 80 ? 'red' : 'cyan'} animated class="p-4 md:p-5 stagger-4 flex flex-col items-center justify-center">
+        <p class="ai-text font-medium mb-2">Usage</p>
+        <ArcGauge
+          value={usage?.usage_percent ?? 0}
+          size={64}
+          color={usage && usage.usage_percent > 80 ? '#ef4444' : '#06b6d4'}
+        />
+        {#if usage}
+          <p class="text-xs text-text-dim mt-1.5">{usage.sessions_used}/{usage.session_limit_24h} sessions</p>
+        {/if}
+      </GlassCard>
     </div>
 
     <!-- Activity Feed -->

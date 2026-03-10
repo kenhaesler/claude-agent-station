@@ -41,4 +41,4 @@
   let text = $derived(format ? format(displayed) : String(Math.round(displayed)));
 </script>
 
-<span class="font-data tabular-nums">{text}</span>
+<span class="data-readout">{text}</span>

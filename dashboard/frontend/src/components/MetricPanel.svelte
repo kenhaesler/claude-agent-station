@@ -15,8 +15,8 @@
 </script>
 
 <GlassCard {glow} animated class="p-4 md:p-5 {className}">
-  <p class="text-[10px] font-medium text-text-dim uppercase tracking-wider mb-2">{label}</p>
-  <p class="text-xl md:text-2xl font-semibold text-text">
+  <p class="ai-text font-medium mb-2">{label}</p>
+  <p class="text-xl md:text-2xl font-semibold text-text data-readout">
     <AnimatedCounter {value} {format} />
   </p>
   {#if subtitle}
