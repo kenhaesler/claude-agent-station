@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db
 from app.models import Run
-from app.schemas import RunOut, RunList
+from app.schemas import RunOut, RunList, ActiveEmployeeOut
 from app.services.log_importer import import_historical_runs
 from app.services.systemd import systemctl
 
@@ -45,6 +45,26 @@ async def list_runs(
     runs = result.scalars().all()
 
     return RunList(runs=runs, total=total)
+
+
+@router.get("/active-employees", response_model=list[ActiveEmployeeOut])
+async def get_active_employees(db: AsyncSession = Depends(get_db)):
+    """Return all currently running employee/agent runs for workspace visualization."""
+    result = await db.execute(
+        select(Run).where(Run.status == "running").where(Run.project_id.isnot(None))
+    )
+    runs = result.scalars().all()
+    return [
+        ActiveEmployeeOut(
+            run_id=r.run_id,
+            project_id=r.project_id,
+            mode=r.mode or "employee",
+            status=r.status or "running",
+            issue_number=r.issue_number,
+            turns=r.turns,
+        )
+        for r in runs
+    ]
 
 
 @router.get("/latest", response_model=Optional[RunOut])
