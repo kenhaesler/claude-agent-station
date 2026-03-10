@@ -1,4 +1,4 @@
-import type { Project, ProjectCreate, ProjectUpdate, Run, RunList, Plan, PlanList, SystemStatus, AuthStatus, LogSearchResult, RunLogs, UsageData, OAuthStartResponse, OAuthCallbackResponse } from './types';
+import type { Project, ProjectCreate, ProjectUpdate, Run, RunList, Plan, PlanList, SystemStatus, AuthStatus, LogSearchResult, RunLogs, UsageData, TokenUsageData, OAuthStartResponse, OAuthCallbackResponse } from './types';
 
 const BASE = import.meta.env.VITE_API_URL || '';
 
@@ -46,6 +46,7 @@ export const rescanRuns = () => request<{ status: string; imported: number }>('/
 // Config
 export const getConfig = () => request<Record<string, unknown>>('/api/config');
 export const getUsage = () => request<UsageData>('/api/config/usage');
+export const getTokenUsage = () => request<TokenUsageData>('/api/config/token-usage');
 export const updateConfig = (data: Record<string, unknown>) =>
   request<Record<string, unknown>>('/api/config', { method: 'PUT', body: JSON.stringify(data) });
 

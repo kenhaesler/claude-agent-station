@@ -17,11 +17,11 @@
   },
   "limits": {
     "max_employee_turns": 200,
-    "max_employee_budget_usd": 25.00,
     "max_analyst_turns": 50,
-    "max_analyst_budget_usd": 5.00,
     "max_manager_turns": 30,
-    "max_manager_budget_usd": 3.00,
+    "token_limit_daily": 0,
+    "token_limit_monthly": 0,
+    "token_reserve_percent": 20,
     "session_limit_24h": 50,
     "max_session_percent": 80
   },

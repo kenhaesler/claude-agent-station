@@ -90,6 +90,9 @@ async def receive_run_event(
 
         run.status = final_status
         run.cost_usd = event.cost_usd
+        run.tokens_input = event.tokens_input
+        run.tokens_output = event.tokens_output
+        run.tokens_total = event.tokens_total
         run.turns = event.turns
         run.duration_ms = event.duration_ms
         run.finished_at = datetime.now(timezone.utc)

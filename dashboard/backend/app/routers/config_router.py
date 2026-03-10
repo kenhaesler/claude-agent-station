@@ -3,16 +3,17 @@
 import json
 import time
 import logging
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.dependencies import get_db
-from app.models import ConfigEntry
+from app.models import ConfigEntry, Run
 from app.services.config_sync import _read_config_json, _write_config_json, sync_config_to_db
 
 logger = logging.getLogger(__name__)
@@ -125,4 +126,75 @@ async def get_usage():
         "window_remaining_hours": round(remaining_hours, 1),
         "usage_percent": round((sessions_used / session_limit * 100) if session_limit > 0 else 0, 1),
         "last_run_ts": last_run,
+    }
+
+
+@router.get("/token-usage")
+async def get_token_usage(db: AsyncSession = Depends(get_db)):
+    """Get token consumption data against configured limits."""
+    config = _read_config_json()
+    limits = config.get("limits", {})
+    token_limit_daily = limits.get("token_limit_daily", 0)
+    token_limit_monthly = limits.get("token_limit_monthly", 0)
+    token_reserve_percent = limits.get("token_reserve_percent", 20)
+
+    now = datetime.now(timezone.utc)
+
+    # Daily tokens consumed (last 24h)
+    day_ago = now - timedelta(hours=24)
+    daily_result = await db.execute(
+        select(
+            func.coalesce(func.sum(Run.tokens_input), 0),
+            func.coalesce(func.sum(Run.tokens_output), 0),
+            func.coalesce(func.sum(Run.tokens_total), 0),
+        ).where(Run.started_at >= day_ago)
+    )
+    daily_row = daily_result.one()
+    daily_input = daily_row[0]
+    daily_output = daily_row[1]
+    daily_total = daily_row[2]
+
+    # Monthly tokens consumed (last 30 days)
+    month_ago = now - timedelta(days=30)
+    monthly_result = await db.execute(
+        select(
+            func.coalesce(func.sum(Run.tokens_total), 0),
+        ).where(Run.started_at >= month_ago)
+    )
+    monthly_total = monthly_result.scalar()
+
+    # Calculate effective limits (after reserve)
+    reserve_factor = 1 - (token_reserve_percent / 100)
+    effective_daily = int(token_limit_daily * reserve_factor) if token_limit_daily > 0 else 0
+    effective_monthly = int(token_limit_monthly * reserve_factor) if token_limit_monthly > 0 else 0
+
+    # Usage percentages
+    daily_percent = round((daily_total / effective_daily * 100) if effective_daily > 0 else 0, 1)
+    monthly_percent = round((monthly_total / effective_monthly * 100) if effective_monthly > 0 else 0, 1)
+
+    # Can spawn check: is there enough budget for an employee (~50K tokens avg)?
+    avg_employee_tokens = 50000
+    can_spawn = True
+    if effective_daily > 0 and (daily_total + avg_employee_tokens) > effective_daily:
+        can_spawn = False
+    if effective_monthly > 0 and (monthly_total + avg_employee_tokens) > effective_monthly:
+        can_spawn = False
+
+    return {
+        "daily": {
+            "tokens_input": daily_input,
+            "tokens_output": daily_output,
+            "tokens_total": daily_total,
+            "limit": token_limit_daily,
+            "effective_limit": effective_daily,
+            "usage_percent": daily_percent,
+        },
+        "monthly": {
+            "tokens_total": monthly_total,
+            "limit": token_limit_monthly,
+            "effective_limit": effective_monthly,
+            "usage_percent": monthly_percent,
+        },
+        "token_reserve_percent": token_reserve_percent,
+        "can_spawn_employee": can_spawn,
     }

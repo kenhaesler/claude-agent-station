@@ -27,10 +27,18 @@ export function formatDuration(ms: number | null): string {
   return `${hours}h ${remainMin}m`;
 }
 
+/** @deprecated Use formatTokens instead. Kept for historical data display. */
 export function formatCost(usd: number | null): string {
   if (usd == null) return '-';
   if (usd < 0.01) return `$${usd.toFixed(4)}`;
   return `$${usd.toFixed(2)}`;
+}
+
+export function formatTokens(tokens: number | null): string {
+  if (tokens == null || tokens === 0) return '-';
+  if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`;
+  if (tokens >= 1_000) return `${(tokens / 1_000).toFixed(1)}K`;
+  return `${tokens}`;
 }
 
 export function formatDate(dateStr: string | null): string {

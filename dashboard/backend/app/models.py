@@ -42,7 +42,10 @@ class Run(Base):
     verdict = Column(Text, nullable=True)  # APPROVE/PR/REJECT/null
     issue_number = Column(Integer, nullable=True)
     branch = Column(Text, nullable=True)
-    cost_usd = Column(Float, nullable=True)
+    cost_usd = Column(Float, nullable=True)  # Deprecated: kept for historical data
+    tokens_input = Column(Integer, nullable=True)
+    tokens_output = Column(Integer, nullable=True)
+    tokens_total = Column(Integer, nullable=True)
     turns = Column(Integer, nullable=True)
     duration_ms = Column(Integer, nullable=True)
     started_at = Column(DateTime, nullable=True)

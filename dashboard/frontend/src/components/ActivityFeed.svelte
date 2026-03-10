@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { Run } from '../lib/types';
-  import { formatDuration, formatCost } from '../lib/format';
+  import { formatDuration, formatTokens } from '../lib/format';
   import { timeAgo } from '../lib/format';
   import StatusBadge from './StatusBadge.svelte';
   import StatusOrb from './StatusOrb.svelte';
@@ -42,7 +42,7 @@
           </span>
           <StatusBadge value={run.verdict} />
           <span class="text-xs text-text-dim ml-auto hidden sm:block">{formatDuration(run.duration_ms)}</span>
-          <span class="text-xs text-text-dim w-14 text-right font-data">{formatCost(run.cost_usd)}</span>
+          <span class="text-xs text-text-dim w-14 text-right font-data">{formatTokens(run.tokens_total)}</span>
           <span class="text-[10px] text-text-dim/60 hidden md:block w-16 text-right">{timeAgo(run.started_at)}</span>
         </a>
       {/each}

@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { Run } from '../lib/types';
   import { getRun } from '../lib/api';
-  import { formatDuration, formatCost, formatDate } from '../lib/format';
+  import { formatDuration, formatTokens, formatDate } from '../lib/format';
   import { toastError } from '../lib/toast.svelte';
   import StatusBadge from '../components/StatusBadge.svelte';
   import LoadingSpinner from '../components/LoadingSpinner.svelte';
@@ -53,8 +53,8 @@
         <p class="mt-1 font-medium">{formatDuration(run.duration_ms)}</p>
       </GlassCard>
       <GlassCard class="p-4">
-        <span class="text-xs text-text-dim">Cost</span>
-        <p class="mt-1 font-medium font-data">{formatCost(run.cost_usd)}</p>
+        <span class="text-xs text-text-dim">Tokens</span>
+        <p class="mt-1 font-medium font-data">{formatTokens(run.tokens_total)}</p>
       </GlassCard>
     </div>
 
@@ -81,6 +81,18 @@
           <tr>
             <td class="px-5 py-3 text-text-dim">Turns</td>
             <td class="px-5 py-3">{run.turns ?? '-'}</td>
+          </tr>
+          <tr>
+            <td class="px-5 py-3 text-text-dim">Tokens (Input)</td>
+            <td class="px-5 py-3 font-data">{formatTokens(run.tokens_input)}</td>
+          </tr>
+          <tr>
+            <td class="px-5 py-3 text-text-dim">Tokens (Output)</td>
+            <td class="px-5 py-3 font-data">{formatTokens(run.tokens_output)}</td>
+          </tr>
+          <tr>
+            <td class="px-5 py-3 text-text-dim">Tokens (Total)</td>
+            <td class="px-5 py-3 font-data">{formatTokens(run.tokens_total)}</td>
           </tr>
           <tr>
             <td class="px-5 py-3 text-text-dim">Started</td>
