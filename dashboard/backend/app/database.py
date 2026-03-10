@@ -49,6 +49,6 @@ async def _migrate_add_columns(conn) -> None:
 async def init_db():
     """Create all tables and run migrations."""
     async with engine.begin() as conn:
-        from app.models import Project, Run, ConfigEntry, Notification  # noqa: F401
+        from app.models import Project, Run, ConfigEntry, Notification, Plan  # noqa: F401
         await conn.run_sync(Base.metadata.create_all)
         await _migrate_add_columns(conn)

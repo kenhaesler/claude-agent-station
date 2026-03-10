@@ -1,4 +1,4 @@
-import type { Project, ProjectCreate, ProjectUpdate, Run, RunList, SystemStatus, AuthStatus, LogSearchResult, RunLogs, UsageData, OAuthStartResponse, OAuthCallbackResponse } from './types';
+import type { Project, ProjectCreate, ProjectUpdate, Run, RunList, Plan, PlanList, SystemStatus, AuthStatus, LogSearchResult, RunLogs, UsageData, OAuthStartResponse, OAuthCallbackResponse } from './types';
 
 const BASE = import.meta.env.VITE_API_URL || '';
 
@@ -65,6 +65,25 @@ export const submitOAuthCode = (code: string, state: string) =>
     method: 'POST',
     body: JSON.stringify({ code, state }),
   });
+
+// Plans
+export const listPlans = (params?: { limit?: number; offset?: number; project_id?: number; status?: string }) => {
+  const q = new URLSearchParams();
+  if (params?.limit) q.set('limit', String(params.limit));
+  if (params?.offset) q.set('offset', String(params.offset));
+  if (params?.project_id) q.set('project_id', String(params.project_id));
+  if (params?.status) q.set('status', params.status);
+  return request<PlanList>(`/api/plans?${q}`);
+};
+export const getPlan = (id: number) => request<Plan>(`/api/plans/${id}`);
+export const deletePlan = (id: number) =>
+  request<void>(`/api/plans/${id}`, { method: 'DELETE' });
+export const approvePlan = (id: number) =>
+  request<Plan>(`/api/plans/${id}/approve`, { method: 'POST' });
+export const rejectPlan = (id: number) =>
+  request<Plan>(`/api/plans/${id}/reject`, { method: 'POST' });
+export const implementPlan = (id: number) =>
+  request<Plan>(`/api/plans/${id}/implement`, { method: 'POST' });
 
 // Logs
 export const searchLogs = (q: string, runId?: string, limit?: number) => {

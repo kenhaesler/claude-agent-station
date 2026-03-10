@@ -66,6 +66,7 @@
       <label for="mode" class="block text-sm text-text-dim mb-1">Mode</label>
       <select id="mode" bind:value={mode} class="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 text-sm text-text">
         <option value="full">Full</option>
+        <option value="plan">Plan</option>
         <option value="analyze">Analyze</option>
       </select>
     </div>

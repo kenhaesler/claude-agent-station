@@ -55,6 +55,28 @@ export interface RunList {
   total: number;
 }
 
+export interface Plan {
+  id: number;
+  project_id: number;
+  issue_number: number | null;
+  issue_title: string | null;
+  title: string;
+  description: string | null;
+  steps: string | null;
+  estimated_scope: string | null;
+  files_affected: string | null;
+  status: string;
+  run_id: string | null;
+  implementation_run_id: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface PlanList {
+  plans: Plan[];
+  total: number;
+}
+
 export interface SystemStatus {
   service: { active: boolean };
   timer: { active: boolean; next_trigger: string | null };

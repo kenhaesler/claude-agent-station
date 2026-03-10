@@ -60,6 +60,25 @@ class ConfigEntry(Base):
     updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
 
 
+class Plan(Base):
+    __tablename__ = "plans"
+
+    id = Column(Integer, primary_key=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False)
+    issue_number = Column(Integer, nullable=True)
+    issue_title = Column(Text, nullable=True)
+    title = Column(Text, nullable=False)
+    description = Column(Text, nullable=True)  # Markdown plan content
+    steps = Column(Text, nullable=True)  # JSON array of implementation steps
+    estimated_scope = Column(Text, nullable=True)  # small/medium/large
+    files_affected = Column(Text, nullable=True)  # JSON array of file paths
+    status = Column(Text, default="draft")  # draft/approved/implementing/completed/rejected
+    run_id = Column(Text, nullable=True)  # run that created this plan
+    implementation_run_id = Column(Text, nullable=True)  # run that implemented this plan
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class Notification(Base):
     __tablename__ = "notifications"
 

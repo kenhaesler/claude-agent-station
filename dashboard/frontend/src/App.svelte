@@ -11,6 +11,8 @@
   import RunDetailPage from './pages/RunDetailPage.svelte';
   import LogsPage from './pages/LogsPage.svelte';
   import ConfigPage from './pages/ConfigPage.svelte';
+  import PlansPage from './pages/PlansPage.svelte';
+  import PlanDetailPage from './pages/PlanDetailPage.svelte';
   import SystemPage from './pages/SystemPage.svelte';
 
   let serviceActive = $state(false);
@@ -82,6 +84,10 @@
         <DashboardPage />
       {:else if route.page === 'projects'}
         <ProjectsPage />
+      {:else if route.page === 'plans'}
+        <PlansPage />
+      {:else if route.page === 'plan-detail'}
+        <PlanDetailPage planId={route.param ?? ''} />
       {:else if route.page === 'runs'}
         <RunsPage />
       {:else if route.page === 'run-detail'}

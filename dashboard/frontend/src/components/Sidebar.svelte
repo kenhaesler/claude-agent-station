@@ -13,6 +13,7 @@
   const links = [
     { page: 'dashboard', label: 'Dashboard' },
     { page: 'projects', label: 'Projects' },
+    { page: 'plans', label: 'Plans' },
     { page: 'runs', label: 'Runs' },
     { page: 'logs', label: 'Logs' },
     { page: 'config', label: 'Config' },
@@ -65,7 +66,7 @@
 
   <nav class="flex flex-col gap-1 px-2 py-3 flex-1">
     {#each links as link}
-      {@const active = route.page === link.page || (link.page === 'runs' && route.page === 'run-detail')}
+      {@const active = route.page === link.page || (link.page === 'runs' && route.page === 'run-detail') || (link.page === 'plans' && route.page === 'plan-detail')}
       <a
         href="#{link.page === 'dashboard' ? '/' : `/${link.page}`}"
         onclick={closeMobile}
@@ -82,6 +83,8 @@
             <rect x="2" y="2" width="7" height="7" rx="1" /><rect x="11" y="2" width="7" height="7" rx="1" /><rect x="2" y="11" width="7" height="7" rx="1" /><rect x="11" y="11" width="7" height="7" rx="1" />
           {:else if link.page === 'projects'}
             <path d="M2 6V16a1 1 0 001 1h14a1 1 0 001-1V8a1 1 0 00-1-1h-7l-2-2H3a1 1 0 00-1 1z" />
+          {:else if link.page === 'plans'}
+            <path d="M4 4h12M4 8h12M4 12h8" /><path d="M13 12l2 2 4-4" stroke-width="2" />
           {:else if link.page === 'runs'}
             <circle cx="10" cy="10" r="8" /><polygon points="8,6 15,10 8,14" fill="currentColor" stroke="none" />
           {:else if link.page === 'logs'}

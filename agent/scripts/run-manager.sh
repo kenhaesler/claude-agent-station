@@ -378,8 +378,8 @@ run_employee() {
     max_turns=$(json_get "$CONFIG_FILE" "limits.max_employee_turns" 2>/dev/null || echo "200")
     max_budget=$(json_get "$CONFIG_FILE" "limits.max_employee_budget_usd" 2>/dev/null || echo "25.00")
 
-    # Analyze mode uses Sonnet (cheaper — no code changes, just analysis)
-    if [ "$mode" = "analyze" ]; then
+    # Analyze/plan modes use Sonnet (cheaper — no code changes, just analysis/planning)
+    if [ "$mode" = "analyze" ] || [ "$mode" = "plan" ]; then
         model="claude-sonnet-4-6"
         max_turns=50
         max_budget="5.00"
@@ -396,7 +396,22 @@ run_employee() {
 
     # Select prompt based on mode
     local system_prompt employee_prompt
-    if [ "$mode" = "analyze" ]; then
+    if [ "$mode" = "plan" ]; then
+        system_prompt="$SCRIPT_DIR/../prompts/planner.md"
+        employee_prompt="Create implementation plans for the repository: $repo
+
+Environment variables available:
+- GITHUB_REPO=$repo
+- GH_TOKEN is set
+
+Your workspace is: $workspace
+
+Analyze open issues and create detailed implementation plans. Write plans to the dashboard API at http://127.0.0.1:8420/api/plans. Each plan should include step-by-step instructions, files to change, code snippets, and acceptance criteria.
+
+Write your report to $workspace/.claude-employee-report.json
+
+Remember: You are in PLAN mode. Read and analyze only — do NOT modify any source files."
+    elif [ "$mode" = "analyze" ]; then
         system_prompt="$SCRIPT_DIR/../prompts/analyst.md"
         employee_prompt="Analyze the repository: $repo
 
@@ -413,7 +428,48 @@ Write your report to $workspace/.claude-employee-report.json
 Remember: You are in ANALYZE mode. Read and analyze only — do NOT modify any source files."
     else
         system_prompt="$SCRIPT_DIR/../prompts/employee.md"
-        employee_prompt="Work on the repository: $repo
+
+        # Check if there's a plan file to implement
+        local plan_file="$workspace/.claude-plan-to-implement.json"
+        if [ -f "$plan_file" ]; then
+            local plan_title plan_issue plan_description plan_steps
+            plan_title=$(python3 -c "import json; print(json.load(open('$plan_file')).get('title',''))" 2>/dev/null || echo "")
+            plan_issue=$(python3 -c "import json; print(json.load(open('$plan_file')).get('issue_number',''))" 2>/dev/null || echo "")
+            plan_description=$(python3 -c "import json; print(json.load(open('$plan_file')).get('description','')[:2000])" 2>/dev/null || echo "")
+            plan_steps=$(python3 -c "import json; print(json.load(open('$plan_file')).get('steps',''))" 2>/dev/null || echo "")
+
+            log_info "Found plan file: $plan_title (issue #$plan_issue)"
+            employee_prompt="Work on the repository: $repo
+
+Environment variables available:
+- GITHUB_REPO=$repo
+- GH_TOKEN is set
+
+Your workspace is: $workspace
+
+## Implementation Plan to Execute
+
+You have a pre-approved implementation plan to follow. Read the plan file at $plan_file for full details.
+
+**Plan**: $plan_title
+**Issue**: #$plan_issue
+
+### Plan Description:
+$plan_description
+
+### Steps:
+$plan_steps
+
+Follow this plan carefully. Implement each step, write tests, and verify everything works.
+
+Write your report to $workspace/.claude-employee-report.json
+
+Remember: commit locally but NEVER push. The manager will review and push if approved."
+
+            # Clean up plan file after reading (it's been embedded in the prompt)
+            rm -f "$plan_file"
+        else
+            employee_prompt="Work on the repository: $repo
 
 Environment variables available:
 - GITHUB_REPO=$repo
@@ -424,6 +480,7 @@ Your workspace is: $workspace
 Find the most actionable open issue, implement it fully, run tests, and write your report to $workspace/.claude-employee-report.json
 
 Remember: commit locally but NEVER push. The manager will review and push if approved."
+        fi
     fi
 
     # Append custom instructions if configured for this project
