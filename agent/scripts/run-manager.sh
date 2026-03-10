@@ -450,20 +450,37 @@ setup_workspace() {
     local workspace="$WORKSPACES_DIR/$name"
 
     if [ -d "$workspace/.git" ]; then
-        log_info "Pulling latest for $repo..." >&2
+        log_info "Resetting workspace to main for $repo..." >&2
         cd "$workspace"
-        git checkout main 2>/dev/null >&2 || git checkout master 2>/dev/null >&2 || true
 
-        # Clean up stale autonomous branches from previous failed runs
-        local stale_branches
-        stale_branches=$(git branch --list 'autonomous/*' 2>/dev/null | tr -d ' *')
-        if [ -n "$stale_branches" ]; then
-            log_info "Cleaning up stale autonomous branches..." >&2
-            echo "$stale_branches" | while IFS= read -r b; do
-                git branch -D "$b" 2>/dev/null >&2 || true
-            done
+        # 1. Remove any lingering worktrees first (they block branch operations)
+        git worktree prune 2>/dev/null >&2 || true
+        local worktree_pattern="$WORKSPACES_DIR/${name}-e"
+        for wt in "$worktree_pattern"*; do
+            [ -d "$wt" ] && git worktree remove "$wt" --force 2>/dev/null >&2 || rm -rf "$wt" 2>/dev/null
+        done
+        git worktree prune 2>/dev/null >&2 || true
+
+        # 2. Discard any dirty state left by previous employees
+        git reset --hard HEAD 2>/dev/null >&2 || true
+        git clean -fd 2>/dev/null >&2 || true
+
+        # 3. Switch to main (or master) — force checkout in case of conflicts
+        local default_branch="main"
+        if ! git rev-parse --verify main >/dev/null 2>&1; then
+            default_branch="master"
         fi
+        git checkout -f "$default_branch" 2>/dev/null >&2 || {
+            log_warn "Could not checkout $default_branch for $repo, trying to recover..." >&2
+            git checkout -f "$(git remote show origin 2>/dev/null | sed -n 's/.*HEAD branch: //p')" 2>/dev/null >&2 || true
+        }
 
+        # 4. Clean up stale branches from previous runs
+        git branch --list 'autonomous/*' 'employee-*' 2>/dev/null | tr -d ' *' | while IFS= read -r b; do
+            [ -n "$b" ] && git branch -D "$b" 2>/dev/null >&2 || true
+        done
+
+        # 5. Pull latest
         git pull origin "$(git branch --show-current)" 2>/dev/null >&2 || {
             log_warn "Pull failed for $repo, continuing with existing state" >&2
         }
@@ -502,12 +519,15 @@ setup_employee_worktree() {
     local current_branch
     current_branch=$(git branch --show-current 2>/dev/null || echo "main")
 
-    git worktree add "$worktree_path" "$current_branch" 2>/dev/null >&2 || {
+    # Create a new branch for the worktree — git won't allow checking out the
+    # same branch in multiple worktrees, so each employee gets its own branch
+    local worktree_branch="employee-${employee_index}-$(date +%s)"
+    git worktree add -b "$worktree_branch" "$worktree_path" HEAD 2>&1 >&2 || {
         log_error "Failed to create worktree for $repo employee $employee_index" >&2
         return 1
     }
 
-    log_info "Created worktree: $worktree_path (from $current_branch)" >&2
+    log_info "Created worktree: $worktree_path (branch $worktree_branch from $current_branch)" >&2
     echo "$worktree_path"
 }
 
@@ -534,6 +554,11 @@ cleanup_worktrees() {
 
     # Prune stale worktree references
     git worktree prune 2>/dev/null || true
+
+    # Clean up temporary employee branches
+    git branch --list 'employee-*' 2>/dev/null | while read -r branch; do
+        git branch -D "$branch" 2>/dev/null || true
+    done
 }
 
 cleanup_all_worktrees() {
@@ -586,7 +611,7 @@ Return ONLY the JSON assignment object, no other text."
     local assigner_prompt_file="$SCRIPT_DIR/../prompts/assigner.md"
     local assignment_output
     assignment_output=$(echo "$assignment_prompt" | claude -p \
-        --system "$(cat "$assigner_prompt_file")" \
+        --system-prompt "$(cat "$assigner_prompt_file")" \
         --model "claude-haiku-4-5-20251001" \
         --max-turns 1 \
         --no-session-persistence \
@@ -1657,10 +1682,10 @@ main() {
                     continue 2
                 }
             elif [ "$employees_this_project" -gt 1 ]; then
-                # Create isolated worktree for concurrent employees
+                # Create isolated worktree for concurrent employees — NO fallback
                 workspace=$(setup_employee_worktree "$repo" "$ei") || {
-                    log_warn "Failed to create worktree for $repo employee $ei, using shared workspace"
-                    workspace="$WORKSPACES_DIR/$(repo_name "$repo")"
+                    log_error "Failed to create worktree for $repo employee $ei, skipping (no shared workspace fallback)"
+                    continue
                 }
                 # Copy assignment file to worktree if it exists
                 local main_ws="$WORKSPACES_DIR/$(repo_name "$repo")"
