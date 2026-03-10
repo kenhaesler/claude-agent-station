@@ -248,7 +248,7 @@
           color={usage && usage.usage_percent > 80 ? '#ef4444' : '#06b6d4'}
         />
         {#if usage}
-          <p class="text-xs text-text-dim mt-1.5">{usage.sessions_used}/{usage.session_limit_24h} sessions</p>
+          <p class="text-xs text-text-dim mt-1.5">{usage.sessions_used} sessions ({usage.usage_percent}% used)</p>
         {/if}
       </GlassCard>
     </div>

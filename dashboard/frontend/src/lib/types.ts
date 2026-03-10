@@ -127,9 +127,8 @@ export interface RunLogs {
 
 export interface UsageData {
   sessions_used: number;
-  session_limit_24h: number;
-  threshold: number;
-  max_session_percent: number;
+  max_usage_percent: number;
+  plan_limit: number;
   window_start_ts: number;
   window_remaining_hours: number;
   usage_percent: number;
@@ -141,18 +140,12 @@ export interface TokenUsageData {
     tokens_input: number;
     tokens_output: number;
     tokens_total: number;
-    limit: number;
-    effective_limit: number;
-    usage_percent: number;
   };
   monthly: {
     tokens_total: number;
-    limit: number;
-    effective_limit: number;
-    usage_percent: number;
   };
-  token_reserve_percent: number;
-  can_spawn_employee: boolean;
+  max_usage_percent: number;
+  reserve_percent: number;
 }
 
 export interface StationConfig {
@@ -164,14 +157,11 @@ export interface StationConfig {
     manager?: string;
   };
   limits?: {
+    max_usage_percent?: number;
+    reserve_percent?: number;
     max_employee_turns?: number;
     max_analyst_turns?: number;
     max_manager_turns?: number;
-    token_limit_daily?: number;
-    token_limit_monthly?: number;
-    token_reserve_percent?: number;
-    session_limit_24h?: number;
-    max_session_percent?: number;
     max_concurrent_employees?: number;
     max_employees_per_project?: number;
     token_budget_strategy?: string;
