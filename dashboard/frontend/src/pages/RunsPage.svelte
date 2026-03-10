@@ -1,8 +1,8 @@
 <script lang="ts">
   import type { Run, Project } from '../lib/types';
-  import { listRuns, listProjects } from '../lib/api';
+  import { listRuns, listProjects, rescanRuns } from '../lib/api';
   import { formatDuration, formatCost } from '../lib/format';
-  import { toastError } from '../lib/toast.svelte';
+  import { toastError, toastSuccess } from '../lib/toast.svelte';
   import StatusBadge from '../components/StatusBadge.svelte';
   import LoadingSpinner from '../components/LoadingSpinner.svelte';
   import EmptyState from '../components/EmptyState.svelte';
@@ -61,13 +61,41 @@
     }
   }
 
+  let rescanning = $state(false);
+
+  async function rescan() {
+    rescanning = true;
+    try {
+      const res = await rescanRuns();
+      if (res.imported > 0) {
+        toastSuccess(`Imported ${res.imported} new run(s)`);
+      }
+      await load();
+    } catch (e: any) {
+      toastError(e.message);
+    } finally {
+      rescanning = false;
+    }
+  }
+
   $effect(() => { load(); });
+
+  // Auto-refresh every 30 seconds to pick up new runs
+  $effect(() => {
+    const interval = setInterval(() => { load(); }, 30000);
+    return () => clearInterval(interval);
+  });
 
   let projectMap = $derived(Object.fromEntries(projects.map(p => [p.id, p.repo])));
 </script>
 
 <div class="space-y-6 animate-fade-in-up">
-  <h1 class="text-2xl font-bold">Runs</h1>
+  <div class="flex items-center justify-between">
+    <h1 class="text-2xl font-bold">Runs</h1>
+    <button onclick={rescan} disabled={rescanning} class="px-3 py-1.5 text-xs glass rounded cursor-pointer hover:bg-white/[0.03] transition-colors disabled:opacity-50">
+      {rescanning ? 'Scanning...' : 'Rescan Logs'}
+    </button>
+  </div>
 
   <RunFilters bind:verdict bind:status bind:projectId {projects} onchange={applyFilters} />
 
