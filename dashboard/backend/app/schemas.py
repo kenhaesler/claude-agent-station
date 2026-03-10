@@ -76,6 +76,18 @@ class RunList(BaseModel):
     total: int
 
 
+class ActiveEmployeeOut(BaseModel):
+    """A currently-running agent/employee for the workspace visualization."""
+    run_id: str
+    project_id: int
+    mode: str
+    status: str
+    issue_number: Optional[int] = None
+    turns: Optional[int] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 # --- Config ---
 
 class ConfigOut(BaseModel):

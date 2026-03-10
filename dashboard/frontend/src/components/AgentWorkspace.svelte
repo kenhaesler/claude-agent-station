@@ -1,6 +1,6 @@
 <script lang="ts">
   import { WorkspaceRenderer } from '../lib/workspace-renderer';
-  import type { RunPhase } from '../lib/workspace-renderer';
+  import type { RunPhase, ActiveEmployee } from '../lib/workspace-renderer';
   import type { Project, Run, SystemStatus, UsageData } from '../lib/types';
 
   interface Props {
@@ -34,6 +34,24 @@
       }
     }
     return modes;
+  });
+
+  /** Derive active employees from running runs */
+  let activeEmployees = $derived((): ActiveEmployee[] => {
+    const employees: ActiveEmployee[] = [];
+    for (const r of runs) {
+      if (r.status === 'running' && r.project_id && r.mode) {
+        employees.push({
+          runId: r.run_id,
+          projectId: r.project_id,
+          mode: r.mode,
+          status: r.status,
+          issueNumber: r.issue_number ?? null,
+          turns: r.turns ?? null,
+        });
+      }
+    }
+    return employees;
   });
 
   let runPhase = $derived((): RunPhase => {
@@ -84,6 +102,7 @@
       })),
       activeRunProjectIds: activeRunProjectIds(),
       activeProjectModes: activeProjectModes(),
+      activeEmployees: activeEmployees(),
       runPhase: runPhase(),
       serviceActive: systemStatus?.service.active ?? false,
       usagePercent: usage?.usage_percent ?? 0,
@@ -92,11 +111,30 @@
 
   function handleMouseMove(e: MouseEvent) {
     if (!renderer) return;
+
+    // Check satellites first (they're smaller, more specific targets)
+    const sat = renderer.getSatelliteAt(e.clientX, e.clientY);
+    if (sat) {
+      const rect = container.getBoundingClientRect();
+      const emp = sat.employee;
+      const modeLabel = emp.mode.charAt(0).toUpperCase() + emp.mode.slice(1);
+      const issueText = emp.issueNumber != null ? ` - #${emp.issueNumber}` : '';
+      const statusText = emp.status === 'running' ? ' (running)' : emp.status === 'failed' ? ' (failed)' : ' (done)';
+      tooltip = {
+        text: `${modeLabel}${issueText}${statusText}`,
+        x: e.clientX - rect.left,
+        y: e.clientY - rect.top - 28,
+      };
+      return;
+    }
+
     const node = renderer.getNodeAt(e.clientX, e.clientY);
     if (node) {
       const rect = container.getBoundingClientRect();
+      const employeeCount = runs.filter(r => r.status === 'running' && r.project_id === node.id).length;
+      const countText = employeeCount > 0 ? ` (${employeeCount} agent${employeeCount > 1 ? 's' : ''})` : '';
       tooltip = {
-        text: node.repo.split('/').pop() || node.repo,
+        text: (node.repo.split('/').pop() || node.repo) + countText,
         x: e.clientX - rect.left,
         y: e.clientY - rect.top - 28,
       };

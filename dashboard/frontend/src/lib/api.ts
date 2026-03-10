@@ -1,4 +1,4 @@
-import type { Project, ProjectCreate, ProjectUpdate, Run, RunList, Plan, PlanList, SystemStatus, AuthStatus, LogSearchResult, RunLogs, UsageData, TokenUsageData, OAuthStartResponse, OAuthCallbackResponse } from './types';
+import type { Project, ProjectCreate, ProjectUpdate, Run, RunList, ActiveEmployeeData, Plan, PlanList, SystemStatus, AuthStatus, LogSearchResult, RunLogs, UsageData, TokenUsageData, OAuthStartResponse, OAuthCallbackResponse } from './types';
 
 const BASE = import.meta.env.VITE_API_URL || '';
 
@@ -39,6 +39,7 @@ export const listRuns = (params?: { limit?: number; offset?: number; project_id?
   if (params?.concurrent_group_id) q.set('concurrent_group_id', params.concurrent_group_id);
   return request<RunList>(`/api/runs?${q}`);
 };
+export const getActiveEmployees = () => request<ActiveEmployeeData[]>('/api/runs/active-employees');
 export const getLatestRun = () => request<Run>('/api/runs/latest');
 export const getRun = (runId: string) => request<Run>(`/api/runs/${runId}`);
 export const triggerRun = () => request<{ status: string; detail: string }>('/api/runs/trigger', { method: 'POST' });

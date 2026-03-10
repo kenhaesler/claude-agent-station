@@ -640,6 +640,59 @@ Remember: commit locally but NEVER push. The manager will review and push if app
 IMPORTANT: You are employee #$employee_index working in parallel on this project. Other employees are working on different issues simultaneously. Make sure to pick an issue that is NOT labeled 'autonomous-agent/in-progress'. Each employee must work on a DIFFERENT issue."
             fi
             employee_prompt="Work on the repository: $repo
+            # Check if there's manager rejection feedback to address
+            local feedback_file="$workspace/.claude-manager-feedback.json"
+            if [ -f "$feedback_file" ]; then
+                local fb_issue fb_branch fb_reasoning fb_feedback fb_missing fb_retry
+                fb_issue=$(python3 -c "import json; print(json.load(open('$feedback_file')).get('issue_number',''))" 2>/dev/null || echo "")
+                fb_branch=$(python3 -c "import json; print(json.load(open('$feedback_file')).get('branch',''))" 2>/dev/null || echo "")
+                fb_reasoning=$(python3 -c "import json; print(json.load(open('$feedback_file')).get('reasoning',''))" 2>/dev/null || echo "")
+                fb_feedback=$(python3 -c "import json; print(json.load(open('$feedback_file')).get('feedback_to_employee',''))" 2>/dev/null || echo "")
+                fb_missing=$(python3 -c "import json; print(json.dumps(json.load(open('$feedback_file')).get('requirements_missing',[]), indent=2))" 2>/dev/null || echo "[]")
+                fb_retry=$(python3 -c "import json; print(json.load(open('$feedback_file')).get('retry_count',1))" 2>/dev/null || echo "1")
+
+                log_info "Employee retry: issue #$fb_issue on branch $fb_branch (attempt $fb_retry)"
+
+                employee_prompt="Work on the repository: $repo
+
+Environment variables available:
+- GITHUB_REPO=$repo
+- GH_TOKEN is set
+
+Your workspace is: $workspace
+
+## IMPORTANT: Manager Rejected Your Previous Work — Fix Required
+
+Your previous implementation was reviewed by the manager and **REJECTED**. You must fix the issues identified below.
+
+**Issue**: #$fb_issue
+**Branch**: $fb_branch (your previous work is still on this branch)
+**Retry attempt**: $fb_retry
+
+### Manager's Rejection Reasoning:
+$fb_reasoning
+
+### Manager's Feedback to You:
+$fb_feedback
+
+### Requirements Still Missing:
+$fb_missing
+
+## Instructions:
+1. **Checkout your existing branch**: \`git checkout $fb_branch\` — your previous commits are still there.
+2. **Read the original issue**: \`gh issue view $fb_issue --repo \$GITHUB_REPO --comments\`
+3. **Read the manager's feedback above carefully** — understand exactly what needs to change.
+4. **Fix the identified issues** — address every point in the feedback and missing requirements.
+5. **Run tests** to verify your fixes work.
+6. **Commit your fixes** with a message like: \`fix #$fb_issue: address manager feedback\`
+7. **Write your report** to $workspace/.claude-employee-report.json
+
+Remember: commit locally but NEVER push. The manager will review and push if approved."
+
+                # Clean up feedback file after embedding in prompt
+                rm -f "$feedback_file"
+            else
+                employee_prompt="Work on the repository: $repo
 
 Environment variables available:
 - GITHUB_REPO=$repo
@@ -650,6 +703,7 @@ ${multi_employee_note}
 Find the most actionable open issue, implement it fully, run tests, and write your report to $workspace/.claude-employee-report${report_suffix}.json
 
 Remember: commit locally but NEVER push. The manager will review and push if approved."
+            fi
         fi
     fi
 
@@ -1105,21 +1159,70 @@ Run: $RUN_ID" 2>/dev/null || true
                 ;;
 
             REJECT)
-                log_info "REJECT: Resetting workspace"
-                git checkout "$base_branch" 2>/dev/null || true
-                git branch -D "$branch" 2>/dev/null || true
-                log_ok "Rejected changes cleaned up"
+                local max_retries
+                max_retries=$(json_get "$CONFIG_FILE" "limits.max_rejection_retries" 2>/dev/null || echo "1")
 
-                if [ -n "$issue_number" ] && [ "$issue_number" != "None" ] && [ "$issue_number" != "null" ]; then
-                    gh issue comment "$issue_number" --repo "$project" --body "🤖 **Manager verdict: REJECTED** — $reasoning. Will retry next cycle.
+                local feedback
+                feedback=$(echo "$verdict_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('feedback_to_employee',''))" 2>/dev/null || echo "")
+                local reqs_missing
+                reqs_missing=$(echo "$verdict_json" | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin).get('requirements_missing',[])))" 2>/dev/null || echo "[]")
 
-Run: $RUN_ID" 2>/dev/null || true
-                    # Clean up agent labels
-                    gh issue edit "$issue_number" --repo "$project" --remove-label "autonomous-agent/done" 2>/dev/null || true
-                    gh issue edit "$issue_number" --repo "$project" --remove-label "autonomous-agent/in-progress" 2>/dev/null || true
+                # Check current retry count from feedback file (if any)
+                local current_retry=0
+                if [ -f "$workspace/.claude-manager-feedback.json" ]; then
+                    current_retry=$(python3 -c "import json; print(json.load(open('$workspace/.claude-manager-feedback.json')).get('retry_count', 0))" 2>/dev/null || echo "0")
                 fi
 
-                notify "reject" "REJECTED: $project #$issue_number - $reasoning"
+                if [ "$current_retry" -lt "$max_retries" ]; then
+                    # Save feedback for employee retry — keep the branch intact
+                    log_info "REJECT: Saving feedback for employee retry ($((current_retry + 1))/$max_retries)"
+                    echo "$verdict_json" | python3 -c "
+import json, sys
+v = json.load(sys.stdin)
+feedback_data = {
+    'verdict': 'REJECT',
+    'project': v.get('project', ''),
+    'issue_number': v.get('issue_number', ''),
+    'branch': v.get('branch', ''),
+    'base_branch': v.get('base_branch', 'main'),
+    'reasoning': v.get('reasoning', ''),
+    'feedback_to_employee': v.get('feedback_to_employee', ''),
+    'requirements_missing': v.get('requirements_missing', []),
+    'retry_count': $((current_retry + 1)),
+    'run_id': '$RUN_ID'
+}
+with open('$workspace/.claude-manager-feedback.json', 'w') as f:
+    json.dump(feedback_data, f, indent=2)
+" 2>/dev/null
+
+                    log_ok "Feedback saved to $workspace/.claude-manager-feedback.json (retry $((current_retry + 1))/$max_retries)"
+
+                    if [ -n "$issue_number" ] && [ "$issue_number" != "None" ] && [ "$issue_number" != "null" ]; then
+                        gh issue comment "$issue_number" --repo "$project" --body "🤖 **Manager verdict: REJECTED** — $reasoning. Employee will retry with feedback (attempt $((current_retry + 1))/$max_retries).
+
+Run: $RUN_ID" 2>/dev/null || true
+                    fi
+
+                    notify "reject_retry" "REJECTED (retry $((current_retry + 1))/$max_retries): $project #$issue_number - $reasoning"
+                else
+                    # Max retries exhausted — clean up
+                    log_info "REJECT: Max retries ($max_retries) exhausted. Resetting workspace."
+                    git checkout "$base_branch" 2>/dev/null || true
+                    git branch -D "$branch" 2>/dev/null || true
+                    rm -f "$workspace/.claude-manager-feedback.json"
+                    log_ok "Rejected changes cleaned up (retries exhausted)"
+
+                    if [ -n "$issue_number" ] && [ "$issue_number" != "None" ] && [ "$issue_number" != "null" ]; then
+                        gh issue comment "$issue_number" --repo "$project" --body "🤖 **Manager verdict: REJECTED** — $reasoning. Retries exhausted ($max_retries attempts). Will start fresh next cycle.
+
+Run: $RUN_ID" 2>/dev/null || true
+                        # Clean up agent labels
+                        gh issue edit "$issue_number" --repo "$project" --remove-label "autonomous-agent/done" 2>/dev/null || true
+                        gh issue edit "$issue_number" --repo "$project" --remove-label "autonomous-agent/in-progress" 2>/dev/null || true
+                    fi
+
+                    notify "reject" "REJECTED (final): $project #$issue_number - $reasoning"
+                fi
                 ;;
 
             *)
@@ -1389,6 +1492,104 @@ main() {
 
     # ---- PHASE 3: Execute verdicts ----
     execute_verdicts "$verdicts_file"
+
+    # ---- PHASE 3b: Retry loop for rejected projects ----
+    local max_retries
+    max_retries=$(json_get "$CONFIG_FILE" "limits.max_rejection_retries" 2>/dev/null || echo "1")
+
+    local retry_round=0
+    while [ "$retry_round" -lt "$max_retries" ]; do
+        # Check which projects have pending feedback files (meaning they were rejected and need retry)
+        local retry_projects=()
+        for ((i = 0; i < project_count; i++)); do
+            local repo_retry
+            repo_retry=$(get_project_field "$i" "repo")
+            local name_retry
+            name_retry=$(repo_name "$repo_retry")
+            local ws_retry="$WORKSPACES_DIR/$name_retry"
+
+            if [ -f "$ws_retry/.claude-manager-feedback.json" ]; then
+                retry_projects+=("$i")
+            fi
+        done
+
+        if [ ${#retry_projects[@]} -eq 0 ]; then
+            log_info "No rejected projects to retry."
+            break
+        fi
+
+        retry_round=$((retry_round + 1))
+        log_info "=========================================="
+        log_info "RETRY ROUND $retry_round/$max_retries: ${#retry_projects[@]} project(s) to retry"
+        log_info "=========================================="
+
+        # Re-run employees for rejected projects
+        for idx in "${retry_projects[@]}"; do
+            local repo_r
+            repo_r=$(get_project_field "$idx" "repo")
+            local name_r
+            name_r=$(repo_name "$repo_r")
+            local ws_r="$WORKSPACES_DIR/$name_r"
+
+            if ! check_rate_limit; then
+                log_warn "Rate limit reached during retry. Remaining retries cancelled."
+                # Clean up remaining feedback files since we can't retry
+                for remaining_idx in "${retry_projects[@]}"; do
+                    local rr=$(get_project_field "$remaining_idx" "repo")
+                    local rn=$(repo_name "$rr")
+                    rm -f "$WORKSPACES_DIR/$rn/.claude-manager-feedback.json"
+                done
+                break 2
+            fi
+
+            if ! check_token_budget; then
+                log_warn "Token budget exceeded during retry. Remaining retries cancelled."
+                for remaining_idx in "${retry_projects[@]}"; do
+                    local rr=$(get_project_field "$remaining_idx" "repo")
+                    local rn=$(repo_name "$rr")
+                    rm -f "$WORKSPACES_DIR/$rn/.claude-manager-feedback.json"
+                done
+                break 2
+            fi
+
+            log_info "Retrying employee for: $repo_r"
+            run_employee "$repo_r" "$ws_r" "$idx"
+
+            # Pause between retries
+            if [ ${#retry_projects[@]} -gt 1 ]; then
+                log_info "Pausing 10s before next retry..."
+                sleep 10
+            fi
+        done
+
+        # Re-run manager review for retried projects
+        if ! check_rate_limit; then
+            log_warn "Rate limit reached before retry manager review."
+            break
+        fi
+
+        local retry_review_package
+        retry_review_package=$(collect_employee_reports "$project_count")
+        log_info "Retry review package: $retry_review_package"
+
+        local retry_verdicts_file
+        retry_verdicts_file=$(run_manager_review "$retry_review_package")
+
+        # Execute retry verdicts
+        execute_verdicts "$retry_verdicts_file"
+
+        # Update verdicts_file to the latest for digest
+        verdicts_file="$retry_verdicts_file"
+    done
+
+    # Clean up any remaining feedback files (in case retries were exhausted by the loop limit)
+    for ((i = 0; i < project_count; i++)); do
+        local repo_cleanup
+        repo_cleanup=$(get_project_field "$i" "repo")
+        local name_cleanup
+        name_cleanup=$(repo_name "$repo_cleanup")
+        rm -f "$WORKSPACES_DIR/$name_cleanup/.claude-manager-feedback.json"
+    done
 
     # ---- PHASE 4: Write digest ----
     write_digest "$verdicts_file"

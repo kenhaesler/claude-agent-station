@@ -22,6 +22,7 @@
     "token_limit_daily": 0,
     "token_limit_monthly": 0,
     "token_reserve_percent": 20,
+    "max_rejection_retries": 1,
     "session_limit_24h": 50,
     "max_session_percent": 80,
     "max_concurrent_employees": 1,
