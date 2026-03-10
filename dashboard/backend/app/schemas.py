@@ -102,6 +102,56 @@ class NotificationOut(BaseModel):
         from_attributes = True
 
 
+# --- Plans ---
+
+class PlanCreate(BaseModel):
+    project_id: int
+    issue_number: Optional[int] = None
+    issue_title: Optional[str] = None
+    title: str
+    description: Optional[str] = None
+    steps: Optional[str] = None  # JSON array
+    estimated_scope: Optional[str] = None
+    files_affected: Optional[str] = None  # JSON array
+    status: str = "draft"
+    run_id: Optional[str] = None
+
+
+class PlanUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    steps: Optional[str] = None
+    estimated_scope: Optional[str] = None
+    files_affected: Optional[str] = None
+    status: Optional[str] = None
+    implementation_run_id: Optional[str] = None
+
+
+class PlanOut(BaseModel):
+    id: int
+    project_id: int
+    issue_number: Optional[int] = None
+    issue_title: Optional[str] = None
+    title: str
+    description: Optional[str] = None
+    steps: Optional[str] = None
+    estimated_scope: Optional[str] = None
+    files_affected: Optional[str] = None
+    status: str
+    run_id: Optional[str] = None
+    implementation_run_id: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class PlanList(BaseModel):
+    plans: List[PlanOut]
+    total: int
+
+
 # --- System ---
 
 class HealthResponse(BaseModel):

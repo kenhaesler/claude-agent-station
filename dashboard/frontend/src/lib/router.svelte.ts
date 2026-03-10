@@ -1,4 +1,4 @@
-type Page = 'dashboard' | 'projects' | 'runs' | 'run-detail' | 'logs' | 'config' | 'system';
+type Page = 'dashboard' | 'projects' | 'plans' | 'plan-detail' | 'runs' | 'run-detail' | 'logs' | 'config' | 'system';
 
 interface Route {
   page: Page;
@@ -12,8 +12,11 @@ function parseHash(): Route {
   if (parts.length === 0) return { page: 'dashboard', param: null };
 
   const page = parts[0] as Page;
-  const validPages: Page[] = ['dashboard', 'projects', 'runs', 'logs', 'config', 'system'];
+  const validPages: Page[] = ['dashboard', 'projects', 'plans', 'runs', 'logs', 'config', 'system'];
 
+  if (page === 'plans' && parts.length > 1) {
+    return { page: 'plan-detail', param: parts[1] };
+  }
   if (page === 'runs' && parts.length > 1) {
     return { page: 'run-detail', param: parts[1] };
   }

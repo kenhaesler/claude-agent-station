@@ -378,8 +378,8 @@ run_employee() {
     max_turns=$(json_get "$CONFIG_FILE" "limits.max_employee_turns" 2>/dev/null || echo "200")
     max_budget=$(json_get "$CONFIG_FILE" "limits.max_employee_budget_usd" 2>/dev/null || echo "25.00")
 
-    # Analyze mode uses Sonnet (cheaper — no code changes, just analysis)
-    if [ "$mode" = "analyze" ]; then
+    # Analyze/plan modes use Sonnet (cheaper — no code changes, just analysis/planning)
+    if [ "$mode" = "analyze" ] || [ "$mode" = "plan" ]; then
         model="claude-sonnet-4-6"
         max_turns=50
         max_budget="5.00"
@@ -396,7 +396,22 @@ run_employee() {
 
     # Select prompt based on mode
     local system_prompt employee_prompt
-    if [ "$mode" = "analyze" ]; then
+    if [ "$mode" = "plan" ]; then
+        system_prompt="$SCRIPT_DIR/../prompts/planner.md"
+        employee_prompt="Create implementation plans for the repository: $repo
+
+Environment variables available:
+- GITHUB_REPO=$repo
+- GH_TOKEN is set
+
+Your workspace is: $workspace
+
+Analyze open issues and create detailed implementation plans. Write plans to the dashboard API at http://127.0.0.1:8420/api/plans. Each plan should include step-by-step instructions, files to change, code snippets, and acceptance criteria.
+
+Write your report to $workspace/.claude-employee-report.json
+
+Remember: You are in PLAN mode. Read and analyze only — do NOT modify any source files."
+    elif [ "$mode" = "analyze" ]; then
         system_prompt="$SCRIPT_DIR/../prompts/analyst.md"
         employee_prompt="Analyze the repository: $repo
 
