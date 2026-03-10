@@ -1,7 +1,7 @@
 """Application configuration via pydantic-settings."""
 
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 from pydantic_settings import BaseSettings
 
@@ -25,6 +25,15 @@ class Settings(BaseSettings):
 
     # WebSocket polling interval (seconds)
     ws_poll_interval: float = 0.5
+
+    # CORS allowed origins for cross-origin requests (e.g. frontend dev server)
+    # Override with STATION_ALLOWED_ORIGINS as a JSON list or comma-separated string
+    allowed_origins: List[str] = [
+        "http://localhost:5173",
+        "http://localhost:4173",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:4173",
+    ]
 
     class Config:
         env_prefix = "STATION_"

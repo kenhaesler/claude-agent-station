@@ -95,9 +95,11 @@ app = FastAPI(
 )
 
 # CORS for local frontend development
+# Note: allow_credentials=True requires explicit origins (not "*") per the CORS spec.
+# Configure via STATION_ALLOWED_ORIGINS env var for custom origins.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
