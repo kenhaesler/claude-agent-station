@@ -731,6 +731,7 @@ print(json.dumps(v))
         case "$verdict" in
             APPROVE)
                 log_info "APPROVE: Pushing, merging, and closing issue (base: $base_branch)"
+                local push_merge_ok=false
                 # Push the branch
                 if git push origin "$branch" 2>/dev/null; then
                     log_ok "Pushed $branch"
@@ -739,28 +740,7 @@ print(json.dumps(v))
                     git checkout "$base_branch" 2>/dev/null
                     if git merge "$branch" 2>/dev/null; then
                         git push origin "$base_branch" 2>/dev/null && log_ok "Merged to $base_branch"
-
-                        # Close issue with documentation
-                        if [ -n "$issue_number" ]; then
-                            local feedback
-                            feedback=$(echo "$verdict_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('feedback_to_employee','Good work.'))")
-                            gh issue comment "$issue_number" --repo "$project" --body "## Completed by Autonomous Agent
-
-### Manager Review: APPROVED
-
-$reasoning
-
-### Employee Feedback
-$feedback
-
-Branch \`$branch\` merged to \`$base_branch\`.
-
----
-Autonomous run: $RUN_ID" 2>/dev/null || true
-
-                            gh issue close "$issue_number" --repo "$project" --reason completed 2>/dev/null || true
-                            log_ok "Issue #$issue_number closed"
-                        fi
+                        push_merge_ok=true
 
                         # Cleanup branch
                         git branch -d "$branch" 2>/dev/null || true
@@ -776,6 +756,41 @@ Run: $RUN_ID" 2>/dev/null || true
                     fi
                 else
                     log_error "Push failed for $branch"
+                fi
+
+                # Close issue with documentation (after push/merge)
+                if [ "$push_merge_ok" = true ] && [ -n "$issue_number" ] && [ "$issue_number" != "None" ] && [ "$issue_number" != "null" ]; then
+                    local feedback
+                    feedback=$(echo "$verdict_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('feedback_to_employee','Good work.'))")
+                    gh issue comment "$issue_number" --repo "$project" --body "## Completed by Autonomous Agent
+
+### Manager Review: APPROVED
+
+$reasoning
+
+### Employee Feedback
+$feedback
+
+Branch \`$branch\` merged to \`$base_branch\`.
+
+---
+Autonomous run: $RUN_ID" 2>/dev/null || log_warn "Failed to comment on issue #$issue_number"
+
+                    if gh issue close "$issue_number" --repo "$project" --reason completed 2>&1; then
+                        log_ok "Issue #$issue_number closed"
+                    else
+                        log_error "Failed to close issue #$issue_number, retrying..."
+                        sleep 2
+                        if gh issue close "$issue_number" --repo "$project" --reason completed 2>&1; then
+                            log_ok "Issue #$issue_number closed (retry succeeded)"
+                        else
+                            log_error "Failed to close issue #$issue_number after retry"
+                        fi
+                    fi
+
+                    # Clean up agent labels
+                    gh issue edit "$issue_number" --repo "$project" --remove-label "autonomous-agent/done" 2>/dev/null || true
+                    gh issue edit "$issue_number" --repo "$project" --remove-label "autonomous-agent/in-progress" 2>/dev/null || true
                 fi
 
                 notify "approve" "APPROVED: $project #$issue_number - $reasoning"
@@ -796,10 +811,13 @@ Run: $RUN_ID" 2>/dev/null || true
 ---
 Autonomous run: $RUN_ID" 2>/dev/null && log_ok "PR created" || log_warn "PR creation failed"
 
-                    if [ -n "$issue_number" ]; then
+                    if [ -n "$issue_number" ] && [ "$issue_number" != "None" ] && [ "$issue_number" != "null" ]; then
                         gh issue comment "$issue_number" --repo "$project" --body "PR created for human review. Manager notes: $reasoning
 
 Run: $RUN_ID" 2>/dev/null || true
+                        # Clean up agent labels
+                        gh issue edit "$issue_number" --repo "$project" --remove-label "autonomous-agent/done" 2>/dev/null || true
+                        gh issue edit "$issue_number" --repo "$project" --remove-label "autonomous-agent/in-progress" 2>/dev/null || true
                     fi
                 else
                     log_error "Push failed for $branch"
@@ -813,6 +831,15 @@ Run: $RUN_ID" 2>/dev/null || true
                 git checkout "$base_branch" 2>/dev/null || true
                 git branch -D "$branch" 2>/dev/null || true
                 log_ok "Rejected changes cleaned up"
+
+                if [ -n "$issue_number" ] && [ "$issue_number" != "None" ] && [ "$issue_number" != "null" ]; then
+                    gh issue comment "$issue_number" --repo "$project" --body "🤖 **Manager verdict: REJECTED** — $reasoning. Will retry next cycle.
+
+Run: $RUN_ID" 2>/dev/null || true
+                    # Clean up agent labels
+                    gh issue edit "$issue_number" --repo "$project" --remove-label "autonomous-agent/done" 2>/dev/null || true
+                    gh issue edit "$issue_number" --repo "$project" --remove-label "autonomous-agent/in-progress" 2>/dev/null || true
+                fi
 
                 notify "reject" "REJECTED: $project #$issue_number - $reasoning"
                 ;;

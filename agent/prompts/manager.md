@@ -156,7 +156,7 @@ After executing each verdict, update the issue on GitHub:
 
 ### On APPROVE (after pushing and merging):
 - Comment on the issue: `gh issue comment <number> --repo <repo> --body "🤖 **Manager verdict: APPROVED** — merged to main. <brief reasoning>"`
-- The merge commit with `fix #N` or `closes #N` will auto-close the issue
+- Close the issue explicitly: `gh issue close <number> --repo <repo> --reason completed`
 - Remove agent labels: `gh issue edit <number> --repo <repo> --remove-label "autonomous-agent/done"`
 
 ### On PR (after pushing and creating PR):
