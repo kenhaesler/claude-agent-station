@@ -154,8 +154,8 @@ cleanup_children() {
     fi
 }
 
-trap 'cleanup_children TERM; exit 130' SIGTERM
-trap 'cleanup_children INT; exit 130' SIGINT
+trap 'cleanup_children TERM; cleanup_all_worktrees 2>/dev/null || true; exit 130' SIGTERM
+trap 'cleanup_children INT; cleanup_all_worktrees 2>/dev/null || true; exit 130' SIGINT
 
 get_max_concurrent() {
     json_get "$CONFIG_FILE" "limits.max_concurrent_employees" 2>/dev/null || echo "1"
@@ -480,6 +480,177 @@ setup_workspace() {
     echo "$workspace"
 }
 
+# ============================================================================
+# WORKTREE MANAGEMENT (for concurrent employees on same project)
+# ============================================================================
+
+setup_employee_worktree() {
+    local repo="$1" employee_index="$2"
+    local name
+    name=$(repo_name "$repo")
+    local main_workspace="$WORKSPACES_DIR/$name"
+    local worktree_path="$WORKSPACES_DIR/${name}-e${employee_index}"
+
+    # Remove stale worktree if it exists
+    if [ -d "$worktree_path" ]; then
+        log_info "Removing stale worktree: $worktree_path" >&2
+        cd "$main_workspace"
+        git worktree remove "$worktree_path" --force 2>/dev/null >&2 || rm -rf "$worktree_path"
+    fi
+
+    cd "$main_workspace"
+    local current_branch
+    current_branch=$(git branch --show-current 2>/dev/null || echo "main")
+
+    git worktree add "$worktree_path" "$current_branch" 2>/dev/null >&2 || {
+        log_error "Failed to create worktree for $repo employee $employee_index" >&2
+        return 1
+    }
+
+    log_info "Created worktree: $worktree_path (from $current_branch)" >&2
+    echo "$worktree_path"
+}
+
+cleanup_worktrees() {
+    local repo="$1"
+    local name
+    name=$(repo_name "$repo")
+    local main_workspace="$WORKSPACES_DIR/$name"
+
+    if [ ! -d "$main_workspace/.git" ]; then
+        return 0
+    fi
+
+    cd "$main_workspace"
+
+    # Find and remove all employee worktrees for this repo
+    local worktree_pattern="$WORKSPACES_DIR/${name}-e"
+    for wt in "$worktree_pattern"*; do
+        if [ -d "$wt" ]; then
+            log_info "Cleaning up worktree: $wt"
+            git worktree remove "$wt" --force 2>/dev/null || rm -rf "$wt"
+        fi
+    done
+
+    # Prune stale worktree references
+    git worktree prune 2>/dev/null || true
+}
+
+cleanup_all_worktrees() {
+    local count
+    count=$(get_project_count 2>/dev/null) || return 0
+    for ((i = 0; i < count; i++)); do
+        local repo
+        repo=$(get_project_field "$i" "repo" 2>/dev/null) || continue
+        cleanup_worktrees "$repo" 2>/dev/null || true
+    done
+}
+
+# ============================================================================
+# ISSUE ASSIGNMENT (pre-assignment for concurrent employees)
+# ============================================================================
+
+assign_work() {
+    local repo="$1" project_index="$2" employee_count="$3"
+    local name
+    name=$(repo_name "$repo")
+    local workspace="$WORKSPACES_DIR/$name"
+
+    log_info "Pre-assigning issues for $repo ($employee_count employees)..."
+
+    # Fetch open issues
+    local issues_json
+    issues_json=$(cd "$workspace" && GITHUB_REPO="$repo" gh issue list --repo "$repo" --state open --limit 30 --json number,title,body,labels,assignees 2>/dev/null) || {
+        log_warn "Failed to fetch issues for $repo, employees will self-select"
+        return 1
+    }
+
+    # Fetch open PRs to avoid duplicating work
+    local prs_json
+    prs_json=$(cd "$workspace" && GITHUB_REPO="$repo" gh pr list --repo "$repo" --state open --json number,title,headRefName 2>/dev/null) || prs_json="[]"
+
+    # Build assignment prompt
+    local assignment_prompt="Assign issues from this repository to $employee_count employees.
+
+## Open Issues:
+$issues_json
+
+## Open PRs (avoid duplicating these):
+$prs_json
+
+## Employee Count: $employee_count
+
+Return ONLY the JSON assignment object, no other text."
+
+    # Run assigner with Haiku (fast + cheap)
+    local assigner_prompt_file="$SCRIPT_DIR/../prompts/assigner.md"
+    local assignment_output
+    assignment_output=$(echo "$assignment_prompt" | claude -p \
+        --system "$(cat "$assigner_prompt_file")" \
+        --model "claude-haiku-4-5-20251001" \
+        --max-turns 1 \
+        --no-session-persistence \
+        --dangerously-skip-permissions \
+        --output-format text 2>/dev/null) || {
+        log_warn "Assignment agent failed for $repo, employees will self-select"
+        return 1
+    }
+
+    # Extract JSON from output (handle potential markdown wrapping)
+    local clean_json
+    clean_json=$(echo "$assignment_output" | python3 -c "
+import sys, json, re
+text = sys.stdin.read()
+# Try to extract JSON from markdown code blocks if present
+match = re.search(r'\`\`\`(?:json)?\s*(\{.*?\})\s*\`\`\`', text, re.DOTALL)
+if match:
+    text = match.group(1)
+# Validate it's valid JSON
+data = json.loads(text.strip())
+print(json.dumps(data))
+" 2>/dev/null) || {
+        log_warn "Failed to parse assignment output for $repo, employees will self-select"
+        return 1
+    }
+
+    # Write individual assignment files
+    local assignments_written=0
+    for ((ei = 0; ei < employee_count; ei++)); do
+        local assignment_file="$workspace/.claude-assignment-${ei}.json"
+        local employee_assignment
+        employee_assignment=$(echo "$clean_json" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+assignments = data.get('assignments', [])
+for a in assignments:
+    if a.get('employee_index') == $ei:
+        print(json.dumps(a))
+        break
+" 2>/dev/null) || continue
+
+        if [ -n "$employee_assignment" ] && [ "$employee_assignment" != "null" ]; then
+            echo "$employee_assignment" > "$assignment_file"
+            local assigned_issue
+            assigned_issue=$(echo "$employee_assignment" | python3 -c "import sys,json; print(json.load(sys.stdin).get('issue_number',''))" 2>/dev/null || echo "?")
+            log_info "  Employee $ei assigned issue #$assigned_issue"
+
+            # Label issue as in-progress atomically
+            (cd "$workspace" && GITHUB_REPO="$repo" gh label create "autonomous-agent/in-progress" --repo "$repo" --color D4C5F9 --description "Being worked on by autonomous agent" --force 2>/dev/null || true)
+            (cd "$workspace" && GITHUB_REPO="$repo" gh issue edit "$assigned_issue" --repo "$repo" --add-label "autonomous-agent/in-progress" 2>/dev/null || true)
+
+            assignments_written=$((assignments_written + 1))
+        fi
+    done
+
+    if [ "$assignments_written" -eq 0 ]; then
+        log_warn "No assignments produced for $repo, employees will self-select"
+        return 1
+    fi
+
+    log_ok "Assigned $assignments_written issues for $repo"
+    return 0
+}
+
 list_projects() {
     local count
     count=$(get_project_count)
@@ -633,6 +804,39 @@ Remember: commit locally but NEVER push. The manager will review and push if app
             # Clean up plan file after reading (it's been embedded in the prompt)
             rm -f "$plan_file"
         else
+            # Check if there's a pre-assignment for this employee
+            local assignment_file="$workspace/.claude-assignment-${employee_index}.json"
+            if [ -f "$assignment_file" ]; then
+                local assign_issue assign_title assign_instructions
+                assign_issue=$(python3 -c "import json; print(json.load(open('$assignment_file')).get('issue_number',''))" 2>/dev/null || echo "")
+                assign_title=$(python3 -c "import json; print(json.load(open('$assignment_file')).get('issue_title',''))" 2>/dev/null || echo "")
+                assign_instructions=$(python3 -c "import json; print(json.load(open('$assignment_file')).get('instructions',''))" 2>/dev/null || echo "")
+
+                log_info "Employee $employee_index has pre-assignment: issue #$assign_issue"
+
+                employee_prompt="Work on the repository: $repo
+
+Environment variables available:
+- GITHUB_REPO=$repo
+- GH_TOKEN is set
+
+Your workspace is: $workspace
+
+## DIRECTED MODE: Pre-Assigned Issue
+
+You have been assigned a specific issue by the manager. **Skip Step 1 (Find Work)** — go directly to Step 1b (Signal Work) and then Step 2 (Understand the FULL Issue).
+
+**Assigned Issue**: #$assign_issue — $assign_title
+
+**Manager Instructions**: $assign_instructions
+
+Work on issue #$assign_issue. Read it fully (including all comments), implement the solution, run tests, and write your report to $workspace/.claude-employee-report${report_suffix}.json
+
+Remember: commit locally but NEVER push. The manager will review and push if approved."
+
+                # Clean up assignment file after embedding
+                rm -f "$assignment_file"
+            else
             local multi_employee_note=""
             if [ "$employee_index" -gt 0 ]; then
                 multi_employee_note="
@@ -704,6 +908,7 @@ Find the most actionable open issue, implement it fully, run tests, and write yo
 Remember: commit locally but NEVER push. The manager will review and push if approved."
             fi
         fi
+        fi  # end plan_file check
     fi
 
     # Append custom instructions if configured for this project
@@ -829,13 +1034,28 @@ collect_employee_reports() {
         echo "## Project: $repo" >> "$review_package"
         echo "" >> "$review_package"
 
-        # Find all employee reports (main + indexed)
+        # Find all employee reports (main workspace + worktree paths)
         local report_files=()
         if [ -f "$workspace/.claude-employee-report.json" ]; then
             report_files+=("$workspace/.claude-employee-report.json")
         fi
         for indexed_report in "$workspace"/.claude-employee-report-*.json; do
             [ -f "$indexed_report" ] && report_files+=("$indexed_report")
+        done
+        # Also check worktree paths (reports may not have been copied yet)
+        for wt_dir in "$WORKSPACES_DIR/${name}-e"*; do
+            if [ -d "$wt_dir" ]; then
+                for wt_report in "$wt_dir"/.claude-employee-report*.json; do
+                    if [ -f "$wt_report" ]; then
+                        # Avoid duplicates - only add if not already in main workspace
+                        local wt_basename
+                        wt_basename=$(basename "$wt_report")
+                        if [ ! -f "$workspace/$wt_basename" ]; then
+                            report_files+=("$wt_report")
+                        fi
+                    fi
+                done
+            fi
         done
 
         if [ ${#report_files[@]} -eq 0 ]; then
@@ -1362,6 +1582,31 @@ main() {
     done
     log_info "Total employees to spawn: $total_employees"
 
+    # ---- PHASE 0.5: Pre-assign issues for multi-employee projects ----
+    for ((i = 0; i < project_count; i++)); do
+        local repo_check enabled_check mode_check
+        repo_check=$(get_project_field "$i" "repo")
+        enabled_check=$(get_project_field "$i" "enabled" 2>/dev/null || echo "true")
+        [ "$enabled_check" = "false" ] && continue
+        mode_check=$(get_project_field "$i" "mode" 2>/dev/null || echo "full")
+
+        local employees_for_assign=$max_per_project
+        if [ "$mode_check" = "analyze" ] || [ "$mode_check" = "plan" ]; then
+            employees_for_assign=1
+        fi
+
+        # Only pre-assign if multiple employees on same project in full mode
+        if [ "$employees_for_assign" -gt 1 ] && [ "$mode_check" = "full" ]; then
+            # Need workspace for fetching issues
+            local assign_workspace
+            assign_workspace=$(setup_workspace "$repo_check") || {
+                log_warn "Failed to setup workspace for $repo_check assignment, will self-select"
+                continue
+            }
+            assign_work "$repo_check" "$i" "$employees_for_assign" || true
+        fi
+    done
+
     # ---- PHASE 1: Run employees per project ----
     local has_work=false
     local is_parallel=false
@@ -1404,13 +1649,24 @@ main() {
                 break 2
             fi
 
-            # Setup workspace (only once per project, for first employee)
+            # Setup workspace: employee 0 uses main workspace, others get worktrees
             local workspace
             if [ "$ei" -eq 0 ]; then
                 workspace=$(setup_workspace "$repo") || {
                     log_error "Failed to setup workspace for $repo"
                     continue 2
                 }
+            elif [ "$employees_this_project" -gt 1 ]; then
+                # Create isolated worktree for concurrent employees
+                workspace=$(setup_employee_worktree "$repo" "$ei") || {
+                    log_warn "Failed to create worktree for $repo employee $ei, using shared workspace"
+                    workspace="$WORKSPACES_DIR/$(repo_name "$repo")"
+                }
+                # Copy assignment file to worktree if it exists
+                local main_ws="$WORKSPACES_DIR/$(repo_name "$repo")"
+                if [ -f "$main_ws/.claude-assignment-${ei}.json" ]; then
+                    cp "$main_ws/.claude-assignment-${ei}.json" "$workspace/.claude-assignment-${ei}.json"
+                fi
             else
                 workspace="$WORKSPACES_DIR/$(repo_name "$repo")"
             fi
@@ -1451,6 +1707,38 @@ main() {
         log_warn "No employees ran. Exiting."
         exit 0
     fi
+
+    # ---- PHASE 1.5: Collect worktree reports and clean up ----
+    for ((i = 0; i < project_count; i++)); do
+        local repo_wt enabled_wt
+        repo_wt=$(get_project_field "$i" "repo")
+        enabled_wt=$(get_project_field "$i" "enabled" 2>/dev/null || echo "true")
+        [ "$enabled_wt" = "false" ] && continue
+
+        local name_wt
+        name_wt=$(repo_name "$repo_wt")
+        local main_ws_wt="$WORKSPACES_DIR/$name_wt"
+
+        # Copy employee reports from worktrees to main workspace before cleanup
+        for wt_dir in "$WORKSPACES_DIR/${name_wt}-e"*; do
+            if [ -d "$wt_dir" ]; then
+                for wt_report in "$wt_dir"/.claude-employee-report*.json; do
+                    if [ -f "$wt_report" ]; then
+                        local report_basename
+                        report_basename=$(basename "$wt_report")
+                        cp "$wt_report" "$main_ws_wt/$report_basename"
+                        log_info "Copied worktree report: $report_basename from $wt_dir"
+                    fi
+                done
+            fi
+        done
+
+        # Clean up worktrees
+        cleanup_worktrees "$repo_wt" 2>/dev/null || true
+
+        # Clean up assignment files
+        rm -f "$main_ws_wt"/.claude-assignment-*.json 2>/dev/null || true
+    done
 
     # ---- PHASE 2: Manager review ----
 

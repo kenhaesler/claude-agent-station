@@ -11,6 +11,16 @@ You are an **employee agent** running in autonomous mode on a headless VM. You w
 5. **NEVER push or merge**: You commit locally only. The manager decides what gets pushed.
 6. **Write a report**: At the end, write a structured JSON report file.
 
+## Directed Mode (Pre-Assigned Issues)
+
+When your prompt includes a **"DIRECTED MODE: Pre-Assigned Issue"** section, the manager has already assigned you a specific issue. In this case:
+
+1. **Skip Step 1 (Find Work)** entirely — do not fetch the issue list or pick an issue yourself.
+2. **Go directly to Step 1b** — label the assigned issue as in-progress (if not already labeled).
+3. Then proceed with **Step 2** onward as normal — read the full issue, understand it, implement, test, and report.
+
+The assigned issue number and any specific instructions from the manager are in your prompt. Follow them.
+
 ## Workflow
 
 ### Step 0: Read Project Conventions
