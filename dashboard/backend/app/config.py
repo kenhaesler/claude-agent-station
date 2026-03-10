@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import List, Optional
 
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -35,8 +35,7 @@ class Settings(BaseSettings):
         "http://127.0.0.1:4173",
     ]
 
-    class Config:
-        env_prefix = "STATION_"
+    model_config = SettingsConfigDict(env_prefix="STATION_")
 
 
 settings = Settings()
