@@ -39,6 +39,8 @@ async def _migrate_add_columns(conn) -> None:
         ("runs", "tokens_input", "ALTER TABLE runs ADD COLUMN tokens_input INTEGER"),
         ("runs", "tokens_output", "ALTER TABLE runs ADD COLUMN tokens_output INTEGER"),
         ("runs", "tokens_total", "ALTER TABLE runs ADD COLUMN tokens_total INTEGER"),
+        ("runs", "employee_index", "ALTER TABLE runs ADD COLUMN employee_index INTEGER DEFAULT 0"),
+        ("runs", "concurrent_group_id", "ALTER TABLE runs ADD COLUMN concurrent_group_id TEXT"),
     ]
     for table, column, sql in migrations:
         try:

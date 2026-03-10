@@ -66,6 +66,8 @@ async def receive_run_event(
                 model=event.model,
                 status="running",
                 started_at=datetime.now(timezone.utc),
+                employee_index=event.employee_index,
+                concurrent_group_id=event.concurrent_group_id,
             )
             db.add(run)
         else:
@@ -73,6 +75,10 @@ async def receive_run_event(
             run.project_id = project_id or run.project_id
             run.mode = event.mode or run.mode
             run.model = event.model or run.model
+            if event.employee_index is not None:
+                run.employee_index = event.employee_index
+            if event.concurrent_group_id:
+                run.concurrent_group_id = event.concurrent_group_id
 
     elif event_name == "finished":
         # Normalize status: run-manager.sh sends "success"/"no_reports",
@@ -196,6 +202,8 @@ async def receive_run_event(
             "branch": event.branch,
             "mode": event.mode,
             "model": event.model,
+            "employee_index": event.employee_index,
+            "concurrent_group_id": event.concurrent_group_id,
         },
     })
 

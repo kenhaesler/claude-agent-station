@@ -29,13 +29,14 @@ export const deleteProject = (id: number) =>
   request<void>(`/api/projects/${id}`, { method: 'DELETE' });
 
 // Runs
-export const listRuns = (params?: { limit?: number; offset?: number; project_id?: number; status?: string; verdict?: string }) => {
+export const listRuns = (params?: { limit?: number; offset?: number; project_id?: number; status?: string; verdict?: string; concurrent_group_id?: string }) => {
   const q = new URLSearchParams();
   if (params?.limit) q.set('limit', String(params.limit));
   if (params?.offset) q.set('offset', String(params.offset));
   if (params?.project_id) q.set('project_id', String(params.project_id));
   if (params?.status) q.set('status', params.status);
   if (params?.verdict) q.set('verdict', params.verdict);
+  if (params?.concurrent_group_id) q.set('concurrent_group_id', params.concurrent_group_id);
   return request<RunList>(`/api/runs?${q}`);
 };
 export const getLatestRun = () => request<Run>('/api/runs/latest');

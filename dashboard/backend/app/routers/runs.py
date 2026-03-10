@@ -22,6 +22,7 @@ async def list_runs(
     project_id: Optional[int] = None,
     status: Optional[str] = None,
     verdict: Optional[str] = None,
+    concurrent_group_id: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
 ):
     query = select(Run)
@@ -36,6 +37,9 @@ async def list_runs(
     if verdict:
         query = query.where(Run.verdict == verdict)
         count_query = count_query.where(Run.verdict == verdict)
+    if concurrent_group_id:
+        query = query.where(Run.concurrent_group_id == concurrent_group_id)
+        count_query = count_query.where(Run.concurrent_group_id == concurrent_group_id)
 
     total_result = await db.execute(count_query)
     total = total_result.scalar()

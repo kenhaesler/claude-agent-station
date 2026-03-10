@@ -65,6 +65,8 @@ class RunOut(BaseModel):
     employee_report: Optional[str] = None
     verdict_detail: Optional[str] = None
     log_file: Optional[str] = None
+    employee_index: Optional[int] = None
+    concurrent_group_id: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -193,3 +195,5 @@ class WebhookRunEvent(BaseModel):
     duration_ms: Optional[int] = None
     reasoning: Optional[str] = None
     timestamp: Optional[str] = None
+    employee_index: Optional[int] = None
+    concurrent_group_id: Optional[str] = None
