@@ -6,6 +6,7 @@
   import StatusBadge from '../components/StatusBadge.svelte';
   import LoadingSpinner from '../components/LoadingSpinner.svelte';
   import VerdictDetail from '../components/VerdictDetail.svelte';
+  import EmployeeReport from '../components/EmployeeReport.svelte';
   import GlassCard from '../components/GlassCard.svelte';
 
   interface Props { runId: string; }
@@ -100,12 +101,10 @@
     </GlassCard>
 
     <!-- Employee Report -->
-    {#if run.employee_report}
-      <GlassCard class="p-5">
-        <h2 class="font-semibold mb-3">Employee Report</h2>
-        <pre class="text-sm whitespace-pre-wrap text-text-dim">{run.employee_report}</pre>
-      </GlassCard>
-    {/if}
+    <GlassCard class="p-5">
+      <h2 class="font-semibold mb-3">Employee Report</h2>
+      <EmployeeReport report={run.employee_report} />
+    </GlassCard>
 
     <!-- Verdict Detail -->
     <GlassCard class="p-5">
