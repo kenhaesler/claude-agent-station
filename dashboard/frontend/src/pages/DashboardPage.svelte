@@ -1,11 +1,12 @@
 <script lang="ts">
-  import type { Run, SystemStatus, UsageData, Project } from '../lib/types';
-  import { getLatestRun, getSystemStatus, listRuns, getUsage, listProjects } from '../lib/api';
+  import type { Run, SystemStatus, UsageData, Project, CoordinatorTask } from '../lib/types';
+  import { getLatestRun, getSystemStatus, listRuns, getUsage, listProjects, getCoordinatorTasks } from '../lib/api';
   import { formatDuration, formatTokens } from '../lib/format';
   import { toastSuccess, toastError } from '../lib/toast.svelte';
   import {
     connect as connectLiveActivity,
     disconnect as disconnectLiveActivity,
+    reset as resetLiveActivity,
     liveActivity,
   } from '../lib/live-activity.svelte';
   import LoadingSpinner from '../components/LoadingSpinner.svelte';
@@ -27,16 +28,18 @@
   let usage = $state<UsageData | null>(null);
   let projects = $state<Project[]>([]);
   let projectMap = $state<Record<number, string>>({});
+  let coordinatorTasks = $state<CoordinatorTask[]>([]);
   let loading = $state(true);
 
   async function load() {
     try {
-      const [latestRes, runsRes, sysRes, usageRes, projRes] = await Promise.allSettled([
+      const [latestRes, runsRes, sysRes, usageRes, projRes, coordRes] = await Promise.allSettled([
         getLatestRun(),
         listRuns({ limit: 10 }),
         getSystemStatus(),
         getUsage(),
         listProjects(),
+        getCoordinatorTasks(),
       ]);
       if (latestRes.status === 'fulfilled') latest = latestRes.value;
       if (runsRes.status === 'fulfilled') recentRuns = runsRes.value.runs;
@@ -47,6 +50,13 @@
         const map: Record<number, string> = {};
         for (const p of projRes.value) map[p.id] = p.repo;
         projectMap = map;
+      }
+      if (coordRes.status === 'fulfilled') {
+        // Only show coordinator tasks for the current active run
+        const activeRunIds = new Set(recentRuns.filter(r => r.status === 'running' || r.status === 'reviewing').map(r => r.run_id));
+        coordinatorTasks = activeRunIds.size > 0
+          ? coordRes.value.filter(t => activeRunIds.has(t.run_id))
+          : [];
       }
     } finally {
       loading = false;
@@ -68,14 +78,26 @@
   let totalTokens = $derived(recentRuns.reduce((sum, r) => sum + (r.tokens_total ?? 0), 0));
   let avgTokens = $derived(recentRuns.length > 0 ? totalTokens / recentRuns.length : 0);
 
-  // Derive run phase
+  // Derive run phase — detect coordinator activity
+  // "running" = employees working, "reviewing" = manager review phase
   let runPhase = $derived((): RunPhase => {
-    const runningRuns = recentRuns.filter(r => r.status === 'running');
-    if (runningRuns.length === 0) return 'idle';
-    const hasManager = runningRuns.some(r => r.mode === 'manager');
-    const hasVerdict = runningRuns.some(r => r.verdict != null);
+    const activeRuns = recentRuns.filter(r => r.status === 'running' || r.status === 'reviewing');
+    if (activeRuns.length === 0) return 'idle';
+
+    const hasReviewing = activeRuns.some(r => r.status === 'reviewing');
+    const hasManager = activeRuns.some(r => r.mode === 'manager');
+    const hasVerdict = activeRuns.some(r => r.verdict != null);
+
     if (hasVerdict) return 'executing_verdict';
-    if (hasManager) return 'manager_review';
+    if (hasReviewing || hasManager) return 'manager_review';
+
+    // Detect coordinating phase: tasks exist and some are pending/ready (not yet all running)
+    const hasCoordTasks = coordinatorTasks.length > 0;
+    if (hasCoordTasks) {
+      const hasRunning = coordinatorTasks.some(t => t.status === 'running');
+      const hasPending = coordinatorTasks.some(t => t.status === 'pending' || t.status === 'ready');
+      if (!hasRunning || hasPending) return 'coordinating';
+    }
     return 'employee';
   });
 
@@ -83,9 +105,19 @@
 
   // Derive active project name
   let activeProject = $derived(() => {
-    const running = recentRuns.find(r => r.status === 'running');
+    const running = recentRuns.find(r => r.status === 'running' || r.status === 'reviewing');
     if (!running?.project_id) return null;
     return projectMap[running.project_id] ?? null;
+  });
+
+  // Clear stale live activity data when run finishes
+  let prevPhase = $state<string>('idle');
+  $effect(() => {
+    const cur = runPhase();
+    if (prevPhase !== 'idle' && cur === 'idle') {
+      resetLiveActivity();
+    }
+    prevPhase = cur;
   });
 
   // Current tool summary for canvas overlay
@@ -116,6 +148,43 @@
       />
     {/if}
 
+    <!-- Coordinator Task Status — when coordinating -->
+    {#if coordinatorTasks.length > 0 && isRunActive}
+      {@const running = coordinatorTasks.filter(t => t.status === 'running')}
+      {@const completed = coordinatorTasks.filter(t => t.status === 'completed')}
+      {@const failed = coordinatorTasks.filter(t => t.status === 'failed')}
+      {@const pending = coordinatorTasks.filter(t => t.status === 'pending' || t.status === 'ready')}
+      {@const blocked = coordinatorTasks.filter(t => t.status === 'blocked')}
+      <div class="glass rounded-lg px-4 py-3 animate-fade-in-up">
+        <div class="flex items-center gap-3 mb-2">
+          <span class="text-accent-purple text-xs font-medium">Coordinator</span>
+          <span class="text-text-dim text-[10px]">{coordinatorTasks.length} tasks in DAG</span>
+          <a href="#/coordinator" class="ml-auto text-[10px] text-accent-cyan hover:underline">View DAG</a>
+        </div>
+        <div class="flex gap-2 flex-wrap">
+          {#each coordinatorTasks as task}
+            {@const color = task.status === 'completed' ? 'bg-green-500/20 border-green-500/30 text-green-400'
+              : task.status === 'running' ? 'bg-yellow-500/20 border-yellow-500/30 text-yellow-400'
+              : task.status === 'failed' ? 'bg-red-500/20 border-red-500/30 text-red-400'
+              : task.status === 'blocked' ? 'bg-orange-500/20 border-orange-500/30 text-orange-400'
+              : task.status === 'ready' ? 'bg-cyan-500/20 border-cyan-500/30 text-cyan-400'
+              : 'bg-white/5 border-white/10 text-text-dim'}
+            <div class="px-2 py-1 rounded border text-[10px] {color} flex items-center gap-1.5">
+              <span class="font-medium truncate max-w-[140px]">{task.title}</span>
+              {#if task.employee_index != null}
+                <span class="opacity-60">E{task.employee_index}</span>
+              {/if}
+            </div>
+          {/each}
+        </div>
+        {#if failed.length > 0}
+          <div class="mt-1.5 text-[10px] text-red-400">
+            {failed.length} task{failed.length !== 1 ? 's' : ''} failed{blocked.length > 0 ? `, ${blocked.length} blocked` : ''}
+          </div>
+        {/if}
+      </div>
+    {/if}
+
     <!-- Agent Workspace Visualization -->
     <div class="relative glass rounded-lg overflow-hidden animate-fade-in-up" style="height: clamp(280px, 50vh, 500px)">
       <ScanLine />
@@ -127,6 +196,7 @@
         {usage}
         activityIntensity={liveActivity.activityIntensity}
         currentToolSummary={toolSummary}
+        overridePhase={runPhase()}
       />
     </div>
 

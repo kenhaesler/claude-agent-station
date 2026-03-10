@@ -1,4 +1,4 @@
-import type { Project, ProjectCreate, ProjectUpdate, Run, RunList, ActiveEmployeeData, Plan, PlanList, SystemStatus, AuthStatus, LogSearchResult, RunLogs, UsageData, TokenUsageData, OAuthStartResponse, OAuthCallbackResponse } from './types';
+import type { Project, ProjectCreate, ProjectUpdate, Run, RunList, ActiveEmployeeData, Plan, PlanList, SystemStatus, AuthStatus, LogSearchResult, RunLogs, UsageData, TokenUsageData, OAuthStartResponse, OAuthCallbackResponse, CoordinatorTask, CoordinatorDAG, CoordinatorMessage } from './types';
 
 const BASE = import.meta.env.VITE_API_URL || '';
 
@@ -101,3 +101,22 @@ export const getRunLogs = (runId: string, limit?: number, offset?: number) => {
   if (offset) params.set('offset', String(offset));
   return request<RunLogs>(`/api/logs/${runId}?${params}`);
 };
+
+// Coordinator
+export const getCoordinatorTasks = (runId?: string) => {
+  const q = new URLSearchParams();
+  if (runId) q.set('run_id', runId);
+  return request<CoordinatorTask[]>(`/api/coordinator/tasks?${q}`);
+};
+export const getCoordinatorDAG = (runId: string) =>
+  request<CoordinatorDAG>(`/api/coordinator/dag/${runId}`);
+export const getCoordinatorMessages = (runId?: string) => {
+  const q = new URLSearchParams();
+  if (runId) q.set('run_id', runId);
+  return request<CoordinatorMessage[]>(`/api/coordinator/messages?${q}`);
+};
+export const sendGuidance = (data: { run_id: string; employee_index: number; guidance_type: string; content: string }) =>
+  request<{ status: string }>('/api/coordinator/guidance', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });

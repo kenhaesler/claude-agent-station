@@ -9,8 +9,8 @@
   let { phase, startedAt }: Props = $props();
 
   const phases = [
-    { key: 'starting', label: 'Starting', color: 'rgb(59, 130, 246)' },
-    { key: 'employee', label: 'Employee Working', color: 'rgb(59, 130, 246)' },
+    { key: 'coordinating', label: 'Coordinating', color: 'rgb(168, 85, 247)' },
+    { key: 'employee', label: 'Employees Working', color: 'rgb(59, 130, 246)' },
     { key: 'manager_review', label: 'Review', color: 'rgb(245, 158, 11)' },
     { key: 'executing_verdict', label: 'Verdict', color: 'rgb(16, 185, 129)' },
     { key: 'complete', label: 'Complete', color: 'rgb(34, 197, 94)' },
@@ -20,6 +20,7 @@
   function getPhaseIndex(p: RunPhase): number {
     switch (p) {
       case 'idle': return -1;
+      case 'coordinating': return 0;
       case 'employee': return 1;
       case 'manager_review': return 2;
       case 'executing_verdict': return 3;

@@ -69,7 +69,7 @@ export interface ActivityData {
   activeAgent: 'employee' | 'manager' | null;
 }
 
-export type RunPhase = 'idle' | 'employee' | 'manager_review' | 'executing_verdict';
+export type RunPhase = 'idle' | 'coordinating' | 'employee' | 'manager_review' | 'executing_verdict';
 
 export interface WorkspaceData {
   projects: { id: number; repo: string; priority: string; enabled: boolean }[];
@@ -352,7 +352,7 @@ export class WorkspaceRenderer {
     }
 
     // Update flow particles + comet trails
-    const inward = this.runPhase === 'employee' || this.runPhase === 'manager_review';
+    const inward = this.runPhase === 'employee' || this.runPhase === 'coordinating' || this.runPhase === 'manager_review';
     for (let i = this.flowParticles.length - 1; i >= 0; i--) {
       const fp = this.flowParticles[i];
       fp.progress += fp.speed * dt;
@@ -591,7 +591,7 @@ export class WorkspaceRenderer {
   private drawConnections() {
     const { ctx } = this;
     const intensity = this.activity.intensity;
-    const inward = this.runPhase === 'employee' || this.runPhase === 'manager_review';
+    const inward = this.runPhase === 'employee' || this.runPhase === 'coordinating' || this.runPhase === 'manager_review';
 
     for (const node of this.nodes) {
       const isActive = this.activeRunProjectIds.has(node.id);
@@ -1068,6 +1068,7 @@ export class WorkspaceRenderer {
 
   private getPhaseColor(): [number, number, number] {
     switch (this.runPhase) {
+      case 'coordinating': return [168, 85, 247];
       case 'employee': return [59, 130, 246];
       case 'manager_review': return [245, 158, 11];
       case 'executing_verdict': return [16, 185, 129];
@@ -1082,7 +1083,8 @@ export class WorkspaceRenderer {
 
   private getPhaseLabel(): string {
     switch (this.runPhase) {
-      case 'employee': return 'Reviewing';
+      case 'coordinating': return 'Coordinating';
+      case 'employee': return 'Employees Working';
       case 'manager_review': return 'Reviewing';
       case 'executing_verdict': return 'Executing';
       default: return '';

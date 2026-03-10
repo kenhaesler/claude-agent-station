@@ -37,6 +37,15 @@
     'started',
     'finished',
     'verdict',
+    // Coordinator events
+    'dag_created',
+    'dag_completed',
+    'task_started',
+    'task_completed',
+    'task_failed',
+    'task_blocked',
+    'conflict_detected',
+    'guidance_sent',
   ]);
 
   function eventToTicker(event: AgentEvent): TickerEvent {
@@ -75,6 +84,15 @@
     started:            { label: 'Run started',         color: 'text-accent-blue',    icon: '>' },
     finished:           { label: 'Run finished',        color: 'text-accent-blue',    icon: '*' },
     verdict:            { label: 'Verdict issued',      color: 'text-warning',        icon: '!' },
+    // Coordinator events
+    dag_created:        { label: 'DAG created',         color: 'text-accent-purple',  icon: '~' },
+    dag_completed:      { label: 'DAG completed',       color: 'text-accent-purple',  icon: '=' },
+    task_started:       { label: 'Task started',        color: 'text-accent-cyan',    icon: '>' },
+    task_completed:     { label: 'Task done',           color: 'text-accent-emerald', icon: '+' },
+    task_failed:        { label: 'Task failed',         color: 'text-reject',         icon: 'x' },
+    task_blocked:       { label: 'Task blocked',        color: 'text-warning',        icon: '!' },
+    conflict_detected:  { label: 'File conflict',       color: 'text-reject',         icon: '!' },
+    guidance_sent:      { label: 'Guidance sent',       color: 'text-accent-cyan',    icon: '@' },
     default:            { label: 'Event',               color: 'text-text-dim',       icon: '-' },
   };
 

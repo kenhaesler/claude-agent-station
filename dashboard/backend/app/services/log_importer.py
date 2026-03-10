@@ -67,8 +67,11 @@ async def import_historical_runs(db: AsyncSession) -> int:
 
 def _update_run_from_logs(run: "Run", data: dict) -> None:
     """Update an existing Run record with data from log files if fields are missing."""
-    # Only fill in fields that are currently empty/None
-    if not run.status or run.status == "running" or run.status == "unknown":
+    # Only fill in fields that are currently empty/None.
+    # IMPORTANT: Never overwrite "running" status — the run may still be active
+    # with other employees working. Only the webhook handler should transition
+    # a running run to a terminal state.
+    if not run.status or run.status == "unknown":
         if data.get("status") and data["status"] not in ("unknown",):
             run.status = data["status"]
     if not run.model and data.get("model"):
@@ -87,7 +90,7 @@ def _update_run_from_logs(run: "Run", data: dict) -> None:
         run.duration_ms = data["duration_ms"]
     if not run.started_at and data.get("started_at"):
         run.started_at = data["started_at"]
-    if not run.finished_at and data.get("finished_at"):
+    if not run.finished_at and data.get("finished_at") and run.status not in ("running", "reviewing"):
         run.finished_at = data["finished_at"]
     if not run.verdict and data.get("verdict"):
         run.verdict = data["verdict"]

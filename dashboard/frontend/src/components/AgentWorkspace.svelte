@@ -12,9 +12,10 @@
     usage: UsageData | null;
     activityIntensity?: number;
     currentToolSummary?: string | null;
+    overridePhase?: RunPhase | null;
   }
 
-  let { projects, runs, latestRun, systemStatus, usage, activityIntensity = 0, currentToolSummary = null }: Props = $props();
+  let { projects, runs, latestRun, systemStatus, usage, activityIntensity = 0, currentToolSummary = null, overridePhase = null }: Props = $props();
 
   let canvas: HTMLCanvasElement;
   let container: HTMLDivElement;
@@ -26,7 +27,7 @@
   let activeRunProjectIds = $derived(() => {
     const ids = new Set<number>();
     for (const r of runs) {
-      if (r.status === 'running' && r.project_id) ids.add(r.project_id);
+      if ((r.status === 'running' || r.status === 'reviewing') && r.project_id) ids.add(r.project_id);
     }
     return ids;
   });
@@ -34,7 +35,7 @@
   let activeProjectModes = $derived(() => {
     const modes = new Map<number, string>();
     for (const r of runs) {
-      if (r.status === 'running' && r.project_id && r.mode) {
+      if ((r.status === 'running' || r.status === 'reviewing') && r.project_id && r.mode) {
         modes.set(r.project_id, r.mode);
       }
     }
@@ -42,12 +43,15 @@
   });
 
   let runPhase = $derived((): RunPhase => {
-    const runningRuns = runs.filter(r => r.status === 'running');
-    if (runningRuns.length === 0) return 'idle';
-    const hasManager = runningRuns.some(r => r.mode === 'manager');
-    const hasVerdict = runningRuns.some(r => r.verdict != null);
+    // Use parent-provided phase if available (has coordinator context)
+    if (overridePhase) return overridePhase;
+    const activeRuns = runs.filter(r => r.status === 'running' || r.status === 'reviewing');
+    if (activeRuns.length === 0) return 'idle';
+    const hasReviewing = activeRuns.some(r => r.status === 'reviewing');
+    const hasManager = activeRuns.some(r => r.mode === 'manager');
+    const hasVerdict = activeRuns.some(r => r.verdict != null);
     if (hasVerdict) return 'executing_verdict';
-    if (hasManager) return 'manager_review';
+    if (hasReviewing || hasManager) return 'manager_review';
     return 'employee';
   });
 
@@ -149,13 +153,15 @@
   let phase = $derived(runPhase());
   let isActive = $derived(phase !== 'idle');
   let phaseLabel = $derived(
-    phase === 'employee' ? 'EMPLOYEE ACTIVE'
+    phase === 'coordinating' ? 'COORDINATOR ACTIVE'
+    : phase === 'employee' ? 'EMPLOYEES WORKING'
     : phase === 'manager_review' ? 'MANAGER REVIEW'
     : phase === 'executing_verdict' ? 'EXECUTING VERDICT'
     : 'STANDBY'
   );
   let phaseColorClass = $derived(
-    phase === 'employee' ? 'text-accent-blue'
+    phase === 'coordinating' ? 'text-accent-purple'
+    : phase === 'employee' ? 'text-accent-blue'
     : phase === 'manager_review' ? 'text-warning'
     : phase === 'executing_verdict' ? 'text-approve'
     : 'text-text-dim'
@@ -175,7 +181,7 @@
 
     for (let i = 0; i < projects.length; i++) {
       const p = projects[i];
-      const runForProject = runs.find(r => r.status === 'running' && r.project_id === p.id);
+      const runForProject = runs.find(r => (r.status === 'running' || r.status === 'reviewing') && r.project_id === p.id);
       if (!runForProject) continue;
 
       const angle = (i / count) * Math.PI * 2 - Math.PI / 2;
@@ -275,7 +281,7 @@
     {@const labelRadius = Math.min(containerW, containerH) * 0.32 + 30}
     {@const lx = containerW / 2 + Math.cos(angle) * labelRadius}
     {@const ly = containerH / 2 + Math.sin(angle) * labelRadius}
-    {@const activeRun = runs.find(r => r.status === 'running' && r.project_id === project.id)}
+    {@const activeRun = runs.find(r => (r.status === 'running' || r.status === 'reviewing') && r.project_id === project.id)}
     {@const isRunning = !!activeRun}
     {@const modeLabel = activeRun?.mode === 'analyst' ? 'ANALYST' : activeRun?.mode === 'manager' ? 'MANAGER' : 'EMPLOYEE'}
     {@const modeColor = activeRun?.mode === 'analyst' ? 'text-pr' : activeRun?.mode === 'manager' ? 'text-warning' : 'text-accent-blue'}

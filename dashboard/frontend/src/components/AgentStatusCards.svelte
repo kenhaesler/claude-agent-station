@@ -21,14 +21,16 @@
   let isRunning = $derived(phase !== 'idle');
 
   let employeePhaseColor = $derived(
-    phase === 'employee' ? '#3b82f6'
+    phase === 'coordinating' ? '#a855f7'
+    : phase === 'employee' ? '#3b82f6'
     : phase === 'manager_review' ? '#f59e0b'
     : phase === 'executing_verdict' ? '#10b981'
     : '#64748b'
   );
 
   let phaseLabel = $derived(
-    phase === 'employee' ? 'Working'
+    phase === 'coordinating' ? 'Coordinating'
+    : phase === 'employee' ? 'Working'
     : phase === 'manager_review' ? 'In Review'
     : phase === 'executing_verdict' ? 'Executing'
     : 'Standby'

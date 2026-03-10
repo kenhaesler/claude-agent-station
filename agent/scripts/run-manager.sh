@@ -1632,10 +1632,81 @@ main() {
         fi
     done
 
+    # ---- Check for coordinated mode (enabled by default when parallel) ----
+    local coordinated
+    coordinated=$(json_get "$CONFIG_FILE" "coordinator.enabled" 2>/dev/null || echo "true")
+
     # ---- PHASE 1: Run employees per project ----
     local has_work=false
     local is_parallel=false
     [ "$max_concurrent" -gt 1 ] && is_parallel=true
+
+    # ---- COORDINATED MODE: delegate to Python async coordinator ----
+    if [ "$coordinated" = "true" ] && [ "$is_parallel" = true ]; then
+        log_info "=== COORDINATED MODE: Using Python async coordinator ==="
+
+        # Build assignments JSON for the coordinator
+        local assignments_json="$LOG_DIR/run-${RUN_ID}-assignments.json"
+        python3 -c "
+import json, sys
+config = json.load(open('$CONFIG_FILE'))
+projects = config.get('projects', [])
+assignments = []
+max_per = int('$max_per_project')
+workspaces_dir = '$WORKSPACES_DIR'
+
+for i, proj in enumerate(projects):
+    if not proj.get('enabled', True):
+        continue
+    repo = proj['repo']
+    mode = proj.get('mode', 'full')
+    employees = max_per if mode == 'full' else 1
+    repo_name = repo.split('/')[-1] if '/' in repo else repo
+    workspace = f'{workspaces_dir}/{repo_name}'
+
+    # Check for pre-assignments
+    issue_number = None
+    import os
+    assign_file = f'{workspace}/.claude-assignment-0.json'
+    if os.path.exists(assign_file):
+        try:
+            assign = json.load(open(assign_file))
+            issue_number = assign.get('issue_number')
+        except:
+            pass
+
+    assignments.append({
+        'repo': repo,
+        'workspace': workspace,
+        'employee_count': employees,
+        'mode': mode,
+        'issue_number': issue_number,
+    })
+
+json.dump(assignments, open('$assignments_json', 'w'), indent=2)
+print(f'Wrote {len(assignments)} assignments')
+" 2>&1 | while read -r line; do log_info "  $line"; done
+
+        if [ -f "$assignments_json" ]; then
+            local agent_dir
+            agent_dir="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+            PYTHONPATH="$agent_dir/.." python3 -m agent.coordinator \
+                --run-id "$RUN_ID" \
+                --config-file "$CONFIG_FILE" \
+                --log-dir "$LOG_DIR" \
+                --workspaces-dir "$WORKSPACES_DIR" \
+                --assignments-file "$assignments_json" \
+                --concurrent-group-id "$CONCURRENT_GROUP_ID"
+
+            has_work=true
+        else
+            log_warn "Failed to build assignments JSON, falling back to legacy mode"
+        fi
+    fi
+
+    # ---- LEGACY MODE: existing bash employee loop ----
+    if [ "$has_work" = false ]; then
 
     for ((i = 0; i < project_count; i++)); do
         local repo priority enabled
@@ -1727,6 +1798,8 @@ main() {
     if [ "$is_parallel" = true ]; then
         wait_for_all_children
     fi
+
+    fi  # end of legacy mode (if [ "$has_work" = false ])
 
     if [ "$has_work" = false ]; then
         log_warn "No employees ran. Exiting."

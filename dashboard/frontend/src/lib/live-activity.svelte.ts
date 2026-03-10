@@ -113,6 +113,22 @@ export function connect() {
   sampleTimer = setInterval(sampleIntensity, SAMPLE_INTERVAL);
 }
 
+/** Clear accumulated state without disconnecting. Call when runs finish. */
+export function reset() {
+  liveActivity.recentActions.length = 0;
+  liveActivity.currentTool = null;
+  liveActivity.activityIntensity = 0;
+  liveActivity.tokensBurned = 0;
+  liveActivity.turnCount = 0;
+  liveActivity.sparklineData.length = 0;
+  rawIntensity = 0;
+  eventsSinceLastSample = 0;
+  if (currentToolTimer) {
+    clearTimeout(currentToolTimer);
+    currentToolTimer = null;
+  }
+}
+
 export function disconnect() {
   if (ws) {
     ws.disconnect();

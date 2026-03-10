@@ -84,6 +84,42 @@ class Plan(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class CoordinatorTask(Base):
+    __tablename__ = "coordinator_tasks"
+
+    id = Column(Text, primary_key=True)  # "task-{run_id}-{seq}"
+    run_id = Column(Text, nullable=False, index=True)
+    project_repo = Column(Text, nullable=False)
+    issue_number = Column(Integer, nullable=True)
+    title = Column(Text, nullable=False)
+    description = Column(Text, nullable=True)
+    status = Column(Text, default="pending")  # pending/ready/running/completed/failed/blocked
+    employee_index = Column(Integer, nullable=True)
+    depends_on = Column(Text, nullable=True)  # JSON array of task IDs
+    workspace = Column(Text, nullable=True)
+    expected_files = Column(Text, nullable=True)  # JSON array
+    touched_files = Column(Text, nullable=True)  # JSON array
+    exit_code = Column(Integer, nullable=True)
+    error_message = Column(Text, nullable=True)
+    dag_json = Column(Text, nullable=True)  # Full DAG snapshot (on first task only)
+    created_at = Column(DateTime, default=_utcnow)
+    started_at = Column(DateTime, nullable=True)
+    finished_at = Column(DateTime, nullable=True)
+
+
+class CoordinatorMessage(Base):
+    __tablename__ = "coordinator_messages"
+
+    id = Column(Integer, primary_key=True)
+    run_id = Column(Text, nullable=False, index=True)
+    task_id = Column(Text, nullable=True)
+    direction = Column(Text, nullable=False)  # to_employee / from_monitor / system
+    message_type = Column(Text, nullable=False)  # guidance / conflict / progress / error
+    content = Column(Text, nullable=False)  # JSON
+    employee_index = Column(Integer, nullable=True)
+    created_at = Column(DateTime, default=_utcnow)
+
+
 class Notification(Base):
     __tablename__ = "notifications"
 

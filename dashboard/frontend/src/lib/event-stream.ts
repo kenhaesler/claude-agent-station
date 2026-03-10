@@ -31,7 +31,7 @@ export interface AgentEventStreamOptions {
   onStatusChange?: (connected: boolean) => void;
 }
 
-/** Known event types emitted by run-manager.sh */
+/** Known event types emitted by run-manager.sh and coordinator */
 const EVENT_TYPES = [
   'run_start',
   'employee_start',
@@ -43,6 +43,16 @@ const EVENT_TYPES = [
   'started',
   'finished',
   'verdict',
+  // Coordinator events
+  'task_started',
+  'task_completed',
+  'task_failed',
+  'task_ready',
+  'task_blocked',
+  'conflict_detected',
+  'guidance_sent',
+  'dag_created',
+  'dag_completed',
 ];
 
 export class AgentEventStream {

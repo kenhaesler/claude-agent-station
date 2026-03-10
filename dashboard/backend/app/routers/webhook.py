@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db
-from app.models import Run, Project, Notification
+from app.models import Run, Project, Notification, CoordinatorTask, CoordinatorMessage
 from app.schemas import WebhookRunEvent
 from app.services.event_bus import publish as event_bus_publish
 
@@ -165,6 +165,62 @@ async def receive_run_event(
         )
         db.add(notification)
 
+    elif event_name in ("task_started", "task_completed", "task_failed", "task_ready", "task_blocked"):
+        # Coordinator task events — upsert CoordinatorTask records
+        if event.task_id:
+            result2 = await db.execute(
+                select(CoordinatorTask).where(CoordinatorTask.id == event.task_id)
+            )
+            ctask = result2.scalar_one_or_none()
+            if not ctask:
+                ctask = CoordinatorTask(
+                    id=event.task_id,
+                    run_id=event.run_id,
+                    project_repo=event.project or "",
+                    title=event.task_title or "",
+                    depends_on=event.depends_on,
+                    employee_index=event.employee_index,
+                )
+                db.add(ctask)
+
+            status_map = {
+                "task_started": "running",
+                "task_completed": "completed",
+                "task_failed": "failed",
+                "task_ready": "ready",
+                "task_blocked": "blocked",
+            }
+            ctask.status = status_map.get(event_name, ctask.status)
+            if event_name == "task_started":
+                ctask.started_at = datetime.now(timezone.utc)
+                ctask.employee_index = event.employee_index
+            elif event_name in ("task_completed", "task_failed"):
+                ctask.finished_at = datetime.now(timezone.utc)
+
+    elif event_name in ("conflict_detected", "guidance_sent"):
+        # Coordinator messages — log them
+        msg = CoordinatorMessage(
+            run_id=event.run_id,
+            task_id=event.task_id,
+            direction="from_monitor" if event_name == "conflict_detected" else "to_employee",
+            message_type="conflict" if event_name == "conflict_detected" else "guidance",
+            content=json.dumps({
+                "file_path": event.file_path,
+                "employee_a": event.employee_a,
+                "employee_b": event.employee_b,
+                "guidance_type": event.guidance_type,
+                "guidance_content": event.guidance_content,
+            }),
+            employee_index=event.employee_index,
+        )
+        db.add(msg)
+
+    elif event_name in ("dag_created", "dag_completed"):
+        # DAG lifecycle events — store DAG JSON on the first task
+        if event.task_count and event.task_count > 0:
+            # Just log — the actual DAG is saved as a file by the coordinator
+            pass
+
     else:
         # Unknown event — still log it, but create/update the run record
         if not run:
@@ -233,6 +289,16 @@ def _normalize_event_name(event_name: str) -> str:
         "started": "started",
         "finished": "finished",
         "verdict": "verdict",
+        # Coordinator events pass through
+        "task_started": "task_started",
+        "task_completed": "task_completed",
+        "task_failed": "task_failed",
+        "task_ready": "task_ready",
+        "task_blocked": "task_blocked",
+        "conflict_detected": "conflict_detected",
+        "guidance_sent": "guidance_sent",
+        "dag_created": "dag_created",
+        "dag_completed": "dag_completed",
     }
     return mapping.get(event_name, event_name)
 

@@ -21,6 +21,20 @@ When your prompt includes a **"DIRECTED MODE: Pre-Assigned Issue"** section, the
 
 The assigned issue number and any specific instructions from the manager are in your prompt. Follow them.
 
+## Guidance Channel (Coordinated Mode)
+
+When working in coordinated mode, the manager may send you real-time guidance while you work. Every 5-10 tool calls, check for a guidance file:
+
+1. Check if `.claude-guidance-{your_employee_index}.json` exists in your workspace root (your employee index is in your prompt).
+2. If it exists, read it and follow the instructions based on type:
+   - `"warning"` — Be aware of the issue described but continue your work
+   - `"redirect"` — Change your approach as described in the guidance
+   - `"stop"` — Stop current work immediately, write a partial progress report
+   - `"info"` — Informational only, acknowledge and continue
+3. After reading and acting on the guidance, **delete the file** to acknowledge receipt.
+
+This check is lightweight. If no guidance file exists, simply continue working.
+
 ## Workflow
 
 ### Step 0: Read Project Conventions

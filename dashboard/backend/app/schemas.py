@@ -191,7 +191,7 @@ class AuthStatus(BaseModel):
 
 class WebhookRunEvent(BaseModel):
     run_id: str
-    event: str  # started/finished/verdict
+    event: str  # started/finished/verdict + coordinator events
     project: Optional[str] = None
     mode: Optional[str] = None
     model: Optional[str] = None
@@ -209,3 +209,69 @@ class WebhookRunEvent(BaseModel):
     timestamp: Optional[str] = None
     employee_index: Optional[int] = None
     concurrent_group_id: Optional[str] = None
+    # Coordinator task fields
+    task_id: Optional[str] = None
+    task_title: Optional[str] = None
+    task_count: Optional[int] = None
+    depends_on: Optional[str] = None  # JSON array
+    dag_file: Optional[str] = None
+    summary: Optional[dict] = None
+    # Conflict detection fields
+    file_path: Optional[str] = None
+    employee_a: Optional[int] = None
+    employee_b: Optional[int] = None
+    # Guidance fields
+    guidance_type: Optional[str] = None
+    guidance_content: Optional[str] = None
+
+
+# --- Coordinator ---
+
+class CoordinatorTaskOut(BaseModel):
+    id: str
+    run_id: str
+    project_repo: str
+    issue_number: Optional[int] = None
+    title: str
+    description: Optional[str] = None
+    status: str
+    employee_index: Optional[int] = None
+    depends_on: Optional[str] = None  # JSON array of task IDs
+    workspace: Optional[str] = None
+    expected_files: Optional[str] = None
+    touched_files: Optional[str] = None
+    exit_code: Optional[int] = None
+    error_message: Optional[str] = None
+    created_at: Optional[datetime] = None
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CoordinatorDAGOut(BaseModel):
+    run_id: str
+    project_repo: str
+    tasks: List[CoordinatorTaskOut]
+    summary: dict
+
+
+class CoordinatorMessageOut(BaseModel):
+    id: int
+    run_id: str
+    task_id: Optional[str] = None
+    direction: str
+    message_type: str
+    content: str
+    employee_index: Optional[int] = None
+    created_at: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class GuidanceSend(BaseModel):
+    run_id: str
+    employee_index: int
+    guidance_type: str = "info"  # warning/redirect/stop/info
+    content: str
+    workspace: Optional[str] = None

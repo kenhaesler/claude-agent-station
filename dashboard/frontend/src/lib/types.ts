@@ -202,3 +202,43 @@ export interface ToastMessage {
   type: 'success' | 'error' | 'info';
   text: string;
 }
+
+// --- Coordinator ---
+
+export interface CoordinatorTask {
+  id: string;
+  run_id: string;
+  project_repo: string;
+  issue_number: number | null;
+  title: string;
+  description: string | null;
+  status: string;  // pending/ready/running/completed/failed/blocked
+  employee_index: number | null;
+  depends_on: string | null;  // JSON array of task IDs
+  workspace: string | null;
+  expected_files: string | null;
+  touched_files: string | null;
+  exit_code: number | null;
+  error_message: string | null;
+  created_at: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+export interface CoordinatorDAG {
+  run_id: string;
+  project_repo: string;
+  tasks: CoordinatorTask[];
+  summary: Record<string, number>;
+}
+
+export interface CoordinatorMessage {
+  id: number;
+  run_id: string;
+  task_id: string | null;
+  direction: string;
+  message_type: string;
+  content: string;
+  employee_index: number | null;
+  created_at: string | null;
+}
