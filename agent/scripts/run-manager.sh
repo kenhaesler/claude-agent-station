@@ -813,6 +813,14 @@ collect_employee_reports() {
     for ((i = 0; i < count; i++)); do
         local repo
         repo=$(get_project_field "$i" "repo")
+
+        # Skip disabled projects — they weren't worked on by employees
+        local enabled_check
+        enabled_check=$(get_project_field "$i" "enabled" 2>/dev/null || echo "true")
+        if [ "$enabled_check" = "false" ]; then
+            continue
+        fi
+
         local name
         name=$(repo_name "$repo")
         local workspace="$WORKSPACES_DIR/$name"
