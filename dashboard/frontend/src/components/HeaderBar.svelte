@@ -34,7 +34,7 @@
   );
 </script>
 
-<header class="h-12 w-full flex items-center justify-between px-3 md:px-4 glass-heavy border-b border-border/50 shrink-0">
+<header class="h-12 w-full flex items-center justify-between px-3 md:px-4 glass-heavy border-0 border-b border-border/50 shrink-0 relative z-10">
   <!-- Left: hamburger (mobile) + station name -->
   <div class="flex items-center gap-2">
     <button
@@ -48,9 +48,6 @@
     </button>
     <span class="md:hidden text-accent-blue font-bold text-sm text-glow-blue">Claude Station</span>
   </div>
-
-  <!-- Spacer on desktop -->
-  <div class="hidden md:block"></div>
 
   <!-- Status indicators + trigger button -->
   <div class="flex items-center gap-2 md:gap-4">

@@ -42,7 +42,7 @@
     {mobileOpen ? 'translate-x-0' : '-translate-x-full'}"
   style:width={collapsed ? '56px' : '220px'}
 >
-  <div class="flex items-center gap-2 px-4 py-4 border-b border-border/50">
+  <div class="flex items-center gap-2 px-4 h-12 border-b border-border/50">
     {#if !collapsed}
       <span class="text-accent-blue font-bold text-lg text-glow-blue">Claude Station</span>
     {/if}
