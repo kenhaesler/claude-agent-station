@@ -127,6 +127,121 @@ EOF
 
 RATE_TRACKING_FILE="/var/log/claude-agent/usage-tracking.json"
 
+# ============================================================================
+# PARALLEL EXECUTION INFRASTRUCTURE
+# ============================================================================
+
+# Track child PIDs for signal propagation
+declare -a CHILD_PIDS=()
+CONCURRENT_GROUP_ID=""
+
+cleanup_children() {
+    local sig="${1:-TERM}"
+    if [ ${#CHILD_PIDS[@]} -gt 0 ]; then
+        log_warn "Propagating SIG$sig to ${#CHILD_PIDS[@]} child processes"
+        for pid in "${CHILD_PIDS[@]}"; do
+            if kill -0 "$pid" 2>/dev/null; then
+                kill -"$sig" "$pid" 2>/dev/null || true
+            fi
+        done
+        # Give children time to exit gracefully
+        sleep 2
+        for pid in "${CHILD_PIDS[@]}"; do
+            if kill -0 "$pid" 2>/dev/null; then
+                kill -9 "$pid" 2>/dev/null || true
+            fi
+        done
+    fi
+}
+
+trap 'cleanup_children TERM; exit 130' SIGTERM
+trap 'cleanup_children INT; exit 130' SIGINT
+
+get_max_concurrent() {
+    json_get "$CONFIG_FILE" "limits.max_concurrent_employees" 2>/dev/null || echo "1"
+}
+
+get_max_per_project() {
+    json_get "$CONFIG_FILE" "limits.max_employees_per_project" 2>/dev/null || echo "1"
+}
+
+get_budget_strategy() {
+    json_get "$CONFIG_FILE" "limits.token_budget_strategy" 2>/dev/null || echo "equal_split"
+}
+
+# Calculate per-employee turn budget based on strategy
+calculate_employee_budget() {
+    local total_employees="$1" project_priority="$2"
+    local strategy base_turns
+
+    strategy=$(get_budget_strategy)
+    base_turns=$(json_get "$CONFIG_FILE" "limits.max_employee_turns" 2>/dev/null || echo "200")
+
+    python3 -c "
+import json, sys
+
+strategy = '$strategy'
+base_turns = int($base_turns)
+total_employees = int($total_employees)
+priority = '$project_priority'
+
+if total_employees <= 1:
+    print(base_turns)
+    sys.exit(0)
+
+if strategy == 'priority_weighted':
+    # Priority-weighted: high gets 40% more, low gets 40% less
+    weights = {'critical': 1.6, 'high': 1.3, 'medium': 1.0, 'low': 0.7}
+    weight = weights.get(priority, 1.0)
+    # Calculate proportional share then apply weight
+    share = base_turns / total_employees
+    adjusted = int(share * weight)
+    # Clamp to reasonable range
+    print(max(50, min(adjusted, base_turns)))
+elif strategy == 'equal_split':
+    # Equal split: each employee gets base_turns / total_employees
+    # But floor at 50 turns minimum to be useful
+    share = max(50, base_turns // total_employees)
+    print(share)
+else:
+    # Unknown strategy, fall back to equal split
+    print(max(50, base_turns // total_employees))
+" 2>/dev/null || echo "$base_turns"
+}
+
+# Wait for a slot to open up when max concurrency is reached
+wait_for_slot() {
+    local max_concurrent="$1"
+    while [ ${#CHILD_PIDS[@]} -ge "$max_concurrent" ]; do
+        # Clean up finished processes
+        local new_pids=()
+        for pid in "${CHILD_PIDS[@]}"; do
+            if kill -0 "$pid" 2>/dev/null; then
+                new_pids+=("$pid")
+            fi
+        done
+        CHILD_PIDS=("${new_pids[@]}")
+
+        if [ ${#CHILD_PIDS[@]} -ge "$max_concurrent" ]; then
+            # Wait for any child to finish
+            wait -n 2>/dev/null || true
+        fi
+    done
+}
+
+wait_for_all_children() {
+    if [ ${#CHILD_PIDS[@]} -gt 0 ]; then
+        log_info "Waiting for ${#CHILD_PIDS[@]} employee(s) to complete..."
+        for pid in "${CHILD_PIDS[@]}"; do
+            if kill -0 "$pid" 2>/dev/null; then
+                wait "$pid" 2>/dev/null || true
+            fi
+        done
+        CHILD_PIDS=()
+        log_ok "All employees completed"
+    fi
+}
+
 check_rate_limit() {
     local session_limit max_percent window_hours
     session_limit=$(json_get "$CONFIG_FILE" "limits.session_limit_24h" 2>/dev/null || echo "50")
@@ -384,6 +499,8 @@ list_projects() {
 
 run_employee() {
     local repo="$1" workspace="$2" project_index="$3"
+    local employee_index="${4:-0}"
+    local max_turns_override="${5:-}"
     local name
     name=$(repo_name "$repo")
     local mode
@@ -392,11 +509,11 @@ run_employee() {
     custom_instructions=$(get_project_field "$project_index" "custom_instructions" 2>/dev/null || echo "")
 
     log_info "=========================================="
-    log_info "EMPLOYEE: $repo (mode: $mode)"
+    log_info "EMPLOYEE: $repo (mode: $mode, index: $employee_index)"
     log_info "Workspace: $workspace"
     log_info "=========================================="
 
-    webhook_event "employee_start" "\"project\":\"$repo\",\"mode\":\"$mode\""
+    webhook_event "employee_start" "\"project\":\"$repo\",\"mode\":\"$mode\",\"employee_index\":$employee_index,\"concurrent_group_id\":\"$CONCURRENT_GROUP_ID\""
 
     # Run setup script if configured for this project (install dependencies, etc.)
     local setup_script
@@ -415,6 +532,12 @@ run_employee() {
     model=$(json_get "$CONFIG_FILE" "models.employee" 2>/dev/null || echo "claude-opus-4-6")
     max_turns=$(json_get "$CONFIG_FILE" "limits.max_employee_turns" 2>/dev/null || echo "200")
 
+    # Apply budget override if provided (from parallel budget calculation)
+    if [ -n "$max_turns_override" ]; then
+        max_turns="$max_turns_override"
+        log_info "  Budget-adjusted turns: $max_turns"
+    fi
+
     # Analyze/plan modes use Sonnet (cheaper — no code changes, just analysis/planning)
     if [ "$mode" = "analyze" ] || [ "$mode" = "plan" ]; then
         model="claude-sonnet-4-6"
@@ -428,7 +551,12 @@ run_employee() {
     fi
 
     # Clean up any previous report
-    rm -f "$workspace/.claude-employee-report.json"
+    # Indexed employees use .claude-employee-report-{index}.json
+    local report_suffix=""
+    if [ "$employee_index" -gt 0 ]; then
+        report_suffix="-${employee_index}"
+    fi
+    rm -f "$workspace/.claude-employee-report${report_suffix}.json"
 
     # Select prompt based on mode
     local system_prompt employee_prompt
@@ -444,7 +572,7 @@ Your workspace is: $workspace
 
 Analyze open issues and create detailed implementation plans. Write plans to the dashboard API at http://127.0.0.1:8420/api/plans. Each plan should include step-by-step instructions, files to change, code snippets, and acceptance criteria.
 
-Write your report to $workspace/.claude-employee-report.json
+Write your report to $workspace/.claude-employee-report${report_suffix}.json
 
 Remember: You are in PLAN mode. Read and analyze only — do NOT modify any source files."
     elif [ "$mode" = "analyze" ]; then
@@ -459,7 +587,7 @@ Your workspace is: $workspace
 
 Analyze the codebase for bugs, technical debt, security issues, and improvement opportunities. Create well-defined GitHub issues for each finding. Refine any existing vague issues with analysis details.
 
-Write your report to $workspace/.claude-employee-report.json
+Write your report to $workspace/.claude-employee-report${report_suffix}.json
 
 Remember: You are in ANALYZE mode. Read and analyze only — do NOT modify any source files."
     else
@@ -498,13 +626,20 @@ $plan_steps
 
 Follow this plan carefully. Implement each step, write tests, and verify everything works.
 
-Write your report to $workspace/.claude-employee-report.json
+Write your report to $workspace/.claude-employee-report${report_suffix}.json
 
 Remember: commit locally but NEVER push. The manager will review and push if approved."
 
             # Clean up plan file after reading (it's been embedded in the prompt)
             rm -f "$plan_file"
         else
+            local multi_employee_note=""
+            if [ "$employee_index" -gt 0 ]; then
+                multi_employee_note="
+
+IMPORTANT: You are employee #$employee_index working in parallel on this project. Other employees are working on different issues simultaneously. Make sure to pick an issue that is NOT labeled 'autonomous-agent/in-progress'. Each employee must work on a DIFFERENT issue."
+            fi
+            employee_prompt="Work on the repository: $repo
             # Check if there's manager rejection feedback to address
             local feedback_file="$workspace/.claude-manager-feedback.json"
             if [ -f "$feedback_file" ]; then
@@ -564,8 +699,8 @@ Environment variables available:
 - GH_TOKEN is set
 
 Your workspace is: $workspace
-
-Find the most actionable open issue, implement it fully, run tests, and write your report to $workspace/.claude-employee-report.json
+${multi_employee_note}
+Find the most actionable open issue, implement it fully, run tests, and write your report to $workspace/.claude-employee-report${report_suffix}.json
 
 Remember: commit locally but NEVER push. The manager will review and push if approved."
             fi
@@ -595,8 +730,10 @@ $custom_instructions"
         return 0
     fi
 
-    local stream_file="$LOG_DIR/run-${RUN_ID}-employee-${name}.stream.jsonl"
-    local stderr_file="$LOG_DIR/run-${RUN_ID}-employee-${name}.stderr.log"
+    local idx_suffix=""
+    [ "$employee_index" -gt 0 ] && idx_suffix="-${employee_index}"
+    local stream_file="$LOG_DIR/run-${RUN_ID}-employee-${name}${idx_suffix}.stream.jsonl"
+    local stderr_file="$LOG_DIR/run-${RUN_ID}-employee-${name}${idx_suffix}.stderr.log"
     local exit_code=0
 
     cd "$workspace"
@@ -656,7 +793,7 @@ print(f'{t:,}')
         log_warn "Employee exited with code $exit_code: $repo"
     fi
 
-    webhook_event "employee_complete" "\"project\":\"$repo\",\"exit_code\":$exit_code"
+    webhook_event "employee_complete" "\"project\":\"$repo\",\"exit_code\":$exit_code,\"employee_index\":$employee_index"
 
     return 0  # Don't fail the whole run if one employee errors
 }
@@ -685,10 +822,30 @@ collect_employee_reports() {
         echo "## Project: $repo" >> "$review_package"
         echo "" >> "$review_package"
 
-        # Employee report
-        local report_file="$workspace/.claude-employee-report.json"
-        if [ -f "$report_file" ]; then
-            echo "### Employee Report" >> "$review_package"
+        # Find all employee reports (main + indexed)
+        local report_files=()
+        if [ -f "$workspace/.claude-employee-report.json" ]; then
+            report_files+=("$workspace/.claude-employee-report.json")
+        fi
+        for indexed_report in "$workspace"/.claude-employee-report-*.json; do
+            [ -f "$indexed_report" ] && report_files+=("$indexed_report")
+        done
+
+        if [ ${#report_files[@]} -eq 0 ]; then
+            echo "### No employee report found" >> "$review_package"
+            echo "Employee did not produce a report file. Check logs." >> "$review_package"
+            echo "" >> "$review_package"
+            continue
+        fi
+
+        local report_idx=0
+        for report_file in "${report_files[@]}"; do
+            local employee_label="Employee"
+            if [ ${#report_files[@]} -gt 1 ]; then
+                employee_label="Employee #$report_idx"
+            fi
+
+            echo "### ${employee_label} Report" >> "$review_package"
             echo '```json' >> "$review_package"
             cat "$report_file" >> "$review_package"
             echo '```' >> "$review_package"
@@ -696,11 +853,14 @@ collect_employee_reports() {
 
             # Git diff (main vs current branch)
             cd "$workspace"
-            local current_branch
-            current_branch=$(git branch --show-current 2>/dev/null || echo "main")
 
-            # Detect base branch from employee report or default
-            local report_base_branch
+            # Detect branch and base_branch from employee report
+            local report_branch report_base_branch
+            report_branch=$(python3 -c "
+import json
+with open('$report_file') as f:
+    print(json.load(f).get('branch', ''))
+" 2>/dev/null || echo "")
             report_base_branch=$(python3 -c "
 import json
 with open('$report_file') as f:
@@ -708,16 +868,22 @@ with open('$report_file') as f:
 " 2>/dev/null || echo "")
             [ -z "$report_base_branch" ] && report_base_branch="main"
 
-            if [ "$current_branch" != "$report_base_branch" ]; then
-                echo "### Git Diff ($report_base_branch..$current_branch)" >> "$review_package"
+            # Use report's branch if available, else detect from git
+            local diff_branch="$report_branch"
+            if [ -z "$diff_branch" ]; then
+                diff_branch=$(git branch --show-current 2>/dev/null || echo "main")
+            fi
+
+            if [ "$diff_branch" != "$report_base_branch" ] && git rev-parse "$diff_branch" 2>/dev/null >/dev/null; then
+                echo "### ${employee_label} Git Diff ($report_base_branch..$diff_branch)" >> "$review_package"
                 echo '```diff' >> "$review_package"
-                git diff "$report_base_branch".."$current_branch" 2>/dev/null | head -2000 >> "$review_package"
+                git diff "$report_base_branch".."$diff_branch" 2>/dev/null | head -2000 >> "$review_package"
                 echo '```' >> "$review_package"
                 echo "" >> "$review_package"
 
-                echo "### Git Log" >> "$review_package"
+                echo "### ${employee_label} Git Log" >> "$review_package"
                 echo '```' >> "$review_package"
-                git log "$report_base_branch".."$current_branch" --oneline 2>/dev/null >> "$review_package"
+                git log "$report_base_branch".."$diff_branch" --oneline 2>/dev/null >> "$review_package"
                 echo '```' >> "$review_package"
                 echo "" >> "$review_package"
 
@@ -736,14 +902,12 @@ with open('$report_file') as f:
                     echo "" >> "$review_package"
                 fi
             else
-                echo "### No changes (employee stayed on main)" >> "$review_package"
+                echo "### ${employee_label}: No changes (employee stayed on $report_base_branch)" >> "$review_package"
                 echo "" >> "$review_package"
             fi
-        else
-            echo "### No employee report found" >> "$review_package"
-            echo "Employee did not produce a report file. Check logs." >> "$review_package"
-            echo "" >> "$review_package"
-        fi
+
+            report_idx=$((report_idx + 1))
+        done
     done
 
     echo "$review_package"
@@ -1163,10 +1327,38 @@ main() {
     log_info "Run ID: $RUN_ID"
     log_info "Projects: $project_count"
 
-    webhook_event "run_start" "\"project_count\":$project_count"
+    # Read concurrency settings
+    local max_concurrent max_per_project budget_strategy
+    max_concurrent=$(get_max_concurrent)
+    max_per_project=$(get_max_per_project)
+    budget_strategy=$(get_budget_strategy)
+    CONCURRENT_GROUP_ID="group-${RUN_ID}"
 
-    # ---- PHASE 1: Run employees per project (sequentially) ----
+    log_info "Concurrency: max_concurrent=$max_concurrent, max_per_project=$max_per_project, strategy=$budget_strategy"
+
+    webhook_event "run_start" "\"project_count\":$project_count,\"max_concurrent\":$max_concurrent,\"concurrent_group_id\":\"$CONCURRENT_GROUP_ID\""
+
+    # ---- Count total employees to spawn (for budget calculation) ----
+    local total_employees=0
+    for ((i = 0; i < project_count; i++)); do
+        local enabled_check
+        enabled_check=$(get_project_field "$i" "enabled" 2>/dev/null || echo "true")
+        [ "$enabled_check" = "false" ] && continue
+        local mode_check
+        mode_check=$(get_project_field "$i" "mode" 2>/dev/null || echo "full")
+        local employees_for_project=$max_per_project
+        # Analyze/plan modes only use 1 employee
+        if [ "$mode_check" = "analyze" ] || [ "$mode_check" = "plan" ]; then
+            employees_for_project=1
+        fi
+        total_employees=$((total_employees + employees_for_project))
+    done
+    log_info "Total employees to spawn: $total_employees"
+
+    # ---- PHASE 1: Run employees per project ----
     local has_work=false
+    local is_parallel=false
+    [ "$max_concurrent" -gt 1 ] && is_parallel=true
 
     for ((i = 0; i < project_count; i++)); do
         local repo priority enabled
@@ -1180,37 +1372,73 @@ main() {
             continue
         fi
 
-        log_info "Project $((i+1))/$project_count: $repo (priority: $priority)"
-
-        # Check rate limit before each employee
-        if ! check_rate_limit; then
-            log_warn "Rate limit reached. Stopping before $repo"
-            notify "rate_limit" "Rate limit reached before $repo in run $RUN_ID"
-            break
+        local mode_for_project
+        mode_for_project=$(get_project_field "$i" "mode" 2>/dev/null || echo "full")
+        local employees_this_project=$max_per_project
+        # Analyze/plan modes only use 1 employee
+        if [ "$mode_for_project" = "analyze" ] || [ "$mode_for_project" = "plan" ]; then
+            employees_this_project=1
         fi
 
-        # Check token budget before each employee
-        if ! check_token_budget; then
-            log_warn "Token budget exceeded. Stopping before $repo"
-            notify "token_budget" "Token budget exceeded before $repo in run $RUN_ID"
-            break
-        fi
+        for ((ei = 0; ei < employees_this_project; ei++)); do
+            log_info "Project $((i+1))/$project_count: $repo (priority: $priority, employee: $ei)"
 
-        # Setup workspace
-        local workspace
-        workspace=$(setup_workspace "$repo") || {
-            log_error "Failed to setup workspace for $repo"
-            continue
-        }
+            # Check rate limit before each employee
+            if ! check_rate_limit; then
+                log_warn "Rate limit reached. Stopping before $repo employee $ei"
+                notify "rate_limit" "Rate limit reached before $repo employee $ei in run $RUN_ID"
+                break 2
+            fi
 
-        # Run employee
-        run_employee "$repo" "$workspace" "$i"
-        has_work=true
+            # Check token budget before each employee
+            if ! check_token_budget; then
+                log_warn "Token budget exceeded. Stopping before $repo employee $ei"
+                notify "token_budget" "Token budget exceeded before $repo employee $ei in run $RUN_ID"
+                break 2
+            fi
 
-        # Pause between employees
-        log_info "Pausing 10s before next project..."
-        sleep 10
+            # Setup workspace (only once per project, for first employee)
+            local workspace
+            if [ "$ei" -eq 0 ]; then
+                workspace=$(setup_workspace "$repo") || {
+                    log_error "Failed to setup workspace for $repo"
+                    continue 2
+                }
+            else
+                workspace="$WORKSPACES_DIR/$(repo_name "$repo")"
+            fi
+
+            # Calculate per-employee turn budget
+            local employee_turns
+            employee_turns=$(calculate_employee_budget "$total_employees" "$priority")
+
+            if [ "$is_parallel" = true ]; then
+                # Parallel mode: wait for a slot, then spawn in background
+                wait_for_slot "$max_concurrent"
+
+                log_info "  Spawning employee $ei for $repo in background (budget: $employee_turns turns)"
+                run_employee "$repo" "$workspace" "$i" "$ei" "$employee_turns" &
+                CHILD_PIDS+=($!)
+                has_work=true
+            else
+                # Sequential mode (backward compatible): run blocking
+                log_info "  Running employee $ei for $repo sequentially (budget: $employee_turns turns)"
+                run_employee "$repo" "$workspace" "$i" "$ei" "$employee_turns"
+                has_work=true
+
+                # Pause between employees in sequential mode
+                if [ "$ei" -lt $((employees_this_project - 1)) ] || [ "$i" -lt $((project_count - 1)) ]; then
+                    log_info "Pausing 10s before next employee..."
+                    sleep 10
+                fi
+            fi
+        done
     done
+
+    # Wait for all parallel employees to finish
+    if [ "$is_parallel" = true ]; then
+        wait_for_all_children
+    fi
 
     if [ "$has_work" = false ]; then
         log_warn "No employees ran. Exiting."
@@ -1226,10 +1454,17 @@ main() {
         repo_check=$(get_project_field "$i" "repo")
         local name_check
         name_check=$(repo_name "$repo_check")
+        # Check main report and any indexed reports
         if [ -f "$WORKSPACES_DIR/$name_check/.claude-employee-report.json" ]; then
             any_reports=true
             break
         fi
+        for indexed_check in "$WORKSPACES_DIR/$name_check"/.claude-employee-report-*.json; do
+            if [ -f "$indexed_check" ]; then
+                any_reports=true
+                break 2
+            fi
+        done
     done
 
     if [ "$any_reports" = false ]; then

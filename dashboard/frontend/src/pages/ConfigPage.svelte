@@ -20,6 +20,9 @@
   let tokenReservePercent = $state<number | undefined>(undefined);
   let sessionLimit24h = $state<number | undefined>(undefined);
   let maxSessionPercent = $state<number | undefined>(undefined);
+  let maxConcurrentEmployees = $state<number | undefined>(undefined);
+  let maxEmployeesPerProject = $state<number | undefined>(undefined);
+  let tokenBudgetStrategy = $state('');
 
   let schedule = $state('');
 
@@ -45,6 +48,9 @@
     tokenReservePercent = cfg.limits?.token_reserve_percent;
     sessionLimit24h = cfg.limits?.session_limit_24h;
     maxSessionPercent = cfg.limits?.max_session_percent;
+    maxConcurrentEmployees = cfg.limits?.max_concurrent_employees;
+    maxEmployeesPerProject = cfg.limits?.max_employees_per_project;
+    tokenBudgetStrategy = cfg.limits?.token_budget_strategy ?? '';
 
     schedule = cfg.schedule ?? '';
 
@@ -89,6 +95,9 @@
         token_reserve_percent: tokenReservePercent,
         session_limit_24h: sessionLimit24h,
         max_session_percent: maxSessionPercent,
+        max_concurrent_employees: maxConcurrentEmployees,
+        max_employees_per_project: maxEmployeesPerProject,
+        token_budget_strategy: tokenBudgetStrategy || undefined,
       },
       schedule: schedule || undefined,
       notifications: {
@@ -210,6 +219,29 @@
         <div>
           <label for="max-session-pct" class="block text-sm text-text-dim mb-1">Max Session Percent</label>
           <input id="max-session-pct" type="number" bind:value={maxSessionPercent} class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-accent-blue/50 transition-colors" />
+        </div>
+      </div>
+    </GlassCard>
+
+    <!-- Concurrency -->
+    <GlassCard class="p-5">
+      <h3 class="font-semibold mb-4">Parallel Execution</h3>
+      <p class="text-xs text-text-dim mb-4">Control how many employees run concurrently. Set to 1 for sequential mode (default). Budget strategy determines how turn limits are divided among parallel employees.</p>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div>
+          <label for="max-concurrent" class="block text-sm text-text-dim mb-1">Max Concurrent Employees</label>
+          <input id="max-concurrent" type="number" min="1" max="10" bind:value={maxConcurrentEmployees} class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-accent-blue/50 transition-colors" />
+        </div>
+        <div>
+          <label for="max-per-project" class="block text-sm text-text-dim mb-1">Max Employees per Project</label>
+          <input id="max-per-project" type="number" min="1" max="5" bind:value={maxEmployeesPerProject} class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-accent-blue/50 transition-colors" />
+        </div>
+        <div>
+          <label for="budget-strategy" class="block text-sm text-text-dim mb-1">Budget Strategy</label>
+          <select id="budget-strategy" bind:value={tokenBudgetStrategy} class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-accent-blue/50 transition-colors">
+            <option value="equal_split">Equal Split</option>
+            <option value="priority_weighted">Priority Weighted</option>
+          </select>
         </div>
       </div>
     </GlassCard>

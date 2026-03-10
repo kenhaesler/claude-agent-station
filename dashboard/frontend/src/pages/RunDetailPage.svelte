@@ -102,6 +102,20 @@
             <td class="px-5 py-3 text-text-dim">Finished</td>
             <td class="px-5 py-3">{formatDate(run.finished_at)}</td>
           </tr>
+          {#if run.concurrent_group_id}
+            <tr>
+              <td class="px-5 py-3 text-text-dim">Parallel Batch</td>
+              <td class="px-5 py-3 font-data text-xs">
+                <span class="inline-flex items-center gap-1.5">
+                  <span class="w-1.5 h-1.5 rounded-full bg-purple-400/60"></span>
+                  {run.concurrent_group_id}
+                  {#if run.employee_index != null}
+                    <span class="text-purple-400/60">&middot; Employee #{run.employee_index}</span>
+                  {/if}
+                </span>
+              </td>
+            </tr>
+          {/if}
           {#if run.log_file}
             <tr>
               <td class="px-5 py-3 text-text-dim">Log File</td>

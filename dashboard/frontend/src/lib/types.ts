@@ -51,6 +51,8 @@ export interface Run {
   employee_report: string | null;
   verdict_detail: string | null;
   log_file: string | null;
+  employee_index: number | null;
+  concurrent_group_id: string | null;
 }
 
 export interface RunList {
@@ -170,6 +172,9 @@ export interface StationConfig {
     token_reserve_percent?: number;
     session_limit_24h?: number;
     max_session_percent?: number;
+    max_concurrent_employees?: number;
+    max_employees_per_project?: number;
+    token_budget_strategy?: string;
   };
   notifications?: {
     enabled?: boolean;

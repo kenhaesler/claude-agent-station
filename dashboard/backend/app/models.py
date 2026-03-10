@@ -53,6 +53,8 @@ class Run(Base):
     employee_report = Column(Text, nullable=True)  # JSON as text
     verdict_detail = Column(Text, nullable=True)  # JSON as text
     log_file = Column(Text, nullable=True)
+    employee_index = Column(Integer, nullable=True, default=0)
+    concurrent_group_id = Column(Text, nullable=True)
 
 
 class ConfigEntry(Base):

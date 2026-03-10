@@ -87,6 +87,30 @@
   });
 
   let projectMap = $derived(Object.fromEntries(projects.map(p => [p.id, p.repo])));
+
+  // Group runs by concurrent_group_id for visual grouping
+  interface RunGroup {
+    groupId: string | null;
+    runs: typeof runs;
+    isParallel: boolean;
+  }
+
+  let groupedRuns = $derived.by(() => {
+    const groups: RunGroup[] = [];
+    const seen = new Set<string>();
+
+    for (const run of runs) {
+      const gid = run.concurrent_group_id;
+      if (gid && !seen.has(gid)) {
+        seen.add(gid);
+        const groupRuns = runs.filter(r => r.concurrent_group_id === gid);
+        groups.push({ groupId: gid, runs: groupRuns, isParallel: groupRuns.length > 1 });
+      } else if (!gid) {
+        groups.push({ groupId: null, runs: [run], isParallel: false });
+      }
+    }
+    return groups;
+  });
 </script>
 
 <div class="space-y-6 animate-fade-in-up">
@@ -119,17 +143,45 @@
           </tr>
         </thead>
         <tbody class="divide-y divide-border/30">
-          {#each runs as run}
-            <tr class="hover:bg-white/[0.02] transition-colors cursor-pointer" onclick={() => window.location.hash = `/runs/${run.run_id}`}>
-              <td class="px-3 md:px-5 py-3 font-data text-xs truncate max-w-[100px]">{run.run_id.slice(-8)}</td>
-              <td class="px-3 md:px-5 py-3 text-text-dim hidden sm:table-cell truncate max-w-[120px]">{run.project_id ? (projectMap[run.project_id] ?? `#${run.project_id}`) : '-'}</td>
-              <td class="px-3 md:px-5 py-3"><StatusBadge value={run.status} variant="status" /></td>
-              <td class="px-3 md:px-5 py-3"><StatusBadge value={run.verdict} /></td>
-              <td class="px-3 md:px-5 py-3 hidden md:table-cell"><StatusBadge value={run.mode} variant="mode" /></td>
-              <td class="px-3 md:px-5 py-3 text-text-dim">{formatDuration(run.duration_ms)}</td>
-              <td class="px-3 md:px-5 py-3 text-text-dim font-data">{formatTokens(run.tokens_total)}</td>
-              <td class="px-3 md:px-5 py-3 hidden sm:table-cell"><TimeAgo date={run.started_at} /></td>
-            </tr>
+          {#each groupedRuns as group}
+            {#if group.isParallel}
+              <!-- Parallel batch group header -->
+              <tr class="bg-purple-500/[0.05]">
+                <td colspan="8" class="px-3 md:px-5 py-1.5 text-xs text-purple-400/80 font-medium">
+                  <span class="inline-flex items-center gap-1.5">
+                    <span class="w-1.5 h-1.5 rounded-full bg-purple-400/60 animate-pulse"></span>
+                    Parallel batch &middot; {group.runs.length} employees &middot; {group.groupId?.slice(-8)}
+                  </span>
+                </td>
+              </tr>
+              {#each group.runs as run, idx}
+                <tr class="hover:bg-white/[0.02] transition-colors cursor-pointer border-l-2 border-l-purple-500/30" onclick={() => window.location.hash = `/runs/${run.run_id}`}>
+                  <td class="px-3 md:px-5 py-3 font-data text-xs truncate max-w-[100px]">
+                    <span class="text-purple-400/60 mr-1">#{run.employee_index ?? idx}</span>{run.run_id.slice(-8)}
+                  </td>
+                  <td class="px-3 md:px-5 py-3 text-text-dim hidden sm:table-cell truncate max-w-[120px]">{run.project_id ? (projectMap[run.project_id] ?? `#${run.project_id}`) : '-'}</td>
+                  <td class="px-3 md:px-5 py-3"><StatusBadge value={run.status} variant="status" /></td>
+                  <td class="px-3 md:px-5 py-3"><StatusBadge value={run.verdict} /></td>
+                  <td class="px-3 md:px-5 py-3 hidden md:table-cell"><StatusBadge value={run.mode} variant="mode" /></td>
+                  <td class="px-3 md:px-5 py-3 text-text-dim">{formatDuration(run.duration_ms)}</td>
+                  <td class="px-3 md:px-5 py-3 text-text-dim font-data">{formatTokens(run.tokens_total)}</td>
+                  <td class="px-3 md:px-5 py-3 hidden sm:table-cell"><TimeAgo date={run.started_at} /></td>
+                </tr>
+              {/each}
+            {:else}
+              {#each group.runs as run}
+                <tr class="hover:bg-white/[0.02] transition-colors cursor-pointer" onclick={() => window.location.hash = `/runs/${run.run_id}`}>
+                  <td class="px-3 md:px-5 py-3 font-data text-xs truncate max-w-[100px]">{run.run_id.slice(-8)}</td>
+                  <td class="px-3 md:px-5 py-3 text-text-dim hidden sm:table-cell truncate max-w-[120px]">{run.project_id ? (projectMap[run.project_id] ?? `#${run.project_id}`) : '-'}</td>
+                  <td class="px-3 md:px-5 py-3"><StatusBadge value={run.status} variant="status" /></td>
+                  <td class="px-3 md:px-5 py-3"><StatusBadge value={run.verdict} /></td>
+                  <td class="px-3 md:px-5 py-3 hidden md:table-cell"><StatusBadge value={run.mode} variant="mode" /></td>
+                  <td class="px-3 md:px-5 py-3 text-text-dim">{formatDuration(run.duration_ms)}</td>
+                  <td class="px-3 md:px-5 py-3 text-text-dim font-data">{formatTokens(run.tokens_total)}</td>
+                  <td class="px-3 md:px-5 py-3 hidden sm:table-cell"><TimeAgo date={run.started_at} /></td>
+                </tr>
+              {/each}
+            {/if}
           {/each}
         </tbody>
       </table>

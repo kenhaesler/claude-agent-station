@@ -24,7 +24,10 @@
     "token_reserve_percent": 20,
     "max_rejection_retries": 1,
     "session_limit_24h": 50,
-    "max_session_percent": 80
+    "max_session_percent": 80,
+    "max_concurrent_employees": 1,
+    "max_employees_per_project": 1,
+    "token_budget_strategy": "equal_split"
   },
   "dashboard": {
     "port": 8420,

@@ -103,6 +103,10 @@ def _update_run_from_logs(run: "Run", data: dict) -> None:
         run.log_file = data["log_file"]
     if not run.project_id and data.get("project_id"):
         run.project_id = data["project_id"]
+    if run.employee_index is None and data.get("employee_index") is not None:
+        run.employee_index = data["employee_index"]
+    if not run.concurrent_group_id and data.get("concurrent_group_id"):
+        run.concurrent_group_id = data["concurrent_group_id"]
 
 
 def _build_run_data(
@@ -180,6 +184,17 @@ def _build_run_data(
     if files.get("streams"):
         log_file = files["streams"][0]
 
+    # Extract employee_index from stream filename (e.g., employee-reponame-2.stream.jsonl)
+    employee_index = 0
+    for stream_file in files.get("streams", []):
+        fname = stream_file.split("/")[-1]
+        if "employee-" in fname:
+            import re
+            idx_match = re.search(r'employee-[^.]+?-(\d+)\.stream', fname)
+            if idx_match:
+                employee_index = int(idx_match.group(1))
+            break
+
     return {
         "run_id": f"run-{run_id}",
         "project_id": project_id,
@@ -200,4 +215,6 @@ def _build_run_data(
         "employee_report": employee_report,
         "verdict_detail": verdict_detail,
         "log_file": log_file,
+        "employee_index": employee_index,
+        "concurrent_group_id": None,  # Populated via webhook events
     }
