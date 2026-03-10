@@ -14,6 +14,7 @@
   let mode = $state('full');
   let branch = $state('main');
   let enabled = $state(true);
+  let custom_instructions = $state('');
 
   $effect(() => {
     repo = project?.repo ?? '';
@@ -21,14 +22,16 @@
     mode = project?.mode ?? 'full';
     branch = project?.branch ?? 'main';
     enabled = project?.enabled ?? true;
+    custom_instructions = project?.custom_instructions ?? '';
   });
 
   function handleSubmit(e: Event) {
     e.preventDefault();
+    const instructions = custom_instructions.trim() || null;
     if (project) {
-      onsubmit({ priority, mode, branch, enabled } as ProjectUpdate);
+      onsubmit({ priority, mode, branch, enabled, custom_instructions: instructions } as ProjectUpdate);
     } else {
-      onsubmit({ repo, priority, mode, branch, enabled } as ProjectCreate);
+      onsubmit({ repo, priority, mode, branch, enabled, custom_instructions: instructions } as ProjectCreate);
     }
   }
 </script>
@@ -72,6 +75,18 @@
       bind:value={branch}
       class="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-pr"
     />
+  </div>
+
+  <div>
+    <label for="custom_instructions" class="block text-sm text-text-dim mb-1">Custom Instructions</label>
+    <textarea
+      id="custom_instructions"
+      bind:value={custom_instructions}
+      rows="4"
+      placeholder="Optional: Tell the agent what to focus on, coding conventions, areas to avoid, etc."
+      class="w-full bg-surface-2 border border-border rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-pr resize-y"
+    ></textarea>
+    <p class="text-xs text-text-dim mt-1">These instructions are appended to the agent prompt for this project.</p>
   </div>
 
   <label class="flex items-center gap-2 text-sm">
