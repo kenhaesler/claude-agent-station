@@ -2,7 +2,7 @@
 
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
@@ -68,8 +68,8 @@ async def auth_status():
             return {"logged_in": True, "expired": False, "expires_at": None}
 
         # expiresAt is epoch milliseconds
-        expires_dt = datetime.utcfromtimestamp(expires_at / 1000)
-        expired = datetime.utcnow() > expires_dt
+        expires_dt = datetime.fromtimestamp(expires_at / 1000, tz=timezone.utc)
+        expired = datetime.now(timezone.utc) > expires_dt
 
         return {
             "logged_in": True,

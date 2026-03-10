@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Optional, List, Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 # --- Projects ---
@@ -39,8 +39,7 @@ class ProjectOut(BaseModel):
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # --- Runs ---
@@ -64,8 +63,7 @@ class RunOut(BaseModel):
     verdict_detail: Optional[str] = None
     log_file: Optional[str] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class RunList(BaseModel):
@@ -80,8 +78,7 @@ class ConfigOut(BaseModel):
     value: Optional[str] = None
     updated_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ConfigUpdate(BaseModel):
@@ -98,8 +95,7 @@ class NotificationOut(BaseModel):
     read: bool
     created_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # --- System ---
