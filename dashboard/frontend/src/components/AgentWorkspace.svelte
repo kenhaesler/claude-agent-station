@@ -1,5 +1,6 @@
 <script lang="ts">
   import { WorkspaceRenderer } from '../lib/workspace-renderer';
+  import type { RunPhase } from '../lib/workspace-renderer';
   import type { Project, Run, SystemStatus, UsageData } from '../lib/types';
 
   interface Props {
@@ -23,6 +24,29 @@
       if (r.status === 'running' && r.project_id) ids.add(r.project_id);
     }
     return ids;
+  });
+
+  let activeProjectModes = $derived(() => {
+    const modes = new Map<number, string>();
+    for (const r of runs) {
+      if (r.status === 'running' && r.project_id && r.mode) {
+        modes.set(r.project_id, r.mode);
+      }
+    }
+    return modes;
+  });
+
+  let runPhase = $derived((): RunPhase => {
+    const runningRuns = runs.filter(r => r.status === 'running');
+    if (runningRuns.length === 0) return 'idle';
+
+    // Check if any running run is in manager/verdict mode
+    const hasManager = runningRuns.some(r => r.mode === 'manager');
+    const hasVerdict = runningRuns.some(r => r.verdict != null);
+
+    if (hasVerdict) return 'executing_verdict';
+    if (hasManager) return 'manager_review';
+    return 'employee';
   });
 
   $effect(() => {
@@ -59,6 +83,8 @@
         enabled: p.enabled,
       })),
       activeRunProjectIds: activeRunProjectIds(),
+      activeProjectModes: activeProjectModes(),
+      runPhase: runPhase(),
       serviceActive: systemStatus?.service.active ?? false,
       usagePercent: usage?.usage_percent ?? 0,
     });
@@ -76,8 +102,13 @@
       };
     } else if (renderer.isHubAt(e.clientX, e.clientY)) {
       const rect = container.getBoundingClientRect();
+      const phase = runPhase();
+      const phaseText = phase === 'employee' ? 'Employees working'
+        : phase === 'manager_review' ? 'Manager reviewing'
+        : phase === 'executing_verdict' ? 'Executing verdict'
+        : 'Idle';
       tooltip = {
-        text: systemStatus?.service.active ? 'Agent Active' : 'Agent Offline',
+        text: systemStatus?.service.active ? `Manager - ${phaseText}` : 'Manager - Offline',
         x: e.clientX - rect.left,
         y: e.clientY - rect.top - 28,
       };
