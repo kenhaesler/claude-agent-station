@@ -3,12 +3,21 @@
   import { getLatestRun, getSystemStatus, listRuns, getUsage, listProjects } from '../lib/api';
   import { formatDuration, formatTokens } from '../lib/format';
   import { toastSuccess, toastError } from '../lib/toast.svelte';
+  import {
+    connect as connectLiveActivity,
+    disconnect as disconnectLiveActivity,
+    liveActivity,
+  } from '../lib/live-activity.svelte';
   import LoadingSpinner from '../components/LoadingSpinner.svelte';
   import AgentWorkspace from '../components/AgentWorkspace.svelte';
   import MetricPanel from '../components/MetricPanel.svelte';
   import ActivityFeed from '../components/ActivityFeed.svelte';
   import ScanLine from '../components/ScanLine.svelte';
   import EventTicker from '../components/EventTicker.svelte';
+  import PhaseTimeline from '../components/PhaseTimeline.svelte';
+  import LiveAgentFeed from '../components/LiveAgentFeed.svelte';
+  import AgentStatusCards from '../components/AgentStatusCards.svelte';
+  import type { RunPhase } from '../lib/workspace-renderer';
 
   let latest = $state<Run | null>(null);
   let recentRuns = $state<Run[]>([]);
@@ -48,8 +57,39 @@
     return () => clearInterval(interval);
   });
 
+  // Connect/disconnect LiveActivityStore
+  $effect(() => {
+    connectLiveActivity();
+    return () => disconnectLiveActivity();
+  });
+
   let totalTokens = $derived(recentRuns.reduce((sum, r) => sum + (r.tokens_total ?? 0), 0));
   let avgTokens = $derived(recentRuns.length > 0 ? totalTokens / recentRuns.length : 0);
+
+  // Derive run phase
+  let runPhase = $derived((): RunPhase => {
+    const runningRuns = recentRuns.filter(r => r.status === 'running');
+    if (runningRuns.length === 0) return 'idle';
+    const hasManager = runningRuns.some(r => r.mode === 'manager');
+    const hasVerdict = runningRuns.some(r => r.verdict != null);
+    if (hasVerdict) return 'executing_verdict';
+    if (hasManager) return 'manager_review';
+    return 'employee';
+  });
+
+  let isRunActive = $derived(runPhase() !== 'idle');
+
+  // Derive active project name
+  let activeProject = $derived(() => {
+    const running = recentRuns.find(r => r.status === 'running');
+    if (!running?.project_id) return null;
+    return projectMap[running.project_id] ?? null;
+  });
+
+  // Current tool summary for canvas overlay
+  let toolSummary = $derived(
+    liveActivity.currentTool ? `${liveActivity.currentTool.name}: ${liveActivity.currentTool.summary}` : null
+  );
 </script>
 
 <div class="space-y-5">
@@ -61,6 +101,14 @@
       <EventTicker onRefresh={load} />
     </div>
 
+    <!-- Phase Timeline — only when run is active -->
+    {#if isRunActive}
+      <PhaseTimeline
+        phase={runPhase()}
+        startedAt={latest?.started_at ?? null}
+      />
+    {/if}
+
     <!-- Agent Workspace Visualization -->
     <div class="relative glass rounded-xl overflow-hidden animate-fade-in-up" style="height: clamp(280px, 50vh, 500px)">
       <ScanLine />
@@ -70,8 +118,24 @@
         latestRun={latest}
         systemStatus={system}
         {usage}
+        activityIntensity={liveActivity.activityIntensity}
+        currentToolSummary={toolSummary}
       />
     </div>
+
+    <!-- Live Agent Feed — when run is active -->
+    {#if isRunActive}
+      <LiveAgentFeed />
+    {/if}
+
+    <!-- Agent Status Cards — always visible -->
+    <AgentStatusCards
+      latestRun={latest}
+      systemStatus={system}
+      {usage}
+      phase={runPhase()}
+      activeProject={activeProject()}
+    />
 
     <!-- Metric Panels -->
     <div class="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">

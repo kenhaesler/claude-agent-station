@@ -34,7 +34,7 @@
   );
 </script>
 
-<header class="h-12 w-full flex items-center justify-between px-3 md:px-4 glass-heavy border-0 border-b border-border/50 shrink-0 relative z-10">
+<header class="h-12 w-full flex items-center justify-between px-3 md:px-4 glass-heavy border-0 border-b border-border/50 shrink-0">
   <!-- Left: hamburger (mobile) + station name -->
   <div class="flex items-center gap-2">
     <button

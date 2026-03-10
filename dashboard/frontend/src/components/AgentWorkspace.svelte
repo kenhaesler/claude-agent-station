@@ -1,7 +1,8 @@
 <script lang="ts">
   import { WorkspaceRenderer } from '../lib/workspace-renderer';
-  import type { RunPhase, ActiveEmployee } from '../lib/workspace-renderer';
+  import type { RunPhase } from '../lib/workspace-renderer';
   import type { Project, Run, SystemStatus, UsageData } from '../lib/types';
+  import { liveActivity } from '../lib/live-activity.svelte';
 
   interface Props {
     projects: Project[];
@@ -9,14 +10,18 @@
     latestRun: Run | null;
     systemStatus: SystemStatus | null;
     usage: UsageData | null;
+    activityIntensity?: number;
+    currentToolSummary?: string | null;
   }
 
-  let { projects, runs, latestRun, systemStatus, usage }: Props = $props();
+  let { projects, runs, latestRun, systemStatus, usage, activityIntensity = 0, currentToolSummary = null }: Props = $props();
 
   let canvas: HTMLCanvasElement;
   let container: HTMLDivElement;
   let renderer: WorkspaceRenderer | null = null;
   let tooltip = $state<{ text: string; x: number; y: number } | null>(null);
+  let containerW = $state(300);
+  let containerH = $state(300);
 
   let activeRunProjectIds = $derived(() => {
     const ids = new Set<number>();
@@ -36,32 +41,11 @@
     return modes;
   });
 
-  /** Derive active employees from running runs */
-  let activeEmployees = $derived((): ActiveEmployee[] => {
-    const employees: ActiveEmployee[] = [];
-    for (const r of runs) {
-      if (r.status === 'running' && r.project_id && r.mode) {
-        employees.push({
-          runId: r.run_id,
-          projectId: r.project_id,
-          mode: r.mode,
-          status: r.status,
-          issueNumber: r.issue_number ?? null,
-          turns: r.turns ?? null,
-        });
-      }
-    }
-    return employees;
-  });
-
   let runPhase = $derived((): RunPhase => {
     const runningRuns = runs.filter(r => r.status === 'running');
     if (runningRuns.length === 0) return 'idle';
-
-    // Check if any running run is in manager/verdict mode
     const hasManager = runningRuns.some(r => r.mode === 'manager');
     const hasVerdict = runningRuns.some(r => r.verdict != null);
-
     if (hasVerdict) return 'executing_verdict';
     if (hasManager) return 'manager_review';
     return 'employee';
@@ -72,6 +56,8 @@
 
     renderer = new WorkspaceRenderer(canvas);
     const rect = container.getBoundingClientRect();
+    containerW = rect.width;
+    containerH = rect.height;
     renderer.resize(rect.width, rect.height);
     renderer.start();
 
@@ -79,6 +65,8 @@
       for (const entry of entries) {
         const { width, height } = entry.contentRect;
         if (width > 0 && height > 0) {
+          containerW = width;
+          containerH = height;
           renderer?.resize(width, height);
         }
       }
@@ -102,39 +90,27 @@
       })),
       activeRunProjectIds: activeRunProjectIds(),
       activeProjectModes: activeProjectModes(),
-      activeEmployees: activeEmployees(),
       runPhase: runPhase(),
       serviceActive: systemStatus?.service.active ?? false,
       usagePercent: usage?.usage_percent ?? 0,
     });
   });
 
+  $effect(() => {
+    renderer?.setActivity({
+      intensity: activityIntensity,
+      currentTool: currentToolSummary ?? null,
+      activeAgent: runPhase() === 'idle' ? null : runPhase() === 'manager_review' ? 'manager' : 'employee',
+    });
+  });
+
   function handleMouseMove(e: MouseEvent) {
     if (!renderer) return;
-
-    // Check satellites first (they're smaller, more specific targets)
-    const sat = renderer.getSatelliteAt(e.clientX, e.clientY);
-    if (sat) {
-      const rect = container.getBoundingClientRect();
-      const emp = sat.employee;
-      const modeLabel = emp.mode.charAt(0).toUpperCase() + emp.mode.slice(1);
-      const issueText = emp.issueNumber != null ? ` - #${emp.issueNumber}` : '';
-      const statusText = emp.status === 'running' ? ' (running)' : emp.status === 'failed' ? ' (failed)' : ' (done)';
-      tooltip = {
-        text: `${modeLabel}${issueText}${statusText}`,
-        x: e.clientX - rect.left,
-        y: e.clientY - rect.top - 28,
-      };
-      return;
-    }
-
     const node = renderer.getNodeAt(e.clientX, e.clientY);
     if (node) {
       const rect = container.getBoundingClientRect();
-      const employeeCount = runs.filter(r => r.status === 'running' && r.project_id === node.id).length;
-      const countText = employeeCount > 0 ? ` (${employeeCount} agent${employeeCount > 1 ? 's' : ''})` : '';
       tooltip = {
-        text: (node.repo.split('/').pop() || node.repo) + countText,
+        text: node.repo.split('/').pop() || node.repo,
         x: e.clientX - rect.left,
         y: e.clientY - rect.top - 28,
       };
@@ -168,6 +144,51 @@
       window.location.hash = '/system';
     }
   }
+
+  // HUD state
+  let phase = $derived(runPhase());
+  let isActive = $derived(phase !== 'idle');
+  let phaseLabel = $derived(
+    phase === 'employee' ? 'EMPLOYEE ACTIVE'
+    : phase === 'manager_review' ? 'MANAGER REVIEW'
+    : phase === 'executing_verdict' ? 'EXECUTING VERDICT'
+    : 'STANDBY'
+  );
+  let phaseColorClass = $derived(
+    phase === 'employee' ? 'text-accent-blue'
+    : phase === 'manager_review' ? 'text-warning'
+    : phase === 'executing_verdict' ? 'text-approve'
+    : 'text-text-dim'
+  );
+
+  // Connection status indicator
+  let wsConnected = $derived(liveActivity.connected);
+
+  // Running projects for per-project HUD
+  let runningProjects = $derived(() => {
+    const result: { name: string; mode: string; angle: number; x: number; y: number }[] = [];
+    const count = projects.length;
+    if (count === 0) return result;
+    const orbitR = Math.min(containerW, containerH) * 0.32;
+    const cx = containerW / 2;
+    const cy = containerH / 2;
+
+    for (let i = 0; i < projects.length; i++) {
+      const p = projects[i];
+      const runForProject = runs.find(r => r.status === 'running' && r.project_id === p.id);
+      if (!runForProject) continue;
+
+      const angle = (i / count) * Math.PI * 2 - Math.PI / 2;
+      result.push({
+        name: p.repo.split('/').pop() ?? p.repo,
+        mode: runForProject.mode ?? 'employee',
+        angle,
+        x: cx + Math.cos(angle) * (orbitR + 42),
+        y: cy + Math.sin(angle) * (orbitR + 42),
+      });
+    }
+    return result;
+  });
 </script>
 
 <div
@@ -186,25 +207,122 @@
 
   {#if tooltip}
     <div
-      class="absolute pointer-events-none px-2 py-1 rounded text-xs glass text-text-dim whitespace-nowrap"
+      class="absolute pointer-events-none px-2 py-1 rounded text-xs glass text-text-dim whitespace-nowrap z-20"
       style="left: {tooltip.x}px; top: {tooltip.y}px; transform: translateX(-50%)"
     >
       {tooltip.text}
     </div>
   {/if}
 
-  <!-- Node labels -->
+  <!-- HUD: Top-left corner bracket + status -->
+  <div class="absolute top-2 left-2 pointer-events-none z-10">
+    <div class="hud-bracket-tl">
+      <div class="text-[9px] font-data tracking-widest {phaseColorClass} pl-1.5 pt-0.5 {isActive ? 'animate-pulse-glow' : ''}">
+        {phaseLabel}
+      </div>
+      <div class="text-[8px] font-data text-text-dim pl-1.5 mt-0.5 opacity-60">
+        CLAUDE AGENT STATION
+      </div>
+    </div>
+  </div>
+
+  <!-- HUD: Top-right corner bracket + connection -->
+  <div class="absolute top-2 right-2 pointer-events-none z-10">
+    <div class="hud-bracket-tr text-right">
+      <div class="flex items-center justify-end gap-1 pr-1.5 pt-0.5">
+        <span class="text-[8px] font-data tracking-wider {wsConnected ? 'text-approve' : 'text-reject'}">
+          {wsConnected ? 'STREAM ACTIVE' : 'STREAM OFFLINE'}
+        </span>
+        <div class="w-1.5 h-1.5 rounded-full {wsConnected ? 'bg-approve animate-pulse-glow' : 'bg-reject'}"></div>
+      </div>
+      {#if liveActivity.turnCount > 0}
+        <div class="text-[8px] font-data text-text-dim pr-1.5 mt-0.5 opacity-60">
+          TURNS: {liveActivity.turnCount}
+        </div>
+      {/if}
+    </div>
+  </div>
+
+  <!-- HUD: Bottom-left corner bracket -->
+  <div class="absolute bottom-2 left-2 pointer-events-none z-10">
+    <div class="hud-bracket-bl">
+      {#if liveActivity.currentTool}
+        <div class="text-[8px] font-data text-accent-cyan pl-1.5 pb-0.5 truncate max-w-[180px]">
+          {liveActivity.currentTool.name}
+        </div>
+      {/if}
+      <div class="text-[8px] font-data text-text-dim pl-1.5 pb-0.5 opacity-50">
+        {projects.length} PROJECT{projects.length !== 1 ? 'S' : ''} REGISTERED
+      </div>
+    </div>
+  </div>
+
+  <!-- HUD: Bottom-right corner bracket -->
+  <div class="absolute bottom-2 right-2 pointer-events-none z-10">
+    <div class="hud-bracket-br text-right">
+      {#if usage}
+        <div class="text-[8px] font-data text-text-dim pr-1.5 pb-0.5 opacity-60">
+          USAGE: {Math.round(usage.usage_percent)}%
+        </div>
+      {/if}
+    </div>
+  </div>
+
+  <!-- Node labels + per-project interaction badges -->
   {#each projects as project, i}
     {@const count = projects.length}
     {@const angle = (i / count) * Math.PI * 2 - Math.PI / 2}
-    {@const labelRadius = Math.min(container?.clientWidth ?? 300, container?.clientHeight ?? 300) * 0.32 + 28}
-    {@const lx = (container?.clientWidth ?? 300) / 2 + Math.cos(angle) * labelRadius}
-    {@const ly = (container?.clientHeight ?? 300) / 2 + Math.sin(angle) * labelRadius}
-    <span
-      class="absolute text-[10px] text-text-dim pointer-events-none whitespace-nowrap"
+    {@const labelRadius = Math.min(containerW, containerH) * 0.32 + 30}
+    {@const lx = containerW / 2 + Math.cos(angle) * labelRadius}
+    {@const ly = containerH / 2 + Math.sin(angle) * labelRadius}
+    {@const activeRun = runs.find(r => r.status === 'running' && r.project_id === project.id)}
+    {@const isRunning = !!activeRun}
+    {@const modeLabel = activeRun?.mode === 'analyst' ? 'ANALYST' : activeRun?.mode === 'manager' ? 'MANAGER' : 'EMPLOYEE'}
+    {@const modeColor = activeRun?.mode === 'analyst' ? 'text-pr' : activeRun?.mode === 'manager' ? 'text-warning' : 'text-accent-blue'}
+
+    <div
+      class="absolute pointer-events-none z-10 flex flex-col items-center gap-0.5"
       style="left: {lx}px; top: {ly}px; transform: translate(-50%, -50%)"
     >
-      {project.repo.split('/').pop() ?? project.repo}
-    </span>
+      <!-- Project name -->
+      <span class="text-[10px] whitespace-nowrap {isRunning ? 'text-text font-medium' : 'text-text-dim'}">
+        {project.repo.split('/').pop() ?? project.repo}
+      </span>
+
+      <!-- Active role badge -->
+      {#if isRunning}
+        <span class="text-[8px] font-data tracking-wider {modeColor} animate-pulse-glow whitespace-nowrap">
+          {modeLabel}
+        </span>
+      {/if}
+    </div>
   {/each}
 </div>
+
+<style>
+  /* HUD corner brackets — JARVIS-style */
+  .hud-bracket-tl {
+    border-left: 1px solid rgba(59, 130, 246, 0.35);
+    border-top: 1px solid rgba(59, 130, 246, 0.35);
+    padding: 2px 6px 4px 0;
+    min-width: 80px;
+  }
+  .hud-bracket-tr {
+    border-right: 1px solid rgba(59, 130, 246, 0.35);
+    border-top: 1px solid rgba(59, 130, 246, 0.35);
+    padding: 2px 0 4px 6px;
+    min-width: 80px;
+  }
+  .hud-bracket-bl {
+    border-left: 1px solid rgba(59, 130, 246, 0.25);
+    border-bottom: 1px solid rgba(59, 130, 246, 0.25);
+    padding: 4px 6px 2px 0;
+    min-width: 80px;
+  }
+  .hud-bracket-br {
+    border-right: 1px solid rgba(59, 130, 246, 0.25);
+    border-bottom: 1px solid rgba(59, 130, 246, 0.25);
+    padding: 4px 0 2px 6px;
+    min-width: 60px;
+  }
+</style>

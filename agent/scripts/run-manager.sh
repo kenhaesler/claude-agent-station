@@ -639,7 +639,6 @@ Remember: commit locally but NEVER push. The manager will review and push if app
 
 IMPORTANT: You are employee #$employee_index working in parallel on this project. Other employees are working on different issues simultaneously. Make sure to pick an issue that is NOT labeled 'autonomous-agent/in-progress'. Each employee must work on a DIFFERENT issue."
             fi
-            employee_prompt="Work on the repository: $repo
             # Check if there's manager rejection feedback to address
             local feedback_file="$workspace/.claude-manager-feedback.json"
             if [ -f "$feedback_file" ]; then
@@ -921,7 +920,7 @@ run_manager_review() {
     log_info "MANAGER: Reviewing employee work" >&2
     log_info "==========================================" >&2
 
-    webhook_event "manager_review" "\"review_package\":\"$review_package\""
+    webhook_event "manager_review" "\"review_package\":\"$review_package\"" >&2
 
     local model max_turns
     model=$(json_get "$CONFIG_FILE" "models.manager" 2>/dev/null || echo "claude-sonnet-4-6")

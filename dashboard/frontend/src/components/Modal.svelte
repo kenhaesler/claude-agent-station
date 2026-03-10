@@ -17,12 +17,22 @@
   function onKeydown(e: KeyboardEvent) {
     if (e.key === 'Escape') onclose();
   }
+
+  function portal(node: HTMLElement) {
+    document.body.appendChild(node);
+    return {
+      destroy() {
+        node.remove();
+      }
+    };
+  }
 </script>
 
 {#if open}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
-    class="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50"
+    use:portal
+    class="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[999]"
     onclick={onBackdropClick}
     onkeydown={onKeydown}
   >
