@@ -16,6 +16,7 @@ from app.config import settings
 from app.database import init_db, async_session
 from app.services.config_sync import sync_config_to_db
 from app.services.log_importer import import_historical_runs
+from app.services.stale_run_reaper import reap_stale_runs
 
 from app.routers import (
     health,
@@ -39,6 +40,9 @@ logger = logging.getLogger(__name__)
 # Interval (seconds) between periodic log re-scans
 LOG_RESCAN_INTERVAL = 30
 
+# Interval (seconds) between stale-run checks
+STALE_RUN_CHECK_INTERVAL = 15
+
 
 async def _periodic_log_import() -> None:
     """Background task: periodically re-scan log directory for new runs."""
@@ -51,6 +55,19 @@ async def _periodic_log_import() -> None:
                     logger.info("Periodic log import: %d new runs imported", imported)
         except Exception:
             logger.exception("Error in periodic log import")
+
+
+async def _periodic_stale_run_check() -> None:
+    """Background task: detect and reap runs left in 'running' state after agent dies."""
+    while True:
+        await asyncio.sleep(STALE_RUN_CHECK_INTERVAL)
+        try:
+            async with async_session() as db:
+                reaped = await reap_stale_runs(db)
+                if reaped > 0:
+                    logger.info("Stale run reaper: marked %d orphaned runs as interrupted", reaped)
+        except Exception:
+            logger.exception("Error in stale run reaper")
 
 
 @asynccontextmanager
@@ -75,18 +92,28 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         imported = await import_historical_runs(db)
         logger.info("Log import complete: %d new runs", imported)
 
-    # 4. Start periodic background import so new runs appear without restart
+    # 4. Reap any runs stuck in 'running' from a previous crash
+    async with async_session() as db:
+        reaped = await reap_stale_runs(db)
+        if reaped > 0:
+            logger.info("Startup reaper: marked %d orphaned runs as interrupted", reaped)
+
+    # 5. Start periodic background tasks
     rescan_task = asyncio.create_task(_periodic_log_import())
+    reaper_task = asyncio.create_task(_periodic_stale_run_check())
     logger.info("Started periodic log rescan (every %ds)", LOG_RESCAN_INTERVAL)
+    logger.info("Started stale run reaper (every %ds)", STALE_RUN_CHECK_INTERVAL)
 
     yield
 
-    # Cancel background task on shutdown
+    # Cancel background tasks on shutdown
     rescan_task.cancel()
-    try:
-        await rescan_task
-    except asyncio.CancelledError:
-        pass
+    reaper_task.cancel()
+    for task in (rescan_task, reaper_task):
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
     logger.info("Shutting down dashboard backend")
 
 
