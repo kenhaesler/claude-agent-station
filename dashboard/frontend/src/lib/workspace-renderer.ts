@@ -10,6 +10,26 @@ interface ProjectNode {
   targetGlow: number;
 }
 
+/** Represents an active employee/agent working on a project. */
+export interface ActiveEmployee {
+  runId: string;
+  projectId: number;
+  mode: string;        // 'employee' | 'analyst' | 'manager' | 'planner'
+  status: string;      // 'running' | 'success' | 'failed'
+  issueNumber: number | null;
+  turns: number | null;
+}
+
+/** A rendered satellite hexagon orbiting a project node. */
+interface EmployeeSatellite {
+  employee: ActiveEmployee;
+  x: number;
+  y: number;
+  angle: number;
+  pulsePhase: number;
+  spawnProgress: number; // 0..1 for spawn animation
+}
+
 interface Particle {
   x: number;
   y: number;
@@ -33,11 +53,51 @@ export type RunPhase = 'idle' | 'employee' | 'manager_review' | 'executing_verdi
 export interface WorkspaceData {
   projects: { id: number; repo: string; priority: string; enabled: boolean }[];
   activeRunProjectIds: Set<number>;
-  activeProjectModes: Map<number, string>; // project_id → 'employee' | 'analyst' | 'manager'
+  activeProjectModes: Map<number, string>; // project_id -> 'employee' | 'analyst' | 'manager'
+  activeEmployees: ActiveEmployee[];
   runPhase: RunPhase;
   serviceActive: boolean;
   usagePercent: number;
 }
+
+/** Style config per agent type */
+const AGENT_STYLES: Record<string, {
+  color: [number, number, number];
+  label: string;
+  dashPattern: number[];
+  fillAlpha: number;
+}> = {
+  employee: {
+    color: [59, 130, 246],    // blue
+    label: 'EMP',
+    dashPattern: [],           // solid fill
+    fillAlpha: 0.2,
+  },
+  analyst: {
+    color: [168, 85, 247],    // purple
+    label: 'ANL',
+    dashPattern: [4, 4],       // dashed
+    fillAlpha: 0.15,
+  },
+  manager: {
+    color: [245, 158, 11],    // amber
+    label: 'MGR',
+    dashPattern: [],
+    fillAlpha: 0.12,
+  },
+  planner: {
+    color: [16, 185, 129],    // green
+    label: 'PLN',
+    dashPattern: [2, 3],       // dotted
+    fillAlpha: 0.12,
+  },
+};
+
+const STATUS_COLORS: Record<string, [number, number, number]> = {
+  running: [59, 130, 246],   // blue
+  success: [16, 185, 129],   // green
+  failed:  [239, 68, 68],    // red
+};
 
 export class WorkspaceRenderer {
   private ctx: CanvasRenderingContext2D;
@@ -49,6 +109,7 @@ export class WorkspaceRenderer {
   private lastTime = 0;
 
   private nodes: ProjectNode[] = [];
+  private satellites: Map<number, EmployeeSatellite[]> = new Map(); // projectId -> satellites
   private ambientParticles: Particle[] = [];
   private flowParticles: FlowParticle[] = [];
 
@@ -61,6 +122,7 @@ export class WorkspaceRenderer {
   private serviceActive = false;
   private activeRunProjectIds = new Set<number>();
   private activeProjectModes = new Map<number, string>();
+  private activeEmployees: ActiveEmployee[] = [];
   private runPhase: RunPhase = 'idle';
 
   constructor(private canvas: HTMLCanvasElement, dpr: number = window.devicePixelRatio || 1) {
@@ -81,6 +143,7 @@ export class WorkspaceRenderer {
     this.hubRadius = Math.min(w, h) * 0.045;
 
     this.layoutNodes();
+    this.layoutSatellites();
   }
 
   setData(data: WorkspaceData) {
@@ -88,6 +151,7 @@ export class WorkspaceRenderer {
     this.usagePercent = data.usagePercent;
     this.activeRunProjectIds = data.activeRunProjectIds;
     this.activeProjectModes = data.activeProjectModes;
+    this.activeEmployees = data.activeEmployees;
     this.runPhase = data.runPhase;
 
     const existingIds = new Set(this.nodes.map(n => n.id));
@@ -124,7 +188,86 @@ export class WorkspaceRenderer {
     }
 
     this.layoutNodes();
+    this.updateSatellites();
     this.ensureAmbientParticles();
+  }
+
+  /** Create/update satellite hexagons for active employees */
+  private updateSatellites() {
+    // Group employees by project
+    const byProject = new Map<number, ActiveEmployee[]>();
+    for (const emp of this.activeEmployees) {
+      const list = byProject.get(emp.projectId) ?? [];
+      list.push(emp);
+      byProject.set(emp.projectId, list);
+    }
+
+    // Update satellites for each project
+    for (const [projectId, employees] of byProject) {
+      const existing = this.satellites.get(projectId) ?? [];
+      const updated: EmployeeSatellite[] = [];
+
+      for (const emp of employees) {
+        // Find existing satellite for this run
+        const existingSat = existing.find(s => s.employee.runId === emp.runId);
+        if (existingSat) {
+          existingSat.employee = emp;
+          updated.push(existingSat);
+        } else {
+          // New satellite - will animate in
+          updated.push({
+            employee: emp,
+            x: 0,
+            y: 0,
+            angle: 0,
+            pulsePhase: Math.random() * Math.PI * 2,
+            spawnProgress: 0,
+          });
+        }
+      }
+
+      this.satellites.set(projectId, updated);
+    }
+
+    // Remove satellites for projects with no active employees
+    for (const [projectId] of this.satellites) {
+      if (!byProject.has(projectId)) {
+        this.satellites.delete(projectId);
+      }
+    }
+
+    this.layoutSatellites();
+  }
+
+  /** Position satellites around their parent project nodes */
+  private layoutSatellites() {
+    const satelliteRadius = this.hubRadius * 0.4; // size of satellite hex
+    const orbitDist = this.hubRadius * 1.4; // distance from project center
+
+    for (const [projectId, sats] of this.satellites) {
+      const parent = this.nodes.find(n => n.id === projectId);
+      if (!parent) continue;
+
+      const count = sats.length;
+      for (let i = 0; i < count; i++) {
+        // Arrange satellites radially around the project node
+        // Start from the side facing away from hub for better visibility
+        const awayAngle = Math.atan2(parent.y - this.hubY, parent.x - this.hubX);
+        let satAngle: number;
+
+        if (count === 1) {
+          satAngle = awayAngle;
+        } else {
+          // Spread satellites in an arc facing away from the hub
+          const spread = Math.min(Math.PI * 0.8, (count - 1) * Math.PI / 4);
+          satAngle = awayAngle - spread / 2 + (i / (count - 1)) * spread;
+        }
+
+        sats[i].angle = satAngle;
+        sats[i].x = parent.x + Math.cos(satAngle) * orbitDist;
+        sats[i].y = parent.y + Math.sin(satAngle) * orbitDist;
+      }
+    }
   }
 
   private layoutNodes() {
@@ -197,6 +340,16 @@ export class WorkspaceRenderer {
       node.glow += diff * 0.03;
     }
 
+    // Update satellite spawn animations and pulse
+    for (const [, sats] of this.satellites) {
+      for (const sat of sats) {
+        if (sat.spawnProgress < 1) {
+          sat.spawnProgress = Math.min(1, sat.spawnProgress + dt * 0.003);
+        }
+        sat.pulsePhase += dt * 0.003;
+      }
+    }
+
     // Update ambient particles
     for (const p of this.ambientParticles) {
       p.life += dt;
@@ -249,7 +402,7 @@ export class WorkspaceRenderer {
       ctx.fill();
     }
 
-    // Draw connections
+    // Draw connections (hub <-> project nodes)
     for (const node of this.nodes) {
       const isActive = this.activeRunProjectIds.has(node.id);
       ctx.beginPath();
@@ -269,8 +422,33 @@ export class WorkspaceRenderer {
       ctx.setLineDash([]);
     }
 
+    // Draw satellite connection lines (project <-> employees)
+    for (const [projectId, sats] of this.satellites) {
+      const parent = this.nodes.find(n => n.id === projectId);
+      if (!parent) continue;
+
+      for (const sat of sats) {
+        if (sat.spawnProgress < 0.1) continue;
+        const style = AGENT_STYLES[sat.employee.mode] ?? AGENT_STYLES.employee;
+        const [cr, cg, cb] = style.color;
+        const alpha = 0.25 * sat.spawnProgress;
+
+        ctx.beginPath();
+        ctx.moveTo(parent.x, parent.y);
+        ctx.lineTo(
+          parent.x + (sat.x - parent.x) * sat.spawnProgress,
+          parent.y + (sat.y - parent.y) * sat.spawnProgress,
+        );
+        ctx.strokeStyle = `rgba(${cr}, ${cg}, ${cb}, ${alpha})`;
+        ctx.lineWidth = 1;
+        ctx.setLineDash(style.dashPattern);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
+
     // Draw flow particles
-    // Direction depends on phase: employee phase = node→hub, verdict = hub→node
+    // Direction depends on phase: employee phase = node->hub, verdict = hub->node
     const inward = this.runPhase === 'employee' || this.runPhase === 'manager_review';
     ctx.globalCompositeOperation = 'lighter';
     for (const fp of this.flowParticles) {
@@ -279,11 +457,11 @@ export class WorkspaceRenderer {
 
       let x: number, y: number;
       if (inward) {
-        // Node → Hub (employees reporting to manager)
+        // Node -> Hub (employees reporting to manager)
         x = node.x + (this.hubX - node.x) * fp.progress;
         y = node.y + (this.hubY - node.y) * fp.progress;
       } else {
-        // Hub → Node (manager directing / verdict)
+        // Hub -> Node (manager directing / verdict)
         x = this.hubX + (node.x - this.hubX) * fp.progress;
         y = this.hubY + (node.y - this.hubY) * fp.progress;
       }
@@ -314,6 +492,13 @@ export class WorkspaceRenderer {
     // Draw project nodes
     for (const node of this.nodes) {
       this.drawProjectNode(node);
+    }
+
+    // Draw employee satellites
+    for (const [, sats] of this.satellites) {
+      for (const sat of sats) {
+        this.drawEmployeeSatellite(sat);
+      }
     }
   }
 
@@ -421,6 +606,7 @@ export class WorkspaceRenderer {
     const r = this.hubRadius * 0.6;
     const isActive = this.activeRunProjectIds.has(node.id);
     const mode = this.activeProjectModes.get(node.id);
+    const hasSatellites = (this.satellites.get(node.id)?.length ?? 0) > 0;
 
     // Glow for active nodes
     if (isActive) {
@@ -460,8 +646,8 @@ export class WorkspaceRenderer {
     ctx.lineWidth = 1;
     ctx.stroke();
 
-    // Role badge for active nodes
-    if (isActive && mode) {
+    // Role badge for active nodes (only if no satellites — satellites show individual roles)
+    if (isActive && mode && !hasSatellites) {
       const roleLabel = mode === 'analyst' ? 'Analyst' : 'Employee';
       const badgeColor = mode === 'analyst' ? '168, 85, 247' : '59, 130, 246';
       const fontSize = Math.max(8, r * 0.55);
@@ -490,6 +676,94 @@ export class WorkspaceRenderer {
     }
   }
 
+  /** Draw a satellite hexagon representing an active employee */
+  private drawEmployeeSatellite(sat: EmployeeSatellite) {
+    if (sat.spawnProgress < 0.01) return;
+
+    const { ctx } = this;
+    const baseR = this.hubRadius * 0.35;
+    const r = baseR * sat.spawnProgress; // animate size on spawn
+    const emp = sat.employee;
+    const style = AGENT_STYLES[emp.mode] ?? AGENT_STYLES.employee;
+    const statusColor = STATUS_COLORS[emp.status] ?? STATUS_COLORS.running;
+    const [cr, cg, cb] = style.color;
+    const [sr, sg, sb] = statusColor;
+
+    const globalAlpha = sat.spawnProgress;
+
+    // Pulse glow for running employees
+    if (emp.status === 'running') {
+      const pulse = Math.sin(sat.pulsePhase) * 0.3 + 0.7;
+      const gradient = ctx.createRadialGradient(sat.x, sat.y, r * 0.3, sat.x, sat.y, r * 2);
+      gradient.addColorStop(0, `rgba(${cr}, ${cg}, ${cb}, ${0.15 * pulse * globalAlpha})`);
+      gradient.addColorStop(1, `rgba(${cr}, ${cg}, ${cb}, 0)`);
+      ctx.beginPath();
+      ctx.arc(sat.x, sat.y, r * 2, 0, Math.PI * 2);
+      ctx.fillStyle = gradient;
+      ctx.fill();
+    }
+
+    // Hexagon shape
+    ctx.beginPath();
+    for (let i = 0; i < 6; i++) {
+      const angle = (i / 6) * Math.PI * 2 - Math.PI / 6;
+      const x = sat.x + Math.cos(angle) * r;
+      const y = sat.y + Math.sin(angle) * r;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+
+    // Fill style depends on agent type
+    ctx.fillStyle = `rgba(${cr}, ${cg}, ${cb}, ${style.fillAlpha * globalAlpha})`;
+    ctx.fill();
+
+    // Border style depends on agent type (dash pattern)
+    ctx.setLineDash(style.dashPattern);
+    ctx.strokeStyle = `rgba(${cr}, ${cg}, ${cb}, ${0.6 * globalAlpha})`;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Status indicator dot (top-right of hex)
+    const dotX = sat.x + r * 0.6;
+    const dotY = sat.y - r * 0.6;
+    const dotR = Math.max(2, r * 0.2);
+
+    ctx.beginPath();
+    ctx.arc(dotX, dotY, dotR, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(${sr}, ${sg}, ${sb}, ${0.9 * globalAlpha})`;
+    ctx.fill();
+
+    // Pulsing ring for running status
+    if (emp.status === 'running') {
+      const pulseScale = 1 + Math.sin(sat.pulsePhase * 2) * 0.3;
+      ctx.beginPath();
+      ctx.arc(dotX, dotY, dotR * pulseScale * 1.8, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(${sr}, ${sg}, ${sb}, ${0.3 * globalAlpha})`;
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+
+    // Issue number label inside hex
+    if (emp.issueNumber != null) {
+      const fontSize = Math.max(7, r * 0.5);
+      ctx.font = `bold ${fontSize}px system-ui, -apple-system, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = `rgba(${cr}, ${cg}, ${cb}, ${0.9 * globalAlpha})`;
+      ctx.fillText(`#${emp.issueNumber}`, sat.x, sat.y);
+    }
+
+    // Agent type label below hex
+    const labelFontSize = Math.max(6, r * 0.35);
+    ctx.font = `${labelFontSize}px system-ui, -apple-system, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillStyle = `rgba(${cr}, ${cg}, ${cb}, ${0.6 * globalAlpha})`;
+    ctx.fillText(style.label, sat.x, sat.y + r + 2);
+  }
+
   getNodeAt(clientX: number, clientY: number): ProjectNode | null {
     const rect = this.canvas.getBoundingClientRect();
     const x = clientX - rect.left;
@@ -501,6 +775,26 @@ export class WorkspaceRenderer {
       const dy = y - node.y;
       if (dx * dx + dy * dy < hitRadius * hitRadius) {
         return node;
+      }
+    }
+    return null;
+  }
+
+  /** Get the satellite (employee) at the given screen coordinates */
+  getSatelliteAt(clientX: number, clientY: number): EmployeeSatellite | null {
+    const rect = this.canvas.getBoundingClientRect();
+    const x = clientX - rect.left;
+    const y = clientY - rect.top;
+    const hitRadius = this.hubRadius * 0.45;
+
+    for (const [, sats] of this.satellites) {
+      for (const sat of sats) {
+        if (sat.spawnProgress < 0.5) continue;
+        const dx = x - sat.x;
+        const dy = y - sat.y;
+        if (dx * dx + dy * dy < hitRadius * hitRadius) {
+          return sat;
+        }
       }
     }
     return null;
