@@ -3,11 +3,13 @@
   import { searchLogs } from '../lib/api';
   import type { LogSearchResult } from '../lib/types';
   import { toastError } from '../lib/toast.svelte';
+  import { parseLogLine, type ParsedLogEvent } from '../lib/log-parser';
   import LoadingSpinner from '../components/LoadingSpinner.svelte';
+  import LogEvent from '../components/LogEvent.svelte';
   import StatusOrb from '../components/StatusOrb.svelte';
   import GlassCard from '../components/GlassCard.svelte';
 
-  let lines = $state<string[]>([]);
+  let events = $state<ParsedLogEvent[]>([]);
   let connected = $state(false);
   let paused = $state(false);
   let searchQuery = $state('');
@@ -22,12 +24,16 @@
 
   function startWs() {
     ws?.disconnect();
-    lines = [];
+    events = [];
     ws = new LogWebSocket(
       '/api/logs/stream',
       (data) => {
-        lines.push(data);
-        if (lines.length > 2000) lines.splice(0, lines.length - 2000);
+        const parsed = parseLogLine(data);
+        if (parsed) {
+          const newEvents = Array.isArray(parsed) ? parsed : [parsed];
+          events.push(...newEvents);
+          if (events.length > 5000) events.splice(0, events.length - 5000);
+        }
         if (autoScroll && logContainer) {
           requestAnimationFrame(() => {
             logContainer.scrollTop = logContainer.scrollHeight;
@@ -99,7 +105,7 @@
       <button onclick={togglePause} class="px-3 py-1.5 text-sm glass rounded-lg text-text-dim hover:text-text cursor-pointer transition-colors">
         {paused ? 'Resume' : 'Pause'}
       </button>
-      <button onclick={() => { lines = []; }} class="px-3 py-1.5 text-sm glass rounded-lg text-text-dim hover:text-text cursor-pointer transition-colors">
+      <button onclick={() => { events = []; }} class="px-3 py-1.5 text-sm glass rounded-lg text-text-dim hover:text-text cursor-pointer transition-colors">
         Clear
       </button>
       <label class="flex items-center gap-1 text-xs text-text-dim">
@@ -126,11 +132,11 @@
     <!-- Live Log Viewer -->
     <GlassCard class="p-3 md:p-4 h-[calc(100vh-200px)] md:h-[calc(100vh-240px)] overflow-auto font-data text-xs leading-relaxed">
       <div bind:this={logContainer} class="h-full overflow-auto">
-        {#if lines.length === 0}
+        {#if events.length === 0}
           <p class="text-text-dim">Waiting for log data...</p>
         {:else}
-          {#each lines as line}
-            <div class="hover:bg-white/[0.02] py-0.5 break-all">{line}</div>
+          {#each events as event}
+            <LogEvent {event} />
           {/each}
         {/if}
       </div>
@@ -145,11 +151,20 @@
       <GlassCard class="overflow-hidden">
         <div class="divide-y divide-border/30">
           {#each searchResults as result}
+            {@const parsed = parseLogLine(result.content)}
             <div class="px-5 py-3">
               <div class="flex items-center gap-2 mb-1">
                 <span class="text-xs text-text-dim font-data">{result.file}:{result.line}</span>
               </div>
-              <pre class="text-xs whitespace-pre-wrap break-all text-text-dim">{result.content}</pre>
+              {#if parsed && !Array.isArray(parsed)}
+                <LogEvent event={parsed} />
+              {:else if parsed && Array.isArray(parsed)}
+                {#each parsed as event}
+                  <LogEvent {event} />
+                {/each}
+              {:else}
+                <pre class="text-xs whitespace-pre-wrap break-all text-text-dim">{result.content}</pre>
+              {/if}
             </div>
           {/each}
         </div>
