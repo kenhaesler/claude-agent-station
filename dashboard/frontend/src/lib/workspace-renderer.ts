@@ -28,9 +28,13 @@ interface FlowParticle {
   size: number;
 }
 
+export type RunPhase = 'idle' | 'employee' | 'manager_review' | 'executing_verdict';
+
 export interface WorkspaceData {
   projects: { id: number; repo: string; priority: string; enabled: boolean }[];
   activeRunProjectIds: Set<number>;
+  activeProjectModes: Map<number, string>; // project_id → 'employee' | 'analyst' | 'manager'
+  runPhase: RunPhase;
   serviceActive: boolean;
   usagePercent: number;
 }
@@ -56,6 +60,8 @@ export class WorkspaceRenderer {
   private usagePercent = 0;
   private serviceActive = false;
   private activeRunProjectIds = new Set<number>();
+  private activeProjectModes = new Map<number, string>();
+  private runPhase: RunPhase = 'idle';
 
   constructor(private canvas: HTMLCanvasElement, dpr: number = window.devicePixelRatio || 1) {
     this.ctx = canvas.getContext('2d')!;
@@ -81,6 +87,8 @@ export class WorkspaceRenderer {
     this.serviceActive = data.serviceActive;
     this.usagePercent = data.usagePercent;
     this.activeRunProjectIds = data.activeRunProjectIds;
+    this.activeProjectModes = data.activeProjectModes;
+    this.runPhase = data.runPhase;
 
     const existingIds = new Set(this.nodes.map(n => n.id));
     const newIds = new Set(data.projects.map(p => p.id));
@@ -262,22 +270,40 @@ export class WorkspaceRenderer {
     }
 
     // Draw flow particles
+    // Direction depends on phase: employee phase = node→hub, verdict = hub→node
+    const inward = this.runPhase === 'employee' || this.runPhase === 'manager_review';
     ctx.globalCompositeOperation = 'lighter';
     for (const fp of this.flowParticles) {
       const node = this.nodes[fp.nodeIndex];
       if (!node) continue;
-      const x = this.hubX + (node.x - this.hubX) * fp.progress;
-      const y = this.hubY + (node.y - this.hubY) * fp.progress;
+
+      let x: number, y: number;
+      if (inward) {
+        // Node → Hub (employees reporting to manager)
+        x = node.x + (this.hubX - node.x) * fp.progress;
+        y = node.y + (this.hubY - node.y) * fp.progress;
+      } else {
+        // Hub → Node (manager directing / verdict)
+        x = this.hubX + (node.x - this.hubX) * fp.progress;
+        y = this.hubY + (node.y - this.hubY) * fp.progress;
+      }
+
+      // Phase-based color: employee=blue, manager_review=amber, verdict=green
+      const color = this.runPhase === 'manager_review'
+        ? '245, 158, 11'
+        : this.runPhase === 'executing_verdict'
+        ? '16, 185, 129'
+        : '59, 130, 246';
 
       ctx.beginPath();
       ctx.arc(x, y, fp.size, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(59, 130, 246, ${0.8 * (1 - fp.progress * 0.5)})`;
+      ctx.fillStyle = `rgba(${color}, ${0.8 * (1 - fp.progress * 0.5)})`;
       ctx.fill();
 
       // Glow
       ctx.beginPath();
       ctx.arc(x, y, fp.size * 3, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(59, 130, 246, ${0.15 * (1 - fp.progress * 0.5)})`;
+      ctx.fillStyle = `rgba(${color}, ${0.15 * (1 - fp.progress * 0.5)})`;
       ctx.fill();
     }
     ctx.globalCompositeOperation = 'source-over';
@@ -291,16 +317,36 @@ export class WorkspaceRenderer {
     }
   }
 
+  private getPhaseColor(): [number, number, number] {
+    switch (this.runPhase) {
+      case 'employee': return [59, 130, 246];       // blue
+      case 'manager_review': return [245, 158, 11]; // amber
+      case 'executing_verdict': return [16, 185, 129]; // green
+      default: return [59, 130, 246];                // blue (idle)
+    }
+  }
+
+  private getPhaseLabel(): string {
+    switch (this.runPhase) {
+      case 'employee': return 'Reviewing';
+      case 'manager_review': return 'Reviewing';
+      case 'executing_verdict': return 'Executing';
+      default: return '';
+    }
+  }
+
   private drawHub() {
     const { ctx } = this;
     const pulse = Math.sin(this.hubPulse) * 0.3 + 0.7;
     const r = this.hubRadius;
+    const phaseColor = this.getPhaseColor();
+    const [cr, cg, cb] = phaseColor;
 
     // Hub glow
     if (this.serviceActive) {
       const gradient = ctx.createRadialGradient(this.hubX, this.hubY, r * 0.5, this.hubX, this.hubY, r * 2.5);
-      gradient.addColorStop(0, `rgba(59, 130, 246, ${0.15 * pulse})`);
-      gradient.addColorStop(1, 'rgba(59, 130, 246, 0)');
+      gradient.addColorStop(0, `rgba(${cr}, ${cg}, ${cb}, ${0.15 * pulse})`);
+      gradient.addColorStop(1, `rgba(${cr}, ${cg}, ${cb}, 0)`);
       ctx.beginPath();
       ctx.arc(this.hubX, this.hubY, r * 2.5, 0, Math.PI * 2);
       ctx.fillStyle = gradient;
@@ -319,12 +365,12 @@ export class WorkspaceRenderer {
     ctx.closePath();
 
     ctx.fillStyle = this.serviceActive
-      ? `rgba(59, 130, 246, ${0.1 + pulse * 0.08})`
+      ? `rgba(${cr}, ${cg}, ${cb}, ${0.1 + pulse * 0.08})`
       : 'rgba(30, 41, 59, 0.5)';
     ctx.fill();
 
     ctx.strokeStyle = this.serviceActive
-      ? `rgba(59, 130, 246, ${0.4 + pulse * 0.3})`
+      ? `rgba(${cr}, ${cg}, ${cb}, ${0.4 + pulse * 0.3})`
       : 'rgba(71, 85, 105, 0.3)';
     ctx.lineWidth = 1.5;
     ctx.stroke();
@@ -348,21 +394,40 @@ export class WorkspaceRenderer {
     ctx.beginPath();
     ctx.arc(this.hubX, this.hubY, 3, 0, Math.PI * 2);
     ctx.fillStyle = this.serviceActive
-      ? `rgba(59, 130, 246, ${pulse})`
+      ? `rgba(${cr}, ${cg}, ${cb}, ${pulse})`
       : 'rgba(71, 85, 105, 0.5)';
     ctx.fill();
+
+    // "Manager" label below hub
+    ctx.font = `bold ${Math.max(10, r * 0.4)}px system-ui, -apple-system, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillStyle = this.serviceActive
+      ? `rgba(${cr}, ${cg}, ${cb}, 0.8)`
+      : 'rgba(148, 163, 184, 0.5)';
+    ctx.fillText('Manager', this.hubX, this.hubY + r + 10);
+
+    // Phase label below "Manager" when active
+    const phaseLabel = this.getPhaseLabel();
+    if (phaseLabel && this.runPhase !== 'idle') {
+      ctx.font = `${Math.max(8, r * 0.3)}px system-ui, -apple-system, sans-serif`;
+      ctx.fillStyle = `rgba(${cr}, ${cg}, ${cb}, 0.6)`;
+      ctx.fillText(phaseLabel, this.hubX, this.hubY + r + 10 + Math.max(12, r * 0.45));
+    }
   }
 
   private drawProjectNode(node: ProjectNode) {
     const { ctx } = this;
     const r = this.hubRadius * 0.6;
     const isActive = this.activeRunProjectIds.has(node.id);
+    const mode = this.activeProjectModes.get(node.id);
 
     // Glow for active nodes
     if (isActive) {
+      const glowColor = mode === 'analyst' ? '168, 85, 247' : '59, 130, 246';
       const gradient = ctx.createRadialGradient(node.x, node.y, r * 0.3, node.x, node.y, r * 2);
-      gradient.addColorStop(0, `rgba(59, 130, 246, ${0.2 * (0.7 + node.glow * 0.3)})`);
-      gradient.addColorStop(1, 'rgba(59, 130, 246, 0)');
+      gradient.addColorStop(0, `rgba(${glowColor}, ${0.2 * (0.7 + node.glow * 0.3)})`);
+      gradient.addColorStop(1, `rgba(${glowColor}, 0)`);
       ctx.beginPath();
       ctx.arc(node.x, node.y, r * 2, 0, Math.PI * 2);
       ctx.fillStyle = gradient;
@@ -394,6 +459,35 @@ export class WorkspaceRenderer {
     ctx.strokeStyle = `rgba(${priorityColor.join(',')}, ${borderAlpha})`;
     ctx.lineWidth = 1;
     ctx.stroke();
+
+    // Role badge for active nodes
+    if (isActive && mode) {
+      const roleLabel = mode === 'analyst' ? 'Analyst' : 'Employee';
+      const badgeColor = mode === 'analyst' ? '168, 85, 247' : '59, 130, 246';
+      const fontSize = Math.max(8, r * 0.55);
+
+      // Badge background pill
+      ctx.font = `bold ${fontSize}px system-ui, -apple-system, sans-serif`;
+      const textWidth = ctx.measureText(roleLabel).width;
+      const badgeW = textWidth + 8;
+      const badgeH = fontSize + 4;
+      const badgeX = node.x - badgeW / 2;
+      const badgeY = node.y - r - badgeH - 4;
+
+      ctx.beginPath();
+      ctx.roundRect(badgeX, badgeY, badgeW, badgeH, 3);
+      ctx.fillStyle = `rgba(${badgeColor}, 0.2)`;
+      ctx.fill();
+      ctx.strokeStyle = `rgba(${badgeColor}, 0.5)`;
+      ctx.lineWidth = 0.5;
+      ctx.stroke();
+
+      // Badge text
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = `rgba(${badgeColor}, 0.9)`;
+      ctx.fillText(roleLabel, node.x, badgeY + badgeH / 2);
+    }
   }
 
   getNodeAt(clientX: number, clientY: number): ProjectNode | null {
