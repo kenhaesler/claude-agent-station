@@ -14,6 +14,7 @@ class ProjectCreate(BaseModel):
     mode: str = "full"
     enabled: bool = True
     branch: str = "main"
+    custom_instructions: Optional[str] = None
 
 
 class ProjectUpdate(BaseModel):
@@ -21,6 +22,7 @@ class ProjectUpdate(BaseModel):
     mode: Optional[str] = None
     enabled: Optional[bool] = None
     branch: Optional[str] = None
+    custom_instructions: Optional[str] = None
 
 
 class ProjectOut(BaseModel):
@@ -30,6 +32,7 @@ class ProjectOut(BaseModel):
     mode: str
     enabled: bool
     branch: str
+    custom_instructions: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 

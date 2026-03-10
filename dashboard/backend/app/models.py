@@ -19,6 +19,7 @@ class Project(Base):
     mode = Column(Text, default="full")
     enabled = Column(Boolean, default=True)
     branch = Column(Text, default="main")
+    custom_instructions = Column(Text, nullable=True, default=None)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

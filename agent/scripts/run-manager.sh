@@ -350,6 +350,8 @@ run_employee() {
     name=$(repo_name "$repo")
     local mode
     mode=$(get_project_field "$project_index" "mode" 2>/dev/null || echo "full")
+    local custom_instructions
+    custom_instructions=$(get_project_field "$project_index" "custom_instructions" 2>/dev/null || echo "")
 
     log_info "=========================================="
     log_info "EMPLOYEE: $repo (mode: $mode)"
@@ -409,6 +411,14 @@ Your workspace is: $workspace
 Find the most actionable open issue, implement it fully, run tests, and write your report to $workspace/.claude-employee-report.json
 
 Remember: commit locally but NEVER push. The manager will review and push if approved."
+    fi
+
+    # Append custom instructions if configured for this project
+    if [ -n "$custom_instructions" ]; then
+        employee_prompt="$employee_prompt
+
+## Project-Specific Custom Instructions
+$custom_instructions"
     fi
 
     # Build employee command

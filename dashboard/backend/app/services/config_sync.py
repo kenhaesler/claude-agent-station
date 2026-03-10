@@ -70,6 +70,9 @@ async def sync_config_to_db(db: AsyncSession) -> int:
             existing.mode = proj_data.get("mode", existing.mode)
             existing.enabled = proj_data.get("enabled", True)
             existing.branch = proj_data.get("branch", existing.branch or "main")
+            existing.custom_instructions = proj_data.get(
+                "custom_instructions", existing.custom_instructions
+            )
         else:
             project = Project(
                 repo=repo,
@@ -77,6 +80,7 @@ async def sync_config_to_db(db: AsyncSession) -> int:
                 mode=proj_data.get("mode", "full"),
                 enabled=proj_data.get("enabled", True),
                 branch=proj_data.get("branch", "main"),
+                custom_instructions=proj_data.get("custom_instructions"),
             )
             db.add(project)
         count += 1
@@ -100,6 +104,7 @@ async def sync_db_to_config(db: AsyncSession) -> None:
             "mode": p.mode,
             **({"enabled": p.enabled} if not p.enabled else {}),
             **({"branch": p.branch} if p.branch != "main" else {}),
+            **({"custom_instructions": p.custom_instructions} if p.custom_instructions else {}),
         }
         for p in projects
         if p.enabled or True  # include disabled projects so they're not lost

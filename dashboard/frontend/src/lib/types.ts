@@ -5,6 +5,7 @@ export interface Project {
   mode: string;
   enabled: boolean;
   branch: string;
+  custom_instructions: string | null;
   created_at: string | null;
   updated_at: string | null;
 }
@@ -15,6 +16,7 @@ export interface ProjectCreate {
   mode?: string;
   enabled?: boolean;
   branch?: string;
+  custom_instructions?: string | null;
 }
 
 export interface ProjectUpdate {
@@ -22,6 +24,7 @@ export interface ProjectUpdate {
   mode?: string;
   enabled?: boolean;
   branch?: string;
+  custom_instructions?: string | null;
 }
 
 export interface Run {
