@@ -1,15 +1,21 @@
 """CRUD endpoints for implementation plans."""
 
 import json
+import logging
+from pathlib import Path
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.dependencies import get_db
 from app.models import Plan, Project
 from app.schemas import PlanCreate, PlanUpdate, PlanOut, PlanList
+from app.services.systemd import systemctl
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/plans", tags=["plans"])
 
@@ -123,4 +129,65 @@ async def reject_plan(plan_id: int, db: AsyncSession = Depends(get_db)) -> Plan:
     plan.status = "rejected"
     await db.commit()
     await db.refresh(plan)
+    return plan
+
+
+@router.post("/{plan_id}/implement", response_model=PlanOut)
+async def implement_plan(plan_id: int, db: AsyncSession = Depends(get_db)) -> Plan:
+    """Write the plan to a file in the project workspace and trigger implementation.
+
+    The plan file is read by the employee agent as context for implementing
+    the planned changes. The project mode is temporarily not changed — the
+    employee agent picks up the plan file automatically.
+    """
+    result = await db.execute(select(Plan).where(Plan.id == plan_id))
+    plan = result.scalar_one_or_none()
+    if not plan:
+        raise HTTPException(status_code=404, detail="Plan not found")
+    if plan.status not in ("approved", "draft"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot implement plan with status '{plan.status}'. Approve it first.",
+        )
+
+    # Look up the project to find repo name
+    proj_result = await db.execute(select(Project).where(Project.id == plan.project_id))
+    project = proj_result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail="Associated project not found")
+
+    # Write the plan to the workspace so the employee agent can read it
+    repo_name = project.repo.split("/")[-1]
+    workspace_dir = Path(settings.workspaces_dir) / repo_name
+    plan_file = workspace_dir / ".claude-plan-to-implement.json"
+
+    plan_data = {
+        "plan_id": plan.id,
+        "issue_number": plan.issue_number,
+        "issue_title": plan.issue_title,
+        "title": plan.title,
+        "description": plan.description,
+        "steps": plan.steps,
+        "files_affected": plan.files_affected,
+        "estimated_scope": plan.estimated_scope,
+    }
+
+    try:
+        workspace_dir.mkdir(parents=True, exist_ok=True)
+        plan_file.write_text(json.dumps(plan_data, indent=2))
+        logger.info("Wrote plan file to %s", plan_file)
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"Failed to write plan file: {e}")
+
+    # Update plan status
+    plan.status = "implementing"
+    await db.commit()
+    await db.refresh(plan)
+
+    # Trigger the agent service
+    trigger_result = await systemctl("start", "claude-agent.service")
+    if not trigger_result.get("success"):
+        logger.warning("Failed to trigger agent service: %s", trigger_result)
+        # Don't fail — the plan file is written and can be picked up on next run
+
     return plan

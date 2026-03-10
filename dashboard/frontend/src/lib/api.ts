@@ -82,6 +82,8 @@ export const approvePlan = (id: number) =>
   request<Plan>(`/api/plans/${id}/approve`, { method: 'POST' });
 export const rejectPlan = (id: number) =>
   request<Plan>(`/api/plans/${id}/reject`, { method: 'POST' });
+export const implementPlan = (id: number) =>
+  request<Plan>(`/api/plans/${id}/implement`, { method: 'POST' });
 
 // Logs
 export const searchLogs = (q: string, runId?: string, limit?: number) => {

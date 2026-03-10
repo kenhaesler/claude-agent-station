@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { getPlan, listProjects, approvePlan, rejectPlan } from '../lib/api';
+  import { getPlan, listProjects, approvePlan, rejectPlan, implementPlan } from '../lib/api';
   import { navigate } from '../lib/router.svelte';
   import { toastSuccess, toastError } from '../lib/toast.svelte';
   import type { Plan, Project } from '../lib/types';
@@ -90,6 +90,17 @@
     }
   }
 
+  async function handleImplement() {
+    if (!plan) return;
+    if (!confirm('This will trigger the agent to implement this plan. Continue?')) return;
+    try {
+      plan = await implementPlan(plan.id);
+      toastSuccess('Implementation triggered! The agent will work on this plan.');
+    } catch (e: any) {
+      toastError(`Failed: ${e.message}`);
+    }
+  }
+
   $effect(() => {
     load();
   });
@@ -126,6 +137,11 @@
 
     <!-- Actions -->
     <div class="flex gap-2">
+      {#if plan.status === 'approved' || plan.status === 'draft'}
+        <button onclick={handleImplement} class="px-4 py-2 text-sm bg-accent-blue/20 text-accent-blue hover:bg-accent-blue/30 rounded-lg cursor-pointer font-medium">
+          Implement Plan
+        </button>
+      {/if}
       {#if plan.status === 'draft' || plan.status === 'rejected'}
         <button onclick={handleApprove} class="px-4 py-2 text-sm bg-green-500/20 text-green-400 hover:bg-green-500/30 rounded-lg cursor-pointer">
           Approve Plan
