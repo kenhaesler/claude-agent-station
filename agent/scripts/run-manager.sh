@@ -196,6 +196,44 @@ with open(tracking_file, 'w') as f:
 }
 
 # ============================================================================
+# TOKEN BUDGET CHECK
+# ============================================================================
+
+check_token_budget() {
+    # Check if token consumption is within configured limits.
+    # Queries the dashboard API for current token usage.
+    # Returns 0 if OK to proceed, 1 if budget exceeded.
+    local token_limit_daily token_reserve_pct
+    token_limit_daily=$(json_get "$CONFIG_FILE" "limits.token_limit_daily" 2>/dev/null || echo "0")
+    token_reserve_pct=$(json_get "$CONFIG_FILE" "limits.token_reserve_percent" 2>/dev/null || echo "20")
+
+    # If no daily token limit configured, skip check
+    [ "$token_limit_daily" = "0" ] && return 0
+
+    # Try to get token usage from dashboard API
+    local usage_json
+    usage_json=$(curl -s --max-time 3 "http://127.0.0.1:8420/api/config/token-usage" 2>/dev/null || echo "")
+    if [ -z "$usage_json" ]; then
+        log_warn "Could not reach dashboard API for token budget check, proceeding anyway"
+        return 0
+    fi
+
+    local can_spawn
+    can_spawn=$(echo "$usage_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('can_spawn_employee', True))" 2>/dev/null || echo "True")
+
+    if [ "$can_spawn" = "False" ]; then
+        local daily_total daily_limit
+        daily_total=$(echo "$usage_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('daily',{}).get('tokens_total',0))" 2>/dev/null || echo "?")
+        daily_limit=$(echo "$usage_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('daily',{}).get('effective_limit',0))" 2>/dev/null || echo "?")
+        log_warn "Token budget exceeded: ${daily_total} tokens used, effective limit ${daily_limit} (reserve ${token_reserve_pct}%)"
+        return 1
+    fi
+
+    log_info "Token budget: OK"
+    return 0
+}
+
+# ============================================================================
 # PREFLIGHT CHECKS
 # ============================================================================
 
@@ -373,16 +411,14 @@ run_employee() {
         fi
     fi
 
-    local model max_turns max_budget
+    local model max_turns
     model=$(json_get "$CONFIG_FILE" "models.employee" 2>/dev/null || echo "claude-opus-4-6")
     max_turns=$(json_get "$CONFIG_FILE" "limits.max_employee_turns" 2>/dev/null || echo "200")
-    max_budget=$(json_get "$CONFIG_FILE" "limits.max_employee_budget_usd" 2>/dev/null || echo "25.00")
 
     # Analyze/plan modes use Sonnet (cheaper — no code changes, just analysis/planning)
     if [ "$mode" = "analyze" ] || [ "$mode" = "plan" ]; then
         model="claude-sonnet-4-6"
         max_turns=50
-        max_budget="5.00"
     fi
 
     # Determine fallback model (must differ from primary)
@@ -496,7 +532,6 @@ $custom_instructions"
     cmd+=(--model "$model")
     cmd+=(--fallback-model "$fallback_model")
     cmd+=(--max-turns "$max_turns")
-    cmd+=(--max-budget-usd "$max_budget")
     cmd+=(--system-prompt-file "$system_prompt")
     # No --allowedTools/--disallowedTools: full VM access, prompt-enforced guardrails
 
@@ -545,10 +580,16 @@ for b in d.get('message',{}).get('content',[]):
                 [ -n "$text_snippet" ] && log_info "  Employee: $text_snippet"
                 ;;
             result)
-                local result_cost result_turns
-                result_cost=$(echo "$line" | python3 -c "import json,sys; print(f'{json.load(sys.stdin).get(\"total_cost_usd\",0):.2f}')" 2>/dev/null || echo "?")
+                local result_tokens result_turns
+                result_tokens=$(echo "$line" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+mu=d.get('modelUsage',{})
+t=sum(u.get('inputTokens',0)+u.get('outputTokens',0) for u in mu.values())
+print(f'{t:,}')
+" 2>/dev/null || echo "?")
                 result_turns=$(echo "$line" | python3 -c "import json,sys; print(json.load(sys.stdin).get('num_turns',0))" 2>/dev/null || echo "?")
-                log_info "  Employee result: Turns=$result_turns Cost=\$$result_cost"
+                log_info "  Employee result: Turns=$result_turns Tokens=$result_tokens"
                 ;;
         esac
     done
@@ -665,10 +706,9 @@ run_manager_review() {
 
     webhook_event "manager_review" "\"review_package\":\"$review_package\""
 
-    local model max_turns max_budget
+    local model max_turns
     model=$(json_get "$CONFIG_FILE" "models.manager" 2>/dev/null || echo "claude-sonnet-4-6")
     max_turns=$(json_get "$CONFIG_FILE" "limits.max_manager_turns" 2>/dev/null || echo "30")
-    max_budget=$(json_get "$CONFIG_FILE" "limits.max_manager_budget_usd" 2>/dev/null || echo "3.00")
 
     # Determine fallback model for manager
     local manager_fallback="claude-haiku-4-5-20251001"
@@ -680,7 +720,6 @@ run_manager_review() {
     cmd+=(--model "$model")
     cmd+=(--fallback-model "$manager_fallback")
     cmd+=(--max-turns "$max_turns")
-    cmd+=(--max-budget-usd "$max_budget")
     cmd+=(--system-prompt-file "$SCRIPT_DIR/../prompts/manager.md")
     # No --allowedTools: full VM access, prompt-enforced guardrails
 
@@ -722,9 +761,15 @@ for b in d.get('message',{}).get('content',[]):
                 [ -n "$text_snippet" ] && log_info "  Manager: $text_snippet" >&2
                 ;;
             result)
-                local result_cost
-                result_cost=$(echo "$line" | python3 -c "import json,sys; print(f'{json.load(sys.stdin).get(\"total_cost_usd\",0):.2f}')" 2>/dev/null || echo "?")
-                log_info "  Manager review cost: \$$result_cost" >&2
+                local result_tokens_mgr
+                result_tokens_mgr=$(echo "$line" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+mu=d.get('modelUsage',{})
+t=sum(u.get('inputTokens',0)+u.get('outputTokens',0) for u in mu.values())
+print(f'{t:,}')
+" 2>/dev/null || echo "?")
+                log_info "  Manager review tokens: $result_tokens_mgr" >&2
                 ;;
         esac
     done
@@ -939,18 +984,24 @@ write_digest() {
         echo "Date: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
         echo ""
 
-        # Extract cost data from stream files
-        echo "## Cost Summary"
-        local total_cost=0
+        # Extract token usage from stream files
+        echo "## Token Usage Summary"
+        local total_tokens=0
         for stream in "$LOG_DIR"/run-${RUN_ID}-*.stream.jsonl; do
             [ -f "$stream" ] || continue
-            local stream_name cost
+            local stream_name tokens
             stream_name=$(basename "$stream" .stream.jsonl | sed "s/run-${RUN_ID}-//")
-            cost=$(tail -1 "$stream" | python3 -c "import json,sys; print(f'{json.load(sys.stdin).get(\"total_cost_usd\",0):.4f}')" 2>/dev/null || echo "0.0000")
-            echo "- **$stream_name**: \$$cost"
-            total_cost=$(python3 -c "print(f'{$total_cost + $cost:.4f}')" 2>/dev/null || echo "?")
+            tokens=$(tail -1 "$stream" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+mu=d.get('modelUsage',{})
+t=sum(u.get('inputTokens',0)+u.get('outputTokens',0) for u in mu.values())
+print(t)
+" 2>/dev/null || echo "0")
+            echo "- **$stream_name**: ${tokens} tokens"
+            total_tokens=$(python3 -c "print($total_tokens + $tokens)" 2>/dev/null || echo "?")
         done
-        echo "- **Total**: \$$total_cost"
+        echo "- **Total**: ${total_tokens} tokens"
         echo ""
 
         if [ -f "$verdicts_file" ]; then
@@ -1033,6 +1084,13 @@ main() {
         if ! check_rate_limit; then
             log_warn "Rate limit reached. Stopping before $repo"
             notify "rate_limit" "Rate limit reached before $repo in run $RUN_ID"
+            break
+        fi
+
+        # Check token budget before each employee
+        if ! check_token_budget; then
+            log_warn "Token budget exceeded. Stopping before $repo"
+            notify "token_budget" "Token budget exceeded before $repo in run $RUN_ID"
             break
         fi
 

@@ -54,7 +54,10 @@ class RunOut(BaseModel):
     verdict: Optional[str] = None
     issue_number: Optional[int] = None
     branch: Optional[str] = None
-    cost_usd: Optional[float] = None
+    cost_usd: Optional[float] = None  # Deprecated: kept for historical data
+    tokens_input: Optional[int] = None
+    tokens_output: Optional[int] = None
+    tokens_total: Optional[int] = None
     turns: Optional[int] = None
     duration_ms: Optional[int] = None
     started_at: Optional[datetime] = None
@@ -182,7 +185,10 @@ class WebhookRunEvent(BaseModel):
     verdict: Optional[str] = None
     issue_number: Optional[int] = None
     branch: Optional[str] = None
-    cost_usd: Optional[float] = None
+    cost_usd: Optional[float] = None  # Deprecated: kept for backward compat
+    tokens_input: Optional[int] = None
+    tokens_output: Optional[int] = None
+    tokens_total: Optional[int] = None
     turns: Optional[int] = None
     duration_ms: Optional[int] = None
     reasoning: Optional[str] = None

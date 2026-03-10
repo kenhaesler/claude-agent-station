@@ -75,6 +75,12 @@ def _update_run_from_logs(run: "Run", data: dict) -> None:
         run.model = data["model"]
     if not run.cost_usd and data.get("cost_usd"):
         run.cost_usd = data["cost_usd"]
+    if not run.tokens_input and data.get("tokens_input"):
+        run.tokens_input = data["tokens_input"]
+    if not run.tokens_output and data.get("tokens_output"):
+        run.tokens_output = data["tokens_output"]
+    if not run.tokens_total and data.get("tokens_total"):
+        run.tokens_total = data["tokens_total"]
     if not run.turns and data.get("turns"):
         run.turns = data["turns"]
     if not run.duration_ms and data.get("duration_ms"):
@@ -184,6 +190,9 @@ def _build_run_data(
         "issue_number": issue_number,
         "branch": branch,
         "cost_usd": result_data.get("cost_usd") if result_data else None,
+        "tokens_input": result_data.get("tokens_input") if result_data else None,
+        "tokens_output": result_data.get("tokens_output") if result_data else None,
+        "tokens_total": result_data.get("tokens_total") if result_data else None,
         "turns": result_data.get("turns") if result_data else None,
         "duration_ms": result_data.get("duration_ms") if result_data else None,
         "started_at": started_at,

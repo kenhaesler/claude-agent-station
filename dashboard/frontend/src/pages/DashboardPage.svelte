@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { Run, SystemStatus, UsageData, Project } from '../lib/types';
   import { getLatestRun, getSystemStatus, listRuns, getUsage, listProjects } from '../lib/api';
-  import { formatDuration, formatCost } from '../lib/format';
+  import { formatDuration, formatTokens } from '../lib/format';
   import { toastSuccess, toastError } from '../lib/toast.svelte';
   import LoadingSpinner from '../components/LoadingSpinner.svelte';
   import AgentWorkspace from '../components/AgentWorkspace.svelte';
@@ -47,8 +47,8 @@
     return () => clearInterval(interval);
   });
 
-  let totalCost = $derived(recentRuns.reduce((sum, r) => sum + (r.cost_usd ?? 0), 0));
-  let avgCost = $derived(recentRuns.length > 0 ? totalCost / recentRuns.length : 0);
+  let totalTokens = $derived(recentRuns.reduce((sum, r) => sum + (r.tokens_total ?? 0), 0));
+  let avgTokens = $derived(recentRuns.length > 0 ? totalTokens / recentRuns.length : 0);
 </script>
 
 <div class="space-y-5">
@@ -86,11 +86,11 @@
         class="stagger-2"
       />
       <MetricPanel
-        label="Total Cost"
-        value={totalCost}
-        format={(n) => formatCost(n)}
+        label="Total Tokens"
+        value={totalTokens}
+        format={(n) => formatTokens(n)}
         glow="purple"
-        subtitle="{recentRuns.length} runs, avg {formatCost(avgCost)}"
+        subtitle="{recentRuns.length} runs, avg {formatTokens(avgTokens)}"
         class="stagger-3"
       />
       <MetricPanel

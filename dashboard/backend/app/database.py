@@ -36,6 +36,9 @@ async def _migrate_add_columns(conn) -> None:
     migrations = [
         ("projects", "custom_instructions", "ALTER TABLE projects ADD COLUMN custom_instructions TEXT"),
         ("projects", "setup_script", "ALTER TABLE projects ADD COLUMN setup_script TEXT"),
+        ("runs", "tokens_input", "ALTER TABLE runs ADD COLUMN tokens_input INTEGER"),
+        ("runs", "tokens_output", "ALTER TABLE runs ADD COLUMN tokens_output INTEGER"),
+        ("runs", "tokens_total", "ALTER TABLE runs ADD COLUMN tokens_total INTEGER"),
     ]
     for table, column, sql in migrations:
         try:

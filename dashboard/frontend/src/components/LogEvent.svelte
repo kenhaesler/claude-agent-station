@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { ParsedLogEvent } from '../lib/log-parser';
   import { formatToolInput, truncate } from '../lib/log-parser';
-  import { formatDuration, formatCost } from '../lib/format';
+  import { formatDuration, formatTokens } from '../lib/format';
 
   interface Props {
     event: ParsedLogEvent;
@@ -139,8 +139,8 @@
       {#if event.durationMs}
         <span class="text-text-dim">{formatDuration(event.durationMs)}</span>
       {/if}
-      {#if event.costUsd != null}
-        <span class="text-text-dim">{formatCost(event.costUsd)}</span>
+      {#if event.tokensTotal}
+        <span class="text-text-dim">{formatTokens(event.tokensTotal)} tokens</span>
       {/if}
       {#if event.model}
         <span class="text-text-dim font-data">{event.model}</span>

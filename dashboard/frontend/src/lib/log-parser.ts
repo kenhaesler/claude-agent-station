@@ -30,7 +30,8 @@ export interface ParsedLogEvent {
 
   // result
   resultStatus?: string;
-  costUsd?: number;
+  costUsd?: number;  // Deprecated: kept for historical log display
+  tokensTotal?: number;
   numTurns?: number;
   durationMs?: number;
   model?: string;
@@ -129,11 +130,19 @@ export function parseLogLine(line: string): ParsedLogEvent | ParsedLogEvent[] | 
     }
 
     case 'result': {
+      // Extract total tokens from modelUsage
+      let tokensTotal = 0;
+      if (json.modelUsage) {
+        for (const usage of Object.values(json.modelUsage) as any[]) {
+          tokensTotal += (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0);
+        }
+      }
       return {
         ...base,
         type: 'result',
         resultStatus: json.subtype || 'completed',
         costUsd: json.total_cost_usd,
+        tokensTotal: tokensTotal || undefined,
         numTurns: json.num_turns,
         durationMs: json.duration_ms,
         model: json.modelUsage ? Object.keys(json.modelUsage)[0] : undefined,

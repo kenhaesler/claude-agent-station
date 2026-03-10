@@ -55,15 +55,20 @@ def parse_run_timestamp(run_id: str) -> Optional[datetime]:
 def parse_result_json(filepath: str) -> Optional[Dict[str, Any]]:
     """Parse a run result .json file (the old format summary).
 
-    Returns dict with: cost_usd, turns, duration_ms, status, model.
+    Returns dict with: cost_usd, tokens_input, tokens_output, tokens_total,
+    turns, duration_ms, status, model.
     """
     try:
         with open(filepath, "r") as f:
             data = json.load(f)
         if data.get("type") != "result":
             return None
+        tokens = _extract_tokens(data)
         return {
             "cost_usd": data.get("total_cost_usd"),
+            "tokens_input": tokens[0],
+            "tokens_output": tokens[1],
+            "tokens_total": tokens[2],
             "turns": data.get("num_turns"),
             "duration_ms": data.get("duration_ms"),
             "status": "success" if data.get("subtype") == "success" else "failed",
@@ -96,8 +101,12 @@ def parse_stream_result(filepath: str) -> Optional[Dict[str, Any]]:
         if not result_line:
             return None
 
+        tokens = _extract_tokens(result_line)
         return {
             "cost_usd": result_line.get("total_cost_usd"),
+            "tokens_input": tokens[0],
+            "tokens_output": tokens[1],
+            "tokens_total": tokens[2],
             "turns": result_line.get("num_turns"),
             "duration_ms": result_line.get("duration_ms"),
             "status": "success" if result_line.get("subtype") == "success" else "failed",
@@ -176,3 +185,25 @@ def _extract_model(data: Dict[str, Any]) -> Optional[str]:
     if model_usage:
         return list(model_usage.keys())[0]
     return None
+
+
+def _extract_tokens(data: Dict[str, Any]) -> Tuple[Optional[int], Optional[int], Optional[int]]:
+    """Extract token usage from result data.
+
+    Claude CLI result events contain a modelUsage dict with per-model token counts.
+    We sum across all models to get totals.
+
+    Returns: (input_tokens, output_tokens, total_tokens)
+    """
+    model_usage = data.get("modelUsage", {})
+    if not model_usage:
+        return (None, None, None)
+
+    total_input = 0
+    total_output = 0
+    for _model, usage in model_usage.items():
+        total_input += usage.get("inputTokens", 0) or 0
+        total_output += usage.get("outputTokens", 0) or 0
+
+    total = total_input + total_output
+    return (total_input or None, total_output or None, total or None)

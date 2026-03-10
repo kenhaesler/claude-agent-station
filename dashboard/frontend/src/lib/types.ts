@@ -40,7 +40,10 @@ export interface Run {
   verdict: string | null;
   issue_number: number | null;
   branch: string | null;
-  cost_usd: number | null;
+  cost_usd: number | null;  // Deprecated: kept for historical data
+  tokens_input: number | null;
+  tokens_output: number | null;
+  tokens_total: number | null;
   turns: number | null;
   duration_ms: number | null;
   started_at: string | null;
@@ -122,6 +125,25 @@ export interface UsageData {
   last_run_ts: number;
 }
 
+export interface TokenUsageData {
+  daily: {
+    tokens_input: number;
+    tokens_output: number;
+    tokens_total: number;
+    limit: number;
+    effective_limit: number;
+    usage_percent: number;
+  };
+  monthly: {
+    tokens_total: number;
+    limit: number;
+    effective_limit: number;
+    usage_percent: number;
+  };
+  token_reserve_percent: number;
+  can_spawn_employee: boolean;
+}
+
 export interface StationConfig {
   projects?: any[];
   _mode_options?: Record<string, string>;
@@ -132,9 +154,11 @@ export interface StationConfig {
   };
   limits?: {
     max_employee_turns?: number;
-    max_employee_budget_usd?: number;
+    max_analyst_turns?: number;
     max_manager_turns?: number;
-    max_manager_budget_usd?: number;
+    token_limit_daily?: number;
+    token_limit_monthly?: number;
+    token_reserve_percent?: number;
     session_limit_24h?: number;
     max_session_percent?: number;
   };

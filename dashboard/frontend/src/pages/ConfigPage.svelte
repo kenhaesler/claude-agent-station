@@ -13,9 +13,11 @@
   let managerModel = $state('');
 
   let maxEmployeeTurns = $state<number | undefined>(undefined);
-  let maxEmployeeBudget = $state<number | undefined>(undefined);
+  let maxAnalystTurns = $state<number | undefined>(undefined);
   let maxManagerTurns = $state<number | undefined>(undefined);
-  let maxManagerBudget = $state<number | undefined>(undefined);
+  let tokenLimitDaily = $state<number | undefined>(undefined);
+  let tokenLimitMonthly = $state<number | undefined>(undefined);
+  let tokenReservePercent = $state<number | undefined>(undefined);
   let sessionLimit24h = $state<number | undefined>(undefined);
   let maxSessionPercent = $state<number | undefined>(undefined);
 
@@ -36,9 +38,11 @@
     managerModel = cfg.models?.manager ?? '';
 
     maxEmployeeTurns = cfg.limits?.max_employee_turns;
-    maxEmployeeBudget = cfg.limits?.max_employee_budget_usd;
+    maxAnalystTurns = cfg.limits?.max_analyst_turns;
     maxManagerTurns = cfg.limits?.max_manager_turns;
-    maxManagerBudget = cfg.limits?.max_manager_budget_usd;
+    tokenLimitDaily = cfg.limits?.token_limit_daily;
+    tokenLimitMonthly = cfg.limits?.token_limit_monthly;
+    tokenReservePercent = cfg.limits?.token_reserve_percent;
     sessionLimit24h = cfg.limits?.session_limit_24h;
     maxSessionPercent = cfg.limits?.max_session_percent;
 
@@ -78,9 +82,11 @@
       },
       limits: {
         max_employee_turns: maxEmployeeTurns,
-        max_employee_budget_usd: maxEmployeeBudget,
+        max_analyst_turns: maxAnalystTurns,
         max_manager_turns: maxManagerTurns,
-        max_manager_budget_usd: maxManagerBudget,
+        token_limit_daily: tokenLimitDaily,
+        token_limit_monthly: tokenLimitMonthly,
+        token_reserve_percent: tokenReservePercent,
         session_limit_24h: sessionLimit24h,
         max_session_percent: maxSessionPercent,
       },
@@ -154,26 +160,49 @@
       </div>
     </GlassCard>
 
-    <!-- Limits -->
+    <!-- Turn Limits -->
     <GlassCard class="p-5">
-      <h3 class="font-semibold mb-4">Limits</h3>
-      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      <h3 class="font-semibold mb-4">Turn Limits</h3>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div>
           <label for="max-employee-turns" class="block text-sm text-text-dim mb-1">Max Employee Turns</label>
           <input id="max-employee-turns" type="number" bind:value={maxEmployeeTurns} class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-accent-blue/50 transition-colors" />
         </div>
         <div>
-          <label for="max-employee-budget" class="block text-sm text-text-dim mb-1">Max Employee Budget (USD)</label>
-          <input id="max-employee-budget" type="number" step="0.01" bind:value={maxEmployeeBudget} class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-accent-blue/50 transition-colors" />
+          <label for="max-analyst-turns" class="block text-sm text-text-dim mb-1">Max Analyst Turns</label>
+          <input id="max-analyst-turns" type="number" bind:value={maxAnalystTurns} class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-accent-blue/50 transition-colors" />
         </div>
         <div>
           <label for="max-manager-turns" class="block text-sm text-text-dim mb-1">Max Manager Turns</label>
           <input id="max-manager-turns" type="number" bind:value={maxManagerTurns} class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-accent-blue/50 transition-colors" />
         </div>
+      </div>
+    </GlassCard>
+
+    <!-- Token Limits -->
+    <GlassCard class="p-5">
+      <h3 class="font-semibold mb-4">Token Budget</h3>
+      <p class="text-xs text-text-dim mb-4">Configure your claude.ai plan's token allowance. Set to 0 to disable token-based limiting.</p>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div>
-          <label for="max-manager-budget" class="block text-sm text-text-dim mb-1">Max Manager Budget (USD)</label>
-          <input id="max-manager-budget" type="number" step="0.01" bind:value={maxManagerBudget} class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-accent-blue/50 transition-colors" />
+          <label for="token-limit-daily" class="block text-sm text-text-dim mb-1">Daily Token Limit</label>
+          <input id="token-limit-daily" type="number" bind:value={tokenLimitDaily} placeholder="0 = unlimited" class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-accent-blue/50 transition-colors" />
         </div>
+        <div>
+          <label for="token-limit-monthly" class="block text-sm text-text-dim mb-1">Monthly Token Limit</label>
+          <input id="token-limit-monthly" type="number" bind:value={tokenLimitMonthly} placeholder="0 = unlimited" class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-accent-blue/50 transition-colors" />
+        </div>
+        <div>
+          <label for="token-reserve-pct" class="block text-sm text-text-dim mb-1">Reserve for Manual Use (%)</label>
+          <input id="token-reserve-pct" type="number" min="0" max="100" bind:value={tokenReservePercent} class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-accent-blue/50 transition-colors" />
+        </div>
+      </div>
+    </GlassCard>
+
+    <!-- Session Limits -->
+    <GlassCard class="p-5">
+      <h3 class="font-semibold mb-4">Session Limits</h3>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
           <label for="session-limit" class="block text-sm text-text-dim mb-1">Session Limit (24h)</label>
           <input id="session-limit" type="number" bind:value={sessionLimit24h} class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-accent-blue/50 transition-colors" />

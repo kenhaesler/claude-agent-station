@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { Run, Project } from '../lib/types';
   import { listRuns, listProjects, rescanRuns } from '../lib/api';
-  import { formatDuration, formatCost } from '../lib/format';
+  import { formatDuration, formatTokens } from '../lib/format';
   import { toastError, toastSuccess } from '../lib/toast.svelte';
   import StatusBadge from '../components/StatusBadge.svelte';
   import LoadingSpinner from '../components/LoadingSpinner.svelte';
@@ -114,7 +114,7 @@
             <th class="px-3 md:px-5 py-3 font-medium">Verdict</th>
             <th class="px-3 md:px-5 py-3 font-medium hidden md:table-cell">Mode</th>
             <th class="px-3 md:px-5 py-3 font-medium">Duration</th>
-            <th class="px-3 md:px-5 py-3 font-medium">Cost</th>
+            <th class="px-3 md:px-5 py-3 font-medium">Tokens</th>
             <th class="px-3 md:px-5 py-3 font-medium hidden sm:table-cell">Started</th>
           </tr>
         </thead>
@@ -127,7 +127,7 @@
               <td class="px-3 md:px-5 py-3"><StatusBadge value={run.verdict} /></td>
               <td class="px-3 md:px-5 py-3 hidden md:table-cell"><StatusBadge value={run.mode} variant="mode" /></td>
               <td class="px-3 md:px-5 py-3 text-text-dim">{formatDuration(run.duration_ms)}</td>
-              <td class="px-3 md:px-5 py-3 text-text-dim font-data">{formatCost(run.cost_usd)}</td>
+              <td class="px-3 md:px-5 py-3 text-text-dim font-data">{formatTokens(run.tokens_total)}</td>
               <td class="px-3 md:px-5 py-3 hidden sm:table-cell"><TimeAgo date={run.started_at} /></td>
             </tr>
           {/each}
