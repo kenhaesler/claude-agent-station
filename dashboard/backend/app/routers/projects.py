@@ -36,7 +36,7 @@ async def create_project(data: ProjectCreate, db: AsyncSession = Depends(get_db)
     if result.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="Project with this repo already exists")
 
-    project = Project(**data.dict())
+    project = Project(**data.model_dump())
     db.add(project)
     await db.commit()
     await db.refresh(project)
@@ -57,7 +57,7 @@ async def update_project(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    update_data = data.dict(exclude_unset=True)
+    update_data = data.model_dump(exclude_unset=True)
     for key, value in update_data.items():
         setattr(project, key, value)
 

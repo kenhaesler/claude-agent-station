@@ -2,7 +2,7 @@
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
@@ -64,7 +64,7 @@ async def receive_run_event(
                 mode=event.mode,
                 model=event.model,
                 status="running",
-                started_at=datetime.utcnow(),
+                started_at=datetime.now(timezone.utc),
             )
             db.add(run)
         else:
@@ -92,7 +92,7 @@ async def receive_run_event(
         run.cost_usd = event.cost_usd
         run.turns = event.turns
         run.duration_ms = event.duration_ms
-        run.finished_at = datetime.utcnow()
+        run.finished_at = datetime.now(timezone.utc)
         run.model = event.model or run.model
 
     elif event_name == "employee_done":
@@ -104,7 +104,7 @@ async def receive_run_event(
                 run_id=event.run_id,
                 project_id=project_id,
                 status="running",
-                started_at=datetime.utcnow(),
+                started_at=datetime.now(timezone.utc),
             )
             db.add(run)
         # Keep status as "running" — do NOT set to finished
@@ -122,7 +122,7 @@ async def receive_run_event(
                 run_id=event.run_id,
                 project_id=project_id,
                 status="reviewing",
-                started_at=datetime.utcnow(),
+                started_at=datetime.now(timezone.utc),
             )
             db.add(run)
         else:
@@ -162,7 +162,7 @@ async def receive_run_event(
                 run_id=event.run_id,
                 project_id=project_id,
                 status=event.status or "running",
-                started_at=datetime.utcnow(),
+                started_at=datetime.now(timezone.utc),
             )
             db.add(run)
         # Update fields if provided

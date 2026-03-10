@@ -1,6 +1,6 @@
 """SQLAlchemy ORM models."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import (
@@ -8,6 +8,11 @@ from sqlalchemy import (
 )
 
 from app.database import Base
+
+
+def _utcnow() -> datetime:
+    """Return current UTC time as a timezone-aware datetime."""
+    return datetime.now(timezone.utc)
 
 
 class Project(Base):
@@ -21,8 +26,8 @@ class Project(Base):
     branch = Column(Text, default="main")
     custom_instructions = Column(Text, nullable=True, default=None)
     setup_script = Column(Text, nullable=True, default=None)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=_utcnow)
+    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
 
 
 class Run(Base):
@@ -52,7 +57,7 @@ class ConfigEntry(Base):
 
     key = Column(Text, primary_key=True)
     value = Column(Text, nullable=True)  # JSON-encoded
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
 
 
 class Notification(Base):
@@ -63,4 +68,4 @@ class Notification(Base):
     type = Column(Text, nullable=True)  # approve/reject/pr/error/info
     message = Column(Text, nullable=True)
     read = Column(Boolean, default=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=_utcnow)

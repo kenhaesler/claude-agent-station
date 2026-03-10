@@ -33,6 +33,7 @@ async def _migrate_add_columns(conn) -> None:
     """Add columns that may be missing from older databases."""
     migrations = [
         ("projects", "custom_instructions", "ALTER TABLE projects ADD COLUMN custom_instructions TEXT"),
+        ("projects", "setup_script", "ALTER TABLE projects ADD COLUMN setup_script TEXT"),
     ]
     for table, column, sql in migrations:
         try:
