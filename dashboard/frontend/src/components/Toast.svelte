@@ -9,7 +9,7 @@
 </script>
 
 {#if toasts.length > 0}
-  <div class="fixed bottom-4 right-4 flex flex-col gap-2 z-50">
+  <div class="fixed bottom-4 right-4 flex flex-col gap-2 z-[60]">
     {#each toasts as t (t.id)}
       <div
         class="glass border rounded-lg px-4 py-2 text-sm max-w-sm animate-fade-in-up {typeClasses[t.type]}"
