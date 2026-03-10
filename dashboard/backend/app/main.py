@@ -27,6 +27,7 @@ from app.routers import (
     webhook,
     oauth,
     plans,
+    events,
 )
 
 logging.basicConfig(
@@ -116,6 +117,7 @@ app.include_router(system.router)
 app.include_router(webhook.router)
 app.include_router(oauth.router)
 app.include_router(plans.router)
+app.include_router(events.router)
 
 # Serve frontend static files (must be last, catches all non-API routes)
 _frontend_dist = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"

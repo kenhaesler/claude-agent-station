@@ -8,6 +8,7 @@
   import MetricPanel from '../components/MetricPanel.svelte';
   import ActivityFeed from '../components/ActivityFeed.svelte';
   import ScanLine from '../components/ScanLine.svelte';
+  import EventTicker from '../components/EventTicker.svelte';
 
   let latest = $state<Run | null>(null);
   let recentRuns = $state<Run[]>([]);
@@ -55,6 +56,11 @@
   {#if loading}
     <div class="flex justify-center py-12"><LoadingSpinner /></div>
   {:else}
+    <!-- Live Event Ticker (SSE-powered) -->
+    <div class="animate-fade-in-up">
+      <EventTicker onRefresh={load} />
+    </div>
+
     <!-- Agent Workspace Visualization -->
     <div class="relative glass rounded-xl overflow-hidden animate-fade-in-up" style="height: clamp(280px, 50vh, 500px)">
       <ScanLine />

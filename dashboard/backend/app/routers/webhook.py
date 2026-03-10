@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.dependencies import get_db
 from app.models import Run, Project, Notification
 from app.schemas import WebhookRunEvent
+from app.services.event_bus import publish as event_bus_publish
 
 logger = logging.getLogger(__name__)
 
@@ -180,6 +181,24 @@ async def receive_run_event(
 
     await db.commit()
     logger.info("Processed webhook event: %s (normalized: %s) for %s", event.event, event_name, event.run_id)
+
+    # Broadcast to SSE subscribers for real-time dashboard updates
+    await event_bus_publish({
+        "type": event.event,
+        "data": {
+            "run_id": event.run_id,
+            "event": event.event,
+            "normalized": event_name,
+            "project": event.project,
+            "status": event.status,
+            "verdict": event.verdict,
+            "issue_number": event.issue_number,
+            "branch": event.branch,
+            "mode": event.mode,
+            "model": event.model,
+        },
+    })
+
     return {"status": "ok", "run_id": event.run_id, "event": event.event}
 
 
