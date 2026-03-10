@@ -59,3 +59,11 @@ async def init_db():
         from app.models import Project, Run, ConfigEntry, Notification, Plan, CoordinatorTask, CoordinatorMessage  # noqa: F401
         await conn.run_sync(Base.metadata.create_all)
         await _migrate_add_columns(conn)
+
+    # Run JSON config migrations (idempotent, safe to call every startup)
+    try:
+        import importlib
+        mod = importlib.import_module("migrations.0003_simplify_config_schema")
+        mod.run()
+    except Exception as e:
+        logger.debug("Config schema migration skipped: %s", e)
