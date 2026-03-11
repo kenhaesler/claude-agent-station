@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount, onDestroy } from 'svelte';
   import { LogWebSocket } from '../lib/ws';
   import { searchLogs } from '../lib/api';
   import type { LogSearchResult } from '../lib/types';
@@ -17,7 +18,7 @@
   let searching = $state(false);
   let mode = $state<'live' | 'search'>('live');
 
-  let logContainer: HTMLElement;
+  let logContainer = $state<HTMLElement | null>(null);
   let autoScroll = $state(true);
 
   let ws: LogWebSocket | null = null;
@@ -36,7 +37,9 @@
         }
         if (autoScroll && logContainer) {
           requestAnimationFrame(() => {
-            logContainer.scrollTop = logContainer.scrollHeight;
+            if (logContainer) {
+              logContainer.scrollTop = logContainer.scrollHeight;
+            }
           });
         }
       },
@@ -71,9 +74,16 @@
     searchResults = [];
   }
 
-  $effect(() => {
+  // Use onMount/onDestroy instead of $effect to prevent unintended
+  // reactive dependency tracking that could cause WebSocket reconnect loops.
+  // $effect would re-fire if any $state read during startWs() changes,
+  // but we only want a single connection on mount.
+  onMount(() => {
     startWs();
-    return () => ws?.disconnect();
+  });
+
+  onDestroy(() => {
+    ws?.disconnect();
   });
 </script>
 
@@ -130,7 +140,7 @@
 
   {#if mode === 'live'}
     <!-- Live Log Viewer -->
-    <GlassCard class="p-3 md:p-4 h-[calc(100vh-200px)] md:h-[calc(100vh-240px)] overflow-auto font-data text-xs leading-relaxed">
+    <GlassCard class="p-3 md:p-4 h-[calc(100vh-200px)] md:h-[calc(100vh-240px)] overflow-hidden font-data text-xs leading-relaxed">
       <div bind:this={logContainer} class="h-full overflow-auto">
         {#if events.length === 0}
           <p class="text-text-dim">Waiting for log data...</p>
