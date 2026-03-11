@@ -121,7 +121,8 @@
     } else if (renderer.isHubAt(e.clientX, e.clientY)) {
       const rect = container.getBoundingClientRect();
       const phase = runPhase();
-      const phaseText = phase === 'employee' ? 'Employees working'
+      const phaseText = phase === 'coordinating' ? 'Coordinator active'
+        : phase === 'employee' ? 'Employees working'
         : phase === 'manager_review' ? 'Manager reviewing'
         : phase === 'executing_verdict' ? 'Executing verdict'
         : 'Idle';

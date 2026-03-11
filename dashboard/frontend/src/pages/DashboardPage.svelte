@@ -91,13 +91,8 @@
     if (hasVerdict) return 'executing_verdict';
     if (hasReviewing || hasManager) return 'manager_review';
 
-    // Detect coordinating phase: tasks exist and some are pending/ready (not yet all running)
-    const hasCoordTasks = coordinatorTasks.length > 0;
-    if (hasCoordTasks) {
-      const hasRunning = coordinatorTasks.some(t => t.status === 'running');
-      const hasPending = coordinatorTasks.some(t => t.status === 'pending' || t.status === 'ready');
-      if (!hasRunning || hasPending) return 'coordinating';
-    }
+    // Detect coordinating phase: coordinator is active whenever tasks exist for the current run
+    if (coordinatorTasks.length > 0) return 'coordinating';
     return 'employee';
   });
 
