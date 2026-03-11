@@ -12,6 +12,7 @@ from app.dependencies import get_db
 from app.models import Run, Project, Notification, CoordinatorTask, CoordinatorMessage
 from app.schemas import WebhookRunEvent
 from app.services.event_bus import publish as event_bus_publish
+from app.services.notifier import send_notification
 
 logger = logging.getLogger(__name__)
 
@@ -262,6 +263,36 @@ async def receive_run_event(
             "concurrent_group_id": event.concurrent_group_id,
         },
     })
+
+    # Send webhook notifications for verdict and completion events
+    if event_name == "verdict" and event.verdict:
+        # Extract issue title from employee report if available
+        issue_title = None
+        if run and run.employee_report:
+            try:
+                report = json.loads(run.employee_report)
+                issue_title = report.get("issue_title")
+            except (json.JSONDecodeError, AttributeError):
+                pass
+
+        await send_notification(
+            event_type=event.verdict,
+            project=event.project or "unknown",
+            issue_number=event.issue_number,
+            issue_title=issue_title,
+            tokens_total=run.tokens_total if run else None,
+            summary=event.reasoning,
+            run_id=event.run_id,
+        )
+
+    elif event_name == "finished" and event.status in ("error", "failed"):
+        await send_notification(
+            event_type="error",
+            project=event.project or "unknown",
+            tokens_total=event.tokens_total,
+            run_id=event.run_id,
+            summary=f"Run finished with status: {event.status}",
+        )
 
     return {"status": "ok", "run_id": event.run_id, "event": event.event}
 

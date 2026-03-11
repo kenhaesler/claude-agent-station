@@ -15,6 +15,7 @@ from app.config import settings
 from app.dependencies import get_db
 from app.models import ConfigEntry, Run
 from app.services.config_sync import _read_config_json, _write_config_json, sync_config_to_db
+from app.services.notifier import send_test_notification
 
 logger = logging.getLogger(__name__)
 
@@ -256,3 +257,12 @@ async def get_token_usage(db: AsyncSession = Depends(get_db)):
         "max_usage_percent": max_usage_pct,
         "reserve_percent": reserve_pct,
     }
+
+
+@router.post("/test-notification")
+async def test_notification():
+    """Send a test webhook notification to verify configuration."""
+    result = await send_test_notification()
+    if result.get("success"):
+        return result
+    raise HTTPException(status_code=400, detail=result.get("error", "Unknown error"))

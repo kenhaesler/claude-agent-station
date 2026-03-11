@@ -170,6 +170,11 @@ export interface StationConfig {
     enabled?: boolean;
     method?: string;
     notification_file?: string;
+    webhook_url?: string;
+    webhook_type?: string;
+    notify_on?: string[];
+    dashboard_url?: string;
+    telegram_chat_id?: string;
   };
   logging?: {
     log_dir?: string;
