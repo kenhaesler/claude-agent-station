@@ -171,14 +171,24 @@ async def run_employee(
             env=env,
         )
 
-        # Stream stdout to file in real-time
+        # Stream stdout to file in real-time.
+        # Use chunked reads instead of readline() to avoid asyncio's default
+        # 64KB StreamReader buffer limit (LimitOverrunError). Claude CLI can
+        # emit JSON lines >64KB when tool results contain large content.
         with open(stream_file, "w") as sf:
+            buf = b""
             while True:
-                line = await proc.stdout.readline()
-                if not line:
+                chunk = await proc.stdout.read(65536)
+                if not chunk:
+                    if buf:
+                        sf.write(buf.decode(errors="replace"))
+                        sf.flush()
                     break
-                sf.write(line.decode())
-                sf.flush()
+                buf += chunk
+                while b"\n" in buf:
+                    line, buf = buf.split(b"\n", 1)
+                    sf.write(line.decode(errors="replace") + "\n")
+                    sf.flush()
 
         await proc.wait()
     finally:
