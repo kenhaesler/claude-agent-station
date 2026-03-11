@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { getPlan, listProjects, approvePlan, rejectPlan, implementPlan } from '../lib/api';
+  import { getPlan, listProjects, approvePlan, rejectPlan, implementPlan, deletePlan } from '../lib/api';
   import { navigate } from '../lib/router.svelte';
   import { toastSuccess, toastError } from '../lib/toast.svelte';
   import type { Plan, Project } from '../lib/types';
@@ -101,6 +101,18 @@
     }
   }
 
+  async function handleDelete() {
+    if (!plan) return;
+    if (!confirm(`Delete plan "${plan.title}"? This action cannot be undone.`)) return;
+    try {
+      await deletePlan(plan.id);
+      toastSuccess('Plan deleted');
+      navigate('/plans');
+    } catch (e: any) {
+      toastError(`Failed to delete: ${e.message}`);
+    }
+  }
+
   $effect(() => {
     load();
   });
@@ -136,7 +148,7 @@
     </div>
 
     <!-- Actions -->
-    <div class="flex gap-2">
+    <div class="flex items-center gap-2">
       {#if plan.status === 'approved' || plan.status === 'draft'}
         <button onclick={handleImplement} class="px-4 py-2 text-sm bg-accent-blue/20 text-accent-blue hover:bg-accent-blue/30 rounded-lg cursor-pointer font-medium">
           Implement Plan
@@ -152,6 +164,12 @@
           Reject Plan
         </button>
       {/if}
+      <button onclick={handleDelete} class="ml-auto px-4 py-2 text-sm bg-red-500/10 text-red-400 hover:bg-red-500/20 border border-red-500/30 rounded-lg cursor-pointer flex items-center gap-1.5">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+        </svg>
+        Delete Plan
+      </button>
     </div>
 
     <!-- Metadata -->
