@@ -280,6 +280,112 @@
       </div>
     </GlassCard>
 
+    <!-- Webhook Notifications -->
+    <GlassCard glow="amber" class="p-5">
+      <h3 class="font-semibold mb-1 flex items-center gap-2">
+        <svg class="w-4 h-4 text-accent-amber" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M13.73 21a2 2 0 0 1-3.46 0" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        Webhook Notifications
+      </h3>
+      <p class="text-xs text-text-dim mb-5">
+        Get real-time alerts via Slack, Discord, Telegram, or any webhook when runs complete.
+      </p>
+      <div class="space-y-4">
+        <div class="flex items-center gap-3">
+          <input id="notif-enabled" type="checkbox" bind:checked={notificationsEnabled} class="w-4 h-4 accent-accent-amber cursor-pointer" />
+          <label for="notif-enabled" class="text-sm text-text cursor-pointer">Enable Notifications</label>
+        </div>
+
+        {#if notificationsEnabled}
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label for="notif-method" class="block text-sm text-text-dim mb-1">Method</label>
+              <select id="notif-method" bind:value={notificationsMethod} class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-accent-amber/50 transition-colors">
+                <option value="file">File</option>
+                <option value="webhook">Webhook</option>
+              </select>
+            </div>
+            {#if notificationsMethod === 'file'}
+              <div>
+                <label for="notif-file" class="block text-sm text-text-dim mb-1">Notification File</label>
+                <input id="notif-file" type="text" bind:value={notificationFile} placeholder="/var/lib/claude-agent-station/notifications.json" class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-accent-amber/50 transition-colors" />
+              </div>
+            {/if}
+          </div>
+
+          {#if notificationsMethod === 'webhook'}
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label for="webhook-type" class="block text-sm text-text-dim mb-1">Webhook Type</label>
+                <select id="webhook-type" bind:value={webhookType} class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-accent-amber/50 transition-colors">
+                  <option value="slack">Slack</option>
+                  <option value="discord">Discord</option>
+                  <option value="telegram">Telegram</option>
+                  <option value="generic">Generic (JSON)</option>
+                </select>
+              </div>
+              <div>
+                <label for="webhook-url" class="block text-sm text-text-dim mb-1">
+                  {webhookType === 'telegram' ? 'Bot API URL' : 'Webhook URL'}
+                </label>
+                <input id="webhook-url" type="url" bind:value={webhookUrl}
+                  placeholder={webhookType === 'slack' ? 'https://hooks.slack.com/services/...' : webhookType === 'discord' ? 'https://discord.com/api/webhooks/...' : webhookType === 'telegram' ? 'https://api.telegram.org/bot<TOKEN>/sendMessage' : 'https://example.com/webhook'}
+                  class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-accent-amber/50 transition-colors" />
+              </div>
+            </div>
+
+            {#if webhookType === 'telegram'}
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label for="telegram-chat-id" class="block text-sm text-text-dim mb-1">Telegram Chat ID</label>
+                  <input id="telegram-chat-id" type="text" bind:value={telegramChatId} placeholder="-1001234567890" class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-accent-amber/50 transition-colors" />
+                </div>
+              </div>
+            {/if}
+
+            <div>
+              <label for="dashboard-url" class="block text-sm text-text-dim mb-1">Dashboard URL (for links in notifications)</label>
+              <input id="dashboard-url" type="url" bind:value={dashboardUrl} placeholder="https://your-server:8420" class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-accent-amber/50 transition-colors" />
+            </div>
+
+            <div>
+              <p class="text-sm text-text-dim mb-2">Notify on:</p>
+              <div class="flex flex-wrap gap-4">
+                <label class="flex items-center gap-2 text-sm text-text cursor-pointer">
+                  <input type="checkbox" bind:checked={notifyOnApprove} class="w-4 h-4 accent-accent-emerald cursor-pointer" />
+                  Approve
+                </label>
+                <label class="flex items-center gap-2 text-sm text-text cursor-pointer">
+                  <input type="checkbox" bind:checked={notifyOnReject} class="w-4 h-4 accent-accent-red cursor-pointer" />
+                  Reject
+                </label>
+                <label class="flex items-center gap-2 text-sm text-text cursor-pointer">
+                  <input type="checkbox" bind:checked={notifyOnPr} class="w-4 h-4 accent-accent-blue cursor-pointer" />
+                  PR Created
+                </label>
+                <label class="flex items-center gap-2 text-sm text-text cursor-pointer">
+                  <input type="checkbox" bind:checked={notifyOnError} class="w-4 h-4 accent-accent-amber cursor-pointer" />
+                  Error / Stale Run
+                </label>
+              </div>
+            </div>
+
+            <div>
+              <button
+                onclick={sendTestNotification}
+                disabled={testingSending || !webhookUrl}
+                class="px-4 py-2 bg-gradient-to-r from-accent-amber/80 to-accent-amber text-white rounded-lg text-sm font-medium hover:shadow-[0_0_16px_rgba(245,158,11,0.3)] disabled:opacity-40 cursor-pointer transition-all"
+              >
+                {testingSending ? 'Sending...' : 'Send Test Notification'}
+              </button>
+            </div>
+          {/if}
+        {/if}
+      </div>
+    </GlassCard>
+
     <!-- Advanced Settings (collapsible) -->
     <GlassCard class="p-5">
       <button
@@ -297,7 +403,7 @@
           <path d="M9 18l6-6-6-6"/>
         </svg>
         <h3 class="font-semibold">Advanced Settings</h3>
-        <span class="text-xs text-text-dim ml-auto">Turn limits, notifications, logging</span>
+        <span class="text-xs text-text-dim ml-auto">Turn limits, logging</span>
       </button>
 
       {#if showAdvanced}
@@ -319,101 +425,6 @@
                 <label for="max-manager-turns" class="block text-sm text-text-dim mb-1">Max Manager Turns</label>
                 <input id="max-manager-turns" type="number" bind:value={maxManagerTurns} class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-accent-blue/50 transition-colors" />
               </div>
-            </div>
-          </div>
-
-          <!-- Notifications -->
-          <div>
-            <h4 class="text-sm font-medium text-text-dim mb-3">Notifications</h4>
-            <div class="space-y-4">
-              <div class="flex items-center gap-3">
-                <input id="notif-enabled" type="checkbox" bind:checked={notificationsEnabled} class="w-4 h-4 accent-accent-blue cursor-pointer" />
-                <label for="notif-enabled" class="text-sm text-text cursor-pointer">Enabled</label>
-              </div>
-
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label for="notif-method" class="block text-sm text-text-dim mb-1">Method</label>
-                  <select id="notif-method" bind:value={notificationsMethod} class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-accent-blue/50 transition-colors">
-                    <option value="file">File</option>
-                    <option value="webhook">Webhook</option>
-                  </select>
-                </div>
-                {#if notificationsMethod === 'file'}
-                  <div>
-                    <label for="notif-file" class="block text-sm text-text-dim mb-1">Notification File</label>
-                    <input id="notif-file" type="text" bind:value={notificationFile} placeholder="/var/lib/claude-agent-station/notifications.json" class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-accent-blue/50 transition-colors" />
-                  </div>
-                {/if}
-              </div>
-
-              {#if notificationsMethod === 'webhook'}
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label for="webhook-type" class="block text-sm text-text-dim mb-1">Webhook Type</label>
-                    <select id="webhook-type" bind:value={webhookType} class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-accent-blue/50 transition-colors">
-                      <option value="slack">Slack</option>
-                      <option value="discord">Discord</option>
-                      <option value="telegram">Telegram</option>
-                      <option value="generic">Generic (JSON)</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label for="webhook-url" class="block text-sm text-text-dim mb-1">
-                      {webhookType === 'telegram' ? 'Bot API URL' : 'Webhook URL'}
-                    </label>
-                    <input id="webhook-url" type="url" bind:value={webhookUrl}
-                      placeholder={webhookType === 'slack' ? 'https://hooks.slack.com/services/...' : webhookType === 'discord' ? 'https://discord.com/api/webhooks/...' : webhookType === 'telegram' ? 'https://api.telegram.org/bot<TOKEN>/sendMessage' : 'https://example.com/webhook'}
-                      class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-accent-blue/50 transition-colors" />
-                  </div>
-                </div>
-
-                {#if webhookType === 'telegram'}
-                  <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label for="telegram-chat-id" class="block text-sm text-text-dim mb-1">Telegram Chat ID</label>
-                      <input id="telegram-chat-id" type="text" bind:value={telegramChatId} placeholder="-1001234567890" class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-accent-blue/50 transition-colors" />
-                    </div>
-                  </div>
-                {/if}
-
-                <div>
-                  <label for="dashboard-url" class="block text-sm text-text-dim mb-1">Dashboard URL (for links in notifications)</label>
-                  <input id="dashboard-url" type="url" bind:value={dashboardUrl} placeholder="https://your-server:8420" class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-accent-blue/50 transition-colors" />
-                </div>
-
-                <div>
-                  <p class="text-sm text-text-dim mb-2">Notify on:</p>
-                  <div class="flex flex-wrap gap-4">
-                    <label class="flex items-center gap-2 text-sm text-text cursor-pointer">
-                      <input type="checkbox" bind:checked={notifyOnApprove} class="w-4 h-4 accent-accent-emerald cursor-pointer" />
-                      Approve
-                    </label>
-                    <label class="flex items-center gap-2 text-sm text-text cursor-pointer">
-                      <input type="checkbox" bind:checked={notifyOnReject} class="w-4 h-4 accent-accent-red cursor-pointer" />
-                      Reject
-                    </label>
-                    <label class="flex items-center gap-2 text-sm text-text cursor-pointer">
-                      <input type="checkbox" bind:checked={notifyOnPr} class="w-4 h-4 accent-accent-blue cursor-pointer" />
-                      PR Created
-                    </label>
-                    <label class="flex items-center gap-2 text-sm text-text cursor-pointer">
-                      <input type="checkbox" bind:checked={notifyOnError} class="w-4 h-4 accent-accent-amber cursor-pointer" />
-                      Error / Stale Run
-                    </label>
-                  </div>
-                </div>
-
-                <div>
-                  <button
-                    onclick={sendTestNotification}
-                    disabled={testingSending || !webhookUrl}
-                    class="px-4 py-2 glass text-text rounded-lg text-sm font-medium hover:bg-white/[0.06] disabled:opacity-40 cursor-pointer transition-colors"
-                  >
-                    {testingSending ? 'Sending...' : 'Send Test Notification'}
-                  </button>
-                </div>
-              {/if}
             </div>
           </div>
 
