@@ -3,23 +3,25 @@
   import { toastSuccess, toastError } from '../lib/toast.svelte';
   import LoadingSpinner from '../components/LoadingSpinner.svelte';
   import GlassCard from '../components/GlassCard.svelte';
+  import UsageSliders from '../components/UsageSliders.svelte';
+  import PlanUsageDisplay from '../components/PlanUsageDisplay.svelte';
   import type { StationConfig } from '../lib/types';
 
   let loading = $state(true);
   let saving = $state(false);
+  let showAdvanced = $state(false);
 
-  // Form state
+  // Form state — new simplified fields
   let employeeModel = $state('');
   let managerModel = $state('');
 
+  let maxUsagePercent = $state(60);
+  let reservePercent = $state(40);
+
+  // Advanced (kept but hidden by default)
   let maxEmployeeTurns = $state<number | undefined>(undefined);
   let maxAnalystTurns = $state<number | undefined>(undefined);
   let maxManagerTurns = $state<number | undefined>(undefined);
-  let tokenLimitDaily = $state<number | undefined>(undefined);
-  let tokenLimitMonthly = $state<number | undefined>(undefined);
-  let tokenReservePercent = $state<number | undefined>(undefined);
-  let sessionLimit24h = $state<number | undefined>(undefined);
-  let maxSessionPercent = $state<number | undefined>(undefined);
   let maxConcurrentEmployees = $state<number | undefined>(undefined);
   let maxEmployeesPerProject = $state<number | undefined>(undefined);
   let tokenBudgetStrategy = $state('');
@@ -40,14 +42,14 @@
     employeeModel = cfg.models?.employee ?? '';
     managerModel = cfg.models?.manager ?? '';
 
+    // New simplified fields
+    maxUsagePercent = cfg.limits?.max_usage_percent ?? 60;
+    reservePercent = cfg.limits?.reserve_percent ?? 40;
+
+    // Advanced turn limits (kept)
     maxEmployeeTurns = cfg.limits?.max_employee_turns;
     maxAnalystTurns = cfg.limits?.max_analyst_turns;
     maxManagerTurns = cfg.limits?.max_manager_turns;
-    tokenLimitDaily = cfg.limits?.token_limit_daily;
-    tokenLimitMonthly = cfg.limits?.token_limit_monthly;
-    tokenReservePercent = cfg.limits?.token_reserve_percent;
-    sessionLimit24h = cfg.limits?.session_limit_24h;
-    maxSessionPercent = cfg.limits?.max_session_percent;
     maxConcurrentEmployees = cfg.limits?.max_concurrent_employees;
     maxEmployeesPerProject = cfg.limits?.max_employees_per_project;
     tokenBudgetStrategy = cfg.limits?.token_budget_strategy ?? '';
@@ -87,14 +89,11 @@
         manager: managerModel || undefined,
       },
       limits: {
+        max_usage_percent: maxUsagePercent,
+        reserve_percent: reservePercent,
         max_employee_turns: maxEmployeeTurns,
         max_analyst_turns: maxAnalystTurns,
         max_manager_turns: maxManagerTurns,
-        token_limit_daily: tokenLimitDaily,
-        token_limit_monthly: tokenLimitMonthly,
-        token_reserve_percent: tokenReservePercent,
-        session_limit_24h: sessionLimit24h,
-        max_session_percent: maxSessionPercent,
         max_concurrent_employees: maxConcurrentEmployees,
         max_employees_per_project: maxEmployeesPerProject,
         token_budget_strategy: tokenBudgetStrategy || undefined,
@@ -142,6 +141,37 @@
   {#if loading}
     <div class="flex justify-center py-12"><LoadingSpinner /></div>
   {:else}
+    <!-- Plan Usage Display -->
+    <GlassCard glow="cyan" class="p-5">
+      <h3 class="font-semibold mb-4 flex items-center gap-2">
+        <svg class="w-4 h-4 text-accent-cyan" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        Plan Usage
+      </h3>
+      <PlanUsageDisplay />
+    </GlassCard>
+
+    <!-- Usage Budget (the main new UI) -->
+    <GlassCard glow="blue" class="p-5">
+      <h3 class="font-semibold mb-1 flex items-center gap-2">
+        <svg class="w-4 h-4 text-accent-blue" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"/>
+          <path d="M12 6v6l4 2"/>
+        </svg>
+        Usage Budget
+      </h3>
+      <p class="text-xs text-text-dim mb-5">
+        Control how much of your Claude plan the agent can consume. One simple concept: set a cap and a reserve.
+      </p>
+      <UsageSliders
+        {maxUsagePercent}
+        {reservePercent}
+        onMaxUsageChange={(v) => maxUsagePercent = v}
+        onReserveChange={(v) => reservePercent = v}
+      />
+    </GlassCard>
+
     <!-- Models -->
     <GlassCard class="p-5">
       <h3 class="font-semibold mb-4">Models</h3>
@@ -169,64 +199,10 @@
       </div>
     </GlassCard>
 
-    <!-- Turn Limits -->
-    <GlassCard class="p-5">
-      <h3 class="font-semibold mb-4">Turn Limits</h3>
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div>
-          <label for="max-employee-turns" class="block text-sm text-text-dim mb-1">Max Employee Turns</label>
-          <input id="max-employee-turns" type="number" bind:value={maxEmployeeTurns} class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-accent-blue/50 transition-colors" />
-        </div>
-        <div>
-          <label for="max-analyst-turns" class="block text-sm text-text-dim mb-1">Max Analyst Turns</label>
-          <input id="max-analyst-turns" type="number" bind:value={maxAnalystTurns} class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-accent-blue/50 transition-colors" />
-        </div>
-        <div>
-          <label for="max-manager-turns" class="block text-sm text-text-dim mb-1">Max Manager Turns</label>
-          <input id="max-manager-turns" type="number" bind:value={maxManagerTurns} class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-accent-blue/50 transition-colors" />
-        </div>
-      </div>
-    </GlassCard>
-
-    <!-- Token Limits -->
-    <GlassCard class="p-5">
-      <h3 class="font-semibold mb-4">Token Budget</h3>
-      <p class="text-xs text-text-dim mb-4">Configure your claude.ai plan's token allowance. Set to 0 to disable token-based limiting.</p>
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div>
-          <label for="token-limit-daily" class="block text-sm text-text-dim mb-1">Daily Token Limit</label>
-          <input id="token-limit-daily" type="number" bind:value={tokenLimitDaily} placeholder="0 = unlimited" class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-accent-blue/50 transition-colors" />
-        </div>
-        <div>
-          <label for="token-limit-monthly" class="block text-sm text-text-dim mb-1">Monthly Token Limit</label>
-          <input id="token-limit-monthly" type="number" bind:value={tokenLimitMonthly} placeholder="0 = unlimited" class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-accent-blue/50 transition-colors" />
-        </div>
-        <div>
-          <label for="token-reserve-pct" class="block text-sm text-text-dim mb-1">Reserve for Manual Use (%)</label>
-          <input id="token-reserve-pct" type="number" min="0" max="100" bind:value={tokenReservePercent} class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-accent-blue/50 transition-colors" />
-        </div>
-      </div>
-    </GlassCard>
-
-    <!-- Session Limits -->
-    <GlassCard class="p-5">
-      <h3 class="font-semibold mb-4">Session Limits</h3>
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div>
-          <label for="session-limit" class="block text-sm text-text-dim mb-1">Session Limit (24h)</label>
-          <input id="session-limit" type="number" bind:value={sessionLimit24h} class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-accent-blue/50 transition-colors" />
-        </div>
-        <div>
-          <label for="max-session-pct" class="block text-sm text-text-dim mb-1">Max Session Percent</label>
-          <input id="max-session-pct" type="number" bind:value={maxSessionPercent} class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-accent-blue/50 transition-colors" />
-        </div>
-      </div>
-    </GlassCard>
-
-    <!-- Concurrency -->
+    <!-- Parallel Execution -->
     <GlassCard class="p-5">
       <h3 class="font-semibold mb-4">Parallel Execution</h3>
-      <p class="text-xs text-text-dim mb-4">Control how many employees run concurrently. Set to 1 for sequential mode (default). Budget strategy determines how turn limits are divided among parallel employees.</p>
+      <p class="text-xs text-text-dim mb-4">Control how many employees run concurrently. Budget strategy determines how turn limits are divided among parallel employees.</p>
       <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div>
           <label for="max-concurrent" class="block text-sm text-text-dim mb-1">Max Concurrent Employees</label>
@@ -255,38 +231,83 @@
       </div>
     </GlassCard>
 
-    <!-- Notifications -->
+    <!-- Advanced Settings (collapsible) -->
     <GlassCard class="p-5">
-      <h3 class="font-semibold mb-4">Notifications</h3>
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div class="flex items-center gap-3 md:col-span-2">
-          <input id="notif-enabled" type="checkbox" bind:checked={notificationsEnabled} class="w-4 h-4 accent-accent-blue cursor-pointer" />
-          <label for="notif-enabled" class="text-sm text-text cursor-pointer">Enabled</label>
-        </div>
-        <div>
-          <label for="notif-method" class="block text-sm text-text-dim mb-1">Method</label>
-          <input id="notif-method" type="text" bind:value={notificationsMethod} placeholder="file" class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-accent-blue/50 transition-colors" />
-        </div>
-        <div>
-          <label for="notif-file" class="block text-sm text-text-dim mb-1">Notification File</label>
-          <input id="notif-file" type="text" bind:value={notificationFile} placeholder="/var/lib/claude-agent-station/notifications.json" class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-accent-blue/50 transition-colors" />
-        </div>
-      </div>
-    </GlassCard>
+      <button
+        onclick={() => showAdvanced = !showAdvanced}
+        class="flex items-center gap-2 w-full text-left cursor-pointer"
+      >
+        <svg
+          class="w-4 h-4 text-text-dim transition-transform duration-200"
+          class:rotate-90={showAdvanced}
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+        >
+          <path d="M9 18l6-6-6-6"/>
+        </svg>
+        <h3 class="font-semibold">Advanced Settings</h3>
+        <span class="text-xs text-text-dim ml-auto">Turn limits, notifications, logging</span>
+      </button>
 
-    <!-- Logging -->
-    <GlassCard class="p-5">
-      <h3 class="font-semibold mb-4">Logging</h3>
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div>
-          <label for="log-dir" class="block text-sm text-text-dim mb-1">Log Directory</label>
-          <input id="log-dir" type="text" bind:value={logDir} placeholder="/var/log/claude-agent/" class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-accent-blue/50 transition-colors" />
+      {#if showAdvanced}
+        <div class="mt-5 space-y-6 animate-fade-in-up">
+          <!-- Turn Limits -->
+          <div>
+            <h4 class="text-sm font-medium text-text-dim mb-3">Turn Limits</h4>
+            <p class="text-xs text-text-dim mb-3">Controls quality/depth per agent role. Higher = more thorough but slower.</p>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div>
+                <label for="max-employee-turns" class="block text-sm text-text-dim mb-1">Max Employee Turns</label>
+                <input id="max-employee-turns" type="number" bind:value={maxEmployeeTurns} class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-accent-blue/50 transition-colors" />
+              </div>
+              <div>
+                <label for="max-analyst-turns" class="block text-sm text-text-dim mb-1">Max Analyst Turns</label>
+                <input id="max-analyst-turns" type="number" bind:value={maxAnalystTurns} class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-accent-blue/50 transition-colors" />
+              </div>
+              <div>
+                <label for="max-manager-turns" class="block text-sm text-text-dim mb-1">Max Manager Turns</label>
+                <input id="max-manager-turns" type="number" bind:value={maxManagerTurns} class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-accent-blue/50 transition-colors" />
+              </div>
+            </div>
+          </div>
+
+          <!-- Notifications -->
+          <div>
+            <h4 class="text-sm font-medium text-text-dim mb-3">Notifications</h4>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div class="flex items-center gap-3 md:col-span-2">
+                <input id="notif-enabled" type="checkbox" bind:checked={notificationsEnabled} class="w-4 h-4 accent-accent-blue cursor-pointer" />
+                <label for="notif-enabled" class="text-sm text-text cursor-pointer">Enabled</label>
+              </div>
+              <div>
+                <label for="notif-method" class="block text-sm text-text-dim mb-1">Method</label>
+                <input id="notif-method" type="text" bind:value={notificationsMethod} placeholder="file" class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-accent-blue/50 transition-colors" />
+              </div>
+              <div>
+                <label for="notif-file" class="block text-sm text-text-dim mb-1">Notification File</label>
+                <input id="notif-file" type="text" bind:value={notificationFile} placeholder="/var/lib/claude-agent-station/notifications.json" class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-accent-blue/50 transition-colors" />
+              </div>
+            </div>
+          </div>
+
+          <!-- Logging -->
+          <div>
+            <h4 class="text-sm font-medium text-text-dim mb-3">Logging</h4>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label for="log-dir" class="block text-sm text-text-dim mb-1">Log Directory</label>
+                <input id="log-dir" type="text" bind:value={logDir} placeholder="/var/log/claude-agent/" class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-accent-blue/50 transition-colors" />
+              </div>
+              <div>
+                <label for="digest-dir" class="block text-sm text-text-dim mb-1">Digest Directory</label>
+                <input id="digest-dir" type="text" bind:value={digestDir} placeholder="/var/log/claude-agent/digests/" class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-accent-blue/50 transition-colors" />
+              </div>
+            </div>
+          </div>
         </div>
-        <div>
-          <label for="digest-dir" class="block text-sm text-text-dim mb-1">Digest Directory</label>
-          <input id="digest-dir" type="text" bind:value={digestDir} placeholder="/var/log/claude-agent/digests/" class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-accent-blue/50 transition-colors" />
-        </div>
-      </div>
+      {/if}
     </GlassCard>
 
     <!-- Actions -->

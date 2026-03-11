@@ -40,7 +40,7 @@
       if (usageRes.status === 'fulfilled') {
         usagePercent = usageRes.value.usage_percent;
         sessionsUsed = usageRes.value.sessions_used;
-        sessionLimit = usageRes.value.session_limit_24h;
+        sessionLimit = usageRes.value.plan_limit || usageRes.value.max_usage_percent;
       }
     } catch {
       // silently fail - header just shows defaults

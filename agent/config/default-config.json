@@ -16,15 +16,12 @@
     "analyst": "claude-sonnet-4-6"
   },
   "limits": {
+    "max_usage_percent": 80,
+    "reserve_percent": 20,
     "max_employee_turns": 200,
     "max_analyst_turns": 50,
     "max_manager_turns": 30,
-    "token_limit_daily": 0,
-    "token_limit_monthly": 0,
-    "token_reserve_percent": 20,
     "max_rejection_retries": 1,
-    "session_limit_24h": 50,
-    "max_session_percent": 80,
     "max_concurrent_employees": 1,
     "max_employees_per_project": 1,
     "token_budget_strategy": "equal_split"

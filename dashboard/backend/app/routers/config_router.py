@@ -20,12 +20,67 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/config", tags=["config"])
 
+# ── Old field names that were removed in the simplified schema ──
+_REMOVED_LIMIT_FIELDS = {
+    "token_limit_daily",
+    "token_limit_monthly",
+    "token_reserve_percent",
+    "session_limit_24h",
+    "max_session_percent",
+}
+
+# ── Default values for the new simplified fields ──
+_NEW_LIMIT_DEFAULTS = {
+    "max_usage_percent": 80,
+    "reserve_percent": 20,
+}
+
+
+def _migrate_limits_in_memory(limits: Dict[str, Any]) -> Dict[str, Any]:
+    """Migrate old limit fields to new schema in-memory.
+
+    If old fields are present, derive new field values from them and strip
+    the old fields.  This provides backward compatibility for configs that
+    haven't been migrated yet.
+    """
+    migrated = dict(limits)
+
+    # Derive max_usage_percent from old max_session_percent if present
+    if "max_session_percent" in migrated and "max_usage_percent" not in migrated:
+        migrated["max_usage_percent"] = migrated["max_session_percent"]
+
+    # Derive reserve_percent from old token_reserve_percent if present
+    if "token_reserve_percent" in migrated and "reserve_percent" not in migrated:
+        migrated["reserve_percent"] = migrated["token_reserve_percent"]
+
+    # Ensure new fields have defaults
+    for field, default in _NEW_LIMIT_DEFAULTS.items():
+        if field not in migrated:
+            migrated[field] = default
+
+    # Remove old fields
+    for field in _REMOVED_LIMIT_FIELDS:
+        migrated.pop(field, None)
+
+    return migrated
+
+
+def _normalize_config(config: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize config by migrating any old-style limits to new schema."""
+    if "limits" in config:
+        config["limits"] = _migrate_limits_in_memory(config["limits"])
+    return config
+
 
 @router.get("")
 async def get_config():
-    """Get the full station config (from JSON file, source of truth)."""
+    """Get the full station config (from JSON file, source of truth).
+
+    Automatically migrates old limit fields to the new simplified schema
+    in the response.  The on-disk file is not modified until a PUT.
+    """
     config = _read_config_json()
-    return config
+    return _normalize_config(config)
 
 
 @router.put("")
@@ -35,6 +90,9 @@ async def update_config(body: Dict[str, Any], db: AsyncSession = Depends(get_db)
     Accepts the full config object. Projects are synced to the DB.
     Non-project fields (models, limits, schedule, notifications, logging) are
     written directly to JSON.
+
+    If the incoming limits still contain old field names they are migrated
+    automatically before writing.
     """
     # Read current config to preserve any fields not sent by frontend
     current = _read_config_json()
@@ -42,9 +100,9 @@ async def update_config(body: Dict[str, Any], db: AsyncSession = Depends(get_db)
     for key in ("models", "limits", "schedule", "notifications", "logging"):
         if key in body:
             current[key] = body[key]
-    # Keep _mode_options metadata
-    # Don't allow projects to be overwritten from this endpoint
-    # (use /api/projects for that)
+
+    # Normalize limits (migrate old -> new) before persisting
+    current = _normalize_config(current)
 
     _write_config_json(current)
 
@@ -83,13 +141,25 @@ async def set_config_entry(key: str, body: dict, db: AsyncSession = Depends(get_
 
 @router.get("/usage")
 async def get_usage():
-    """Get current usage tracking data (sessions used, window info)."""
+    """Get current usage tracking data.
+
+    Uses the new simplified max_usage_percent field. Falls back gracefully
+    to old field names for unmigrated configs.
+    """
+    config = _read_config_json()
+    limits = config.get("limits", {})
+
+    # Use new field, fall back to old for backward compat
+    max_usage_pct = limits.get(
+        "max_usage_percent",
+        limits.get("max_session_percent", _NEW_LIMIT_DEFAULTS["max_usage_percent"]),
+    )
+
     usage_path = Path(settings.log_dir) / "usage-tracking.json"
     if not usage_path.exists():
         return {
             "sessions_used": 0,
-            "session_limit_24h": 50,
-            "max_session_percent": 80,
+            "max_usage_percent": max_usage_pct,
             "window_start": time.time(),
             "window_remaining_hours": 24.0,
             "usage_percent": 0.0,
@@ -98,15 +168,10 @@ async def get_usage():
     with open(usage_path, "r") as f:
         data = json.load(f)
 
-    config = _read_config_json()
-    limits = config.get("limits", {})
-    session_limit = limits.get("session_limit_24h", 50)
-    max_pct = limits.get("max_session_percent", 80)
-    threshold = int(session_limit * max_pct / 100)
-
     sessions_used = data.get("sessions_used", 0)
     window_start = data.get("window_start", time.time())
     last_run = data.get("last_run", 0)
+    plan_limit = data.get("plan_limit", 0)  # from Claude plan detection
 
     now = time.time()
     elapsed = now - window_start
@@ -117,26 +182,42 @@ async def get_usage():
         sessions_used = 0
         remaining_hours = 24.0
 
+    # Calculate usage percent against plan limit if known, else raw count
+    if plan_limit > 0:
+        usage_percent = round(sessions_used / plan_limit * 100, 1)
+    else:
+        usage_percent = 0.0
+
     return {
         "sessions_used": sessions_used,
-        "session_limit_24h": session_limit,
-        "threshold": threshold,
-        "max_session_percent": max_pct,
+        "max_usage_percent": max_usage_pct,
+        "plan_limit": plan_limit,
         "window_start_ts": window_start,
         "window_remaining_hours": round(remaining_hours, 1),
-        "usage_percent": round((sessions_used / session_limit * 100) if session_limit > 0 else 0, 1),
+        "usage_percent": usage_percent,
         "last_run_ts": last_run,
     }
 
 
 @router.get("/token-usage")
 async def get_token_usage(db: AsyncSession = Depends(get_db)):
-    """Get token consumption data against configured limits."""
+    """Get token consumption data.
+
+    Uses the new simplified reserve_percent field. The old per-day/per-month
+    hard limits have been removed in favor of plan-aware usage tracking.
+    """
     config = _read_config_json()
     limits = config.get("limits", {})
-    token_limit_daily = limits.get("token_limit_daily", 0)
-    token_limit_monthly = limits.get("token_limit_monthly", 0)
-    token_reserve_percent = limits.get("token_reserve_percent", 20)
+
+    # New simplified fields (with backward-compat fallback)
+    max_usage_pct = limits.get(
+        "max_usage_percent",
+        limits.get("max_session_percent", _NEW_LIMIT_DEFAULTS["max_usage_percent"]),
+    )
+    reserve_pct = limits.get(
+        "reserve_percent",
+        limits.get("token_reserve_percent", _NEW_LIMIT_DEFAULTS["reserve_percent"]),
+    )
 
     now = datetime.now(timezone.utc)
 
@@ -163,38 +244,15 @@ async def get_token_usage(db: AsyncSession = Depends(get_db)):
     )
     monthly_total = monthly_result.scalar()
 
-    # Calculate effective limits (after reserve)
-    reserve_factor = 1 - (token_reserve_percent / 100)
-    effective_daily = int(token_limit_daily * reserve_factor) if token_limit_daily > 0 else 0
-    effective_monthly = int(token_limit_monthly * reserve_factor) if token_limit_monthly > 0 else 0
-
-    # Usage percentages
-    daily_percent = round((daily_total / effective_daily * 100) if effective_daily > 0 else 0, 1)
-    monthly_percent = round((monthly_total / effective_monthly * 100) if effective_monthly > 0 else 0, 1)
-
-    # Can spawn check: is there enough budget for an employee (~50K tokens avg)?
-    avg_employee_tokens = 50000
-    can_spawn = True
-    if effective_daily > 0 and (daily_total + avg_employee_tokens) > effective_daily:
-        can_spawn = False
-    if effective_monthly > 0 and (monthly_total + avg_employee_tokens) > effective_monthly:
-        can_spawn = False
-
     return {
         "daily": {
             "tokens_input": daily_input,
             "tokens_output": daily_output,
             "tokens_total": daily_total,
-            "limit": token_limit_daily,
-            "effective_limit": effective_daily,
-            "usage_percent": daily_percent,
         },
         "monthly": {
             "tokens_total": monthly_total,
-            "limit": token_limit_monthly,
-            "effective_limit": effective_monthly,
-            "usage_percent": monthly_percent,
         },
-        "token_reserve_percent": token_reserve_percent,
-        "can_spawn_employee": can_spawn,
+        "max_usage_percent": max_usage_pct,
+        "reserve_percent": reserve_pct,
     }
