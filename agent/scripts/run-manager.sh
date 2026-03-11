@@ -282,49 +282,31 @@ wait_for_all_children() {
 }
 
 check_rate_limit() {
-    local session_limit max_percent window_hours
-    session_limit=$(json_get "$CONFIG_FILE" "limits.session_limit_24h" 2>/dev/null || echo "50")
-    max_percent=$(json_get "$CONFIG_FILE" "limits.max_session_percent" 2>/dev/null || echo "80")
-    window_hours=24
+    # Single source of truth: query the dashboard's plan-usage API which uses
+    # the configured max_usage_percent (cap) and reserve_percent from manager-config.json.
+    # This replaces the old session_limit_24h / max_session_percent dual-config system.
+    local max_usage_pct
+    max_usage_pct=$(json_get "$CONFIG_FILE" "limits.max_usage_percent" 2>/dev/null || echo "80")
 
-    local result
-    result=$(python3 -c "
-import json, time, os
+    local plan_usage
+    plan_usage=$(curl -s --max-time 5 "http://127.0.0.1:8420/api/plan-usage?max_usage_percent=$max_usage_pct" 2>/dev/null || echo "")
 
-tracking_file = '$RATE_TRACKING_FILE'
-session_limit = int($session_limit)
-max_percent = float($max_percent)
-now = time.time()
-window_sec = $window_hours * 3600
-threshold = int(session_limit * max_percent / 100.0)
+    if [ -z "$plan_usage" ]; then
+        log_warn "Could not reach dashboard API for rate limit check, proceeding anyway"
+        return 0
+    fi
 
-state = {'window_start': now, 'sessions_used': 0}
-if os.path.exists(tracking_file):
-    try:
-        with open(tracking_file) as f:
-            state = json.load(f)
-    except (json.JSONDecodeError, KeyError):
-        pass
+    local should_throttle weekly_pct reason
+    should_throttle=$(echo "$plan_usage" | python3 -c "import json,sys; print(json.load(sys.stdin).get('should_throttle', False))" 2>/dev/null || echo "False")
+    weekly_pct=$(echo "$plan_usage" | python3 -c "import json,sys; print(json.load(sys.stdin).get('weekly_usage_percent', 0))" 2>/dev/null || echo "0")
+    reason=$(echo "$plan_usage" | python3 -c "import json,sys; print(json.load(sys.stdin).get('throttle_reason', ''))" 2>/dev/null || echo "")
 
-elapsed = now - state.get('window_start', now)
-if elapsed >= window_sec:
-    print('OK|0|%d' % threshold)
-else:
-    used = state.get('sessions_used', 0)
-    if used >= threshold:
-        remaining_min = int((window_sec - elapsed) / 60)
-        print('LIMIT|%d|%d|%d' % (used, threshold, remaining_min))
-    else:
-        print('OK|%d|%d' % (used, threshold))
-" 2>/dev/null)
-
-    local status
-    IFS='|' read -r status _ <<< "$result"
-    if [ "$status" = "LIMIT" ]; then
-        log_warn "Session limit reached: $result"
+    if [ "$should_throttle" = "True" ]; then
+        log_warn "Plan usage cap reached (${weekly_pct}% of weekly limit, cap ${max_usage_pct}%): $reason"
         return 1
     fi
-    log_info "Rate limit: $result"
+
+    log_info "Plan usage: ${weekly_pct}% of weekly limit (cap: ${max_usage_pct}%)"
     return 0
 }
 
@@ -349,43 +331,8 @@ with open(tracking_file, 'w') as f:
 " 2>/dev/null
 }
 
-# ============================================================================
-# TOKEN BUDGET CHECK
-# ============================================================================
-
-check_token_budget() {
-    # Check if token consumption is within configured limits.
-    # Queries the dashboard API for current token usage.
-    # Returns 0 if OK to proceed, 1 if budget exceeded.
-    local token_limit_daily token_reserve_pct
-    token_limit_daily=$(json_get "$CONFIG_FILE" "limits.token_limit_daily" 2>/dev/null || echo "0")
-    token_reserve_pct=$(json_get "$CONFIG_FILE" "limits.token_reserve_percent" 2>/dev/null || echo "20")
-
-    # If no daily token limit configured, skip check
-    [ "$token_limit_daily" = "0" ] && return 0
-
-    # Try to get token usage from dashboard API
-    local usage_json
-    usage_json=$(curl -s --max-time 3 "http://127.0.0.1:8420/api/config/token-usage" 2>/dev/null || echo "")
-    if [ -z "$usage_json" ]; then
-        log_warn "Could not reach dashboard API for token budget check, proceeding anyway"
-        return 0
-    fi
-
-    local can_spawn
-    can_spawn=$(echo "$usage_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('can_spawn_employee', True))" 2>/dev/null || echo "True")
-
-    if [ "$can_spawn" = "False" ]; then
-        local daily_total daily_limit
-        daily_total=$(echo "$usage_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('daily',{}).get('tokens_total',0))" 2>/dev/null || echo "?")
-        daily_limit=$(echo "$usage_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('daily',{}).get('effective_limit',0))" 2>/dev/null || echo "?")
-        log_warn "Token budget exceeded: ${daily_total} tokens used, effective limit ${daily_limit} (reserve ${token_reserve_pct}%)"
-        return 1
-    fi
-
-    log_info "Token budget: OK"
-    return 0
-}
+# check_rate_limit() removed — unified into check_rate_limit() which queries
+# the dashboard's /api/plan-usage endpoint using max_usage_percent (cap/reserve).
 
 # ============================================================================
 # PREFLIGHT CHECKS
@@ -1857,9 +1804,9 @@ print(f'Wrote {len(assignments)} assignments')
             fi
 
             # Check token budget before each employee
-            if ! check_token_budget; then
-                log_warn "Token budget exceeded. Stopping before $repo employee $ei"
-                notify "token_budget" "Token budget exceeded before $repo employee $ei in run $RUN_ID"
+            if ! check_rate_limit; then
+                log_warn "Plan usage cap reached. Stopping before $repo employee $ei"
+                notify "rate_limit" "Plan usage cap reached before $repo employee $ei in run $RUN_ID"
                 queue_api POST "/api/queue/batch-pause" "{\"run_id\":\"run-$RUN_ID\"}" >/dev/null 2>&1 &
                 break 2
             fi
@@ -2054,8 +2001,8 @@ print(f'Wrote {len(assignments)} assignments')
                 break 2
             fi
 
-            if ! check_token_budget; then
-                log_warn "Token budget exceeded during retry. Remaining retries cancelled."
+            if ! check_rate_limit; then
+                log_warn "Plan usage cap reached during retry. Remaining retries cancelled."
                 for remaining_idx in "${retry_projects[@]}"; do
                     local rr=$(get_project_field "$remaining_idx" "repo")
                     local rn=$(repo_name "$rr")
