@@ -1,13 +1,17 @@
-"""Plan usage awareness for the coordinator/manager.
+"""Plan usage awareness and rate limit handling for the coordinator/manager.
 
-Provides functions to check plan usage before spawning new employees
-and to request graceful wrap-up when approaching usage thresholds.
+Provides functions to check plan usage before spawning new employees,
+to request graceful wrap-up when approaching usage thresholds, and
+to track/respond to rate limit signals from employee subprocesses.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import sys
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -219,3 +223,199 @@ def _get_plan_tier(config: CoordinatorConfig) -> str:
     falling back to 'max_5x' as default.
     """
     return getattr(config, "plan_tier", "max_5x")
+
+
+# ---------------------------------------------------------------------------
+# Rate limit tracking from employee results
+# ---------------------------------------------------------------------------
+
+# Number of consecutive rate-limited employees before declaring budget exhausted
+RATE_LIMIT_THRESHOLD = 2
+
+
+@dataclass
+class RateLimitEvent:
+    """Record of a single employee rate limit detection."""
+
+    employee_index: int
+    task_id: str
+    timestamp: datetime
+    reason: str
+    exit_code: int
+
+
+@dataclass
+class RateLimitTracker:
+    """Tracks rate limit signals from employees and decides when to stop spawning.
+
+    The manager should create one instance per run and call
+    ``record_employee_result()`` after each employee finishes.
+    When ``is_budget_exhausted`` becomes True, no new employees should be spawned
+    and running employees should be asked to wrap up.
+    """
+
+    events: list[RateLimitEvent] = field(default_factory=list)
+    consecutive_rate_limits: int = 0
+    is_budget_exhausted: bool = False
+    exhausted_reason: str = ""
+    exhausted_at: datetime | None = None
+
+    def record_employee_result(
+        self,
+        employee_index: int,
+        task_id: str,
+        rate_limited: bool,
+        rate_limit_reason: str,
+        exit_code: int,
+    ) -> bool:
+        """Record the result of an employee run and check for budget exhaustion.
+
+        Args:
+            employee_index: The employee index that finished.
+            task_id: The task ID.
+            rate_limited: Whether the employee detected rate limiting.
+            rate_limit_reason: Description of the rate limit signal.
+            exit_code: Process exit code.
+
+        Returns:
+            True if this event triggered budget exhaustion (newly exhausted).
+        """
+        now = datetime.now(timezone.utc)
+
+        if rate_limited:
+            event = RateLimitEvent(
+                employee_index=employee_index,
+                task_id=task_id,
+                timestamp=now,
+                reason=rate_limit_reason,
+                exit_code=exit_code,
+            )
+            self.events.append(event)
+            self.consecutive_rate_limits += 1
+
+            logger.warning(
+                "Rate limit detected from employee %d (task %s): %s "
+                "(consecutive: %d/%d)",
+                employee_index, task_id, rate_limit_reason,
+                self.consecutive_rate_limits, RATE_LIMIT_THRESHOLD,
+            )
+
+            if (
+                not self.is_budget_exhausted
+                and self.consecutive_rate_limits >= RATE_LIMIT_THRESHOLD
+            ):
+                self.is_budget_exhausted = True
+                self.exhausted_at = now
+                self.exhausted_reason = (
+                    f"{self.consecutive_rate_limits} consecutive employees "
+                    f"hit rate limits. Last: {rate_limit_reason}"
+                )
+                logger.error(
+                    "BUDGET EXHAUSTED: %s", self.exhausted_reason,
+                )
+                return True
+        else:
+            # Successful employee resets consecutive counter
+            self.consecutive_rate_limits = 0
+
+        return False
+
+    def to_dict(self) -> dict:
+        """Serialize tracker state for reporting."""
+        return {
+            "is_budget_exhausted": self.is_budget_exhausted,
+            "exhausted_reason": self.exhausted_reason,
+            "exhausted_at": self.exhausted_at.isoformat() if self.exhausted_at else None,
+            "consecutive_rate_limits": self.consecutive_rate_limits,
+            "total_rate_limit_events": len(self.events),
+            "events": [
+                {
+                    "employee_index": e.employee_index,
+                    "task_id": e.task_id,
+                    "timestamp": e.timestamp.isoformat(),
+                    "reason": e.reason,
+                    "exit_code": e.exit_code,
+                }
+                for e in self.events
+            ],
+        }
+
+
+def handle_budget_exhaustion(
+    config: CoordinatorConfig,
+    dag: TaskDAG,
+    tracker: RateLimitTracker,
+    running_tasks: dict[str, int],
+) -> int:
+    """React to budget exhaustion by notifying running employees to wrap up.
+
+    Sends stop guidance to all running employees and logs the event.
+
+    Args:
+        config: Coordinator configuration.
+        dag: The task DAG.
+        tracker: The rate limit tracker.
+        running_tasks: Map of task_id to employee_index for running tasks.
+
+    Returns:
+        Number of employees notified.
+    """
+    notified = 0
+
+    for task_id, employee_index in running_tasks.items():
+        task = dag.tasks.get(task_id)
+        if not task or not task.workspace:
+            continue
+
+        message = (
+            f"BUDGET EXHAUSTED: {tracker.exhausted_reason} "
+            f"Stop work now — commit what you have and write a partial report. "
+            f"The Claude plan limit appears to have been reached."
+        )
+
+        try:
+            send_guidance(
+                workspace=task.workspace,
+                employee_index=employee_index,
+                guidance_type="stop",
+                content=message,
+            )
+            notified += 1
+            logger.warning(
+                "Sent budget-exhaustion STOP to employee %d (task %s)",
+                employee_index, task_id,
+            )
+        except Exception as e:
+            logger.error(
+                "Failed to send budget-exhaustion stop to employee %d: %s",
+                employee_index, e,
+            )
+
+    # Persist exhaustion state to a file for external tools / dashboard
+    _save_exhaustion_state(config, tracker)
+
+    return notified
+
+
+def _save_exhaustion_state(
+    config: CoordinatorConfig,
+    tracker: RateLimitTracker,
+) -> None:
+    """Write budget exhaustion state to a JSON file in the log directory.
+
+    This allows the dashboard and external tools to detect that a run
+    was stopped due to plan budget exhaustion.
+    """
+    state_file = Path(config.log_dir) / f"run-{config.run_id}-budget-exhausted.json"
+    try:
+        state_file.parent.mkdir(parents=True, exist_ok=True)
+        state = {
+            "run_id": config.run_id,
+            "status": "budget_exhausted",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            **tracker.to_dict(),
+        }
+        state_file.write_text(json.dumps(state, indent=2))
+        logger.info("Budget exhaustion state saved to %s", state_file)
+    except OSError as e:
+        logger.error("Failed to save budget exhaustion state: %s", e)

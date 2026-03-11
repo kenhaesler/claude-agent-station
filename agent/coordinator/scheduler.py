@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from agent.coordinator.config import CoordinatorConfig
 
 from agent.coordinator.dag import TaskDAG, Task, TaskStatus
-from agent.coordinator.employee_runner import run_employee
+from agent.coordinator.employee_runner import run_employee, EmployeeResult
 from agent.coordinator.stream_monitor import (
     EmployeeActivity,
     ConflictDetector,
@@ -24,6 +24,8 @@ from agent.coordinator.guidance import send_guidance
 from agent.coordinator.manager import (
     check_plan_usage_before_spawn,
     request_graceful_wrapup,
+    handle_budget_exhaustion,
+    RateLimitTracker,
     DEFAULT_MAX_USAGE_PERCENT,
 )
 from agent.coordinator.reporter import post_task_event, post_conflict, post_guidance
@@ -38,6 +40,7 @@ async def run_scheduler(dag: TaskDAG, config: CoordinatorConfig) -> None:
     activities: dict[str, EmployeeActivity] = {}
     stop_events: dict[str, asyncio.Event] = {}
     conflict_detector = ConflictDetector()
+    rate_limit_tracker = RateLimitTracker()
     next_employee_index = 0
 
     logger.info("Scheduler started: %d tasks, max_concurrent=%d", len(dag.tasks), config.max_concurrent)
@@ -66,6 +69,35 @@ async def run_scheduler(dag: TaskDAG, config: CoordinatorConfig) -> None:
                 last_usage_ok = can_spawn
             except Exception as e:
                 logger.debug("Plan usage check failed (non-fatal): %s", e)
+
+        # If budget exhausted via rate limit detection, stop spawning
+        if rate_limit_tracker.is_budget_exhausted:
+            if running:
+                logger.warning(
+                    "Budget exhausted — waiting for %d running employees to finish",
+                    len(running),
+                )
+            else:
+                logger.warning("Budget exhausted — no running employees, stopping scheduler")
+                break
+            # Don't spawn new tasks, just wait for running ones
+            # Skip the spawn loop entirely
+            done, _ = await asyncio.wait(
+                running.values(),
+                return_when=asyncio.FIRST_COMPLETED,
+                timeout=5.0,
+            )
+            for completed_future in done:
+                task_id = completed_future.result()
+                del running[task_id]
+                if task_id in stop_events:
+                    stop_events[task_id].set()
+                    del stop_events[task_id]
+                if task_id in activities:
+                    activity = activities[task_id]
+                    conflict_detector.clear(activity.employee_index)
+                    del activities[task_id]
+            continue
 
         # Spawn employees for ready tasks
         for task in dag.ready_tasks():
@@ -116,7 +148,7 @@ async def run_scheduler(dag: TaskDAG, config: CoordinatorConfig) -> None:
                 _run_and_monitor(
                     task, config, employee_index, activity,
                     stop_event, conflict_detector, semaphore,
-                    dag,
+                    dag, rate_limit_tracker,
                 )
             )
 
@@ -184,6 +216,7 @@ async def _run_and_monitor(
     conflict_detector: ConflictDetector,
     semaphore: asyncio.Semaphore,
     dag: TaskDAG,
+    rate_limit_tracker: RateLimitTracker | None = None,
 ) -> str:
     """Run an employee and monitor their stream. Returns task_id when done."""
     try:
@@ -199,7 +232,8 @@ async def _run_and_monitor(
         )
 
         # Wait for employee to finish
-        exit_code, _ = await employee_task
+        result: EmployeeResult = await employee_task
+        exit_code = result.exit_code
 
         # Stop the monitor
         stop_event.set()
@@ -208,11 +242,33 @@ async def _run_and_monitor(
         except asyncio.TimeoutError:
             monitor_task.cancel()
 
+        # Record rate limit status with the tracker
+        if rate_limit_tracker is not None:
+            newly_exhausted = rate_limit_tracker.record_employee_result(
+                employee_index=employee_index,
+                task_id=task.id,
+                rate_limited=result.rate_limited,
+                rate_limit_reason=result.rate_limit_reason,
+                exit_code=exit_code,
+            )
+            if newly_exhausted:
+                # Budget just became exhausted — notify other running employees
+                running_map = {
+                    tid: act.employee_index
+                    for tid, act in _get_running_activities(dag, activity).items()
+                }
+                handle_budget_exhaustion(config, dag, rate_limit_tracker, running_map)
+
         # Update DAG based on result
         if exit_code == 0:
             dag.mark_completed(task.id, exit_code)
             post_task_event(config, "task_completed", task)
             logger.info("Task '%s' completed successfully (employee %d)", task.title, employee_index)
+        elif result.rate_limited:
+            error_msg = f"Rate limited: {result.rate_limit_reason}"
+            dag.mark_failed(task.id, error_msg, exit_code)
+            post_task_event(config, "task_failed", task)
+            logger.warning("Task '%s' rate-limited (employee %d): %s", task.title, employee_index, result.rate_limit_reason)
         else:
             dag.mark_failed(task.id, f"Employee exited with code {exit_code}", exit_code)
             post_task_event(config, "task_failed", task)
@@ -234,6 +290,20 @@ async def _run_and_monitor(
         semaphore.release()
 
     return task.id
+
+
+def _get_running_activities(dag: TaskDAG, exclude_activity: EmployeeActivity) -> dict[str, int]:
+    """Get a map of task_id -> employee_index for currently running tasks.
+
+    Used when budget exhaustion is detected to notify other running employees.
+    This is a best-effort helper — the scheduler's activities dict isn't directly
+    accessible here, so we reconstruct from the DAG.
+    """
+    result: dict[str, int] = {}
+    for task in dag.running_tasks():
+        if task.employee_index is not None and task.employee_index != exclude_activity.employee_index:
+            result[task.id] = task.employee_index
+    return result
 
 
 async def _setup_task_workspace(task: Task, config: CoordinatorConfig, employee_index: int) -> str | None:
