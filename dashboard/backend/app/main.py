@@ -19,6 +19,7 @@ from app.services.log_importer import import_historical_runs
 from app.services.stale_run_reaper import reap_stale_runs
 
 from app.routers import (
+    analytics,
     health,
     projects,
     runs,
@@ -137,6 +138,7 @@ app.add_middleware(
 
 # Mount routers
 app.include_router(health.router)
+app.include_router(analytics.router)
 app.include_router(projects.router)
 app.include_router(runs.router)
 app.include_router(logs.router)

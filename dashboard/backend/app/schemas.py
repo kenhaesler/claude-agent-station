@@ -275,3 +275,52 @@ class GuidanceSend(BaseModel):
     guidance_type: str = "info"  # warning/redirect/stop/info
     content: str
     workspace: Optional[str] = None
+
+
+# --- Analytics ---
+
+class DailyTokenUsage(BaseModel):
+    """Token usage aggregated by day."""
+    date: str
+    tokens_total: int = 0
+    tokens_input: int = 0
+    tokens_output: int = 0
+    run_count: int = 0
+
+
+class VerdictDistribution(BaseModel):
+    """Count of runs per verdict type."""
+    verdict: str
+    count: int
+
+
+class ProjectTokenUsage(BaseModel):
+    """Token usage aggregated by project."""
+    project_id: int
+    project_repo: str
+    tokens_total: int = 0
+    tokens_input: int = 0
+    tokens_output: int = 0
+    run_count: int = 0
+
+
+class DailyRunCount(BaseModel):
+    """Run frequency aggregated by day."""
+    date: str
+    total: int = 0
+    success: int = 0
+    failed: int = 0
+
+
+class AnalyticsResponse(BaseModel):
+    """Aggregated analytics data for charts."""
+    days: int
+    total_tokens: int = 0
+    total_tokens_input: int = 0
+    total_tokens_output: int = 0
+    total_runs: int = 0
+    failed_runs: int = 0
+    daily_token_usage: List[DailyTokenUsage] = []
+    verdict_distribution: List[VerdictDistribution] = []
+    project_token_usage: List[ProjectTokenUsage] = []
+    daily_run_counts: List[DailyRunCount] = []

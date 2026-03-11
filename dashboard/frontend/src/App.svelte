@@ -15,6 +15,7 @@
   import PlanDetailPage from './pages/PlanDetailPage.svelte';
   import SystemPage from './pages/SystemPage.svelte';
   import CoordinatorPage from './pages/CoordinatorPage.svelte';
+  import AnalyticsPage from './pages/AnalyticsPage.svelte';
 
   let serviceActive = $state(false);
   let authOk = $state(false);
@@ -91,6 +92,8 @@
         <PlanDetailPage planId={route.param ?? ''} />
       {:else if route.page === 'coordinator'}
         <CoordinatorPage />
+      {:else if route.page === 'analytics'}
+        <AnalyticsPage />
       {:else if route.page === 'runs'}
         <RunsPage />
       {:else if route.page === 'run-detail'}

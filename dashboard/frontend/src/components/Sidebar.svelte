@@ -16,6 +16,7 @@
     { page: 'plans', label: 'Plans' },
     { page: 'runs', label: 'Runs' },
     { page: 'coordinator', label: 'Coordinator' },
+    { page: 'analytics', label: 'Analytics' },
     { page: 'logs', label: 'Logs' },
     { page: 'config', label: 'Config' },
     { page: 'system', label: 'System' },
@@ -90,6 +91,8 @@
             <circle cx="10" cy="10" r="8" /><polygon points="8,6 15,10 8,14" fill="currentColor" stroke="none" />
           {:else if link.page === 'coordinator'}
             <circle cx="10" cy="6" r="2.5" /><circle cx="5" cy="15" r="2.5" /><circle cx="15" cy="15" r="2.5" /><line x1="10" y1="8.5" x2="6.5" y2="12.5" /><line x1="10" y1="8.5" x2="13.5" y2="12.5" /><line x1="7.5" y1="15" x2="12.5" y2="15" />
+          {:else if link.page === 'analytics'}
+            <path d="M3 17V10" /><path d="M7 17V7" /><path d="M11 17V12" /><path d="M15 17V4" /><path d="M19 17V9" />
           {:else if link.page === 'logs'}
             <rect x="3" y="2" width="14" height="16" rx="1" /><line x1="6" y1="6" x2="14" y2="6" /><line x1="6" y1="9.5" x2="14" y2="9.5" /><line x1="6" y1="13" x2="11" y2="13" />
           {:else if link.page === 'config'}

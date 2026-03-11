@@ -232,3 +232,47 @@ export interface CoordinatorMessage {
   employee_index: number | null;
   created_at: string | null;
 }
+
+// --- Analytics ---
+
+export interface DailyTokenUsage {
+  date: string;
+  tokens_total: number;
+  tokens_input: number;
+  tokens_output: number;
+  run_count: number;
+}
+
+export interface VerdictDistribution {
+  verdict: string;
+  count: number;
+}
+
+export interface ProjectTokenUsage {
+  project_id: number;
+  project_repo: string;
+  tokens_total: number;
+  tokens_input: number;
+  tokens_output: number;
+  run_count: number;
+}
+
+export interface DailyRunCount {
+  date: string;
+  total: number;
+  success: number;
+  failed: number;
+}
+
+export interface AnalyticsData {
+  days: number;
+  total_tokens: number;
+  total_tokens_input: number;
+  total_tokens_output: number;
+  total_runs: number;
+  failed_runs: number;
+  daily_token_usage: DailyTokenUsage[];
+  verdict_distribution: VerdictDistribution[];
+  project_token_usage: ProjectTokenUsage[];
+  daily_run_counts: DailyRunCount[];
+}
