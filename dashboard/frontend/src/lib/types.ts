@@ -193,6 +193,42 @@ export interface ToastMessage {
   text: string;
 }
 
+// --- Diff Viewer ---
+
+export interface DiffLine {
+  type: 'add' | 'remove' | 'context';
+  content: string;
+  old_line: number | null;
+  new_line: number | null;
+}
+
+export interface DiffHunk {
+  header: string;
+  old_start: number;
+  old_count: number;
+  new_start: number;
+  new_count: number;
+  lines: DiffLine[];
+}
+
+export interface DiffFile {
+  filename: string;
+  old_filename: string | null;
+  additions: number;
+  deletions: number;
+  is_new: boolean;
+  is_deleted: boolean;
+  is_binary: boolean;
+  hunks: DiffHunk[];
+}
+
+export interface DiffResult {
+  files: DiffFile[];
+  total_additions: number;
+  total_deletions: number;
+  total_files: number;
+}
+
 // --- Coordinator ---
 
 export interface CoordinatorTask {

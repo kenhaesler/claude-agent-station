@@ -1,4 +1,4 @@
-import type { Project, ProjectCreate, ProjectUpdate, Run, RunList, ActiveEmployeeData, Plan, PlanList, SystemStatus, AuthStatus, LogSearchResult, RunLogs, UsageData, TokenUsageData, OAuthStartResponse, OAuthCallbackResponse, CoordinatorTask, CoordinatorDAG, CoordinatorMessage, AnalyticsData } from './types';
+import type { Project, ProjectCreate, ProjectUpdate, Run, RunList, ActiveEmployeeData, Plan, PlanList, SystemStatus, AuthStatus, LogSearchResult, RunLogs, UsageData, TokenUsageData, OAuthStartResponse, OAuthCallbackResponse, CoordinatorTask, CoordinatorDAG, CoordinatorMessage, AnalyticsData, DiffResult } from './types';
 
 const BASE = import.meta.env.VITE_API_URL || '';
 
@@ -43,6 +43,7 @@ export const getActiveEmployees = () => request<ActiveEmployeeData[]>('/api/runs
 export const getLatestRun = () => request<Run>('/api/runs/latest');
 export const getRun = (runId: string) => request<Run>(`/api/runs/${runId}`);
 export const triggerRun = () => request<{ status: string; detail: string }>('/api/runs/trigger', { method: 'POST' });
+export const getRunDiff = (runId: string) => request<DiffResult>(`/api/runs/${runId}/diff`);
 export const rescanRuns = () => request<{ status: string; imported: number }>('/api/runs/rescan', { method: 'POST' });
 
 // Config
