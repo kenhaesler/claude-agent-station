@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { getConfig, updateConfig } from '../lib/api';
+  import { getConfig, updateConfig, testNotification } from '../lib/api';
   import { toastSuccess, toastError } from '../lib/toast.svelte';
   import LoadingSpinner from '../components/LoadingSpinner.svelte';
   import GlassCard from '../components/GlassCard.svelte';
@@ -10,6 +10,7 @@
   let loading = $state(true);
   let saving = $state(false);
   let showAdvanced = $state(false);
+  let testingSending = $state(false);
 
   // Form state — new simplified fields
   let employeeModel = $state('');
@@ -31,6 +32,14 @@
   let notificationsEnabled = $state(false);
   let notificationsMethod = $state('');
   let notificationFile = $state('');
+  let webhookUrl = $state('');
+  let webhookType = $state('slack');
+  let notifyOnApprove = $state(true);
+  let notifyOnReject = $state(true);
+  let notifyOnPr = $state(true);
+  let notifyOnError = $state(true);
+  let dashboardUrl = $state('');
+  let telegramChatId = $state('');
 
   let logDir = $state('');
   let digestDir = $state('');
@@ -59,6 +68,16 @@
     notificationsEnabled = cfg.notifications?.enabled ?? false;
     notificationsMethod = cfg.notifications?.method ?? '';
     notificationFile = cfg.notifications?.notification_file ?? '';
+    webhookUrl = cfg.notifications?.webhook_url ?? '';
+    webhookType = cfg.notifications?.webhook_type ?? 'slack';
+    dashboardUrl = cfg.notifications?.dashboard_url ?? '';
+    telegramChatId = cfg.notifications?.telegram_chat_id ?? '';
+
+    const notifyOn = cfg.notifications?.notify_on ?? ['approve', 'reject', 'pr', 'error'];
+    notifyOnApprove = notifyOn.includes('approve');
+    notifyOnReject = notifyOn.includes('reject');
+    notifyOnPr = notifyOn.includes('pr');
+    notifyOnError = notifyOn.includes('error');
 
     logDir = cfg.logging?.log_dir ?? '';
     digestDir = cfg.logging?.digest_dir ?? '';
@@ -82,6 +101,15 @@
     applyConfig(snapshot);
   }
 
+  function buildNotifyOn(): string[] {
+    const list: string[] = [];
+    if (notifyOnApprove) list.push('approve');
+    if (notifyOnReject) list.push('reject');
+    if (notifyOnPr) list.push('pr');
+    if (notifyOnError) list.push('error');
+    return list;
+  }
+
   function buildPayload(): Record<string, unknown> {
     return {
       models: {
@@ -103,12 +131,33 @@
         enabled: notificationsEnabled,
         method: notificationsMethod || undefined,
         notification_file: notificationFile || undefined,
+        webhook_url: webhookUrl || undefined,
+        webhook_type: webhookType || undefined,
+        notify_on: buildNotifyOn(),
+        dashboard_url: dashboardUrl || undefined,
+        telegram_chat_id: telegramChatId || undefined,
       },
       logging: {
         log_dir: logDir || undefined,
         digest_dir: digestDir || undefined,
       },
     };
+  }
+
+  async function sendTestNotification() {
+    testingSending = true;
+    try {
+      // Save first so the backend has the latest config
+      await save();
+      const result = await testNotification();
+      if (result.success) {
+        toastSuccess(result.message || 'Test notification sent!');
+      }
+    } catch (e: any) {
+      toastError(`Test failed: ${e.message}`);
+    } finally {
+      testingSending = false;
+    }
   }
 
   async function save() {
@@ -276,19 +325,95 @@
           <!-- Notifications -->
           <div>
             <h4 class="text-sm font-medium text-text-dim mb-3">Notifications</h4>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div class="flex items-center gap-3 md:col-span-2">
+            <div class="space-y-4">
+              <div class="flex items-center gap-3">
                 <input id="notif-enabled" type="checkbox" bind:checked={notificationsEnabled} class="w-4 h-4 accent-accent-blue cursor-pointer" />
                 <label for="notif-enabled" class="text-sm text-text cursor-pointer">Enabled</label>
               </div>
-              <div>
-                <label for="notif-method" class="block text-sm text-text-dim mb-1">Method</label>
-                <input id="notif-method" type="text" bind:value={notificationsMethod} placeholder="file" class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-accent-blue/50 transition-colors" />
+
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label for="notif-method" class="block text-sm text-text-dim mb-1">Method</label>
+                  <select id="notif-method" bind:value={notificationsMethod} class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-accent-blue/50 transition-colors">
+                    <option value="file">File</option>
+                    <option value="webhook">Webhook</option>
+                  </select>
+                </div>
+                {#if notificationsMethod === 'file'}
+                  <div>
+                    <label for="notif-file" class="block text-sm text-text-dim mb-1">Notification File</label>
+                    <input id="notif-file" type="text" bind:value={notificationFile} placeholder="/var/lib/claude-agent-station/notifications.json" class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-accent-blue/50 transition-colors" />
+                  </div>
+                {/if}
               </div>
-              <div>
-                <label for="notif-file" class="block text-sm text-text-dim mb-1">Notification File</label>
-                <input id="notif-file" type="text" bind:value={notificationFile} placeholder="/var/lib/claude-agent-station/notifications.json" class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-accent-blue/50 transition-colors" />
-              </div>
+
+              {#if notificationsMethod === 'webhook'}
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label for="webhook-type" class="block text-sm text-text-dim mb-1">Webhook Type</label>
+                    <select id="webhook-type" bind:value={webhookType} class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-accent-blue/50 transition-colors">
+                      <option value="slack">Slack</option>
+                      <option value="discord">Discord</option>
+                      <option value="telegram">Telegram</option>
+                      <option value="generic">Generic (JSON)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label for="webhook-url" class="block text-sm text-text-dim mb-1">
+                      {webhookType === 'telegram' ? 'Bot API URL' : 'Webhook URL'}
+                    </label>
+                    <input id="webhook-url" type="url" bind:value={webhookUrl}
+                      placeholder={webhookType === 'slack' ? 'https://hooks.slack.com/services/...' : webhookType === 'discord' ? 'https://discord.com/api/webhooks/...' : webhookType === 'telegram' ? 'https://api.telegram.org/bot<TOKEN>/sendMessage' : 'https://example.com/webhook'}
+                      class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-accent-blue/50 transition-colors" />
+                  </div>
+                </div>
+
+                {#if webhookType === 'telegram'}
+                  <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label for="telegram-chat-id" class="block text-sm text-text-dim mb-1">Telegram Chat ID</label>
+                      <input id="telegram-chat-id" type="text" bind:value={telegramChatId} placeholder="-1001234567890" class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-accent-blue/50 transition-colors" />
+                    </div>
+                  </div>
+                {/if}
+
+                <div>
+                  <label for="dashboard-url" class="block text-sm text-text-dim mb-1">Dashboard URL (for links in notifications)</label>
+                  <input id="dashboard-url" type="url" bind:value={dashboardUrl} placeholder="https://your-server:8420" class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-2 text-sm text-text focus:outline-none focus:border-accent-blue/50 transition-colors" />
+                </div>
+
+                <div>
+                  <p class="text-sm text-text-dim mb-2">Notify on:</p>
+                  <div class="flex flex-wrap gap-4">
+                    <label class="flex items-center gap-2 text-sm text-text cursor-pointer">
+                      <input type="checkbox" bind:checked={notifyOnApprove} class="w-4 h-4 accent-accent-emerald cursor-pointer" />
+                      Approve
+                    </label>
+                    <label class="flex items-center gap-2 text-sm text-text cursor-pointer">
+                      <input type="checkbox" bind:checked={notifyOnReject} class="w-4 h-4 accent-accent-red cursor-pointer" />
+                      Reject
+                    </label>
+                    <label class="flex items-center gap-2 text-sm text-text cursor-pointer">
+                      <input type="checkbox" bind:checked={notifyOnPr} class="w-4 h-4 accent-accent-blue cursor-pointer" />
+                      PR Created
+                    </label>
+                    <label class="flex items-center gap-2 text-sm text-text cursor-pointer">
+                      <input type="checkbox" bind:checked={notifyOnError} class="w-4 h-4 accent-accent-amber cursor-pointer" />
+                      Error / Stale Run
+                    </label>
+                  </div>
+                </div>
+
+                <div>
+                  <button
+                    onclick={sendTestNotification}
+                    disabled={testingSending || !webhookUrl}
+                    class="px-4 py-2 glass text-text rounded-lg text-sm font-medium hover:bg-white/[0.06] disabled:opacity-40 cursor-pointer transition-colors"
+                  >
+                    {testingSending ? 'Sending...' : 'Send Test Notification'}
+                  </button>
+                </div>
+              {/if}
             </div>
           </div>
 

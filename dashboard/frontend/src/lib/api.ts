@@ -52,6 +52,8 @@ export const getUsage = () => request<UsageData>('/api/config/usage');
 export const getTokenUsage = () => request<TokenUsageData>('/api/config/token-usage');
 export const updateConfig = (data: Record<string, unknown>) =>
   request<Record<string, unknown>>('/api/config', { method: 'PUT', body: JSON.stringify(data) });
+export const testNotification = () =>
+  request<{ success: boolean; message?: string }>('/api/config/test-notification', { method: 'POST' });
 
 // System
 export const getSystemStatus = () => request<SystemStatus>('/api/system/status');
