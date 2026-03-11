@@ -77,10 +77,11 @@ async def reap_stale_runs(db: AsyncSession) -> int:
                 project_name = proj.repo
 
         await send_notification(
-            event_type="interrupted",
+            event_type="error",
             project=project_name,
             run_id=run.run_id,
             summary=f"Stale run reaped: agent process died while run was in progress.",
+            _bypass_filter=True,
         )
 
     return len(stale_runs)
