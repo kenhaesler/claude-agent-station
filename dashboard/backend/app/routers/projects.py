@@ -3,11 +3,11 @@
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, update as sa_update, delete as sa_delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db
-from app.models import Project
+from app.models import Project, Run, Plan
 from app.schemas import ProjectCreate, ProjectUpdate, ProjectOut
 from app.services.config_sync import sync_db_to_config
 
@@ -75,6 +75,15 @@ async def delete_project(project_id: int, db: AsyncSession = Depends(get_db)):
     project = result.scalar_one_or_none()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+
+    # Nullify project_id on related runs (preserve history)
+    await db.execute(
+        sa_update(Run).where(Run.project_id == project_id).values(project_id=None)
+    )
+    # Delete related plans
+    await db.execute(
+        sa_delete(Plan).where(Plan.project_id == project_id)
+    )
 
     await db.delete(project)
     await db.commit()
