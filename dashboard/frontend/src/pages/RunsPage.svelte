@@ -191,8 +191,8 @@
     <div class="flex items-center justify-between text-xs md:text-sm text-text-dim">
       <span>{offset + 1}-{Math.min(offset + limit, total)} of {total}</span>
       <div class="flex gap-2">
-        <button onclick={prevPage} disabled={offset === 0} class="px-3 py-1 glass rounded disabled:opacity-30 cursor-pointer hover:bg-white/[0.03] transition-colors">Prev</button>
-        <button onclick={nextPage} disabled={offset + limit >= total} class="px-3 py-1 glass rounded disabled:opacity-30 cursor-pointer hover:bg-white/[0.03] transition-colors">Next</button>
+        <button onclick={prevPage} disabled={offset === 0} class="px-3 py-1 glass rounded disabled:opacity-50 cursor-pointer hover:bg-white/[0.03] transition-colors">Prev</button>
+        <button onclick={nextPage} disabled={offset + limit >= total} class="px-3 py-1 glass rounded disabled:opacity-50 cursor-pointer hover:bg-white/[0.03] transition-colors">Next</button>
       </div>
     </div>
   {/if}

@@ -150,13 +150,13 @@
 
 {:else if event.type === 'rate_limit'}
   <!-- Rate Limit - minimal -->
-  <div class="py-0.5 px-2 opacity-30 text-xs text-text-dim">
+  <div class="py-0.5 px-2 opacity-60 text-xs text-text-dim">
     ⏳ rate limit check
   </div>
 
 {:else}
   <!-- Unknown / raw -->
-  <div class="flex items-start gap-2 py-0.5 px-2 opacity-50">
+  <div class="flex items-start gap-2 py-0.5 px-2 opacity-70">
     <span class="text-text-dim text-xs mt-0.5 shrink-0">·</span>
     <div class="min-w-0 flex-1 text-xs text-text-dim font-data break-all">
       {#if expandable}

@@ -24,7 +24,7 @@
       case 'WebSearch':
         return { icon: '&#127760;', badgeClass: 'bg-blue-500/20 text-blue-400 border-blue-500/30' };
       default:
-        return { icon: '&#9881;', badgeClass: 'bg-slate-500/20 text-slate-400 border-slate-500/30' };
+        return { icon: '&#9881;', badgeClass: 'bg-slate-500/20 text-text-dim border-slate-500/30' };
     }
   }
 </script>

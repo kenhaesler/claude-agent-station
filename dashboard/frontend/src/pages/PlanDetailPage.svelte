@@ -28,7 +28,7 @@
       case 'implementing': return 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30';
       case 'completed': return 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30';
       case 'rejected': return 'bg-red-500/20 text-red-400 border-red-500/30';
-      default: return 'bg-gray-500/20 text-gray-400 border-gray-500/30';
+      default: return 'bg-gray-500/20 text-text-dim border-gray-500/30';
     }
   }
 

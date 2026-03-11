@@ -257,7 +257,7 @@
           {liveActivity.currentTool.name}
         </div>
       {/if}
-      <div class="text-[8px] font-data text-text-dim pl-1.5 pb-0.5 opacity-50">
+      <div class="text-[8px] font-data text-text-dim pl-1.5 pb-0.5 opacity-70">
         {projects.length} PROJECT{projects.length !== 1 ? 'S' : ''} REGISTERED
       </div>
     </div>
