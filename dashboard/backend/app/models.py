@@ -129,3 +129,23 @@ class Notification(Base):
     message = Column(Text, nullable=True)
     read = Column(Boolean, default=False)
     created_at = Column(DateTime, default=_utcnow)
+
+
+class PlanUsageHistory(Base):
+    __tablename__ = "plan_usage_history"
+
+    id = Column(Integer, primary_key=True)
+    timestamp = Column(Text, nullable=False)
+    detection_method = Column(Text, nullable=True)  # cli_scrape / heuristic
+    plan_tier = Column(Text, nullable=True)
+    session_tokens_used = Column(Integer, default=0)
+    session_tokens_limit = Column(Integer, default=0)
+    session_usage_percent = Column(Float, default=0.0)
+    weekly_tokens_used = Column(Integer, default=0)
+    weekly_tokens_limit = Column(Integer, default=0)
+    weekly_usage_percent = Column(Float, default=0.0)
+    weekly_reset_at = Column(Text, nullable=True)
+    per_model_json = Column(Text, nullable=True)  # JSON array of per-model usage
+    is_throttled = Column(Boolean, default=False)
+    error = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=_utcnow)
