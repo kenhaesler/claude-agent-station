@@ -1,12 +1,13 @@
 <script lang="ts">
-  import type { Run } from '../lib/types';
-  import { getRun } from '../lib/api';
+  import type { Run, DiffResult } from '../lib/types';
+  import { getRun, getRunDiff } from '../lib/api';
   import { formatDuration, formatTokens, formatDate } from '../lib/format';
   import { toastError } from '../lib/toast.svelte';
   import StatusBadge from '../components/StatusBadge.svelte';
   import LoadingSpinner from '../components/LoadingSpinner.svelte';
   import VerdictDetail from '../components/VerdictDetail.svelte';
   import EmployeeReport from '../components/EmployeeReport.svelte';
+  import DiffViewer from '../components/DiffViewer.svelte';
   import GlassCard from '../components/GlassCard.svelte';
 
   interface Props { runId: string; }
@@ -14,15 +15,39 @@
 
   let run = $state<Run | null>(null);
   let loading = $state(true);
+  let diff = $state<DiffResult | null>(null);
+  let diffLoading = $state(false);
+  let diffExpanded = $state(false);
 
   async function load(id: string) {
     loading = true;
+    diff = null;
+    diffExpanded = false;
     try {
       run = await getRun(id);
     } catch (e: any) {
       toastError(e.message);
     } finally {
       loading = false;
+    }
+  }
+
+  async function loadDiff() {
+    if (diffLoading || diff) return;
+    diffLoading = true;
+    try {
+      diff = await getRunDiff(runId);
+    } catch (e: any) {
+      toastError('Failed to load diff: ' + e.message);
+    } finally {
+      diffLoading = false;
+    }
+  }
+
+  function toggleDiff() {
+    diffExpanded = !diffExpanded;
+    if (diffExpanded && !diff && !diffLoading) {
+      loadDiff();
     }
   }
 
@@ -137,6 +162,41 @@
       <h2 class="font-semibold mb-3">Verdict Detail</h2>
       <VerdictDetail detail={run.verdict_detail} />
     </GlassCard>
+
+    <!-- Code Changes -->
+    {#if run.branch}
+      <GlassCard class="p-5">
+        <button
+          class="w-full flex items-center justify-between"
+          onclick={toggleDiff}
+        >
+          <h2 class="font-semibold flex items-center gap-2">
+            Code Changes
+            {#if diff && diff.total_files > 0}
+              <span class="text-xs font-data text-text-dim">
+                {diff.total_files} file{diff.total_files !== 1 ? 's' : ''}
+                {#if diff.total_additions > 0}
+                  <span class="text-emerald-400">+{diff.total_additions}</span>
+                {/if}
+                {#if diff.total_deletions > 0}
+                  <span class="text-red-400">-{diff.total_deletions}</span>
+                {/if}
+              </span>
+            {/if}
+          </h2>
+          <span class="text-text-dim text-sm transition-transform {diffExpanded ? 'rotate-90' : ''}">▶</span>
+        </button>
+        {#if diffExpanded}
+          <div class="mt-4">
+            {#if diffLoading}
+              <div class="flex justify-center py-6"><LoadingSpinner /></div>
+            {:else if diff}
+              <DiffViewer {diff} />
+            {/if}
+          </div>
+        {/if}
+      </GlassCard>
+    {/if}
 
     <!-- Log Link -->
     <div class="flex gap-3">

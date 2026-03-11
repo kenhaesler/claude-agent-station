@@ -1,16 +1,23 @@
 """Run history endpoints."""
 
+import asyncio
+import logging
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.dependencies import get_db
-from app.models import Run
+from app.models import Run, Project
 from app.schemas import RunOut, RunList, ActiveEmployeeOut
+from app.services.diff_parser import parse_unified_diff, DiffResult
 from app.services.log_importer import import_historical_runs
 from app.services.systemd import systemctl
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/runs", tags=["runs"])
 
@@ -89,6 +96,82 @@ async def get_run(run_id: str, db: AsyncSession = Depends(get_db)):
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
     return run
+
+
+@router.get("/{run_id}/diff", response_model=DiffResult)
+async def get_run_diff(run_id: str, db: AsyncSession = Depends(get_db)):
+    """Return the git diff for a run's branch vs the base branch.
+
+    Looks up the run to find its branch and project, then runs
+    `git diff <base_branch>...<employee_branch>` in the project workspace.
+    Returns a structured diff with per-file hunks and line data.
+    """
+    # 1. Look up the run
+    result = await db.execute(select(Run).where(Run.run_id == run_id))
+    run = result.scalar_one_or_none()
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    # No branch means no diff (e.g., analyze mode)
+    if not run.branch:
+        return DiffResult()
+
+    # 2. Look up the project to get workspace path and base branch
+    base_branch = "main"
+    repo_name: Optional[str] = None
+
+    if run.project_id:
+        proj_result = await db.execute(
+            select(Project).where(Project.id == run.project_id)
+        )
+        project = proj_result.scalar_one_or_none()
+        if project:
+            base_branch = project.branch or "main"
+            repo_name = project.repo.split("/")[-1] if "/" in project.repo else project.repo
+
+    if not repo_name:
+        # Try to infer from the employee report or return empty
+        return DiffResult()
+
+    # 3. Compute the workspace path
+    workspace = Path(settings.workspaces_dir) / repo_name
+    if not workspace.is_dir():
+        return DiffResult()
+
+    # 4. Check if the branch exists
+    try:
+        check_branch = await asyncio.create_subprocess_exec(
+            "git", "-C", str(workspace), "rev-parse", "--verify", run.branch,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        await check_branch.communicate()
+        if check_branch.returncode != 0:
+            return DiffResult()
+    except Exception:
+        return DiffResult()
+
+    # 5. Run git diff
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "git", "-C", str(workspace), "diff",
+            f"{base_branch}...{run.branch}", "--",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+
+        if proc.returncode != 0:
+            logger.warning("git diff failed for run %s: %s", run_id, stderr.decode())
+            return DiffResult()
+
+        diff_text = stdout.decode(errors="replace")
+    except Exception as exc:
+        logger.error("Error running git diff for run %s: %s", run_id, exc)
+        return DiffResult()
+
+    # 6. Parse and return
+    return parse_unified_diff(diff_text)
 
 
 @router.post("/rescan")
