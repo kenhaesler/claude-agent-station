@@ -234,6 +234,41 @@ export interface DiffResult {
   total_files: number;
 }
 
+// --- Queue ---
+
+export interface QueueItem {
+  id: number;
+  project_repo: string;
+  issue_number: number | null;
+  issue_title: string | null;
+  state: string;
+  priority: number;
+  assigned_to: number | null;
+  run_id: string | null;
+  employee_report: string | null;
+  manager_feedback: string | null;
+  retry_count: number;
+  max_retries: number;
+  context: string | null;
+  error_message: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  assigned_at: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
+export interface QueueItemList {
+  items: QueueItem[];
+  total: number;
+}
+
+export interface QueueStats {
+  by_state: Record<string, number>;
+  total: number;
+  avg_time_to_complete_ms: number | null;
+}
+
 // --- Coordinator ---
 
 export interface CoordinatorTask {

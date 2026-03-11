@@ -330,6 +330,13 @@ def _normalize_event_name(event_name: str) -> str:
         "guidance_sent": "guidance_sent",
         "dag_created": "dag_created",
         "dag_completed": "dag_completed",
+        # Queue events pass through
+        "queue_assigned": "queue_assigned",
+        "queue_in_progress": "queue_in_progress",
+        "queue_review": "queue_review",
+        "queue_completed": "queue_completed",
+        "queue_paused": "queue_paused",
+        "queue_failed": "queue_failed",
     }
     return mapping.get(event_name, event_name)
 

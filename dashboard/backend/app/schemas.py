@@ -277,6 +277,67 @@ class GuidanceSend(BaseModel):
     workspace: Optional[str] = None
 
 
+# --- Queue ---
+
+class QueueItemCreate(BaseModel):
+    project_repo: str
+    issue_number: Optional[int] = None
+    issue_title: Optional[str] = None
+    state: str = "pending"
+    priority: int = 0
+    assigned_to: Optional[int] = None
+    run_id: Optional[str] = None
+    max_retries: int = 1
+    context: Optional[str] = None  # JSON
+
+
+class QueueItemUpdate(BaseModel):
+    state: Optional[str] = None
+    priority: Optional[int] = None
+    assigned_to: Optional[int] = None
+    run_id: Optional[str] = None
+    employee_report: Optional[str] = None
+    manager_feedback: Optional[str] = None
+    retry_count: Optional[int] = None
+    error_message: Optional[str] = None
+    context: Optional[str] = None
+
+
+class QueueItemOut(BaseModel):
+    id: int
+    project_repo: str
+    issue_number: Optional[int] = None
+    issue_title: Optional[str] = None
+    state: str
+    priority: int
+    assigned_to: Optional[int] = None
+    run_id: Optional[str] = None
+    employee_report: Optional[str] = None
+    manager_feedback: Optional[str] = None
+    retry_count: int
+    max_retries: int
+    context: Optional[str] = None
+    error_message: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    assigned_at: Optional[datetime] = None
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class QueueItemList(BaseModel):
+    items: List[QueueItemOut]
+    total: int
+
+
+class QueueStats(BaseModel):
+    by_state: dict
+    total: int
+    avg_time_to_complete_ms: Optional[float] = None
+
+
 # --- Analytics ---
 
 class DailyTokenUsage(BaseModel):

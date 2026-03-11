@@ -1,4 +1,4 @@
-import type { Project, ProjectCreate, ProjectUpdate, Run, RunList, ActiveEmployeeData, Plan, PlanList, SystemStatus, AuthStatus, LogSearchResult, RunLogs, UsageData, TokenUsageData, OAuthStartResponse, OAuthCallbackResponse, CoordinatorTask, CoordinatorDAG, CoordinatorMessage, AnalyticsData, DiffResult } from './types';
+import type { Project, ProjectCreate, ProjectUpdate, Run, RunList, ActiveEmployeeData, Plan, PlanList, SystemStatus, AuthStatus, LogSearchResult, RunLogs, UsageData, TokenUsageData, OAuthStartResponse, OAuthCallbackResponse, CoordinatorTask, CoordinatorDAG, CoordinatorMessage, AnalyticsData, DiffResult, QueueItem, QueueItemList, QueueStats } from './types';
 
 const BASE = import.meta.env.VITE_API_URL || '';
 
@@ -128,6 +128,25 @@ export const updatePrompt = (role: string, content: string) =>
   request<PromptData>(`/api/prompts/${role}`, { method: 'PUT', body: JSON.stringify({ content }) });
 export const resetPrompt = (role: string) =>
   request<PromptData>(`/api/prompts/${role}`, { method: 'DELETE' });
+
+// Queue
+export const listQueue = (params?: { state?: string; project_repo?: string; run_id?: string; limit?: number; offset?: number }) => {
+  const q = new URLSearchParams();
+  if (params?.state) q.set('state', params.state);
+  if (params?.project_repo) q.set('project_repo', params.project_repo);
+  if (params?.run_id) q.set('run_id', params.run_id);
+  if (params?.limit) q.set('limit', String(params.limit));
+  if (params?.offset) q.set('offset', String(params.offset));
+  return request<QueueItemList>(`/api/queue?${q}`);
+};
+export const getQueueItem = (id: number) => request<QueueItem>(`/api/queue/${id}`);
+export const getQueueStats = () => request<QueueStats>('/api/queue/stats');
+export const createQueueItem = (data: Record<string, unknown>) =>
+  request<QueueItem>('/api/queue', { method: 'POST', body: JSON.stringify(data) });
+export const updateQueueItem = (id: number, data: Record<string, unknown>) =>
+  request<QueueItem>(`/api/queue/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+export const deleteQueueItem = (id: number) =>
+  request<void>(`/api/queue/${id}`, { method: 'DELETE' });
 
 // Coordinator
 export const getCoordinatorTasks = (runId?: string) => {

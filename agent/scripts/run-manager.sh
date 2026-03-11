@@ -110,6 +110,33 @@ webhook_event() {
         2>/dev/null || true
 }
 
+queue_api() {
+    local method="$1" path="$2" body="${3:-}"
+    local url="http://127.0.0.1:8420${path}"
+    if [ -n "$body" ]; then
+        curl -s --max-time 5 -X "$method" "$url" -H "Content-Type: application/json" -d "$body" 2>/dev/null || echo ""
+    else
+        curl -s --max-time 5 -X "$method" "$url" 2>/dev/null || echo ""
+    fi
+}
+
+queue_find_item() {
+    # Find queue item by project_repo and assigned_to for the current run
+    local project="$1" employee_idx="$2"
+    local result
+    result=$(queue_api GET "/api/queue?project_repo=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$project'))")&run_id=run-$RUN_ID&limit=100")
+    echo "$result" | python3 -c "
+import json, sys
+try:
+    data = json.load(sys.stdin)
+    for item in data.get('items', []):
+        if item.get('assigned_to') == $employee_idx:
+            print(item['id'])
+            break
+except: pass
+" 2>/dev/null || echo ""
+}
+
 usage() {
     cat << 'EOF'
 Manager/Employee Autonomous Agent Orchestrator
@@ -671,6 +698,13 @@ for a in assignments:
             assigned_issue=$(echo "$employee_assignment" | python3 -c "import sys,json; print(json.load(sys.stdin).get('issue_number',''))" 2>/dev/null || echo "?")
             log_info "  Employee $ei assigned issue #$assigned_issue"
 
+            # Create queue item for tracking
+            local issue_title_q
+            issue_title_q=$(echo "$employee_assignment" | python3 -c "import sys,json; t=json.load(sys.stdin).get('issue_title',''); print(t.replace('\"','\\\\\"')[:200])" 2>/dev/null || echo "")
+            local ctx_json
+            ctx_json=$(echo "$employee_assignment" | python3 -c "import sys,json; print(json.dumps(json.load(sys.stdin)))" 2>/dev/null || echo "{}")
+            queue_api POST "/api/queue" "{\"project_repo\":\"$repo\",\"issue_number\":$( [ -n "$assigned_issue" ] && [ "$assigned_issue" != "?" ] && echo "$assigned_issue" || echo "null"),\"issue_title\":\"$issue_title_q\",\"state\":\"assigned\",\"assigned_to\":$ei,\"run_id\":\"run-$RUN_ID\",\"context\":$(echo "$ctx_json" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read()))" 2>/dev/null || echo "\"{}\"")}" >/dev/null 2>&1 &
+
             # Label issue as in-progress atomically
             (cd "$workspace" && GITHUB_REPO="$repo" gh label create "autonomous-agent/in-progress" --repo "$repo" --color D4C5F9 --description "Being worked on by autonomous agent" --force 2>/dev/null || true)
             (cd "$workspace" && GITHUB_REPO="$repo" gh issue edit "$assigned_issue" --repo "$repo" --add-label "autonomous-agent/in-progress" 2>/dev/null || true)
@@ -722,6 +756,13 @@ run_employee() {
     log_info "=========================================="
 
     webhook_event "employee_start" "\"project\":\"$repo\",\"mode\":\"$mode\",\"employee_index\":$employee_index,\"concurrent_group_id\":\"$CONCURRENT_GROUP_ID\""
+
+    # Transition queue item to in_progress
+    local _qid
+    _qid=$(queue_find_item "$repo" "$employee_index")
+    if [ -n "$_qid" ]; then
+        queue_api PUT "/api/queue/$_qid" "{\"state\":\"in_progress\"}" >/dev/null 2>&1 &
+    fi
 
     # Run setup script if configured for this project (install dependencies, etc.)
     local setup_script
@@ -1035,6 +1076,21 @@ print(f'{t:,}')
     fi
 
     webhook_event "employee_complete" "\"project\":\"$repo\",\"exit_code\":$exit_code,\"employee_index\":$employee_index"
+
+    # Transition queue item to review
+    local _qid2
+    _qid2=$(queue_find_item "$repo" "$employee_index")
+    if [ -n "$_qid2" ]; then
+        # Attach employee report if available
+        local report_file="$workspace/.claude-employee-report${report_suffix}.json"
+        if [ -f "$report_file" ]; then
+            local report_escaped
+            report_escaped=$(python3 -c "import sys,json; print(json.dumps(open('$report_file').read()))" 2>/dev/null || echo "null")
+            queue_api PUT "/api/queue/$_qid2" "{\"state\":\"review\",\"employee_report\":$report_escaped}" >/dev/null 2>&1 &
+        else
+            queue_api PUT "/api/queue/$_qid2" "{\"state\":\"review\"}" >/dev/null 2>&1 &
+        fi
+    fi
 
     return 0  # Don't fail the whole run if one employee errors
 }
@@ -1390,6 +1446,14 @@ Autonomous run: $RUN_ID" 2>/dev/null || log_warn "Failed to comment on issue #$i
                 fi
 
                 notify "approve" "APPROVED: $project #$issue_number - $reasoning"
+
+                # Queue: approved → completed
+                local _vqid
+                _vqid=$(queue_api GET "/api/queue?project_repo=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$project'))" 2>/dev/null)&run_id=run-$RUN_ID&state=review&limit=1" | python3 -c "import json,sys; items=json.load(sys.stdin).get('items',[]); print(items[0]['id'] if items else '')" 2>/dev/null || echo "")
+                if [ -n "$_vqid" ]; then
+                    queue_api PUT "/api/queue/$_vqid" "{\"state\":\"approved\"}" >/dev/null 2>&1
+                    queue_api PUT "/api/queue/$_vqid" "{\"state\":\"completed\"}" >/dev/null 2>&1
+                fi
                 ;;
 
             PR)
@@ -1420,6 +1484,14 @@ Run: $RUN_ID" 2>/dev/null || true
                 fi
 
                 notify "pr" "PR: $project #$issue_number - $reasoning"
+
+                # Queue: approved → completed (PR is also a terminal success)
+                local _prqid
+                _prqid=$(queue_api GET "/api/queue?project_repo=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$project'))" 2>/dev/null)&run_id=run-$RUN_ID&state=review&limit=1" | python3 -c "import json,sys; items=json.load(sys.stdin).get('items',[]); print(items[0]['id'] if items else '')" 2>/dev/null || echo "")
+                if [ -n "$_prqid" ]; then
+                    queue_api PUT "/api/queue/$_prqid" "{\"state\":\"approved\"}" >/dev/null 2>&1
+                    queue_api PUT "/api/queue/$_prqid" "{\"state\":\"completed\"}" >/dev/null 2>&1
+                fi
                 ;;
 
             REJECT)
@@ -1468,6 +1540,15 @@ Run: $RUN_ID" 2>/dev/null || true
                     fi
 
                     notify "reject_retry" "REJECTED (retry $((current_retry + 1))/$max_retries): $project #$issue_number - $reasoning"
+
+                    # Queue: reject current item and create new pending item with feedback
+                    local _rqid
+                    _rqid=$(queue_api GET "/api/queue?project_repo=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$project'))" 2>/dev/null)&run_id=run-$RUN_ID&state=review&limit=1" | python3 -c "import json,sys; items=json.load(sys.stdin).get('items',[]); print(items[0]['id'] if items else '')" 2>/dev/null || echo "")
+                    if [ -n "$_rqid" ]; then
+                        local fb_escaped
+                        fb_escaped=$(echo "$verdict_json" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read()))" 2>/dev/null || echo "null")
+                        queue_api PUT "/api/queue/$_rqid" "{\"state\":\"rejected\",\"manager_feedback\":$fb_escaped}" >/dev/null 2>&1
+                    fi
                 else
                     # Max retries exhausted — clean up
                     log_info "REJECT: Max retries ($max_retries) exhausted. Resetting workspace."
@@ -1486,6 +1567,14 @@ Run: $RUN_ID" 2>/dev/null || true
                     fi
 
                     notify "reject" "REJECTED (final): $project #$issue_number - $reasoning"
+
+                    # Queue: mark as failed (retries exhausted)
+                    local _fqid
+                    _fqid=$(queue_api GET "/api/queue?project_repo=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$project'))" 2>/dev/null)&run_id=run-$RUN_ID&state=review&limit=1" | python3 -c "import json,sys; items=json.load(sys.stdin).get('items',[]); print(items[0]['id'] if items else '')" 2>/dev/null || echo "")
+                    if [ -n "$_fqid" ]; then
+                        queue_api PUT "/api/queue/$_fqid" "{\"state\":\"rejected\",\"error_message\":\"Max retries exhausted\"}" >/dev/null 2>&1
+                        queue_api PUT "/api/queue/$_fqid" "{\"state\":\"failed\",\"error_message\":\"Max retries exhausted\"}" >/dev/null 2>&1
+                    fi
                 fi
                 ;;
 
@@ -1618,6 +1707,23 @@ main() {
         total_employees=$((total_employees + employees_for_project))
     done
     log_info "Total employees to spawn: $total_employees"
+
+    # ---- PHASE 0.4: Resume any paused queue items from previous runs ----
+    local paused_count
+    paused_count=$(queue_api GET "/api/queue?state=paused&limit=1" | python3 -c "import json,sys; print(json.load(sys.stdin).get('total',0))" 2>/dev/null || echo "0")
+    if [ "$paused_count" -gt 0 ]; then
+        log_info "Resuming $paused_count paused queue items from previous runs"
+        local paused_items
+        paused_items=$(queue_api GET "/api/queue?state=paused&limit=100")
+        echo "$paused_items" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+for item in data.get('items', []):
+    print(item['id'])
+" 2>/dev/null | while read -r qid; do
+            queue_api PUT "/api/queue/$qid" "{\"state\":\"pending\",\"run_id\":\"run-$RUN_ID\"}" >/dev/null 2>&1
+        done
+    fi
 
     # ---- PHASE 0.5: Pre-assign issues for multi-employee projects ----
     for ((i = 0; i < project_count; i++)); do
@@ -1754,6 +1860,7 @@ print(f'Wrote {len(assignments)} assignments')
             if ! check_token_budget; then
                 log_warn "Token budget exceeded. Stopping before $repo employee $ei"
                 notify "token_budget" "Token budget exceeded before $repo employee $ei in run $RUN_ID"
+                queue_api POST "/api/queue/batch-pause" "{\"run_id\":\"run-$RUN_ID\"}" >/dev/null 2>&1 &
                 break 2
             fi
 

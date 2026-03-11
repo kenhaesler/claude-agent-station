@@ -131,6 +131,30 @@ class Notification(Base):
     created_at = Column(DateTime, default=_utcnow)
 
 
+class QueueItem(Base):
+    __tablename__ = "task_queue"
+
+    id = Column(Integer, primary_key=True)
+    project_repo = Column(Text, nullable=False, index=True)
+    issue_number = Column(Integer, nullable=True)
+    issue_title = Column(Text, nullable=True)
+    state = Column(Text, nullable=False, default="pending", index=True)
+    priority = Column(Integer, default=0)
+    assigned_to = Column(Integer, nullable=True)
+    run_id = Column(Text, nullable=True, index=True)
+    employee_report = Column(Text, nullable=True)  # JSON
+    manager_feedback = Column(Text, nullable=True)  # JSON
+    retry_count = Column(Integer, default=0)
+    max_retries = Column(Integer, default=1)
+    context = Column(Text, nullable=True)  # JSON
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=_utcnow)
+    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
+    assigned_at = Column(DateTime, nullable=True)
+    started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+
+
 class PlanUsageHistory(Base):
     __tablename__ = "plan_usage_history"
 

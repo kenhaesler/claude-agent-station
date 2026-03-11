@@ -312,13 +312,43 @@ async def _setup_task_workspace(task: Task, config: CoordinatorConfig, employee_
     main_workspace = os.path.join(config.workspaces_dir, repo_name)
 
     if employee_index == 0:
-        # Use main workspace
+        # Use main workspace — clone if it doesn't exist yet
         if not Path(main_workspace).exists():
-            logger.error("Main workspace does not exist: %s", main_workspace)
-            return None
+            logger.info("Workspace missing, cloning %s into %s", task.project_repo, main_workspace)
+            try:
+                Path(config.workspaces_dir).mkdir(parents=True, exist_ok=True)
+                result = subprocess.run(
+                    ["gh", "repo", "clone", task.project_repo, repo_name],
+                    cwd=config.workspaces_dir,
+                    capture_output=True, text=True, timeout=120,
+                )
+                if result.returncode != 0:
+                    logger.error("Failed to clone %s: %s", task.project_repo, result.stderr)
+                    return None
+                logger.info("Cloned %s successfully", task.project_repo)
+            except Exception as e:
+                logger.error("Clone failed for %s: %s", task.project_repo, e)
+                return None
         return main_workspace
 
     # Create worktree for concurrent employees
+    # Ensure main workspace exists first (worktrees branch from it)
+    if not Path(main_workspace).exists():
+        logger.info("Main workspace missing for worktree, cloning %s", task.project_repo)
+        try:
+            Path(config.workspaces_dir).mkdir(parents=True, exist_ok=True)
+            clone_result = subprocess.run(
+                ["gh", "repo", "clone", task.project_repo, repo_name],
+                cwd=config.workspaces_dir,
+                capture_output=True, text=True, timeout=120,
+            )
+            if clone_result.returncode != 0:
+                logger.error("Failed to clone %s: %s", task.project_repo, clone_result.stderr)
+                return None
+        except Exception as e:
+            logger.error("Clone failed for %s: %s", task.project_repo, e)
+            return None
+
     worktree_dir = os.path.join(config.workspaces_dir, f"{repo_name}-e{employee_index}")
     branch_name = f"employee-{employee_index}-{config.run_id}"
 

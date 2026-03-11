@@ -17,6 +17,14 @@
     reviewing: 'bg-warning/20 text-warning shadow-[0_0_8px_rgba(245,158,11,0.25)]',
     failed: 'bg-reject/20 text-reject shadow-[0_0_8px_rgba(239,68,68,0.15)]',
     interrupted: 'bg-warning/20 text-warning shadow-[0_0_8px_rgba(245,158,11,0.15)]',
+    // Queue states
+    pending: 'bg-warning/20 text-warning shadow-[0_0_8px_rgba(245,158,11,0.15)]',
+    assigned: 'bg-info/20 text-info shadow-[0_0_8px_rgba(59,130,246,0.15)]',
+    in_progress: 'bg-info/20 text-info shadow-[0_0_8px_rgba(59,130,246,0.25)]',
+    review: 'bg-warning/20 text-warning shadow-[0_0_8px_rgba(245,158,11,0.25)]',
+    approved: 'bg-approve/20 text-approve shadow-[0_0_8px_rgba(34,197,94,0.15)]',
+    rejected: 'bg-reject/20 text-reject shadow-[0_0_8px_rgba(239,68,68,0.15)]',
+    paused: 'bg-text-dim/20 text-text-dim',
     // Modes
     full: 'bg-pr/20 text-pr shadow-[0_0_8px_rgba(168,85,247,0.15)]',
     analyze: 'bg-info/20 text-info shadow-[0_0_8px_rgba(59,130,246,0.15)]',

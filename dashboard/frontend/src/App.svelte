@@ -15,6 +15,7 @@
   import PlanDetailPage from './pages/PlanDetailPage.svelte';
   import SystemPage from './pages/SystemPage.svelte';
   import CoordinatorPage from './pages/CoordinatorPage.svelte';
+  import QueuePage from './pages/QueuePage.svelte';
   import AnalyticsPage from './pages/AnalyticsPage.svelte';
   import PromptsPage from './pages/PromptsPage.svelte';
 
@@ -93,6 +94,8 @@
         <PlanDetailPage planId={route.param ?? ''} />
       {:else if route.page === 'coordinator'}
         <CoordinatorPage />
+      {:else if route.page === 'queue'}
+        <QueuePage />
       {:else if route.page === 'analytics'}
         <AnalyticsPage />
       {:else if route.page === 'runs'}
