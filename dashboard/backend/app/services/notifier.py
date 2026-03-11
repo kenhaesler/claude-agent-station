@@ -218,16 +218,21 @@ async def send_notification(
     tokens_total: Optional[int] = None,
     summary: Optional[str] = None,
     run_id: Optional[str] = None,
+    _bypass_filter: bool = False,
 ) -> bool:
     """Send a webhook notification for a run event.
 
     Returns True if notification was sent successfully, False otherwise.
     Never raises — failures are logged.
+
+    Args:
+        _bypass_filter: If True, skip the _should_notify check. Used by
+            send_test_notification which validates config independently.
     """
     try:
         config = _get_notification_config()
 
-        if not _should_notify(event_type, config):
+        if not _bypass_filter and not _should_notify(event_type, config):
             return False
 
         webhook_url = config["webhook_url"]
@@ -308,6 +313,7 @@ async def send_test_notification() -> Dict[str, Any]:
         tokens_total=12345,
         summary="This is a test notification from Claude Agent Station. If you see this, your webhook is configured correctly!",
         run_id="test-notification",
+        _bypass_filter=True,
     )
 
     if result:
