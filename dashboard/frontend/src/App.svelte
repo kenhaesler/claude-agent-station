@@ -16,6 +16,7 @@
   import SystemPage from './pages/SystemPage.svelte';
   import CoordinatorPage from './pages/CoordinatorPage.svelte';
   import AnalyticsPage from './pages/AnalyticsPage.svelte';
+  import PromptsPage from './pages/PromptsPage.svelte';
 
   let serviceActive = $state(false);
   let authOk = $state(false);
@@ -102,6 +103,8 @@
         <LogsPage />
       {:else if route.page === 'config'}
         <ConfigPage />
+      {:else if route.page === 'prompts'}
+        <PromptsPage />
       {:else if route.page === 'system'}
         <SystemPage />
       {/if}

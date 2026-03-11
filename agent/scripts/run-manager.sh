@@ -11,6 +11,18 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="${STATION_CONFIG:-/home/claude-agent/.claude/autonomous/manager-config.json}"
+
+# Resolve prompt file: prefer custom override if it exists, else use default
+resolve_prompt() {
+    local role="$1"
+    local custom="$SCRIPT_DIR/../prompts/custom/${role}.md"
+    local default_prompt="$SCRIPT_DIR/../prompts/${role}.md"
+    if [ -f "$custom" ]; then
+        echo "$custom"
+    else
+        echo "$default_prompt"
+    fi
+}
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
 LOG_DIR=""
 DIGEST_DIR=""
@@ -608,7 +620,7 @@ $prs_json
 Return ONLY the JSON assignment object, no other text."
 
     # Run assigner with Haiku (fast + cheap)
-    local assigner_prompt_file="$SCRIPT_DIR/../prompts/assigner.md"
+    local assigner_prompt_file="$(resolve_prompt assigner)"
     local assignment_output
     assignment_output=$(echo "$assignment_prompt" | claude -p \
         --system-prompt "$(cat "$assigner_prompt_file")" \
@@ -757,7 +769,7 @@ run_employee() {
     # Select prompt based on mode
     local system_prompt employee_prompt
     if [ "$mode" = "plan" ]; then
-        system_prompt="$SCRIPT_DIR/../prompts/planner.md"
+        system_prompt="$(resolve_prompt planner)"
         employee_prompt="Create implementation plans for the repository: $repo
 
 Environment variables available:
@@ -772,7 +784,7 @@ Write your report to $workspace/.claude-employee-report${report_suffix}.json
 
 Remember: You are in PLAN mode. Read and analyze only — do NOT modify any source files."
     elif [ "$mode" = "analyze" ]; then
-        system_prompt="$SCRIPT_DIR/../prompts/analyst.md"
+        system_prompt="$(resolve_prompt analyst)"
         employee_prompt="Analyze the repository: $repo
 
 Environment variables available:
@@ -787,7 +799,7 @@ Write your report to $workspace/.claude-employee-report${report_suffix}.json
 
 Remember: You are in ANALYZE mode. Read and analyze only — do NOT modify any source files."
     else
-        system_prompt="$SCRIPT_DIR/../prompts/employee.md"
+        system_prompt="$(resolve_prompt employee)"
 
         # Check if there's a plan file to implement
         local plan_file="$workspace/.claude-plan-to-implement.json"
@@ -1189,7 +1201,7 @@ run_manager_review() {
     cmd+=(--model "$model")
     cmd+=(--fallback-model "$manager_fallback")
     cmd+=(--max-turns "$max_turns")
-    cmd+=(--system-prompt-file "$SCRIPT_DIR/../prompts/manager.md")
+    cmd+=(--system-prompt-file "$(resolve_prompt manager)")
     # No --allowedTools: full VM access, prompt-enforced guardrails
 
     local manager_prompt="Review the employee work in this file: $review_package

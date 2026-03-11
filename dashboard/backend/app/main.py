@@ -32,6 +32,7 @@ from app.routers import (
     events,
     coordinator,
     plan_usage,
+    prompts,
 )
 
 logging.basicConfig(
@@ -151,6 +152,7 @@ app.include_router(plans.router)
 app.include_router(events.router)
 app.include_router(coordinator.router)
 app.include_router(plan_usage.router)
+app.include_router(prompts.router)
 
 # Serve frontend static files (must be last, catches all non-API routes)
 _frontend_dist = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"

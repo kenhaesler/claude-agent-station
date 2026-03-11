@@ -35,6 +35,9 @@ Thumbs.db
 # Instance config (contains project-specific settings)
 agent/config/station-config.json
 
+# Custom prompt overrides (user-specific, managed via dashboard)
+agent/prompts/custom/
+
 # Secrets
 credentials.json
 api-key

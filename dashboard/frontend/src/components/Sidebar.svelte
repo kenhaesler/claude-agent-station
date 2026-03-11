@@ -19,6 +19,7 @@
     { page: 'analytics', label: 'Analytics' },
     { page: 'logs', label: 'Logs' },
     { page: 'config', label: 'Config' },
+    { page: 'prompts', label: 'Prompts' },
     { page: 'system', label: 'System' },
   ] as const;
 
@@ -97,6 +98,8 @@
             <rect x="3" y="2" width="14" height="16" rx="1" /><line x1="6" y1="6" x2="14" y2="6" /><line x1="6" y1="9.5" x2="14" y2="9.5" /><line x1="6" y1="13" x2="11" y2="13" />
           {:else if link.page === 'config'}
             <circle cx="10" cy="10" r="3" /><path d="M10 1.5v2M10 16.5v2M1.5 10h2M16.5 10h2M3.4 3.4l1.4 1.4M15.2 15.2l1.4 1.4M3.4 16.6l1.4-1.4M15.2 4.8l1.4-1.4" />
+          {:else if link.page === 'prompts'}
+            <path d="M4 4h12a1 1 0 011 1v10a1 1 0 01-1 1H4a1 1 0 01-1-1V5a1 1 0 011-1z" /><path d="M6 7h8M6 10h6M6 13h4" />
           {:else if link.page === 'system'}
             <rect x="3" y="2" width="14" height="5" rx="1" /><rect x="3" y="9" width="14" height="5" rx="1" /><circle cx="6" cy="4.5" r="0.75" fill="currentColor" /><circle cx="6" cy="11.5" r="0.75" fill="currentColor" /><line x1="8" y1="17" x2="12" y2="17" /><line x1="10" y1="14" x2="10" y2="17" />
           {/if}

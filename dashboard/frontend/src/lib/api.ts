@@ -110,6 +110,22 @@ export const getAnalytics = (params?: { days?: number; project_id?: number }) =>
   return request<AnalyticsData>(`/api/analytics?${q}`);
 };
 
+// Prompts
+export interface PromptData {
+  role: string;
+  label: string;
+  description: string;
+  default_content: string;
+  custom_content: string | null;
+  has_override: boolean;
+}
+export const listPrompts = () => request<PromptData[]>('/api/prompts');
+export const getPrompt = (role: string) => request<PromptData>(`/api/prompts/${role}`);
+export const updatePrompt = (role: string, content: string) =>
+  request<PromptData>(`/api/prompts/${role}`, { method: 'PUT', body: JSON.stringify({ content }) });
+export const resetPrompt = (role: string) =>
+  request<PromptData>(`/api/prompts/${role}`, { method: 'DELETE' });
+
 // Coordinator
 export const getCoordinatorTasks = (runId?: string) => {
   const q = new URLSearchParams();
