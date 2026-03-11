@@ -5,6 +5,7 @@
   import type { Plan, Project } from '../lib/types';
   import GlassCard from '../components/GlassCard.svelte';
   import LoadingSpinner from '../components/LoadingSpinner.svelte';
+  import MarkdownRenderer from '../components/MarkdownRenderer.svelte';
 
   interface Props {
     planId: string;
@@ -206,8 +207,8 @@
       <GlassCard>
         <div class="p-4">
           <h2 class="text-sm font-semibold text-text mb-3">Plan Description</h2>
-          <div class="prose prose-invert prose-sm max-w-none text-text-dim whitespace-pre-wrap font-mono text-xs leading-relaxed bg-surface-2 rounded-lg p-4 overflow-x-auto">
-            {plan.description}
+          <div class="bg-surface-2 rounded-lg p-4 overflow-x-auto text-text-dim text-sm leading-relaxed">
+            <MarkdownRenderer content={plan.description} />
           </div>
         </div>
       </GlassCard>

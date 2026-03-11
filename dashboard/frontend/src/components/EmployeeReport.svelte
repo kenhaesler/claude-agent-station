@@ -1,4 +1,6 @@
 <script lang="ts">
+  import MarkdownRenderer from './MarkdownRenderer.svelte';
+
   interface Props {
     report: string | null;
   }
@@ -184,7 +186,7 @@
       {#if parsed.notes}
         <div>
           <h4 class="text-sm font-medium text-text-dim mb-2">Notes</h4>
-          <p class="text-sm whitespace-pre-wrap">{parsed.notes}</p>
+          <MarkdownRenderer content={parsed.notes} />
         </div>
       {/if}
 
