@@ -11,8 +11,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.dependencies import get_db
-from app.models import Run, Project
-from app.schemas import RunOut, RunList, ActiveEmployeeOut
+from app.models import Run, Project, CoordinatorTask, CoordinatorMessage, QueueItem, Plan
+from app.schemas import (
+    RunOut, RunList, ActiveEmployeeOut, RunFullContext,
+    CoordinatorTaskOut, CoordinatorMessageOut, QueueItemOut, PlanOut,
+)
 from app.services.diff_parser import parse_unified_diff, DiffResult
 from app.services.log_importer import import_historical_runs
 from app.services.systemd import systemctl
@@ -96,6 +99,67 @@ async def get_run(run_id: str, db: AsyncSession = Depends(get_db)):
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
     return run
+
+
+@router.get("/{run_id}/full", response_model=RunFullContext)
+async def get_run_full_context(run_id: str, db: AsyncSession = Depends(get_db)):
+    """Return unified run context: run + coordinator tasks + queue item + plan.
+
+    This powers the unified Run Detail view (AC2) by fetching all related
+    data in a single request instead of requiring 4+ separate API calls.
+    """
+    # 1. Fetch the run
+    result = await db.execute(select(Run).where(Run.run_id == run_id))
+    run = result.scalar_one_or_none()
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    # 2. Fetch coordinator tasks for this run
+    tasks_result = await db.execute(
+        select(CoordinatorTask).where(CoordinatorTask.run_id == run_id)
+    )
+    tasks = tasks_result.scalars().all()
+
+    # 3. Fetch coordinator messages for this run
+    msgs_result = await db.execute(
+        select(CoordinatorMessage)
+        .where(CoordinatorMessage.run_id == run_id)
+        .order_by(CoordinatorMessage.created_at)
+    )
+    messages = msgs_result.scalars().all()
+
+    # 4. Fetch related queue item (by run_id)
+    queue_result = await db.execute(
+        select(QueueItem).where(QueueItem.run_id == run_id)
+    )
+    queue_item = queue_result.scalar_one_or_none()
+
+    # 5. Fetch related plan (by implementation_run_id or run_id)
+    plan_result = await db.execute(
+        select(Plan).where(
+            (Plan.implementation_run_id == run_id) | (Plan.run_id == run_id)
+        )
+    )
+    plan = plan_result.scalar_one_or_none()
+
+    # 6. Get project repo name
+    project_repo: Optional[str] = None
+    if run.project_id:
+        proj_result = await db.execute(
+            select(Project).where(Project.id == run.project_id)
+        )
+        project = proj_result.scalar_one_or_none()
+        if project:
+            project_repo = project.repo
+
+    return RunFullContext(
+        run=RunOut.model_validate(run),
+        coordinator_tasks=[CoordinatorTaskOut.model_validate(t) for t in tasks],
+        coordinator_messages=[CoordinatorMessageOut.model_validate(m) for m in messages],
+        queue_item=QueueItemOut.model_validate(queue_item) if queue_item else None,
+        plan=PlanOut.model_validate(plan) if plan else None,
+        project_repo=project_repo,
+    )
 
 
 @router.get("/{run_id}/diff", response_model=DiffResult)

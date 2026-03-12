@@ -348,6 +348,16 @@ export interface DailyRunCount {
   failed: number;
 }
 
+/** Unified run context returned by GET /api/runs/{id}/full */
+export interface RunFullContext {
+  run: Run;
+  coordinator_tasks: CoordinatorTask[];
+  coordinator_messages: CoordinatorMessage[];
+  queue_item: QueueItem | null;
+  plan: Plan | null;
+  project_repo: string | null;
+}
+
 export interface AnalyticsData {
   days: number;
   total_tokens: number;

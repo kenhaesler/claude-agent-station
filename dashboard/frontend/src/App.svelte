@@ -18,6 +18,7 @@
   import QueuePage from './pages/QueuePage.svelte';
   import AnalyticsPage from './pages/AnalyticsPage.svelte';
   import PromptsPage from './pages/PromptsPage.svelte';
+  import SettingsPage from './pages/SettingsPage.svelte';
 
   let serviceActive = $state(false);
   let authOk = $state(false);
@@ -104,12 +105,14 @@
         <RunDetailPage runId={route.param ?? ''} />
       {:else if route.page === 'logs'}
         <LogsPage />
+      {:else if route.page === 'settings'}
+        <SettingsPage />
       {:else if route.page === 'config'}
-        <ConfigPage />
+        <SettingsPage />
       {:else if route.page === 'prompts'}
         <PromptsPage />
       {:else if route.page === 'system'}
-        <SystemPage />
+        <SettingsPage />
       {/if}
     </main>
   </div>

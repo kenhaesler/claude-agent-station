@@ -393,3 +393,19 @@ class AnalyticsResponse(BaseModel):
     verdict_distribution: List[VerdictDistribution] = []
     project_token_usage: List[ProjectTokenUsage] = []
     daily_run_counts: List[DailyRunCount] = []
+
+
+# --- Unified Run Context ---
+
+class RunFullContext(BaseModel):
+    """Unified run context: run + coordinator tasks + queue item + plan.
+
+    Powers the unified Run Detail view (AC2) by returning all related
+    data in a single response instead of requiring 4+ separate API calls.
+    """
+    run: RunOut
+    coordinator_tasks: List[CoordinatorTaskOut] = []
+    coordinator_messages: List[CoordinatorMessageOut] = []
+    queue_item: Optional[QueueItemOut] = None
+    plan: Optional[PlanOut] = None
+    project_repo: Optional[str] = None
