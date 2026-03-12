@@ -1,7 +1,7 @@
 """Task queue CRUD with state machine validation."""
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -28,8 +28,8 @@ router = APIRouter(prefix="/api/queue", tags=["queue"])
 TRANSITIONS: dict[str, set[str]] = {
     "pending": {"assigned", "paused", "failed"},
     "assigned": {"in_progress", "pending", "paused"},
-    "in_progress": {"review", "paused", "failed"},
-    "review": {"approved", "rejected"},
+    "in_progress": {"review", "paused", "failed", "pending"},
+    "review": {"approved", "rejected", "pending"},
     "approved": {"completed"},
     "rejected": {"pending", "failed"},
     "paused": {"pending"},
@@ -173,12 +173,12 @@ async def update_queue_item(
         elif data.state == "completed":
             item.completed_at = now
 
-    # Apply other fields
+    # Apply other fields (use model_fields_set to detect explicitly provided values,
+    # including explicit nulls like {"run_id": null} for clearing fields)
     for field in ("priority", "assigned_to", "run_id", "employee_report",
                   "manager_feedback", "retry_count", "error_message", "context"):
-        val = getattr(data, field, None)
-        if val is not None:
-            setattr(item, field, val)
+        if field in data.model_fields_set:
+            setattr(item, field, getattr(data, field))
 
     item.updated_at = _utcnow()
     await db.commit()
@@ -201,8 +201,8 @@ async def delete_queue_item(item_id: int, db: AsyncSession = Depends(get_db)):
     item = result.scalar_one_or_none()
     if not item:
         raise HTTPException(404, "Queue item not found")
-    if item.state not in ("pending", "paused", "failed"):
-        raise HTTPException(400, f"Can only delete pending/paused/failed items (current: {item.state})")
+    if item.state not in ("pending", "paused", "failed", "completed"):
+        raise HTTPException(400, f"Can only delete pending/paused/failed/completed items (current: {item.state})")
     await db.delete(item)
     await db.commit()
 
@@ -238,3 +238,27 @@ async def batch_pause(
 
     logger.info("Batch paused %d items for run %s", count, body.run_id)
     return {"status": "ok", "paused": count}
+
+
+@router.post("/purge", status_code=200)
+async def purge_completed(
+    max_age_days: int = Query(default=7, ge=1),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete completed and failed queue items older than max_age_days."""
+    cutoff = _utcnow() - timedelta(days=max_age_days)
+    result = await db.execute(
+        select(QueueItem).where(
+            QueueItem.state.in_(["completed", "failed"]),
+            QueueItem.updated_at < cutoff,
+        )
+    )
+    items = result.scalars().all()
+    for item in items:
+        await db.delete(item)
+    await db.commit()
+
+    if items:
+        logger.info("Purged %d completed/failed queue items older than %d days", len(items), max_age_days)
+
+    return {"purged": len(items)}

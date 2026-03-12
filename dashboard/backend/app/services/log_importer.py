@@ -100,6 +100,8 @@ def _update_run_from_logs(run: "Run", data: dict) -> None:
         run.issue_number = data["issue_number"]
     if not run.branch and data.get("branch"):
         run.branch = data["branch"]
+    # Always backfill employee_report and verdict_detail even for existing runs
+    # that completed before these fields were populated by the webhook handler.
     if not run.employee_report and data.get("employee_report"):
         run.employee_report = data["employee_report"]
     if not run.log_file and data.get("log_file"):

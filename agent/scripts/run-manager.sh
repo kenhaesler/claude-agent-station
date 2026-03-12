@@ -193,8 +193,8 @@ cleanup_children() {
     fi
 }
 
-trap 'cleanup_children TERM; cleanup_all_worktrees 2>/dev/null || true; exit 130' SIGTERM
-trap 'cleanup_children INT; cleanup_all_worktrees 2>/dev/null || true; exit 130' SIGINT
+trap 'queue_api POST "/api/queue/batch-pause" "{\"run_id\":\"run-$RUN_ID\"}" 2>/dev/null; cleanup_children TERM; cleanup_all_worktrees 2>/dev/null || true; exit 130' SIGTERM
+trap 'queue_api POST "/api/queue/batch-pause" "{\"run_id\":\"run-$RUN_ID\"}" 2>/dev/null; cleanup_children INT; cleanup_all_worktrees 2>/dev/null || true; exit 130' SIGINT
 
 get_max_concurrent() {
     json_get "$CONFIG_FILE" "limits.max_concurrent_employees" 2>/dev/null || echo "1"
@@ -1342,7 +1342,10 @@ print(json.dumps(v))
         log_info "Project: $project | Verdict: $verdict | Issue: #$issue_number | Branch: $branch"
         log_info "Reasoning: $reasoning"
 
-        webhook_event "verdict_execute" "\"project\":\"$project\",\"verdict\":\"$verdict\",\"issue_number\":\"$issue_number\""
+        # Escape reasoning for JSON (replace newlines and quotes)
+        local escaped_reasoning
+        escaped_reasoning=$(echo "$reasoning" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read().strip())[1:-1])" 2>/dev/null || echo "$reasoning")
+        webhook_event "verdict_execute" "\"project\":\"$project\",\"verdict\":\"$verdict\",\"issue_number\":\"$issue_number\",\"branch\":\"$branch\",\"reasoning\":\"$escaped_reasoning\""
 
         if [ ! -d "$workspace/.git" ]; then
             log_error "Workspace not found: $workspace"
@@ -1745,7 +1748,11 @@ main() {
     done
     log_info "Total employees to spawn: $total_employees"
 
-    # ---- PHASE 0.4: Resume any paused queue items from previous runs ----
+    # ---- PHASE 0.3.5: Purge old completed/failed queue items ----
+    queue_api POST "/api/queue/purge?max_age_days=7" >/dev/null 2>&1 || true
+
+    # ---- PHASE 0.4: Resume paused and recover orphaned queue items ----
+    # Resume paused items from previous runs
     local paused_count
     paused_count=$(queue_api GET "/api/queue?state=paused&limit=1" | python3 -c "import json,sys; print(json.load(sys.stdin).get('total',0))" 2>/dev/null || echo "0")
     if [ "$paused_count" -gt 0 ]; then
@@ -1761,6 +1768,28 @@ for item in data.get('items', []):
             queue_api PUT "/api/queue/$qid" "{\"state\":\"pending\",\"run_id\":\"run-$RUN_ID\"}" >/dev/null 2>&1
         done
     fi
+
+    # Recover orphaned items stuck in assigned/in_progress/review from dead runs
+    for orphan_state in assigned in_progress review; do
+        local orphan_count
+        orphan_count=$(queue_api GET "/api/queue?state=$orphan_state&limit=1" | python3 -c "import json,sys; print(json.load(sys.stdin).get('total',0))" 2>/dev/null || echo "0")
+        if [ "$orphan_count" -gt 0 ]; then
+            log_info "Recovering $orphan_count orphaned queue items in state '$orphan_state'"
+            local orphan_items
+            orphan_items=$(queue_api GET "/api/queue?state=$orphan_state&limit=100")
+            # Only recover items NOT belonging to the current run
+            echo "$orphan_items" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+current_run = 'run-$RUN_ID'
+for item in data.get('items', []):
+    if item.get('run_id') != current_run:
+        print(item['id'])
+" 2>/dev/null | while read -r qid; do
+                queue_api PUT "/api/queue/$qid" "{\"state\":\"pending\",\"run_id\":null,\"assigned_to\":null}" >/dev/null 2>&1
+            done
+        fi
+    done
 
     # ---- PHASE 0.5: Pre-assign issues for multi-employee projects ----
     for ((i = 0; i < project_count; i++)); do

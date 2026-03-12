@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Run
+from app.models import QueueItem, Run
 from app.services.systemd import get_service_status
 from app.services.event_bus import publish as event_bus_publish
 from app.services.notifier import send_notification
@@ -60,6 +60,25 @@ async def reap_stale_runs(db: AsyncSession) -> int:
                 "project": None,
             },
         })
+
+    # Recover orphaned queue items from reaped runs
+    reaped_run_ids = [r.run_id for r in stale_runs]
+    orphan_result = await db.execute(
+        select(QueueItem).where(
+            QueueItem.run_id.in_(reaped_run_ids),
+            QueueItem.state.in_(["assigned", "in_progress", "review"]),
+        )
+    )
+    orphaned_items = orphan_result.scalars().all()
+    for item in orphaned_items:
+        logger.info(
+            "Recovering orphaned queue item %d (state=%s, run=%s) → pending",
+            item.id, item.state, item.run_id,
+        )
+        item.state = "pending"
+        item.run_id = None
+        item.assigned_to = None
+        item.updated_at = now
 
     await db.commit()
 

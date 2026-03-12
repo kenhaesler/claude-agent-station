@@ -12,6 +12,7 @@ from app.dependencies import get_db
 from app.models import Run, Project, Notification, CoordinatorTask, CoordinatorMessage
 from app.schemas import WebhookRunEvent
 from app.services.event_bus import publish as event_bus_publish
+from app.services.log_parser import parse_employee_report
 from app.services.notifier import send_notification
 
 logger = logging.getLogger(__name__)
@@ -106,6 +107,13 @@ async def receive_run_event(
         run.finished_at = datetime.now(timezone.utc)
         run.model = event.model or run.model
 
+        # Read employee report from disk if not already populated
+        if not run.employee_report and event.project:
+            repo_short = event.project.split("/")[-1] if "/" in event.project else event.project
+            report = parse_employee_report(repo_short)
+            if report:
+                run.employee_report = json.dumps(report)
+
     elif event_name == "employee_done":
         # Employee finished working — update employee-specific data but keep
         # run status as "running" so the dashboard doesn't show it as complete
@@ -149,14 +157,21 @@ async def receive_run_event(
 
         run.verdict = event.verdict
         run.issue_number = event.issue_number
-        run.branch = event.branch
-        if event.reasoning:
-            run.verdict_detail = json.dumps({
-                "verdict": event.verdict,
-                "reasoning": event.reasoning,
-                "issue_number": event.issue_number,
-                "branch": event.branch,
-            })
+        run.branch = event.branch or run.branch
+        run.verdict_detail = json.dumps({
+            "verdict": event.verdict,
+            "reasoning": event.reasoning or "",
+            "project": event.project,
+            "issue_number": event.issue_number,
+            "branch": event.branch,
+        })
+
+        # Read employee report from disk if not already populated
+        if not run.employee_report and event.project:
+            repo_short = event.project.split("/")[-1] if "/" in event.project else event.project
+            report = parse_employee_report(repo_short)
+            if report:
+                run.employee_report = json.dumps(report)
 
         # Create notification
         notification = Notification(
