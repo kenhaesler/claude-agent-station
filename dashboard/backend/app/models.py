@@ -80,8 +80,8 @@ class Plan(Base):
     status = Column(Text, default="draft")  # draft/approved/implementing/completed/rejected
     run_id = Column(Text, nullable=True)  # run that created this plan
     implementation_run_id = Column(Text, nullable=True)  # run that implemented this plan
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=_utcnow)
+    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
 
 
 class CoordinatorTask(Base):
