@@ -28,8 +28,17 @@ AUTHORIZE_URL = "https://claude.ai/oauth/authorize"
 SCOPES = "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers"
 CREDS_PATH = Path("/home/claude-agent/.claude/.credentials.json")
 
-# In-memory store for pending PKCE flows: {state: code_verifier}
-_pending: Dict[str, str] = {}
+# In-memory store for pending PKCE flows: {state: (code_verifier, expires_at)}
+_pending: Dict[str, tuple[str, float]] = {}
+STATE_TTL_SECONDS = 600  # 10 minutes
+
+
+def _cleanup_expired_states() -> None:
+    """Remove expired state entries from the pending store (lazy eviction)."""
+    now = time.time()
+    expired = [s for s, (_, exp) in _pending.items() if now > exp]
+    for s in expired:
+        del _pending[s]
 
 
 class OAuthStartResponse(BaseModel):
@@ -78,9 +87,10 @@ def _write_credentials(path: Path, data: dict) -> None:
 @router.post("/start", response_model=OAuthStartResponse)
 async def start_oauth():
     """Generate PKCE challenge and return authorization URL."""
+    _cleanup_expired_states()
     state = secrets.token_urlsafe(32)
     code_verifier, code_challenge = _generate_pkce()
-    _pending[state] = code_verifier
+    _pending[state] = (code_verifier, time.time() + STATE_TTL_SECONDS)
 
     params = urlencode({
         "code": "true",
@@ -124,9 +134,15 @@ def _clean_code(raw: str) -> str:
 @router.post("/callback", response_model=OAuthCallbackResponse)
 async def oauth_callback(req: OAuthCallbackRequest):
     """Exchange authorization code for tokens and write credentials."""
-    code_verifier = _pending.pop(req.state, None)
-    if not code_verifier:
+    entry = _pending.pop(req.state, None)
+    if not entry:
         raise HTTPException(status_code=400, detail="Invalid or expired state parameter")
+    code_verifier, expires_at = entry
+    if time.time() > expires_at:
+        raise HTTPException(
+            status_code=400,
+            detail="OAuth state has expired. Please restart the login flow.",
+        )
 
     code = _clean_code(req.code)
     logger.info(
