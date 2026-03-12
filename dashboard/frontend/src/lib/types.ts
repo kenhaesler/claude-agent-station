@@ -286,9 +286,17 @@ export interface CoordinatorTask {
   touched_files: string | null;
   exit_code: number | null;
   error_message: string | null;
+  result_summary: string | null;
+  log_path: string | null;
+  branch: string | null;
   created_at: string | null;
   started_at: string | null;
   finished_at: string | null;
+}
+
+export interface CoordinatorTaskDetail extends CoordinatorTask {
+  employee_report: Record<string, unknown> | null;
+  log_excerpt: string | null;
 }
 
 export interface CoordinatorDAG {

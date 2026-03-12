@@ -9,8 +9,11 @@ from sqlalchemy import select, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db
-from app.models import CoordinatorTask, CoordinatorMessage
-from app.schemas import CoordinatorTaskOut, CoordinatorDAGOut, CoordinatorMessageOut, GuidanceSend
+from app.models import CoordinatorTask, CoordinatorMessage, Run
+from app.schemas import (
+    CoordinatorTaskOut, CoordinatorTaskDetailOut, CoordinatorDAGOut,
+    CoordinatorMessageOut, GuidanceSend,
+)
 from app.services.event_bus import publish as event_bus_publish
 
 logger = logging.getLogger(__name__)
@@ -47,6 +50,53 @@ async def get_task(task_id: str, db: AsyncSession = Depends(get_db)):
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     return task
+
+
+@router.get("/tasks/{task_id}/details", response_model=CoordinatorTaskDetailOut)
+async def get_task_details(task_id: str, db: AsyncSession = Depends(get_db)):
+    """Get extended task details including employee report and log excerpt."""
+    import os
+
+    result = await db.execute(
+        select(CoordinatorTask).where(CoordinatorTask.id == task_id)
+    )
+    task = result.scalar_one_or_none()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    # Build base response from task attributes
+    task_data = CoordinatorTaskDetailOut.model_validate(task)
+
+    # Try to find matching run's employee report
+    if task.run_id and task.employee_index is not None:
+        run_result = await db.execute(
+            select(Run).where(
+                Run.run_id == task.run_id,
+                Run.employee_index == task.employee_index,
+            )
+        )
+        run = run_result.scalar_one_or_none()
+        if run and run.employee_report:
+            try:
+                task_data.employee_report = json.loads(run.employee_report)
+            except (json.JSONDecodeError, TypeError):
+                task_data.employee_report = None
+
+        # Use run's log_file if task doesn't have log_path
+        if not task.log_path and run and run.log_file:
+            task_data.log_path = run.log_file
+
+    # Read a log excerpt (last 100 lines)
+    log_file = task.log_path or (task_data.log_path if task_data.log_path else None)
+    if log_file and os.path.isfile(log_file):
+        try:
+            with open(log_file, "r", errors="replace") as f:
+                lines = f.readlines()
+                task_data.log_excerpt = "".join(lines[-100:])
+        except OSError:
+            task_data.log_excerpt = None
+
+    return task_data
 
 
 @router.get("/dag/{run_id}", response_model=CoordinatorDAGOut)

@@ -101,6 +101,9 @@ class CoordinatorTask(Base):
     touched_files = Column(Text, nullable=True)  # JSON array
     exit_code = Column(Integer, nullable=True)
     error_message = Column(Text, nullable=True)
+    result_summary = Column(Text, nullable=True)  # Brief summary of what the task produced
+    log_path = Column(Text, nullable=True)  # Path to employee log file
+    branch = Column(Text, nullable=True)  # Git branch used by the employee
     dag_json = Column(Text, nullable=True)  # Full DAG snapshot (on first task only)
     created_at = Column(DateTime, default=_utcnow)
     started_at = Column(DateTime, nullable=True)
