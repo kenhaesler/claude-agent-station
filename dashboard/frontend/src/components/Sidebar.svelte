@@ -10,18 +10,18 @@
 
   let collapsed = $state(false);
 
+  // AC1: Reduced to 5 primary navigation items (down from 11)
+  // Coordinator + Queue -> integrated into Run Detail (AC4)
+  // Analytics -> accessible from Dashboard (AC4)
+  // Config + System -> merged into Settings (AC4)
+  // Logs -> accessible from Settings and Run Detail
+  // Prompts -> accessible from Settings
   const links = [
     { page: 'dashboard', label: 'Dashboard' },
     { page: 'projects', label: 'Projects' },
     { page: 'plans', label: 'Plans' },
     { page: 'runs', label: 'Runs' },
-    { page: 'coordinator', label: 'Coordinator' },
-    { page: 'queue', label: 'Queue' },
-    { page: 'analytics', label: 'Analytics' },
-    { page: 'logs', label: 'Logs' },
-    { page: 'config', label: 'Config' },
-    { page: 'prompts', label: 'Prompts' },
-    { page: 'system', label: 'System' },
+    { page: 'settings', label: 'Settings' },
   ] as const;
 
   function closeMobile() {
@@ -70,7 +70,7 @@
 
   <nav class="flex flex-col gap-1 px-2 py-3 flex-1">
     {#each links as link}
-      {@const active = route.page === link.page || (link.page === 'runs' && route.page === 'run-detail') || (link.page === 'plans' && route.page === 'plan-detail') || (link.page === 'coordinator' && route.page === 'coordinator')}
+      {@const active = route.page === link.page || (link.page === 'runs' && route.page === 'run-detail') || (link.page === 'plans' && route.page === 'plan-detail') || (link.page === 'settings' && (route.page === 'config' || route.page === 'system' || route.page === 'prompts'))}
       <a
         href="#{link.page === 'dashboard' ? '/' : `/${link.page}`}"
         onclick={closeMobile}
@@ -91,20 +91,8 @@
             <path d="M4 4h12M4 8h12M4 12h8" /><path d="M13 12l2 2 4-4" stroke-width="2" />
           {:else if link.page === 'runs'}
             <circle cx="10" cy="10" r="8" /><polygon points="8,6 15,10 8,14" fill="currentColor" stroke="none" />
-          {:else if link.page === 'coordinator'}
-            <circle cx="10" cy="6" r="2.5" /><circle cx="5" cy="15" r="2.5" /><circle cx="15" cy="15" r="2.5" /><line x1="10" y1="8.5" x2="6.5" y2="12.5" /><line x1="10" y1="8.5" x2="13.5" y2="12.5" /><line x1="7.5" y1="15" x2="12.5" y2="15" />
-          {:else if link.page === 'queue'}
-            <path d="M3 4h14M3 8h14M3 12h14M3 16h14" /><rect x="14" y="3" width="4" height="3" rx="0.5" /><rect x="14" y="7" width="4" height="3" rx="0.5" /><rect x="14" y="11" width="4" height="3" rx="0.5" />
-          {:else if link.page === 'analytics'}
-            <path d="M3 17V10" /><path d="M7 17V7" /><path d="M11 17V12" /><path d="M15 17V4" /><path d="M19 17V9" />
-          {:else if link.page === 'logs'}
-            <rect x="3" y="2" width="14" height="16" rx="1" /><line x1="6" y1="6" x2="14" y2="6" /><line x1="6" y1="9.5" x2="14" y2="9.5" /><line x1="6" y1="13" x2="11" y2="13" />
-          {:else if link.page === 'config'}
+          {:else if link.page === 'settings'}
             <circle cx="10" cy="10" r="3" /><path d="M10 1.5v2M10 16.5v2M1.5 10h2M16.5 10h2M3.4 3.4l1.4 1.4M15.2 15.2l1.4 1.4M3.4 16.6l1.4-1.4M15.2 4.8l1.4-1.4" />
-          {:else if link.page === 'prompts'}
-            <path d="M4 4h12a1 1 0 011 1v10a1 1 0 01-1 1H4a1 1 0 01-1-1V5a1 1 0 011-1z" /><path d="M6 7h8M6 10h6M6 13h4" />
-          {:else if link.page === 'system'}
-            <rect x="3" y="2" width="14" height="5" rx="1" /><rect x="3" y="9" width="14" height="5" rx="1" /><circle cx="6" cy="4.5" r="0.75" fill="currentColor" /><circle cx="6" cy="11.5" r="0.75" fill="currentColor" /><line x1="8" y1="17" x2="12" y2="17" /><line x1="10" y1="14" x2="10" y2="17" />
           {/if}
         </svg>
         {#if !collapsed}

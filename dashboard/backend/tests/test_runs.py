@@ -241,3 +241,28 @@ async def test_get_active_employees_empty(client):
     resp = await client.get("/api/runs/active-employees")
     assert resp.status_code == 200
     assert resp.json() == []
+
+
+# --- Full context (unified run detail) ---
+
+@pytest.mark.asyncio
+async def test_get_run_full_context(client, sample_runs):
+    """GET /api/runs/{run_id}/full returns run with related context."""
+    resp = await client.get("/api/runs/run-001/full")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["run"]["run_id"] == "run-001"
+    assert data["run"]["status"] == "success"
+    assert data["project_repo"] == "owner/test-repo"
+    assert isinstance(data["coordinator_tasks"], list)
+    assert isinstance(data["coordinator_messages"], list)
+    # No queue item or plan linked to this run
+    assert data["queue_item"] is None
+    assert data["plan"] is None
+
+
+@pytest.mark.asyncio
+async def test_get_run_full_context_not_found(client):
+    """GET /api/runs/{run_id}/full returns 404 for unknown run."""
+    resp = await client.get("/api/runs/nonexistent-run/full")
+    assert resp.status_code == 404

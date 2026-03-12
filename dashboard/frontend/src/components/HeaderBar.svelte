@@ -2,6 +2,7 @@
   import StatusOrb from './StatusOrb.svelte';
   import ArcGauge from './ArcGauge.svelte';
   import AiStatusLine from './AiStatusLine.svelte';
+  import ActiveRunBanner from './ActiveRunBanner.svelte';
 
   interface Props {
     serviceActive: boolean;
@@ -56,6 +57,9 @@
     <div class="hidden md:block">
       <AiStatusLine messages={statusMessages} speed={45} />
     </div>
+
+    <!-- AC3: Always-visible active run progress indicator -->
+    <ActiveRunBanner />
   </div>
 
   <!-- Status indicators + trigger button -->
