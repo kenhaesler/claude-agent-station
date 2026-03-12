@@ -102,6 +102,7 @@
         <button
           class="w-full flex items-center gap-2 px-4 py-2.5 text-left hover:bg-white/[0.02] transition-colors"
           onclick={() => toggleFile(file.filename)}
+          aria-expanded={expandedFiles.has(file.filename)}
         >
           <!-- Expand/Collapse Arrow -->
           <span class="text-text-dim text-xs transition-transform {expandedFiles.has(file.filename) ? 'rotate-90' : ''}">

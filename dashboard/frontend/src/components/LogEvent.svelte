@@ -47,7 +47,7 @@
         <span class="text-xs text-text-dim ml-2 font-data">{event.cwd}</span>
       {/if}
       {#if expandable}
-        <button onclick={() => expanded = !expanded} class="ml-2 text-xs text-text-dim hover:text-text cursor-pointer">
+        <button onclick={() => expanded = !expanded} class="ml-2 text-xs text-text-dim hover:text-text cursor-pointer" aria-expanded={expanded}>
           {expanded ? '▾ hide' : '▸ tools'}
         </button>
       {/if}
@@ -76,6 +76,7 @@
       <button
         onclick={() => expanded = !expanded}
         class="text-xs text-purple-400 hover:text-purple-300 cursor-pointer"
+        aria-expanded={expanded}
       >
         {expanded ? '▾' : '▸'} thinking
         {#if !expanded && event.thinking}
@@ -98,7 +99,7 @@
         <span class="text-xs text-text-dim ml-1.5 font-data break-all">{toolInputSummary()}</span>
       {/if}
       {#if expandable}
-        <button onclick={() => expanded = !expanded} class="ml-2 text-xs text-text-dim hover:text-text cursor-pointer">
+        <button onclick={() => expanded = !expanded} class="ml-2 text-xs text-text-dim hover:text-text cursor-pointer" aria-expanded={expanded}>
           {expanded ? '▾ less' : '▸ more'}
         </button>
       {/if}
@@ -118,7 +119,7 @@
       {/if}
       <span class="text-xs text-text-dim font-data whitespace-pre-wrap break-all">{expanded ? event.toolResultContent : resultContentPreview()}</span>
       {#if expandable}
-        <button onclick={() => expanded = !expanded} class="ml-1 text-xs text-text-dim hover:text-text cursor-pointer">
+        <button onclick={() => expanded = !expanded} class="ml-1 text-xs text-text-dim hover:text-text cursor-pointer" aria-expanded={expanded}>
           {expanded ? '▾ less' : '▸ more'}
         </button>
       {/if}
@@ -161,7 +162,7 @@
     <div class="min-w-0 flex-1 text-xs text-text-dim font-data break-all">
       {#if expandable}
         {expanded ? event.raw : truncate(event.raw || event.text || '', 200)}
-        <button onclick={() => expanded = !expanded} class="ml-1 text-xs hover:text-text cursor-pointer">
+        <button onclick={() => expanded = !expanded} class="ml-1 text-xs hover:text-text cursor-pointer" aria-expanded={expanded}>
           {expanded ? '▾' : '▸'}
         </button>
       {:else}

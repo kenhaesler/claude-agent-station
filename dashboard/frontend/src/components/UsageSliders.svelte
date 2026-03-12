@@ -28,13 +28,13 @@
 
   let usageColor = $derived(
     maxUsagePercent <= 50 ? '#10b981' :
-    maxUsagePercent <= 70 ? '#06b6d4' :
+    maxUsagePercent <= 70 ? '#6366f1' :
     maxUsagePercent <= 85 ? '#f59e0b' : '#ef4444'
   );
 
   let reserveColor = $derived(
     reservePercent >= 40 ? '#10b981' :
-    reservePercent >= 20 ? '#06b6d4' :
+    reservePercent >= 20 ? '#6366f1' :
     reservePercent >= 10 ? '#f59e0b' : '#ef4444'
   );
 
@@ -144,24 +144,24 @@
     width: 18px;
     height: 18px;
     border-radius: 50%;
-    background: var(--slider-color, #06b6d4);
+    background: var(--slider-color, #6366f1);
     border: 2px solid rgba(255, 255, 255, 0.15);
-    box-shadow: 0 0 10px color-mix(in srgb, var(--slider-color, #06b6d4) 40%, transparent);
+    box-shadow: 0 0 10px color-mix(in srgb, var(--slider-color, #6366f1) 40%, transparent);
     cursor: pointer;
     transition: box-shadow 0.2s ease;
   }
 
   .usage-slider::-webkit-slider-thumb:hover {
-    box-shadow: 0 0 16px color-mix(in srgb, var(--slider-color, #06b6d4) 60%, transparent);
+    box-shadow: 0 0 16px color-mix(in srgb, var(--slider-color, #6366f1) 60%, transparent);
   }
 
   .usage-slider::-moz-range-thumb {
     width: 18px;
     height: 18px;
     border-radius: 50%;
-    background: var(--slider-color, #06b6d4);
+    background: var(--slider-color, #6366f1);
     border: 2px solid rgba(255, 255, 255, 0.15);
-    box-shadow: 0 0 10px color-mix(in srgb, var(--slider-color, #06b6d4) 40%, transparent);
+    box-shadow: 0 0 10px color-mix(in srgb, var(--slider-color, #6366f1) 40%, transparent);
     cursor: pointer;
   }
 

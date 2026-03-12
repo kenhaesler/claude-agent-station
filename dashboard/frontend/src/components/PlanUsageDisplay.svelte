@@ -48,7 +48,7 @@
     !usage ? '#94a3b8' :
     usage.usage_percent >= 80 ? '#ef4444' :
     usage.usage_percent >= 60 ? '#f59e0b' :
-    usage.usage_percent >= 30 ? '#06b6d4' : '#10b981'
+    usage.usage_percent >= 30 ? '#6366f1' : '#10b981'
   );
 
   let agentCapColor = $derived(
@@ -90,7 +90,7 @@
         <ArcGauge
           value={0}
           size={56}
-          color="#06b6d4"
+          color="#6366f1"
           label="TOKENS"
         />
         <div class="min-w-0">

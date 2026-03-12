@@ -1,67 +1,26 @@
 <script lang="ts">
   import { WorkspaceRenderer } from '../lib/workspace-renderer';
-  import type { RunPhase } from '../lib/workspace-renderer';
-  import type { Project, Run, SystemStatus, UsageData } from '../lib/types';
-  import { liveActivity } from '../lib/live-activity.svelte';
+  import { agentPresence, togglePanel } from '../lib/agent-presence.svelte';
+  import type { SystemStatus, UsageData } from '../lib/types';
 
   interface Props {
-    projects: Project[];
-    runs: Run[];
-    latestRun: Run | null;
     systemStatus: SystemStatus | null;
     usage: UsageData | null;
-    activityIntensity?: number;
-    currentToolSummary?: string | null;
-    overridePhase?: RunPhase | null;
   }
 
-  let { projects, runs, latestRun, systemStatus, usage, activityIntensity = 0, currentToolSummary = null, overridePhase = null }: Props = $props();
+  let { systemStatus, usage }: Props = $props();
 
   let canvas: HTMLCanvasElement;
   let container: HTMLDivElement;
   let renderer: WorkspaceRenderer | null = null;
   let tooltip = $state<{ text: string; x: number; y: number } | null>(null);
-  let containerW = $state(300);
-  let containerH = $state(300);
 
-  let activeRunProjectIds = $derived(() => {
-    const ids = new Set<number>();
-    for (const r of runs) {
-      if ((r.status === 'running' || r.status === 'reviewing') && r.project_id) ids.add(r.project_id);
-    }
-    return ids;
-  });
-
-  let activeProjectModes = $derived(() => {
-    const modes = new Map<number, string>();
-    for (const r of runs) {
-      if ((r.status === 'running' || r.status === 'reviewing') && r.project_id && r.mode) {
-        modes.set(r.project_id, r.mode);
-      }
-    }
-    return modes;
-  });
-
-  let runPhase = $derived((): RunPhase => {
-    // Use parent-provided phase if available (has coordinator context)
-    if (overridePhase) return overridePhase;
-    const activeRuns = runs.filter(r => r.status === 'running' || r.status === 'reviewing');
-    if (activeRuns.length === 0) return 'idle';
-    const hasReviewing = activeRuns.some(r => r.status === 'reviewing');
-    const hasManager = activeRuns.some(r => r.mode === 'manager');
-    const hasVerdict = activeRuns.some(r => r.verdict != null);
-    if (hasVerdict) return 'executing_verdict';
-    if (hasReviewing || hasManager) return 'manager_review';
-    return 'employee';
-  });
-
+  // Initialize renderer
   $effect(() => {
     if (!canvas || !container) return;
 
     renderer = new WorkspaceRenderer(canvas);
     const rect = container.getBoundingClientRect();
-    containerW = rect.width;
-    containerH = rect.height;
     renderer.resize(rect.width, rect.height);
     renderer.start();
 
@@ -69,8 +28,6 @@
       for (const entry of entries) {
         const { width, height } = entry.contentRect;
         if (width > 0 && height > 0) {
-          containerW = width;
-          containerH = height;
           renderer?.resize(width, height);
         }
       }
@@ -84,28 +41,58 @@
     };
   });
 
+  // Feed agent-presence data to renderer
   $effect(() => {
     renderer?.setData({
-      projects: projects.map(p => ({
-        id: p.id,
-        repo: p.repo,
-        priority: p.priority,
-        enabled: p.enabled,
+      agents: agentPresence.agents.map(a => ({
+        id: a.name,
+        role: a.role,
+        name: a.name,
+        color: a.color,
+        isActive: a.status === 'active' || a.status === 'thinking',
+        isThinking: a.status === 'thinking',
+        currentAction: a.currentAction,
+        turnCount: agentPresence.turnCount,
+        tokenCount: agentPresence.tokensBurned,
       })),
-      activeRunProjectIds: activeRunProjectIds(),
-      activeProjectModes: activeProjectModes(),
-      runPhase: runPhase(),
+      phase: agentPresence.phase,
       serviceActive: systemStatus?.service.active ?? false,
       usagePercent: usage?.usage_percent ?? 0,
+      activityIntensity: agentPresence.activityIntensity,
     });
   });
 
   $effect(() => {
     renderer?.setActivity({
-      intensity: activityIntensity,
-      currentTool: currentToolSummary ?? null,
-      activeAgent: runPhase() === 'idle' ? null : runPhase() === 'manager_review' ? 'manager' : 'employee',
+      intensity: agentPresence.activityIntensity,
+      currentTool: agentPresence.currentTool?.summary ?? null,
+      activeAgent: agentPresence.agents.find(a => a.status === 'active')?.name ?? null,
     });
+  });
+
+  // Trigger visual events from conversation log changes
+  let lastLogLen = 0;
+  $effect(() => {
+    const log = agentPresence.conversationLog;
+    if (log.length > lastLogLen && renderer) {
+      for (let i = lastLogLen; i < log.length; i++) {
+        const entry = log[i];
+        if (entry.type === 'tool_use') {
+          renderer.triggerEvent('tool_use', { agentId: entry.agentName, toolName: entry.toolName });
+        } else if (entry.type === 'thinking') {
+          renderer.triggerEvent('thinking_start', { agentId: entry.agentName });
+        } else if (entry.type === 'guidance') {
+          renderer.triggerEvent('guidance_sent', { agentId: entry.agentName });
+        } else if (entry.type === 'phase' && entry.content.startsWith('Verdict')) {
+          renderer.triggerEvent('verdict', { verdict: entry.content });
+        } else if (entry.type === 'phase' && entry.content.includes('started')) {
+          renderer.triggerEvent('run_start');
+        } else if (entry.type === 'phase' && entry.content.includes('completed')) {
+          renderer.triggerEvent('run_complete');
+        }
+      }
+    }
+    lastLogLen = log.length;
   });
 
   function handleMouseMove(e: MouseEvent) {
@@ -114,20 +101,14 @@
     if (node) {
       const rect = container.getBoundingClientRect();
       tooltip = {
-        text: node.repo.split('/').pop() || node.repo,
+        text: `${node.name} — ${node.isActive ? 'Active' : node.isThinking ? 'Thinking' : 'Idle'}`,
         x: e.clientX - rect.left,
         y: e.clientY - rect.top - 28,
       };
     } else if (renderer.isHubAt(e.clientX, e.clientY)) {
       const rect = container.getBoundingClientRect();
-      const phase = runPhase();
-      const phaseText = phase === 'coordinating' ? 'Coordinator active'
-        : phase === 'employee' ? 'Employees working'
-        : phase === 'manager_review' ? 'Manager reviewing'
-        : phase === 'executing_verdict' ? 'Executing verdict'
-        : 'Idle';
       tooltip = {
-        text: systemStatus?.service.active ? `Manager - ${phaseText}` : 'Manager - Offline',
+        text: `Station — ${agentPresence.phase === 'idle' ? 'Idle' : agentPresence.phase.replace('_', ' ')}`,
         x: e.clientX - rect.left,
         y: e.clientY - rect.top - 28,
       };
@@ -144,65 +125,34 @@
     if (!renderer) return;
     const node = renderer.getNodeAt(e.clientX, e.clientY);
     if (node) {
-      window.location.hash = '/projects';
+      togglePanel(node.name);
     } else if (renderer.isHubAt(e.clientX, e.clientY)) {
-      window.location.hash = '/system';
+      togglePanel();
     }
   }
 
-  // HUD state
-  let phase = $derived(runPhase());
-  let isActive = $derived(phase !== 'idle');
   let phaseLabel = $derived(
-    phase === 'coordinating' ? 'Coordinating'
-    : phase === 'employee' ? 'Employees working'
-    : phase === 'manager_review' ? 'Manager review'
-    : phase === 'executing_verdict' ? 'Executing verdict'
+    agentPresence.phase === 'coordinating' ? 'Coordinating'
+    : agentPresence.phase === 'employee' ? 'Working'
+    : agentPresence.phase === 'manager_review' ? 'Reviewing'
+    : agentPresence.phase === 'executing_verdict' ? 'Verdict'
     : 'Standby'
   );
+
   let phaseColorClass = $derived(
-    phase === 'coordinating' ? 'text-accent-purple'
-    : phase === 'employee' ? 'text-accent-blue'
-    : phase === 'manager_review' ? 'text-warning'
-    : phase === 'executing_verdict' ? 'text-approve'
+    agentPresence.phase === 'coordinating' ? 'text-accent-purple'
+    : agentPresence.phase === 'employee' ? 'text-info'
+    : agentPresence.phase === 'manager_review' ? 'text-warning'
+    : agentPresence.phase === 'executing_verdict' ? 'text-approve'
     : 'text-text-dim'
   );
-
-  // Connection status indicator
-  let wsConnected = $derived(liveActivity.connected);
-
-  // Running projects for per-project HUD
-  let runningProjects = $derived(() => {
-    const result: { name: string; mode: string; angle: number; x: number; y: number }[] = [];
-    const count = projects.length;
-    if (count === 0) return result;
-    const orbitR = Math.min(containerW, containerH) * 0.32;
-    const cx = containerW / 2;
-    const cy = containerH / 2;
-
-    for (let i = 0; i < projects.length; i++) {
-      const p = projects[i];
-      const runForProject = runs.find(r => (r.status === 'running' || r.status === 'reviewing') && r.project_id === p.id);
-      if (!runForProject) continue;
-
-      const angle = (i / count) * Math.PI * 2 - Math.PI / 2;
-      result.push({
-        name: p.repo.split('/').pop() ?? p.repo,
-        mode: runForProject.mode ?? 'employee',
-        angle,
-        x: cx + Math.cos(angle) * (orbitR + 42),
-        y: cy + Math.sin(angle) * (orbitR + 42),
-      });
-    }
-    return result;
-  });
 </script>
 
 <div
   bind:this={container}
   class="relative w-full h-full"
   role="img"
-  aria-label="Agent workspace visualization"
+  aria-label="Agent network visualization — Mission Cortex"
 >
   <canvas
     bind:this={canvas}
@@ -227,74 +177,31 @@
       {phaseLabel}
     </div>
     <div class="text-[8px] font-data text-text-dim mt-0.5 opacity-60">
-      Claude Agent Station
+      Mission Cortex
     </div>
   </div>
 
   <!-- Status overlay: top-right -->
   <div class="absolute top-2 right-2 pointer-events-none z-10 text-right">
     <div class="flex items-center justify-end gap-1">
-      <span class="text-[8px] font-data tracking-wider {wsConnected ? 'text-approve' : 'text-reject'}">
-        {wsConnected ? 'Connected' : 'Offline'}
+      <span class="text-[8px] font-data tracking-wider {agentPresence.wsConnected ? 'text-approve' : 'text-reject'}">
+        {agentPresence.wsConnected ? 'Live' : 'Offline'}
       </span>
-      <div class="w-1.5 h-1.5 rounded-full {wsConnected ? 'bg-approve' : 'bg-reject'}"></div>
+      <div class="w-1.5 h-1.5 rounded-full {agentPresence.wsConnected ? 'bg-approve' : 'bg-reject'}"></div>
     </div>
-    {#if liveActivity.turnCount > 0}
+    {#if agentPresence.turnCount > 0}
       <div class="text-[8px] font-data text-text-dim mt-0.5 opacity-60">
-        Turns: {liveActivity.turnCount}
+        {agentPresence.turnCount} turns
       </div>
     {/if}
   </div>
 
-  <!-- Status overlay: bottom-left -->
-  <div class="absolute bottom-2 left-2 pointer-events-none z-10">
-    {#if liveActivity.currentTool}
-      <div class="text-[8px] font-data text-accent-blue truncate max-w-[180px]">
-        {liveActivity.currentTool.name}
-      </div>
-    {/if}
-    <div class="text-[8px] font-data text-text-dim opacity-70">
-      {projects.length} project{projects.length !== 1 ? 's' : ''} registered
-    </div>
-  </div>
-
-  <!-- Status overlay: bottom-right -->
+  <!-- Bottom-right: usage -->
   <div class="absolute bottom-2 right-2 pointer-events-none z-10 text-right">
     {#if usage}
       <div class="text-[8px] font-data text-text-dim opacity-60">
-        Usage: {Math.round(usage.usage_percent)}%
+        Usage {Math.round(usage.usage_percent)}%
       </div>
     {/if}
   </div>
-
-  <!-- Node labels + per-project interaction badges -->
-  {#each projects as project, i}
-    {@const count = projects.length}
-    {@const angle = (i / count) * Math.PI * 2 - Math.PI / 2}
-    {@const labelRadius = Math.min(containerW, containerH) * 0.32 + 30}
-    {@const lx = containerW / 2 + Math.cos(angle) * labelRadius}
-    {@const ly = containerH / 2 + Math.sin(angle) * labelRadius}
-    {@const activeRun = runs.find(r => (r.status === 'running' || r.status === 'reviewing') && r.project_id === project.id)}
-    {@const isRunning = !!activeRun}
-    {@const modeLabel = activeRun?.mode === 'analyst' ? 'Analyst' : activeRun?.mode === 'manager' ? 'Manager' : 'Employee'}
-    {@const modeColor = activeRun?.mode === 'analyst' ? 'text-pr' : activeRun?.mode === 'manager' ? 'text-warning' : 'text-accent-blue'}
-
-    <div
-      class="absolute pointer-events-none z-10 flex flex-col items-center gap-0.5"
-      style="left: {lx}px; top: {ly}px; transform: translate(-50%, -50%)"
-    >
-      <!-- Project name -->
-      <span class="text-[10px] whitespace-nowrap {isRunning ? 'text-text font-medium' : 'text-text-dim'}">
-        {project.repo.split('/').pop() ?? project.repo}
-      </span>
-
-      <!-- Active role badge -->
-      {#if isRunning}
-        <span class="text-[8px] font-data tracking-wider {modeColor} whitespace-nowrap">
-          {modeLabel}
-        </span>
-      {/if}
-    </div>
-  {/each}
 </div>
-

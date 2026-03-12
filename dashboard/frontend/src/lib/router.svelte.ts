@@ -1,29 +1,62 @@
-type Page = 'dashboard' | 'projects' | 'plans' | 'plan-detail' | 'runs' | 'run-detail' | 'coordinator' | 'queue' | 'analytics' | 'logs' | 'config' | 'prompts' | 'system' | 'settings';
+type Page = 'command' | 'stream' | 'stream-detail' | 'decide' | 'decide-detail' | 'config';
 
 interface Route {
   page: Page;
   param: string | null;
 }
 
+/** Map old hash routes to new equivalents */
+const REDIRECTS: Record<string, string> = {
+  '/': '/command',
+  '/dashboard': '/command',
+  '/runs': '/stream',
+  '/coordinator': '/stream',
+  '/queue': '/stream',
+  '/analytics': '/command',
+  '/logs': '/stream',
+  '/plans': '/decide',
+  '/projects': '/config',
+  '/prompts': '/config',
+  '/settings': '/config',
+  '/config': '/config',
+  '/system': '/config',
+};
+
 function parseHash(): Route {
   const hash = window.location.hash.slice(1) || '/';
   const parts = hash.split('/').filter(Boolean);
 
-  if (parts.length === 0) return { page: 'dashboard', param: null };
+  if (parts.length === 0) return { page: 'command', param: null };
 
-  const page = parts[0] as Page;
-  const validPages: Page[] = ['dashboard', 'projects', 'plans', 'runs', 'coordinator', 'queue', 'analytics', 'logs', 'config', 'prompts', 'system', 'settings'];
+  const raw = parts[0];
 
-  if (page === 'plans' && parts.length > 1) {
-    return { page: 'plan-detail', param: parts[1] };
+  // Handle old routes with params first
+  if (raw === 'runs' && parts.length > 1) {
+    window.location.hash = `/stream/${parts[1]}`;
+    return { page: 'stream-detail', param: parts[1] };
   }
-  if (page === 'runs' && parts.length > 1) {
-    return { page: 'run-detail', param: parts[1] };
+  if (raw === 'plans' && parts.length > 1) {
+    window.location.hash = `/decide/${parts[1]}`;
+    return { page: 'decide-detail', param: parts[1] };
   }
-  if (validPages.includes(page)) {
-    return { page, param: parts[1] ?? null };
+
+  // Handle old route redirects (without params)
+  const redirect = REDIRECTS[`/${raw}`];
+  if (redirect && !['command', 'stream', 'decide', 'config'].includes(raw)) {
+    window.location.hash = redirect;
+    return { page: redirect.slice(1) as Page, param: null };
   }
-  return { page: 'dashboard', param: null };
+
+  // New routes
+  if (raw === 'command') return { page: 'command', param: null };
+  if (raw === 'stream' && parts.length > 1) return { page: 'stream-detail', param: parts[1] };
+  if (raw === 'stream') return { page: 'stream', param: null };
+  if (raw === 'decide' && parts.length > 1) return { page: 'decide-detail', param: parts[1] };
+  if (raw === 'decide') return { page: 'decide', param: null };
+  if (raw === 'config') return { page: 'config', param: parts[1] ?? null };
+
+  // Fallback
+  return { page: 'command', param: null };
 }
 
 export let route = $state<Route>(parseHash());

@@ -6,7 +6,7 @@
     label: string;
     value: number;
     format?: (n: number) => string;
-    glow?: 'blue' | 'emerald' | 'purple' | 'red' | 'cyan' | 'none';
+    glow?: 'blue' | 'emerald' | 'purple' | 'red' | 'amber' | 'none';
     subtitle?: string;
     class?: string;
   }
