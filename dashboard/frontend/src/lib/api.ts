@@ -1,4 +1,4 @@
-import type { Project, ProjectCreate, ProjectUpdate, Run, RunList, ActiveEmployeeData, Plan, PlanList, SystemStatus, AuthStatus, LogSearchResult, RunLogs, UsageData, TokenUsageData, OAuthStartResponse, OAuthCallbackResponse, CoordinatorTask, CoordinatorDAG, CoordinatorMessage, AnalyticsData, DiffResult, QueueItem, QueueItemList, QueueStats } from './types';
+import type { Project, ProjectCreate, ProjectUpdate, Run, RunList, ActiveEmployeeData, Plan, PlanList, SystemStatus, AuthStatus, LogSearchResult, RunLogs, UsageData, TokenUsageData, OAuthStartResponse, OAuthCallbackResponse, CoordinatorTask, CoordinatorTaskDetail, CoordinatorDAG, CoordinatorMessage, AnalyticsData, DiffResult, QueueItem, QueueItemList, QueueStats } from './types';
 
 const BASE = import.meta.env.VITE_API_URL || '';
 
@@ -156,6 +156,8 @@ export const getCoordinatorTasks = (runId?: string) => {
 };
 export const getCoordinatorDAG = (runId: string) =>
   request<CoordinatorDAG>(`/api/coordinator/dag/${runId}`);
+export const getCoordinatorTaskDetails = (taskId: string) =>
+  request<CoordinatorTaskDetail>(`/api/coordinator/tasks/${taskId}/details`);
 export const getCoordinatorMessages = (runId?: string) => {
   const q = new URLSearchParams();
   if (runId) q.set('run_id', runId);

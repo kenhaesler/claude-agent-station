@@ -242,11 +242,20 @@ class CoordinatorTaskOut(BaseModel):
     touched_files: Optional[str] = None
     exit_code: Optional[int] = None
     error_message: Optional[str] = None
+    result_summary: Optional[str] = None
+    log_path: Optional[str] = None
+    branch: Optional[str] = None
     created_at: Optional[datetime] = None
     started_at: Optional[datetime] = None
     finished_at: Optional[datetime] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class CoordinatorTaskDetailOut(CoordinatorTaskOut):
+    """Extended task details with employee report and log excerpt."""
+    employee_report: Optional[dict] = None
+    log_excerpt: Optional[str] = None
 
 
 class CoordinatorDAGOut(BaseModel):
