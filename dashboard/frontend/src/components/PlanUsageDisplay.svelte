@@ -60,7 +60,7 @@
 <div class="space-y-4">
   {#if loading}
     <div class="flex items-center gap-2 text-text-dim text-sm">
-      <div class="w-4 h-4 border-2 border-accent-cyan/30 border-t-accent-cyan rounded-full animate-spin"></div>
+      <div class="w-4 h-4 border-2 border-accent-blue/30 border-t-accent-blue rounded-full animate-spin"></div>
       Loading plan usage...
     </div>
   {:else if error}

@@ -68,7 +68,7 @@
 <div class="space-y-6 animate-fade-in-up">
   <div class="flex items-center justify-between">
     <h1 class="text-2xl font-bold">Projects</h1>
-    <button onclick={openCreate} class="px-4 py-2 bg-gradient-to-r from-accent-blue to-accent-emerald text-white rounded-lg text-sm font-medium hover:shadow-[0_0_16px_rgba(59,130,246,0.3)] transition-all cursor-pointer">
+    <button onclick={openCreate} class="px-4 py-2 bg-gradient-to-r from-accent-blue to-accent-emerald text-white rounded-lg text-sm font-medium hover:shadow-lg transition-all cursor-pointer">
       Add Project
     </button>
   </div>

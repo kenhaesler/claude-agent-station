@@ -154,11 +154,11 @@
   let phase = $derived(runPhase());
   let isActive = $derived(phase !== 'idle');
   let phaseLabel = $derived(
-    phase === 'coordinating' ? 'COORDINATOR ACTIVE'
-    : phase === 'employee' ? 'EMPLOYEES WORKING'
-    : phase === 'manager_review' ? 'MANAGER REVIEW'
-    : phase === 'executing_verdict' ? 'EXECUTING VERDICT'
-    : 'STANDBY'
+    phase === 'coordinating' ? 'Coordinating'
+    : phase === 'employee' ? 'Employees working'
+    : phase === 'manager_review' ? 'Manager review'
+    : phase === 'executing_verdict' ? 'Executing verdict'
+    : 'Standby'
   );
   let phaseColorClass = $derived(
     phase === 'coordinating' ? 'text-accent-purple'
@@ -221,58 +221,50 @@
     </div>
   {/if}
 
-  <!-- HUD: Top-left corner bracket + status -->
+  <!-- Status overlay: top-left -->
   <div class="absolute top-2 left-2 pointer-events-none z-10">
-    <div class="hud-bracket-tl">
-      <div class="text-[9px] font-data tracking-widest {phaseColorClass} pl-1.5 pt-0.5 {isActive ? 'animate-pulse-glow' : ''}">
-        {phaseLabel}
-      </div>
-      <div class="text-[8px] font-data text-text-dim pl-1.5 mt-0.5 opacity-60">
-        CLAUDE AGENT STATION
-      </div>
+    <div class="text-[9px] font-data tracking-widest {phaseColorClass}">
+      {phaseLabel}
+    </div>
+    <div class="text-[8px] font-data text-text-dim mt-0.5 opacity-60">
+      Claude Agent Station
     </div>
   </div>
 
-  <!-- HUD: Top-right corner bracket + connection -->
-  <div class="absolute top-2 right-2 pointer-events-none z-10">
-    <div class="hud-bracket-tr text-right">
-      <div class="flex items-center justify-end gap-1 pr-1.5 pt-0.5">
-        <span class="text-[8px] font-data tracking-wider {wsConnected ? 'text-approve' : 'text-reject'}">
-          {wsConnected ? 'STREAM ACTIVE' : 'STREAM OFFLINE'}
-        </span>
-        <div class="w-1.5 h-1.5 rounded-full {wsConnected ? 'bg-approve animate-pulse-glow' : 'bg-reject'}"></div>
-      </div>
-      {#if liveActivity.turnCount > 0}
-        <div class="text-[8px] font-data text-text-dim pr-1.5 mt-0.5 opacity-60">
-          TURNS: {liveActivity.turnCount}
-        </div>
-      {/if}
+  <!-- Status overlay: top-right -->
+  <div class="absolute top-2 right-2 pointer-events-none z-10 text-right">
+    <div class="flex items-center justify-end gap-1">
+      <span class="text-[8px] font-data tracking-wider {wsConnected ? 'text-approve' : 'text-reject'}">
+        {wsConnected ? 'Connected' : 'Offline'}
+      </span>
+      <div class="w-1.5 h-1.5 rounded-full {wsConnected ? 'bg-approve' : 'bg-reject'}"></div>
     </div>
+    {#if liveActivity.turnCount > 0}
+      <div class="text-[8px] font-data text-text-dim mt-0.5 opacity-60">
+        Turns: {liveActivity.turnCount}
+      </div>
+    {/if}
   </div>
 
-  <!-- HUD: Bottom-left corner bracket -->
+  <!-- Status overlay: bottom-left -->
   <div class="absolute bottom-2 left-2 pointer-events-none z-10">
-    <div class="hud-bracket-bl">
-      {#if liveActivity.currentTool}
-        <div class="text-[8px] font-data text-accent-cyan pl-1.5 pb-0.5 truncate max-w-[180px]">
-          {liveActivity.currentTool.name}
-        </div>
-      {/if}
-      <div class="text-[8px] font-data text-text-dim pl-1.5 pb-0.5 opacity-70">
-        {projects.length} PROJECT{projects.length !== 1 ? 'S' : ''} REGISTERED
+    {#if liveActivity.currentTool}
+      <div class="text-[8px] font-data text-accent-blue truncate max-w-[180px]">
+        {liveActivity.currentTool.name}
       </div>
+    {/if}
+    <div class="text-[8px] font-data text-text-dim opacity-70">
+      {projects.length} project{projects.length !== 1 ? 's' : ''} registered
     </div>
   </div>
 
-  <!-- HUD: Bottom-right corner bracket -->
-  <div class="absolute bottom-2 right-2 pointer-events-none z-10">
-    <div class="hud-bracket-br text-right">
-      {#if usage}
-        <div class="text-[8px] font-data text-text-dim pr-1.5 pb-0.5 opacity-60">
-          USAGE: {Math.round(usage.usage_percent)}%
-        </div>
-      {/if}
-    </div>
+  <!-- Status overlay: bottom-right -->
+  <div class="absolute bottom-2 right-2 pointer-events-none z-10 text-right">
+    {#if usage}
+      <div class="text-[8px] font-data text-text-dim opacity-60">
+        Usage: {Math.round(usage.usage_percent)}%
+      </div>
+    {/if}
   </div>
 
   <!-- Node labels + per-project interaction badges -->
@@ -284,7 +276,7 @@
     {@const ly = containerH / 2 + Math.sin(angle) * labelRadius}
     {@const activeRun = runs.find(r => (r.status === 'running' || r.status === 'reviewing') && r.project_id === project.id)}
     {@const isRunning = !!activeRun}
-    {@const modeLabel = activeRun?.mode === 'analyst' ? 'ANALYST' : activeRun?.mode === 'manager' ? 'MANAGER' : 'EMPLOYEE'}
+    {@const modeLabel = activeRun?.mode === 'analyst' ? 'Analyst' : activeRun?.mode === 'manager' ? 'Manager' : 'Employee'}
     {@const modeColor = activeRun?.mode === 'analyst' ? 'text-pr' : activeRun?.mode === 'manager' ? 'text-warning' : 'text-accent-blue'}
 
     <div
@@ -298,7 +290,7 @@
 
       <!-- Active role badge -->
       {#if isRunning}
-        <span class="text-[8px] font-data tracking-wider {modeColor} animate-pulse-glow whitespace-nowrap">
+        <span class="text-[8px] font-data tracking-wider {modeColor} whitespace-nowrap">
           {modeLabel}
         </span>
       {/if}
@@ -306,30 +298,3 @@
   {/each}
 </div>
 
-<style>
-  /* HUD corner brackets — JARVIS-style */
-  .hud-bracket-tl {
-    border-left: 1px solid rgba(59, 130, 246, 0.35);
-    border-top: 1px solid rgba(59, 130, 246, 0.35);
-    padding: 2px 6px 4px 0;
-    min-width: 80px;
-  }
-  .hud-bracket-tr {
-    border-right: 1px solid rgba(59, 130, 246, 0.35);
-    border-top: 1px solid rgba(59, 130, 246, 0.35);
-    padding: 2px 0 4px 6px;
-    min-width: 80px;
-  }
-  .hud-bracket-bl {
-    border-left: 1px solid rgba(59, 130, 246, 0.25);
-    border-bottom: 1px solid rgba(59, 130, 246, 0.25);
-    padding: 4px 6px 2px 0;
-    min-width: 80px;
-  }
-  .hud-bracket-br {
-    border-right: 1px solid rgba(59, 130, 246, 0.25);
-    border-bottom: 1px solid rgba(59, 130, 246, 0.25);
-    padding: 4px 0 2px 6px;
-    min-width: 60px;
-  }
-</style>

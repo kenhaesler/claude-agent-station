@@ -109,7 +109,7 @@
           onclick={() => selectRole(p.role)}
           class="relative px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap cursor-pointer transition-all duration-200
             {activeRole === p.role
-              ? 'bg-accent-cyan/15 text-accent-cyan border border-accent-cyan/30'
+              ? 'bg-accent-blue/15 text-accent-blue border border-accent-blue/30'
               : 'glass text-text-dim hover:text-text hover:bg-white/[0.03] border border-transparent'}"
         >
           {p.label}
@@ -167,7 +167,7 @@
             bind:value={editorContent}
             rows="24"
             spellcheck="false"
-            class="w-full bg-black/30 border border-border/50 rounded-lg px-4 py-3 text-sm text-text font-mono leading-relaxed resize-y focus:outline-none focus:border-accent-cyan/40 transition-colors"
+            class="w-full bg-black/30 border border-border/50 rounded-lg px-4 py-3 text-sm text-text font-mono leading-relaxed resize-y focus:outline-none focus:border-accent-blue/40 transition-colors"
             placeholder="Enter the system prompt for this agent role..."
           ></textarea>
           <p class="text-xs text-text-dim mt-2">
@@ -180,7 +180,7 @@
           <button
             onclick={save}
             disabled={saving || !hasChanges}
-            class="px-5 py-2 bg-gradient-to-r from-accent-blue to-accent-emerald text-white rounded-lg text-sm font-medium hover:shadow-[0_0_16px_rgba(59,130,246,0.3)] disabled:opacity-50 cursor-pointer transition-all"
+            class="px-5 py-2 bg-gradient-to-r from-accent-blue to-accent-emerald text-white rounded-lg text-sm font-medium hover:shadow-lg disabled:opacity-50 cursor-pointer transition-all"
           >
             {saving ? 'Saving...' : 'Save Prompt'}
           </button>

@@ -202,7 +202,7 @@
         <div class="flex items-center gap-3 mb-2">
           <span class="text-accent-purple text-xs font-medium">Coordinator</span>
           <span class="text-text-dim text-[10px]">{coordinatorTasks.length} tasks in DAG</span>
-          <a href="#/coordinator" class="ml-auto text-[10px] text-accent-cyan hover:underline">View DAG</a>
+          <a href="#/coordinator" class="ml-auto text-[10px] text-accent-blue hover:underline">View DAG</a>
         </div>
         <div class="flex gap-2 flex-wrap">
           {#each coordinatorTasks as task}
@@ -282,8 +282,8 @@
         subtitle="{recentRuns.length} runs, avg {formatTokens(avgTokens)}"
         class="stagger-3"
       />
-      <GlassCard glow={usage && usage.usage_percent > 80 ? 'red' : 'cyan'} animated class="p-4 md:p-5 stagger-4 flex flex-col items-center justify-center">
-        <p class="ai-text font-medium mb-2">Usage</p>
+      <GlassCard glow={usage && usage.usage_percent > 80 ? 'red' : 'blue'} animated class="p-4 md:p-5 stagger-4 flex flex-col items-center justify-center">
+        <p class="text-xs font-medium text-text-dim uppercase tracking-wide mb-2">Usage</p>
         <ArcGauge
           value={usage?.usage_percent ?? 0}
           size={64}
@@ -302,10 +302,10 @@
 
     <!-- Analytics Section (AC4: accessible from Dashboard) -->
     <div class="animate-fade-in-up">
-      <GlassCard glow="cyan" class="p-5">
+      <GlassCard glow="blue" class="p-5">
         <button class="w-full flex items-center justify-between cursor-pointer" onclick={toggleAnalytics}>
           <h2 class="font-semibold flex items-center gap-2">
-            <svg class="w-4 h-4 text-accent-cyan" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <svg class="w-4 h-4 text-accent-blue" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
               <path d="M3 17V10" /><path d="M7 17V7" /><path d="M11 17V12" /><path d="M15 17V4" /><path d="M19 17V9" />
             </svg>
             Analytics

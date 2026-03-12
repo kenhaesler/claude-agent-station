@@ -100,13 +100,13 @@
   <div class="flex flex-wrap gap-3 items-center">
     <button
       onclick={switchToLive}
-      class="px-3 py-1.5 text-sm rounded-lg cursor-pointer transition-all {mode === 'live' ? 'bg-gradient-to-r from-accent-blue to-accent-emerald text-white shadow-[0_0_12px_rgba(59,130,246,0.2)]' : 'glass text-text-dim hover:text-text'}"
+      class="px-3 py-1.5 text-sm rounded-lg cursor-pointer transition-all {mode === 'live' ? 'bg-gradient-to-r from-accent-blue to-accent-emerald text-white shadow-lg' : 'glass text-text-dim hover:text-text'}"
     >
       Live
     </button>
     <button
       onclick={() => mode = 'search'}
-      class="px-3 py-1.5 text-sm rounded-lg cursor-pointer transition-all {mode === 'search' ? 'bg-gradient-to-r from-accent-blue to-accent-emerald text-white shadow-[0_0_12px_rgba(59,130,246,0.2)]' : 'glass text-text-dim hover:text-text'}"
+      class="px-3 py-1.5 text-sm rounded-lg cursor-pointer transition-all {mode === 'search' ? 'bg-gradient-to-r from-accent-blue to-accent-emerald text-white shadow-lg' : 'glass text-text-dim hover:text-text'}"
     >
       Search
     </button>

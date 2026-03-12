@@ -133,8 +133,8 @@
         {@const count = stats.by_state[key] ?? 0}
         <button
           onclick={() => toggleStateFilter(key)}
-          class="glass-hud rounded-lg px-3 py-2 text-center cursor-pointer transition-all hover:bg-white/[0.04]
-            {filterState === key ? 'ring-1 ring-accent-cyan/50' : ''}"
+          class="bg-surface border border-border-subtle rounded-lg px-3 py-2 text-center cursor-pointer transition-all hover:bg-white/[0.04]
+            {filterState === key ? 'ring-1 ring-accent-blue/50' : ''}"
         >
           <div class="text-lg font-bold font-data">{count}</div>
           <div class="text-xs text-text-dim">{label}</div>

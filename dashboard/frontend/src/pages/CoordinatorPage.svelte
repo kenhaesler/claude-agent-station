@@ -288,16 +288,16 @@
 
 <div class="space-y-6">
   <div class="flex items-center justify-between">
-    <h1 class="ai-text text-glow-cyan text-xl font-bold">Coordinator</h1>
-    <button onclick={load} class="px-3 py-1.5 text-xs rounded-lg glass-hud border border-hud-line text-text-dim hover:text-text cursor-pointer">
+    <h1 class="text-xl font-bold">Coordinator</h1>
+    <button onclick={load} class="px-3 py-1.5 text-xs rounded-lg bg-surface border border-border text-text-dim hover:text-text cursor-pointer">
       Refresh
     </button>
   </div>
 
   {#if loading && tasks.length === 0}
-    <div class="glass-hud rounded-xl p-8 text-center text-text-dim">Loading...</div>
+    <div class="bg-surface border border-border-subtle rounded-xl p-8 text-center text-text-dim">Loading...</div>
   {:else if tasks.length === 0}
-    <div class="glass-hud rounded-xl p-8 text-center text-text-dim">
+    <div class="bg-surface border border-border-subtle rounded-xl p-8 text-center text-text-dim">
       No coordinated runs yet. When the manager spawns multiple employees, their task DAG, progress, and messages will appear here.
     </div>
   {:else}
@@ -306,9 +306,9 @@
       {@const status = runStatus(runTasks)}
       {@const layers = topoLayers(runTasks)}
       {@const edges = computeEdges(runTasks)}
-      <div class="glass-hud rounded-xl overflow-hidden">
-        <div class="px-4 py-3 border-b border-hud-line flex items-center gap-3">
-          <span class="text-accent-cyan text-sm font-medium">DAG</span>
+      <div class="bg-surface border border-border-subtle rounded-xl overflow-hidden">
+        <div class="px-4 py-3 border-b border-border flex items-center gap-3">
+          <span class="text-accent-blue text-sm font-medium">DAG</span>
           <span class="text-text text-xs">{formatRunId(runId)}</span>
           <span class="text-xs {status.color}">{status.label}</span>
           <span class="ml-auto text-xs text-text-dim">
@@ -344,7 +344,7 @@
             {#each layers as layer, layerIdx}
               {#if layerIdx > 0}
                 <div class="flex justify-center my-2">
-                  <div class="w-px h-4 bg-hud-line opacity-30"></div>
+                  <div class="w-px h-4 bg-border opacity-30"></div>
                 </div>
               {/if}
               <div class="flex flex-wrap justify-center gap-3">
@@ -358,7 +358,7 @@
                       hover:scale-[1.03] hover:shadow-lg hover:shadow-black/20
                       active:scale-[0.98]
                       {isSelected
-                        ? 'ring-2 ring-accent-cyan ring-offset-2 ring-offset-transparent border-accent-cyan/50 bg-accent-cyan/10'
+                        ? 'ring-2 ring-accent-blue ring-offset-2 ring-offset-transparent border-accent-blue/50 bg-accent-blue/10'
                         : statusColor(task.status)}"
                     onclick={() => selectTask(task)}
                   >
@@ -400,7 +400,7 @@
 
           <!-- Dependency Legend -->
           {#if edges.length > 0}
-            <div class="mt-4 pt-3 border-t border-hud-line flex items-center gap-4 text-xs text-text-dim">
+            <div class="mt-4 pt-3 border-t border-border flex items-center gap-4 text-xs text-text-dim">
               <span>Dependencies:</span>
               <span class="flex items-center gap-1">
                 <span class="w-4 h-0.5 bg-green-500/50 inline-block rounded"></span>
@@ -419,9 +419,9 @@
 
     <!-- Task Detail Side Panel -->
     {#if selectedTaskId}
-      <div class="glass-hud rounded-xl overflow-hidden border border-accent-cyan/20 shadow-lg shadow-accent-cyan/5">
-        <div class="px-4 py-3 border-b border-hud-line flex items-center gap-3 bg-accent-cyan/5">
-          <span class="text-accent-cyan text-sm font-bold">Task Details</span>
+      <div class="bg-surface border border-border-subtle rounded-xl overflow-hidden">
+        <div class="px-4 py-3 border-b border-border flex items-center gap-3 bg-accent-blue/5">
+          <span class="text-accent-blue text-sm font-bold">Task Details</span>
           {#if detailLoading}
             <span class="text-xs text-text-dim animate-pulse">Loading...</span>
           {/if}
@@ -453,7 +453,7 @@
               {#if taskDetail.issue_number}
                 <div>
                   <span class="text-text-dim text-xs block mb-0.5">Issue</span>
-                  <a href="https://github.com/{taskDetail.project_repo}/issues/{taskDetail.issue_number}" target="_blank" rel="noopener" class="text-accent-cyan hover:underline">
+                  <a href="https://github.com/{taskDetail.project_repo}/issues/{taskDetail.issue_number}" target="_blank" rel="noopener" class="text-accent-blue hover:underline">
                     #{taskDetail.issue_number}
                   </a>
                 </div>
@@ -474,7 +474,7 @@
 
             <!-- Timestamps -->
             {#if taskDetail.started_at || taskDetail.finished_at}
-              <div class="grid grid-cols-2 gap-3 pt-3 border-t border-hud-line">
+              <div class="grid grid-cols-2 gap-3 pt-3 border-t border-border">
                 {#if taskDetail.started_at}
                   <div>
                     <span class="text-text-dim text-xs block mb-0.5">Started</span>
@@ -498,7 +498,7 @@
 
             <!-- Description -->
             {#if taskDetail.description}
-              <div class="pt-3 border-t border-hud-line">
+              <div class="pt-3 border-t border-border">
                 <span class="text-text-dim text-xs block mb-1">Description</span>
                 <p class="text-text text-sm">{taskDetail.description}</p>
               </div>
@@ -506,7 +506,7 @@
 
             <!-- Result Summary -->
             {#if taskDetail.result_summary}
-              <div class="pt-3 border-t border-hud-line">
+              <div class="pt-3 border-t border-border">
                 <span class="text-text-dim text-xs block mb-1">Result Summary</span>
                 <p class="text-text text-sm bg-green-500/5 border border-green-500/20 rounded p-2">{taskDetail.result_summary}</p>
               </div>
@@ -514,7 +514,7 @@
 
             <!-- Error Message -->
             {#if taskDetail.error_message}
-              <div class="pt-3 border-t border-hud-line">
+              <div class="pt-3 border-t border-border">
                 <span class="text-text-dim text-xs block mb-1">Error</span>
                 <div class="p-2 rounded bg-red-500/10 border border-red-500/20 text-red-400 text-xs font-mono whitespace-pre-wrap">{taskDetail.error_message}</div>
               </div>
@@ -524,7 +524,7 @@
             {#if taskDetail.touched_files}
               {@const files = parseJsonArray(taskDetail.touched_files)}
               {#if files.length > 0}
-                <div class="pt-3 border-t border-hud-line">
+                <div class="pt-3 border-t border-border">
                   <span class="text-text-dim text-xs block mb-1">Files Touched ({files.length})</span>
                   <div class="flex flex-wrap gap-1">
                     {#each files as f}
@@ -538,9 +538,9 @@
             <!-- Employee Report -->
             {#if taskDetail.employee_report}
               {@const report = taskDetail.employee_report}
-              <div class="pt-3 border-t border-hud-line">
+              <div class="pt-3 border-t border-border">
                 <span class="text-text-dim text-xs block mb-2">Employee Report</span>
-                <div class="space-y-2 bg-white/3 rounded-lg p-3 border border-hud-line">
+                <div class="space-y-2 bg-white/3 rounded-lg p-3 border border-border">
                   {#if report.status}
                     <div class="flex items-center gap-2">
                       <span class="text-text-dim text-xs">Status:</span>
@@ -598,23 +598,23 @@
 
             <!-- Log Excerpt -->
             {#if taskDetail.log_excerpt}
-              <div class="pt-3 border-t border-hud-line">
+              <div class="pt-3 border-t border-border">
                 <button
-                  class="text-xs text-accent-cyan hover:underline cursor-pointer flex items-center gap-1"
+                  class="text-xs text-accent-blue hover:underline cursor-pointer flex items-center gap-1"
                   onclick={() => showLogExcerpt = !showLogExcerpt}
                 >
                   <span class="transition-transform duration-200" class:rotate-90={showLogExcerpt}>&#9654;</span>
                   {showLogExcerpt ? 'Hide' : 'Show'} Log Output (last 100 lines)
                 </button>
                 {#if showLogExcerpt}
-                  <pre class="mt-2 p-3 rounded bg-black/30 border border-hud-line text-xs text-text-dim font-mono overflow-auto max-h-80 whitespace-pre-wrap">{taskDetail.log_excerpt}</pre>
+                  <pre class="mt-2 p-3 rounded bg-black/30 border border-border text-xs text-text-dim font-mono overflow-auto max-h-80 whitespace-pre-wrap">{taskDetail.log_excerpt}</pre>
                 {/if}
               </div>
             {/if}
 
             <!-- Dependencies -->
             {#if parseDeps(taskDetail.depends_on).length > 0}
-              <div class="pt-3 border-t border-hud-line">
+              <div class="pt-3 border-t border-border">
                 <span class="text-text-dim text-xs block mb-1">Depends On</span>
                 <div class="flex flex-wrap gap-1">
                   {#each parseDeps(taskDetail.depends_on) as depId}
@@ -642,21 +642,21 @@
 
     <!-- Guidance Panel -->
     {#if latestRunId}
-      <div class="glass-hud rounded-xl overflow-hidden">
-        <div class="px-4 py-3 border-b border-hud-line">
-          <span class="text-accent-cyan text-sm font-medium">Send Guidance</span>
+      <div class="bg-surface border border-border-subtle rounded-xl overflow-hidden">
+        <div class="px-4 py-3 border-b border-border">
+          <span class="text-accent-blue text-sm font-medium">Send Guidance</span>
         </div>
         <div class="p-4">
           <div class="flex flex-wrap gap-3 items-end">
             <div>
               <label class="text-xs text-text-dim block mb-1">Employee</label>
               <input type="number" bind:value={guidanceEmployee} min="0" max="10"
-                class="w-20 px-2 py-1.5 rounded-lg bg-white/5 border border-hud-line text-sm text-text" />
+                class="w-20 px-2 py-1.5 rounded-lg bg-white/5 border border-border text-sm text-text" />
             </div>
             <div>
               <label class="text-xs text-text-dim block mb-1">Type</label>
               <select bind:value={guidanceType}
-                class="px-2 py-1.5 rounded-lg bg-white/5 border border-hud-line text-sm text-text">
+                class="px-2 py-1.5 rounded-lg bg-white/5 border border-border text-sm text-text">
                 <option value="info">Info</option>
                 <option value="warning">Warning</option>
                 <option value="redirect">Redirect</option>
@@ -666,12 +666,12 @@
             <div class="flex-1 min-w-[200px]">
               <label class="text-xs text-text-dim block mb-1">Message</label>
               <input type="text" bind:value={guidanceContent} placeholder="Guidance message..."
-                class="w-full px-2 py-1.5 rounded-lg bg-white/5 border border-hud-line text-sm text-text" />
+                class="w-full px-2 py-1.5 rounded-lg bg-white/5 border border-border text-sm text-text" />
             </div>
             <button
               onclick={handleSendGuidance}
               disabled={guidanceSending || !guidanceContent.trim()}
-              class="px-4 py-1.5 rounded-lg bg-accent-cyan/20 border border-accent-cyan/30 text-accent-cyan text-sm hover:bg-accent-cyan/30 disabled:opacity-50 cursor-pointer"
+              class="px-4 py-1.5 rounded-lg bg-accent-blue/20 border border-accent-blue/30 text-accent-blue text-sm hover:bg-accent-blue/30 disabled:opacity-50 cursor-pointer"
             >
               {guidanceSending ? 'Sending...' : 'Send'}
             </button>
@@ -682,12 +682,12 @@
 
     <!-- Message Log -->
     {#if messages.length > 0}
-      <div class="glass-hud rounded-xl overflow-hidden">
-        <div class="px-4 py-3 border-b border-hud-line">
-          <span class="text-accent-cyan text-sm font-medium">Messages</span>
+      <div class="bg-surface border border-border-subtle rounded-xl overflow-hidden">
+        <div class="px-4 py-3 border-b border-border">
+          <span class="text-accent-blue text-sm font-medium">Messages</span>
           <span class="text-text-dim text-xs ml-2">{messages.length}</span>
         </div>
-        <div class="divide-y divide-hud-line max-h-80 overflow-auto">
+        <div class="divide-y divide-border max-h-80 overflow-auto">
           {#each messages as msg}
             <div class="px-4 py-2 flex items-start gap-3 text-xs">
               <span class="{msgTypeColor(msg.message_type)} shrink-0">

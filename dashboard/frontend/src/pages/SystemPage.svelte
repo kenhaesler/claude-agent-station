@@ -124,7 +124,7 @@
           </div>
         </div>
         <div class="flex flex-wrap gap-2">
-          <button onclick={handleTrigger} class="px-3 py-1.5 text-sm bg-gradient-to-r from-accent-blue to-accent-emerald text-white rounded-lg hover:shadow-[0_0_12px_rgba(59,130,246,0.2)] cursor-pointer transition-all">Trigger Run</button>
+          <button onclick={handleTrigger} class="px-3 py-1.5 text-sm bg-gradient-to-r from-accent-blue to-accent-emerald text-white rounded-lg hover:shadow-lg cursor-pointer transition-all">Trigger Run</button>
           <button onclick={() => doServiceAction('stop', 'claude-agent.service')} class="px-3 py-1.5 text-sm glass rounded-lg text-text-dim hover:text-text cursor-pointer transition-colors">Stop</button>
         </div>
       </GlassCard>
@@ -196,7 +196,7 @@
       {#if oauthFlow === 'idle'}
         <button
           onclick={handleOAuthStart}
-          class="px-3 py-1.5 text-sm bg-gradient-to-r from-accent-blue to-accent-emerald text-white rounded-lg hover:shadow-[0_0_12px_rgba(59,130,246,0.2)] cursor-pointer transition-all"
+          class="px-3 py-1.5 text-sm bg-gradient-to-r from-accent-blue to-accent-emerald text-white rounded-lg hover:shadow-lg cursor-pointer transition-all"
         >
           {auth?.logged_in && !auth.expired ? 'Re-authenticate' : 'Login with Claude'}
         </button>
@@ -230,7 +230,7 @@
           <span>Exchanging code for tokens...</span>
         </div>
       {:else if oauthFlow === 'done'}
-        <p class="text-sm text-approve text-glow-emerald">Authentication successful!</p>
+        <p class="text-sm text-approve">Authentication successful!</p>
       {/if}
 
       {#if oauthError}

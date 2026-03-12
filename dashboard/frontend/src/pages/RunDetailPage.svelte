@@ -202,7 +202,7 @@
             <td class="px-5 py-3 text-text-dim">Issue</td>
             <td class="px-5 py-3">
               {#if run.issue_number && context?.project_repo}
-                <a href="https://github.com/{context.project_repo}/issues/{run.issue_number}" target="_blank" rel="noopener" class="text-accent-cyan hover:underline">
+                <a href="https://github.com/{context.project_repo}/issues/{run.issue_number}" target="_blank" rel="noopener" class="text-accent-blue hover:underline">
                   #{run.issue_number}
                 </a>
               {:else}
@@ -294,7 +294,7 @@
         </h2>
         <div class="space-y-2 text-sm">
           <div>
-            <a href="#/plans/{plan.id}" class="text-accent-cyan hover:underline font-medium">{plan.title}</a>
+            <a href="#/plans/{plan.id}" class="text-accent-blue hover:underline font-medium">{plan.title}</a>
           </div>
           {#if plan.description}
             <p class="text-text-dim text-xs line-clamp-3">{plan.description}</p>
@@ -343,7 +343,7 @@
               {@const isSelected = selectedTaskId === task.id}
               <button
                 class="w-full text-left p-3 rounded-lg border transition-all duration-200 cursor-pointer
-                  {isSelected ? 'ring-1 ring-accent-cyan border-accent-cyan/50 bg-accent-cyan/5' : statusColor(task.status)}"
+                  {isSelected ? 'ring-1 ring-accent-blue border-accent-blue/50 bg-accent-blue/5' : statusColor(task.status)}"
                 onclick={() => selectedTaskId = isSelected ? null : task.id}
               >
                 <div class="flex items-center gap-2 mb-1">
@@ -370,7 +370,7 @@
 
                 <!-- Expanded task detail -->
                 {#if isSelected}
-                  <div class="mt-3 pt-3 border-t border-hud-line space-y-2 text-xs" onclick={(e: MouseEvent) => e.stopPropagation()}>
+                  <div class="mt-3 pt-3 border-t border-border space-y-2 text-xs" onclick={(e: MouseEvent) => e.stopPropagation()}>
                     {#if task.description}
                       <p class="text-text-dim">{task.description}</p>
                     {/if}

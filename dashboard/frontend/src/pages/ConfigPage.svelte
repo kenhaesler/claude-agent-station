@@ -191,9 +191,9 @@
     <div class="flex justify-center py-12"><LoadingSpinner /></div>
   {:else}
     <!-- Plan Usage Display -->
-    <GlassCard glow="cyan" class="p-5">
+    <GlassCard glow="blue" class="p-5">
       <h3 class="font-semibold mb-4 flex items-center gap-2">
-        <svg class="w-4 h-4 text-accent-cyan" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <svg class="w-4 h-4 text-accent-blue" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
         Plan Usage
@@ -376,7 +376,7 @@
               <button
                 onclick={sendTestNotification}
                 disabled={testingSending || !webhookUrl}
-                class="px-4 py-2 bg-gradient-to-r from-accent-amber/80 to-accent-amber text-white rounded-lg text-sm font-medium hover:shadow-[0_0_16px_rgba(245,158,11,0.3)] disabled:opacity-40 cursor-pointer transition-all"
+                class="px-4 py-2 bg-gradient-to-r from-accent-amber/80 to-accent-amber text-white rounded-lg text-sm font-medium hover:shadow-lg disabled:opacity-40 cursor-pointer transition-all"
               >
                 {testingSending ? 'Sending...' : 'Send Test Notification'}
               </button>
@@ -451,7 +451,7 @@
       <button
         onclick={save}
         disabled={saving}
-        class="px-5 py-2 bg-gradient-to-r from-accent-blue to-accent-emerald text-white rounded-lg text-sm font-medium hover:shadow-[0_0_16px_rgba(59,130,246,0.3)] disabled:opacity-50 cursor-pointer transition-all"
+        class="px-5 py-2 bg-gradient-to-r from-accent-blue to-accent-emerald text-white rounded-lg text-sm font-medium hover:shadow-lg disabled:opacity-50 cursor-pointer transition-all"
       >
         {saving ? 'Saving...' : 'Save Changes'}
       </button>

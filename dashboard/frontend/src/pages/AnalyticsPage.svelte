@@ -104,7 +104,7 @@
   <!-- Header with time window selector -->
   <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
     <div>
-      <h1 class="text-xl font-bold ai-text text-glow-cyan">Analytics</h1>
+      <h1 class="text-xl font-bold">Analytics</h1>
       <p class="text-xs text-text-dim mt-1">Token usage, run statistics, and project metrics</p>
     </div>
 
@@ -114,7 +114,7 @@
           onclick={() => selectedWindow = opt.value}
           class="px-3 py-1.5 text-xs font-data rounded-md transition-all duration-200 cursor-pointer
             {selectedWindow === opt.value
-              ? 'bg-accent-cyan/20 text-accent-cyan shadow-[0_0_8px_rgba(6,182,212,0.2)]'
+              ? 'bg-accent-blue/20 text-accent-blue'
               : 'text-text-dim hover:text-text hover:bg-white/[0.04]'}"
         >
           {opt.label}
@@ -148,7 +148,7 @@
       </GlassCard>
       <GlassCard class="p-4">
         <div class="text-[10px] text-text-dim uppercase tracking-wider mb-1">Total Tokens</div>
-        <div class="text-2xl font-bold font-data text-accent-cyan">{formatTokens(data.total_tokens)}</div>
+        <div class="text-2xl font-bold font-data text-accent-blue">{formatTokens(data.total_tokens)}</div>
       </GlassCard>
       <GlassCard class="p-4">
         <div class="text-[10px] text-text-dim uppercase tracking-wider mb-1">Input Tokens</div>
@@ -163,8 +163,8 @@
     <!-- Charts Grid -->
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
       <!-- Daily Token Usage Bar Chart -->
-      <GlassCard glow="cyan" class="p-4">
-        <h2 class="text-sm font-semibold ai-text mb-3">Daily Token Usage</h2>
+      <GlassCard glow="blue" class="p-4">
+        <h2 class="text-sm font-semibold text-xs font-medium text-text-dim uppercase tracking-wide mb-3">Daily Token Usage</h2>
         {#if tokenBarData.length > 0}
           <BarChart
             data={tokenBarData}
@@ -180,8 +180,8 @@
       </GlassCard>
 
       <!-- Run Success Rate Donut Chart -->
-      <GlassCard glow="cyan" class="p-4">
-        <h2 class="text-sm font-semibold ai-text mb-3">Run Verdicts</h2>
+      <GlassCard glow="blue" class="p-4">
+        <h2 class="text-sm font-semibold text-xs font-medium text-text-dim uppercase tracking-wide mb-3">Run Verdicts</h2>
         {#if verdictSegments.length > 0}
           <div class="flex justify-center">
             <DonutChart
@@ -200,8 +200,8 @@
       </GlassCard>
 
       <!-- Tokens by Project Horizontal Bar Chart -->
-      <GlassCard glow="cyan" class="p-4">
-        <h2 class="text-sm font-semibold ai-text mb-3">Tokens by Project (Top 10)</h2>
+      <GlassCard glow="blue" class="p-4">
+        <h2 class="text-sm font-semibold text-xs font-medium text-text-dim uppercase tracking-wide mb-3">Tokens by Project (Top 10)</h2>
         {#if projectBarData.length > 0}
           <BarChart
             data={projectBarData}
@@ -217,8 +217,8 @@
       </GlassCard>
 
       <!-- Run Frequency Line Chart -->
-      <GlassCard glow="cyan" class="p-4">
-        <h2 class="text-sm font-semibold ai-text mb-3">Run Frequency</h2>
+      <GlassCard glow="blue" class="p-4">
+        <h2 class="text-sm font-semibold text-xs font-medium text-text-dim uppercase tracking-wide mb-3">Run Frequency</h2>
         {#if runFrequencyData.length > 0}
           <LineChart
             data={runFrequencyData}

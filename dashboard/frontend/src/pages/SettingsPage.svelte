@@ -261,7 +261,7 @@
           onclick={() => activeTab = tab.key}
           class="px-3 py-1.5 text-xs font-medium rounded-md transition-all duration-200 cursor-pointer
             {activeTab === tab.key
-              ? 'bg-accent-cyan/20 text-accent-cyan shadow-[0_0_8px_rgba(6,182,212,0.2)]'
+              ? 'bg-accent-blue/20 text-accent-blue'
               : 'text-text-dim hover:text-text hover:bg-white/[0.04]'}"
         >
           {tab.label}
@@ -276,9 +276,9 @@
       <div class="flex justify-center py-12"><LoadingSpinner /></div>
     {:else}
       <!-- Plan Usage Display -->
-      <GlassCard glow="cyan" class="p-5">
+      <GlassCard glow="blue" class="p-5">
         <h3 class="font-semibold mb-4 flex items-center gap-2">
-          <svg class="w-4 h-4 text-accent-cyan" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <svg class="w-4 h-4 text-accent-blue" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
           Plan Usage
@@ -438,7 +438,7 @@
 
               <div>
                 <button onclick={sendTestNotification} disabled={testingSending || !webhookUrl}
-                  class="px-4 py-2 bg-gradient-to-r from-accent-amber/80 to-accent-amber text-white rounded-lg text-sm font-medium hover:shadow-[0_0_16px_rgba(245,158,11,0.3)] disabled:opacity-40 cursor-pointer transition-all">
+                  class="px-4 py-2 bg-gradient-to-r from-accent-amber/80 to-accent-amber text-white rounded-lg text-sm font-medium hover:shadow-lg disabled:opacity-40 cursor-pointer transition-all">
                   {testingSending ? 'Sending...' : 'Send Test Notification'}
                 </button>
               </div>
@@ -480,7 +480,7 @@
       <!-- Save / Reset -->
       <div class="flex items-center gap-3">
         <button onclick={save} disabled={saving}
-          class="px-5 py-2 bg-gradient-to-r from-accent-blue to-accent-emerald text-white rounded-lg text-sm font-medium hover:shadow-[0_0_16px_rgba(59,130,246,0.3)] disabled:opacity-50 cursor-pointer transition-all">
+          class="px-5 py-2 bg-gradient-to-r from-accent-blue to-accent-emerald text-white rounded-lg text-sm font-medium hover:shadow-lg disabled:opacity-50 cursor-pointer transition-all">
           {saving ? 'Saving...' : 'Save Changes'}
         </button>
         <button onclick={reset} disabled={saving}
@@ -506,7 +506,7 @@
             </div>
           </div>
           <div class="flex flex-wrap gap-2">
-            <button onclick={handleTrigger} class="px-3 py-1.5 text-sm bg-gradient-to-r from-accent-blue to-accent-emerald text-white rounded-lg hover:shadow-[0_0_12px_rgba(59,130,246,0.2)] cursor-pointer transition-all">Trigger Run</button>
+            <button onclick={handleTrigger} class="px-3 py-1.5 text-sm bg-gradient-to-r from-accent-blue to-accent-emerald text-white rounded-lg hover:shadow-lg cursor-pointer transition-all">Trigger Run</button>
             <button onclick={() => doServiceAction('stop', 'claude-agent.service')} class="px-3 py-1.5 text-sm glass rounded-lg text-text-dim hover:text-text cursor-pointer transition-colors">Stop</button>
           </div>
         </GlassCard>
@@ -566,7 +566,7 @@
 
         {#if oauthFlow === 'idle'}
           <button onclick={handleOAuthStart}
-            class="px-3 py-1.5 text-sm bg-gradient-to-r from-accent-blue to-accent-emerald text-white rounded-lg hover:shadow-[0_0_12px_rgba(59,130,246,0.2)] cursor-pointer transition-all">
+            class="px-3 py-1.5 text-sm bg-gradient-to-r from-accent-blue to-accent-emerald text-white rounded-lg hover:shadow-lg cursor-pointer transition-all">
             {auth?.logged_in && !auth.expired ? 'Re-authenticate' : 'Login with Claude'}
           </button>
         {:else if oauthFlow === 'waiting_for_code'}
@@ -585,7 +585,7 @@
         {:else if oauthFlow === 'submitting'}
           <div class="flex items-center gap-2 text-sm text-text-dim"><LoadingSpinner /><span>Exchanging code for tokens...</span></div>
         {:else if oauthFlow === 'done'}
-          <p class="text-sm text-approve text-glow-emerald">Authentication successful!</p>
+          <p class="text-sm text-approve">Authentication successful!</p>
         {/if}
 
         {#if oauthError}
@@ -620,7 +620,7 @@
 
     <div class="flex items-center gap-3">
       <button onclick={save} disabled={saving}
-        class="px-5 py-2 bg-gradient-to-r from-accent-blue to-accent-emerald text-white rounded-lg text-sm font-medium hover:shadow-[0_0_16px_rgba(59,130,246,0.3)] disabled:opacity-50 cursor-pointer transition-all">
+        class="px-5 py-2 bg-gradient-to-r from-accent-blue to-accent-emerald text-white rounded-lg text-sm font-medium hover:shadow-lg disabled:opacity-50 cursor-pointer transition-all">
         {saving ? 'Saving...' : 'Save Changes'}
       </button>
     </div>
