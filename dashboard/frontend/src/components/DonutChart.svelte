@@ -58,20 +58,12 @@
 
 <div class="donut-chart-container flex flex-col items-center gap-3">
   {#if title}
-    <div class="text-xs ai-text">{title}</div>
+    <div class="text-xs font-medium text-text-dim uppercase tracking-wide">{title}</div>
   {/if}
 
   <div class="relative">
     <svg width={size} height={size} viewBox="0 0 {size} {size}">
-      <defs>
-        <filter id="{uid}-glow">
-          <feGaussianBlur stdDeviation="3" result="blur" />
-          <feMerge>
-            <feMergeNode in="blur" />
-            <feMergeNode in="SourceGraphic" />
-          </feMerge>
-        </filter>
-      </defs>
+      <defs></defs>
 
       <!-- Background ring -->
       <circle
@@ -97,7 +89,6 @@
           stroke-linecap="butt"
           transform="rotate({arc.rotation} {center} {center})"
           opacity={hoveredIndex != null && hoveredIndex !== i ? 0.4 : 0.85}
-          filter={hoveredIndex === i ? `url(#${uid}-glow)` : 'none'}
           style="transition: opacity 0.2s ease, stroke-width 0.2s ease"
           onmouseenter={() => hoveredIndex = i}
           onmouseleave={() => hoveredIndex = null}
@@ -111,7 +102,7 @@
         cy={center}
         r={radius - thickness / 2 - 2}
         fill="none"
-        stroke="rgba(6, 182, 212, 0.04)"
+        stroke="rgba(148, 163, 184, 0.04)"
         stroke-width="1"
       />
 
@@ -175,7 +166,7 @@
       >
         <span
           class="inline-block w-2 h-2 rounded-full shrink-0"
-          style="background: {arc.color}; box-shadow: 0 0 6px {arc.color}40"
+          style="background: {arc.color}"
         ></span>
         <span class="text-[10px] text-text-dim font-data">
           {arc.label}

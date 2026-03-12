@@ -20,7 +20,7 @@
     title = '',
     valueFormatter = (v: number) => v.toLocaleString(),
     height = 200,
-    barColor = '#06b6d4',
+    barColor = '#6366f1',
   }: Props = $props();
 
   // Layout constants
@@ -66,7 +66,7 @@
 
 <div class="bar-chart-container w-full">
   {#if title}
-    <div class="text-xs ai-text mb-2">{title}</div>
+    <div class="text-xs font-medium text-text-dim uppercase tracking-wide mb-2">{title}</div>
   {/if}
 
   <div class="overflow-x-auto">
@@ -77,22 +77,6 @@
           <stop offset="0%" stop-color={barColor} stop-opacity="0.9" />
           <stop offset="100%" stop-color={barColor} stop-opacity="0.3" />
         </linearGradient>
-        <!-- Bar glow filter -->
-        <filter id="{uid}-glow">
-          <feGaussianBlur stdDeviation="3" result="blur" />
-          <feMerge>
-            <feMergeNode in="blur" />
-            <feMergeNode in="SourceGraphic" />
-          </feMerge>
-        </filter>
-        <!-- Limit line glow -->
-        <filter id="{uid}-limit-glow">
-          <feGaussianBlur stdDeviation="2" result="blur" />
-          <feMerge>
-            <feMergeNode in="blur" />
-            <feMergeNode in="SourceGraphic" />
-          </feMerge>
-        </filter>
       </defs>
 
       <!-- Grid lines -->
@@ -148,7 +132,6 @@
           rx="2"
           fill={isOverLimit ? 'url(#' + uid + '-over)' : fill}
           opacity={isHovered ? 1 : 0.85}
-          filter={isHovered ? `url(#${uid}-glow)` : 'none'}
           style="transition: opacity 0.2s ease, height 0.4s ease-out, y 0.4s ease-out"
         />
 
@@ -188,7 +171,7 @@
               height="18"
               rx="4"
               fill="rgba(15, 23, 42, 0.9)"
-              stroke="rgba(6, 182, 212, 0.3)"
+              stroke="rgba(148, 163, 184, 0.3)"
               stroke-width="0.5"
             />
             <text
@@ -217,7 +200,6 @@
           stroke="rgba(239, 68, 68, 0.6)"
           stroke-width="1.5"
           stroke-dasharray="6 4"
-          filter="url(#{uid}-limit-glow)"
         />
         <text
           x={chartW - PAD_RIGHT + 2}
@@ -238,7 +220,7 @@
         y1={PAD_TOP + plotH}
         x2={chartW - PAD_RIGHT}
         y2={PAD_TOP + plotH}
-        stroke="rgba(6, 182, 212, 0.12)"
+        stroke="rgba(148, 163, 184, 0.12)"
         stroke-width="1"
       />
     </svg>

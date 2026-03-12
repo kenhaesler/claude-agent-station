@@ -15,7 +15,7 @@
 
 <div class="glass rounded-xl overflow-hidden">
   <div class="px-4 py-3 border-b border-border/50 flex items-center justify-between">
-    <h3 class="ai-text hud-sweep-line font-medium">Activity Feed</h3>
+    <h3 class="text-xs font-medium text-text-dim uppercase tracking-wide">Activity Feed</h3>
     <a href="#/runs" class="text-xs text-accent-blue hover:text-accent-blue/80 transition-colors">View all</a>
   </div>
 

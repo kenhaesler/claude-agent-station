@@ -10,12 +10,6 @@
 
   let collapsed = $state(false);
 
-  // AC1: Reduced to 5 primary navigation items (down from 11)
-  // Coordinator + Queue -> integrated into Run Detail (AC4)
-  // Analytics -> accessible from Dashboard (AC4)
-  // Config + System -> merged into Settings (AC4)
-  // Logs -> accessible from Settings and Run Detail
-  // Prompts -> accessible from Settings
   const links = [
     { page: 'dashboard', label: 'Dashboard' },
     { page: 'projects', label: 'Projects' },
@@ -41,14 +35,14 @@
 
 <!-- Sidebar -->
 <aside
-  class="sidebar-hud flex flex-col glass-hud transition-all duration-200 shrink-0
+  class="flex flex-col bg-surface border-r border-border transition-all duration-200 shrink-0
     fixed inset-y-0 left-0 z-40 md:relative md:translate-x-0
     {mobileOpen ? 'translate-x-0' : '-translate-x-full'}"
   style:width={collapsed ? '56px' : '220px'}
 >
-  <div class="flex items-center gap-2 px-4 h-12 border-b border-hud-line">
+  <div class="flex items-center gap-2 px-4 h-12 border-b border-border">
     {#if !collapsed}
-      <span class="ai-text text-glow-cyan !text-xs font-bold">Claude Station</span>
+      <span class="text-sm font-semibold text-text">Claude Station</span>
     {/if}
     <!-- Close button on mobile -->
     <button
@@ -74,13 +68,13 @@
       <a
         href="#{link.page === 'dashboard' ? '/' : `/${link.page}`}"
         onclick={closeMobile}
-        class="nav-link relative flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all duration-200 no-underline
+        class="relative flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all duration-200 no-underline
           {active
-            ? 'bg-accent-cyan/10 text-accent-cyan font-medium'
+            ? 'bg-surface-2 text-text font-medium'
             : 'text-text-dim hover:text-text hover:bg-white/[0.03] hover:translate-x-0.5'}"
       >
         {#if active}
-          <span class="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-5 bg-accent-cyan rounded-r shadow-[0_0_12px_rgba(6,182,212,0.5)]"></span>
+          <span class="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-5 bg-accent-blue rounded-r"></span>
         {/if}
         <svg class="w-5 h-5 shrink-0" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
           {#if link.page === 'dashboard'}
@@ -102,52 +96,3 @@
     {/each}
   </nav>
 </aside>
-
-<style>
-  .sidebar-hud {
-    position: relative;
-  }
-
-  /* Corner brackets — desktop only */
-  @media (min-width: 768px) {
-    .sidebar-hud::before,
-    .sidebar-hud::after {
-      content: '';
-      position: absolute;
-      width: 14px;
-      height: 14px;
-      pointer-events: none;
-      z-index: 1;
-    }
-
-    .sidebar-hud::before {
-      top: -1px;
-      left: -1px;
-      border-top: 1.5px solid rgba(6, 182, 212, 0.3);
-      border-left: 1.5px solid rgba(6, 182, 212, 0.3);
-    }
-
-    .sidebar-hud::after {
-      bottom: -1px;
-      right: -1px;
-      border-bottom: 1.5px solid rgba(6, 182, 212, 0.3);
-      border-right: 1.5px solid rgba(6, 182, 212, 0.3);
-    }
-  }
-
-  .nav-link::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 8px;
-    right: 8px;
-    height: 1px;
-    background: linear-gradient(90deg, transparent, rgba(6, 182, 212, 0.15), transparent);
-    opacity: 0;
-    transition: opacity 0.2s ease;
-  }
-
-  .nav-link:hover::before {
-    opacity: 1;
-  }
-</style>

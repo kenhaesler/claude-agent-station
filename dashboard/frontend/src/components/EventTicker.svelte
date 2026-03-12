@@ -122,11 +122,11 @@
   });
 </script>
 
-<div class="glass rounded-lg px-3 py-2 text-xs border-l-2 border-l-accent-cyan/20">
+<div class="glass rounded-lg px-3 py-2 text-xs border-l-2 border-l-border">
   <!-- Header -->
   <div class="flex items-center justify-between mb-1.5">
     <div class="flex items-center gap-1.5">
-      <span class="ai-text hud-sweep-line font-medium">Live Events</span>
+      <span class="text-xs font-medium text-text-dim uppercase tracking-wide">Live Events</span>
       <span
         class="w-1.5 h-1.5 rounded-full {connected ? 'bg-accent-emerald animate-pulse' : 'bg-reject'}"
         title={connected ? 'Connected' : 'Disconnected'}

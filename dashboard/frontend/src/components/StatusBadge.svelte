@@ -8,30 +8,30 @@
 
   const colorMap: Record<string, string> = {
     // Verdicts
-    APPROVE: 'bg-approve/20 text-approve shadow-[0_0_8px_rgba(34,197,94,0.2)]',
-    REJECT: 'bg-reject/20 text-reject shadow-[0_0_8px_rgba(239,68,68,0.2)]',
-    PR: 'bg-pr/20 text-pr shadow-[0_0_8px_rgba(168,85,247,0.2)]',
+    APPROVE: 'bg-approve/20 text-approve',
+    REJECT: 'bg-reject/20 text-reject',
+    PR: 'bg-pr/20 text-pr',
     SKIP: 'bg-text-dim/20 text-text-dim',
     // Statuses
-    completed: 'bg-approve/20 text-approve shadow-[0_0_8px_rgba(34,197,94,0.15)]',
-    running: 'bg-info/20 text-info shadow-[0_0_8px_rgba(59,130,246,0.25)]',
-    reviewing: 'bg-warning/20 text-warning shadow-[0_0_8px_rgba(245,158,11,0.25)]',
-    failed: 'bg-reject/20 text-reject shadow-[0_0_8px_rgba(239,68,68,0.15)]',
-    interrupted: 'bg-warning/20 text-warning shadow-[0_0_8px_rgba(245,158,11,0.15)]',
+    completed: 'bg-approve/20 text-approve',
+    running: 'bg-info/20 text-info',
+    reviewing: 'bg-warning/20 text-warning',
+    failed: 'bg-reject/20 text-reject',
+    interrupted: 'bg-warning/20 text-warning',
     // Queue states
-    pending: 'bg-warning/20 text-warning shadow-[0_0_8px_rgba(245,158,11,0.15)]',
-    assigned: 'bg-info/20 text-info shadow-[0_0_8px_rgba(59,130,246,0.15)]',
-    in_progress: 'bg-info/20 text-info shadow-[0_0_8px_rgba(59,130,246,0.25)]',
-    review: 'bg-warning/20 text-warning shadow-[0_0_8px_rgba(245,158,11,0.25)]',
-    approved: 'bg-approve/20 text-approve shadow-[0_0_8px_rgba(34,197,94,0.15)]',
-    rejected: 'bg-reject/20 text-reject shadow-[0_0_8px_rgba(239,68,68,0.15)]',
+    pending: 'bg-warning/20 text-warning',
+    assigned: 'bg-info/20 text-info',
+    in_progress: 'bg-info/20 text-info',
+    review: 'bg-warning/20 text-warning',
+    approved: 'bg-approve/20 text-approve',
+    rejected: 'bg-reject/20 text-reject',
     paused: 'bg-text-dim/20 text-text-dim',
     // Modes
-    full: 'bg-pr/20 text-pr shadow-[0_0_8px_rgba(168,85,247,0.15)]',
-    analyze: 'bg-info/20 text-info shadow-[0_0_8px_rgba(59,130,246,0.15)]',
+    full: 'bg-pr/20 text-pr',
+    analyze: 'bg-info/20 text-info',
     // Priorities
-    high: 'bg-reject/20 text-reject shadow-[0_0_8px_rgba(239,68,68,0.15)]',
-    medium: 'bg-warning/20 text-warning shadow-[0_0_8px_rgba(245,158,11,0.15)]',
+    high: 'bg-reject/20 text-reject',
+    medium: 'bg-warning/20 text-warning',
     low: 'bg-text-dim/20 text-text-dim',
   };
 

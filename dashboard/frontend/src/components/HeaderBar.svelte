@@ -30,17 +30,17 @@
 
   let usageColor = $derived(
     usagePercent > 80 ? '#ef4444' :
-    usagePercent > 60 ? '#f59e0b' : '#06b6d4'
+    usagePercent > 60 ? '#f59e0b' : '#6366f1'
   );
 
   let statusMessages = $derived([
-    serviceActive ? 'Systems nominal' : 'Systems offline',
+    serviceActive ? 'All systems healthy' : 'Systems offline',
     `Session capacity ${Math.round(100 - usagePercent)}%`,
-    projectCount > 0 ? `Monitoring ${projectCount} projects` : 'Awaiting directives',
+    projectCount > 0 ? `Monitoring ${projectCount} projects` : 'No active runs',
   ]);
 </script>
 
-<header class="header-bar h-12 w-full flex items-center justify-between px-3 md:px-4 glass-hud shrink-0">
+<header class="h-12 w-full flex items-center justify-between px-3 md:px-4 bg-surface border-b border-border shrink-0">
   <!-- Left: hamburger (mobile) + station name -->
   <div class="flex items-center gap-2">
     <button
@@ -52,7 +52,7 @@
         <path d="M3 5h14M3 10h14M3 15h14" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" />
       </svg>
     </button>
-    <span class="md:hidden text-accent-cyan font-bold text-sm text-glow-cyan">Claude Station</span>
+    <span class="md:hidden text-text font-semibold text-sm">Claude Station</span>
     <!-- AI Status text (desktop only) -->
     <div class="hidden md:block">
       <AiStatusLine messages={statusMessages} speed={45} />
@@ -91,17 +91,10 @@
       onclick={onTrigger}
       disabled={triggering}
       class="run-btn px-2.5 md:px-3 py-1 text-xs font-medium rounded-md text-white transition-all cursor-pointer
-        bg-gradient-to-r from-accent-cyan to-accent-emerald hover:shadow-[0_0_16px_rgba(6,182,212,0.3)]
-        {triggering ? 'opacity-50 cursor-not-allowed animate-glow-pulse' : 'hover:opacity-90 active:scale-95'}"
+        bg-accent-blue hover:opacity-90
+        {triggering ? 'opacity-50 cursor-not-allowed' : 'active:scale-95'}"
     >
       {triggering ? '...' : 'Run'}
     </button>
   </div>
 </header>
-
-<style>
-  .header-bar {
-    border-bottom: 1px solid transparent;
-    border-image: linear-gradient(90deg, transparent, rgba(6, 182, 212, 0.25), transparent) 1;
-  }
-</style>

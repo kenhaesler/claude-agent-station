@@ -45,7 +45,7 @@
   <div class="relative" style="height: 148px; overflow: hidden">
     {#if visibleActions.length === 0}
       <div class="flex items-center justify-center h-full">
-        <span class="text-xs text-text-dim animate-shimmer px-4 py-1 rounded">
+        <span class="text-xs text-text-dim px-4 py-1 rounded">
           Waiting for agent activity...
         </span>
       </div>
@@ -76,7 +76,7 @@
 
     <!-- Bottom fade gradient -->
     <div class="absolute bottom-0 left-0 right-0 h-6 pointer-events-none"
-      style="background: linear-gradient(to top, rgba(5, 8, 22, 0.9), transparent)"
+      style="background: linear-gradient(to top, var(--color-bg), transparent)"
     ></div>
   </div>
 </div>

@@ -14,7 +14,6 @@
   import MetricPanel from '../components/MetricPanel.svelte';
   import GlassCard from '../components/GlassCard.svelte';
   import ActivityFeed from '../components/ActivityFeed.svelte';
-  import ScanLine from '../components/ScanLine.svelte';
   import EventTicker from '../components/EventTicker.svelte';
   import PhaseTimeline from '../components/PhaseTimeline.svelte';
   import LiveAgentFeed from '../components/LiveAgentFeed.svelte';
@@ -176,11 +175,11 @@
   {:else}
     <!-- Page Header -->
     <div class="flex items-center justify-between animate-fade-in-up">
-      <h1 class="ai-text hud-sweep-line !text-sm font-bold pb-1">Command Center</h1>
+      <h1 class="text-sm font-semibold text-text">Dashboard</h1>
     </div>
 
     <!-- Live Event Ticker (SSE-powered) -->
-    <div class="animate-fade-in-up border-l-2 border-l-accent-cyan/20 rounded-lg">
+    <div class="animate-fade-in-up border-l-2 border-l-border rounded-lg">
       <EventTicker onRefresh={load} />
     </div>
 
@@ -231,7 +230,6 @@
 
     <!-- Agent Workspace Visualization -->
     <div class="relative glass rounded-lg overflow-hidden animate-fade-in-up" style="height: clamp(280px, 50vh, 500px)">
-      <ScanLine />
       <AgentWorkspace
         {projects}
         runs={recentRuns}
@@ -289,7 +287,7 @@
         <ArcGauge
           value={usage?.usage_percent ?? 0}
           size={64}
-          color={usage && usage.usage_percent > 80 ? '#ef4444' : '#06b6d4'}
+          color={usage && usage.usage_percent > 80 ? '#ef4444' : '#6366f1'}
         />
         {#if usage}
           <p class="text-xs text-text-dim mt-1.5">{usage.sessions_used} sessions ({usage.usage_percent}% used)</p>
@@ -329,7 +327,7 @@
                 </div>
                 <div class="p-3 rounded-lg bg-white/[0.03]">
                   <div class="text-[10px] text-text-dim uppercase tracking-wider mb-1">Total Tokens</div>
-                  <div class="text-xl font-bold font-data text-accent-cyan">{fmtTokens(analytics.total_tokens)}</div>
+                  <div class="text-xl font-bold font-data text-text">{fmtTokens(analytics.total_tokens)}</div>
                 </div>
                 <div class="p-3 rounded-lg bg-white/[0.03]">
                   <div class="text-[10px] text-text-dim uppercase tracking-wider mb-1">Input Tokens</div>
@@ -346,7 +344,7 @@
                 {#if tokenBarData.length > 0}
                   <div>
                     <h3 class="text-xs font-semibold text-text-dim mb-2">Daily Token Usage</h3>
-                    <BarChart data={tokenBarData} valueFormatter={fmtTokens} barColor="#06b6d4" height={180} />
+                    <BarChart data={tokenBarData} valueFormatter={fmtTokens} barColor="#6366f1" height={180} />
                   </div>
                 {/if}
                 {#if verdictSegments.length > 0}

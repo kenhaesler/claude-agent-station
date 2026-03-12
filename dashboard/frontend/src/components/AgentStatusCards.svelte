@@ -55,7 +55,7 @@
         <div class="flex items-center gap-2">
           <StatusOrb active={isRunning} color={employeePhaseColor} size="md" />
           <div>
-            <span class="ai-text font-medium !text-[10px]">Employee</span>
+            <span class="text-xs font-medium text-text-dim uppercase tracking-wide">Employee</span>
             <span class="text-[10px] text-text-dim ml-1.5">{phaseLabel}</span>
           </div>
         </div>
@@ -71,11 +71,11 @@
       {/if}
 
       {#if liveActivity.currentTool}
-        <div class="text-[10px] font-data text-accent-cyan truncate mb-2">
+        <div class="text-[10px] font-data text-text-dim truncate mb-2">
           {liveActivity.currentTool.name}: {liveActivity.currentTool.summary}
         </div>
       {:else if isRunning}
-        <div class="text-[10px] font-data text-text-dim mb-2 animate-pulse-glow">
+        <div class="text-[10px] font-data text-text-dim mb-2 opacity-60">
           Thinking...
         </div>
       {:else}
@@ -110,7 +110,7 @@
             size="md"
           />
           <div>
-            <span class="ai-text font-medium !text-[10px]">Manager</span>
+            <span class="text-xs font-medium text-text-dim uppercase tracking-wide">Manager</span>
             <span class="text-[10px] text-text-dim ml-1.5">{managerPhaseLabel}</span>
           </div>
         </div>

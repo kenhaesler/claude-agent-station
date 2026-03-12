@@ -17,7 +17,7 @@
   let {
     data,
     title = '',
-    color = '#06b6d4',
+    color = '#6366f1',
     fillOpacity = 0.15,
     height = 180,
     valueFormatter = (v: number) => v.toLocaleString(),
@@ -76,7 +76,7 @@
 
 <div class="line-chart-container w-full">
   {#if title}
-    <div class="text-xs ai-text mb-2">{title}</div>
+    <div class="text-xs font-medium text-text-dim uppercase tracking-wide mb-2">{title}</div>
   {/if}
 
   <div class="overflow-x-auto">
@@ -87,22 +87,6 @@
           <stop offset="0%" stop-color={color} stop-opacity={fillOpacity} />
           <stop offset="100%" stop-color={color} stop-opacity="0" />
         </linearGradient>
-        <!-- Line glow -->
-        <filter id="{uid}-glow">
-          <feGaussianBlur stdDeviation="2.5" result="blur" />
-          <feMerge>
-            <feMergeNode in="blur" />
-            <feMergeNode in="SourceGraphic" />
-          </feMerge>
-        </filter>
-        <!-- Dot glow -->
-        <filter id="{uid}-dot-glow">
-          <feGaussianBlur stdDeviation="3" result="blur" />
-          <feMerge>
-            <feMergeNode in="blur" />
-            <feMergeNode in="SourceGraphic" />
-          </feMerge>
-        </filter>
       </defs>
 
       <!-- Grid lines -->
@@ -142,7 +126,6 @@
           stroke-width="2"
           stroke-linejoin="round"
           stroke-linecap="round"
-          filter="url(#{uid}-glow)"
           style="transition: d 0.4s ease-out"
         />
       {/if}
@@ -168,7 +151,7 @@
             y1={PAD_TOP}
             x2={pt.x}
             y2={PAD_TOP + plotH}
-            stroke="rgba(6, 182, 212, 0.2)"
+            stroke="rgba(148, 163, 184, 0.2)"
             stroke-width="1"
             stroke-dasharray="3 3"
           />
@@ -183,7 +166,6 @@
             fill={hoveredIndex === i ? color : 'rgba(15, 23, 42, 0.8)'}
             stroke={color}
             stroke-width={hoveredIndex === i ? 2 : 1.5}
-            filter={hoveredIndex === i ? `url(#${uid}-dot-glow)` : 'none'}
             style="transition: r 0.15s ease, fill 0.15s ease"
           />
         {/if}
@@ -198,7 +180,7 @@
               height="18"
               rx="4"
               fill="rgba(15, 23, 42, 0.9)"
-              stroke="rgba(6, 182, 212, 0.3)"
+              stroke="rgba(148, 163, 184, 0.3)"
               stroke-width="0.5"
             />
             <text
@@ -236,7 +218,7 @@
         y1={PAD_TOP + plotH}
         x2={chartW - PAD_RIGHT}
         y2={PAD_TOP + plotH}
-        stroke="rgba(6, 182, 212, 0.12)"
+        stroke="rgba(148, 163, 184, 0.12)"
         stroke-width="1"
       />
     </svg>

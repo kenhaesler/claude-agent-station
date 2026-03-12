@@ -58,16 +58,13 @@
       {@const isFuture = i > activeIndex}
 
       <!-- Segment -->
-      <div class="flex-1 h-2 rounded-full relative overflow-hidden {isFuture ? 'opacity-30' : ''}" style={isActive ? `box-shadow: 0 0 10px ${p.color}40` : ''}>
+      <div class="flex-1 h-2 rounded-full relative overflow-hidden {isFuture ? 'opacity-30' : ''}"  >
         <!-- Background -->
         <div class="absolute inset-0 rounded-full"
           style="background: {isCompleted || isActive ? p.color : 'rgba(71, 85, 105, 0.3)'}; opacity: {isCompleted ? 0.8 : isActive ? 0.6 : 1}"
         ></div>
 
         <!-- Active shimmer -->
-        {#if isActive}
-          <div class="absolute inset-0 rounded-full phase-active"></div>
-        {/if}
       </div>
 
       <!-- Connector dot between segments -->

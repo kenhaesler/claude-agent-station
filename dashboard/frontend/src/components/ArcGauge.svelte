@@ -6,7 +6,7 @@
     label?: string;
   }
 
-  let { value, size = 48, color = '#06b6d4', label }: Props = $props();
+  let { value, size = 48, color = '#6366f1', label }: Props = $props();
 
   const strokeWidth = 3;
   let radius = $derived((size - strokeWidth) / 2);
@@ -26,15 +26,7 @@
 </script>
 
 <svg width={size} height={size} viewBox="0 0 {size} {size}" class="shrink-0">
-  <defs>
-    <filter id="arc-glow-{size}">
-      <feGaussianBlur stdDeviation="2" result="blur" />
-      <feMerge>
-        <feMergeNode in="blur" />
-        <feMergeNode in="SourceGraphic" />
-      </feMerge>
-    </filter>
-  </defs>
+  <defs></defs>
   <!-- Background arc -->
   <path
     d={arcPath}
@@ -52,7 +44,6 @@
     stroke-linecap="round"
     stroke-dasharray={circumference}
     stroke-dashoffset={offset}
-    filter="url(#arc-glow-{size})"
     style="transition: stroke-dashoffset 0.6s ease-out"
   />
   <!-- Center text -->
