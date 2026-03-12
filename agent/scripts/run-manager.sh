@@ -1074,6 +1074,17 @@ collect_employee_reports() {
         echo "## Project: $repo" >> "$review_package"
         echo "" >> "$review_package"
 
+        # Detect project mode from config
+        local project_mode
+        project_mode=$(get_project_field "$i" "mode" 2>/dev/null || echo "full")
+        [ -z "$project_mode" ] && project_mode="full"
+        if [ "$project_mode" = "analyze" ]; then
+            echo "### ⚠️ MODE: ANALYZE — No code changes expected" >> "$review_package"
+            echo "" >> "$review_package"
+            echo "This project is running in **analyze mode**. The employee was instructed to read code and create/refine GitHub issues ONLY — not to make any code changes. **Do NOT reject for absence of code changes.** Review the quality of created/refined issues instead." >> "$review_package"
+            echo "" >> "$review_package"
+        fi
+
         # Find all employee reports (main workspace + worktree paths)
         local report_files=()
         if [ -f "$workspace/.claude-employee-report.json" ]; then
@@ -1169,7 +1180,19 @@ with open('$report_file') as f:
                     echo "" >> "$review_package"
                 fi
             else
-                echo "### ${employee_label}: No changes (employee stayed on $report_base_branch)" >> "$review_package"
+                # Detect mode from employee report as fallback
+                local report_mode
+                report_mode=$(python3 -c "
+import json
+with open('$report_file') as f:
+    print(json.load(f).get('mode', ''))
+" 2>/dev/null || echo "")
+
+                if [ "$project_mode" = "analyze" ] || [ "$report_mode" = "analyze" ]; then
+                    echo "### ${employee_label}: Analyze mode — no code changes expected (this is correct behavior)" >> "$review_package"
+                else
+                    echo "### ${employee_label}: No changes (employee stayed on $report_base_branch)" >> "$review_package"
+                fi
                 echo "" >> "$review_package"
             fi
 
@@ -1303,13 +1326,14 @@ v = data['verdicts'][$v]
 print(json.dumps(v))
 " 2>/dev/null)
 
-        local project verdict branch issue_number reasoning base_branch
+        local project verdict branch issue_number reasoning base_branch verdict_mode
         project=$(echo "$verdict_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('project',''))")
         verdict=$(echo "$verdict_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('verdict','REJECT'))")
         branch=$(echo "$verdict_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('branch',''))")
         issue_number=$(echo "$verdict_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('issue_number',''))")
         reasoning=$(echo "$verdict_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('reasoning',''))")
         base_branch=$(echo "$verdict_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('base_branch','main'))")
+        verdict_mode=$(echo "$verdict_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('mode',''))" 2>/dev/null || echo "")
 
         local name
         name=$(repo_name "$project")
@@ -1326,6 +1350,72 @@ print(json.dumps(v))
         fi
 
         cd "$workspace"
+
+        # Detect analyze mode from verdict, employee report, or project config
+        local is_analyze_mode=false
+        if [ "$verdict_mode" = "analyze" ]; then
+            is_analyze_mode=true
+        elif [ -f "$workspace/.claude-employee-report.json" ]; then
+            local report_mode_check
+            report_mode_check=$(python3 -c "import json; print(json.load(open('$workspace/.claude-employee-report.json')).get('mode',''))" 2>/dev/null || echo "")
+            [ "$report_mode_check" = "analyze" ] && is_analyze_mode=true
+        fi
+
+        # Handle analyze-mode verdicts — no push/merge needed
+        if [ "$is_analyze_mode" = true ]; then
+            log_info "Analyze mode detected — skipping push/merge operations"
+
+            if [ "$verdict" = "APPROVE" ]; then
+                log_ok "APPROVE (analyze mode): Analysis work accepted"
+
+                if [ -n "$issue_number" ] && [ "$issue_number" != "None" ] && [ "$issue_number" != "null" ]; then
+                    gh issue comment "$issue_number" --repo "$project" --body "## Analyze Mode Review: APPROVED
+
+$reasoning
+
+Analysis produced useful issues. No code changes expected (analyze mode).
+
+---
+Autonomous run: $RUN_ID" 2>/dev/null || log_warn "Failed to comment on issue #$issue_number"
+
+                    gh issue close "$issue_number" --repo "$project" --reason completed 2>/dev/null || true
+                    gh issue edit "$issue_number" --repo "$project" --remove-label "autonomous-agent/done" 2>/dev/null || true
+                    gh issue edit "$issue_number" --repo "$project" --remove-label "autonomous-agent/in-progress" 2>/dev/null || true
+                fi
+
+                notify "approve" "APPROVED (analyze): $project #$issue_number - $reasoning"
+            elif [ "$verdict" = "REJECT" ]; then
+                log_info "REJECT (analyze mode): Analysis work rejected"
+
+                if [ -n "$issue_number" ] && [ "$issue_number" != "None" ] && [ "$issue_number" != "null" ]; then
+                    gh issue comment "$issue_number" --repo "$project" --body "🤖 **Manager verdict: REJECTED (analyze mode)** — $reasoning. Will retry next cycle.
+
+Run: $RUN_ID" 2>/dev/null || true
+                    gh issue edit "$issue_number" --repo "$project" --remove-label "autonomous-agent/done" 2>/dev/null || true
+                    gh issue edit "$issue_number" --repo "$project" --remove-label "autonomous-agent/in-progress" 2>/dev/null || true
+                fi
+
+                notify "reject" "REJECTED (analyze): $project #$issue_number - $reasoning"
+            else
+                log_info "$verdict (analyze mode): $reasoning"
+            fi
+
+            # Queue state update for analyze mode
+            local _aqid
+            _aqid=$(queue_api GET "/api/queue?project_repo=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$project'))" 2>/dev/null)&run_id=run-$RUN_ID&state=review&limit=1" | python3 -c "import json,sys; items=json.load(sys.stdin).get('items',[]); print(items[0]['id'] if items else '')" 2>/dev/null || echo "")
+            if [ -n "$_aqid" ]; then
+                if [ "$verdict" = "APPROVE" ]; then
+                    queue_api PUT "/api/queue/$_aqid" "{\"state\":\"approved\"}" >/dev/null 2>&1
+                    queue_api PUT "/api/queue/$_aqid" "{\"state\":\"completed\"}" >/dev/null 2>&1
+                else
+                    queue_api PUT "/api/queue/$_aqid" "{\"state\":\"rejected\"}" >/dev/null 2>&1
+                fi
+            fi
+
+            # Return to base branch and continue to next verdict
+            git checkout "$base_branch" 2>/dev/null || true
+            continue
+        fi
 
         case "$verdict" in
             APPROVE)
