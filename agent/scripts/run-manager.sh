@@ -1618,6 +1618,19 @@ Run: $RUN_ID" 2>/dev/null || true
                 fi
                 ;;
 
+            SKIP)
+                log_info "SKIP: No eligible work for $project — $reasoning"
+                notify "skip" "SKIP: $project - $reasoning"
+
+                # Queue: mark as completed (not a failure)
+                local _sqid
+                _sqid=$(queue_api GET "/api/queue?project_repo=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$project'))" 2>/dev/null)&run_id=run-$RUN_ID&state=review&limit=1" | python3 -c "import json,sys; items=json.load(sys.stdin).get('items',[]); print(items[0]['id'] if items else '')" 2>/dev/null || echo "")
+                if [ -n "$_sqid" ]; then
+                    queue_api PUT "/api/queue/$_sqid" "{\"state\":\"approved\"}" >/dev/null 2>&1
+                    queue_api PUT "/api/queue/$_sqid" "{\"state\":\"completed\"}" >/dev/null 2>&1
+                fi
+                ;;
+
             *)
                 log_warn "Unknown verdict: $verdict for $project"
                 ;;

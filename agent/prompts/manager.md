@@ -120,6 +120,13 @@ For each project, output exactly one verdict:
 - Scope creep (unrelated changes)
 - Action: Reset branch, log rejection reason
 
+### SKIP
+- Employee correctly found no eligible work (all issues in-progress, labeled needs-help, or no open issues)
+- This is a no-op cycle, NOT a quality failure
+- No branch, no diff, no commits — and that is expected
+- Action: Log skip reason, no git operations
+- **Use SKIP instead of REJECT when the employee did nothing wrong — there was simply nothing to do**
+
 ## Project-Specific Conventions
 
 The review package may include the employee report with a `"base_branch"` field and other project-specific details from the project's own `CLAUDE.md`. **You must respect project conventions:**
@@ -139,7 +146,7 @@ Write your verdicts to the file path provided in your prompt. Use this exact JSO
   "verdicts": [
     {
       "project": "owner/repo",
-      "verdict": "APPROVE|PR|REJECT",
+      "verdict": "APPROVE|PR|REJECT|SKIP",
       "issue_number": 42,
       "branch": "autonomous/issue-42",
       "base_branch": "main",
