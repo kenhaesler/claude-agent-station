@@ -26,6 +26,7 @@ class CoordinatorConfig:
     budget_strategy: str = "equal_split"
     employee_model: str = "claude-opus-4-6"
     webhook_url: str = "http://127.0.0.1:8420/api/webhook/run-event"
+    webhook_secret: str = ""
     db_path: str = "/var/lib/claude-agent-station/station.db"
 
     # Coordinator-specific
@@ -77,6 +78,9 @@ class CoordinatorConfig:
             cfg.webhook_url = dashboard.get(
                 "webhook_url", cfg.webhook_url
             )
+            cfg.webhook_secret = dashboard.get(
+                "webhook_secret", cfg.webhook_secret
+            )
 
             coordinator = data.get("coordinator", {})
             cfg.stream_poll_interval = coordinator.get("stream_poll_interval", cfg.stream_poll_interval)
@@ -90,5 +94,6 @@ class CoordinatorConfig:
         # Environment overrides
         cfg.db_path = os.environ.get("STATION_DB", cfg.db_path)
         cfg.webhook_url = os.environ.get("STATION_WEBHOOK_URL", cfg.webhook_url)
+        cfg.webhook_secret = os.environ.get("STATION_WEBHOOK_SECRET", cfg.webhook_secret)
 
         return cfg

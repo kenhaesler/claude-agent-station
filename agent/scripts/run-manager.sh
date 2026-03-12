@@ -104,8 +104,16 @@ webhook_event() {
     webhook_url=$(json_get "$CONFIG_FILE" "dashboard.webhook_url" 2>/dev/null || echo "")
     # Default to local dashboard if not configured
     [ -z "$webhook_url" ] && webhook_url="http://127.0.0.1:8420/api/webhook/run-event"
+    # Include auth token header if a webhook secret is configured
+    local webhook_secret
+    webhook_secret="${STATION_WEBHOOK_SECRET:-$(json_get "$CONFIG_FILE" "dashboard.webhook_secret" 2>/dev/null || echo "")}"
+    local -a auth_header=()
+    if [ -n "$webhook_secret" ]; then
+        auth_header=(-H "X-Webhook-Token: $webhook_secret")
+    fi
     curl -s --max-time 3 -X POST "$webhook_url" \
         -H "Content-Type: application/json" \
+        "${auth_header[@]}" \
         -d "{\"event\":\"$event\",\"run_id\":\"run-$RUN_ID\",\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",${payload}}" \
         2>/dev/null || true
 }

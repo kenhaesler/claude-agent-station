@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import urllib.request
 import urllib.error
 from datetime import datetime, timezone
@@ -33,10 +34,15 @@ def post_event(config: CoordinatorConfig, event: str, extra: dict | None = None)
 
     try:
         data = json.dumps(payload).encode()
+        headers = {"Content-Type": "application/json"}
+        # Include auth token if a webhook secret is configured
+        webhook_secret = os.environ.get("STATION_WEBHOOK_SECRET", "") or getattr(config, "webhook_secret", "")
+        if webhook_secret:
+            headers["X-Webhook-Token"] = webhook_secret
         req = urllib.request.Request(
             config.webhook_url,
             data=data,
-            headers={"Content-Type": "application/json"},
+            headers=headers,
             method="POST",
         )
         with urllib.request.urlopen(req, timeout=3):

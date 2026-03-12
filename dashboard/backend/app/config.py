@@ -26,6 +26,12 @@ class Settings(BaseSettings):
     # WebSocket polling interval (seconds)
     ws_poll_interval: float = 0.5
 
+    # Shared secret for authenticating webhook requests from the agent.
+    # When set, all POST /api/webhook/* requests must include a matching
+    # X-Webhook-Token header.  When empty (default), no auth is required
+    # (backward-compatible with existing deployments).
+    webhook_secret: Optional[str] = None
+
     # CORS allowed origins for cross-origin requests (e.g. frontend dev server)
     # Override with STATION_ALLOWED_ORIGINS as a JSON list or comma-separated string
     allowed_origins: List[str] = [

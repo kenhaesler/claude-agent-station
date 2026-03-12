@@ -4,10 +4,13 @@ import json
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends
+from typing import Optional
+
+from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.dependencies import get_db
 from app.models import Run, Project, Notification, CoordinatorTask, CoordinatorMessage
 from app.schemas import WebhookRunEvent
@@ -24,6 +27,7 @@ router = APIRouter(prefix="/api/webhook", tags=["webhook"])
 async def receive_run_event(
     event: WebhookRunEvent,
     db: AsyncSession = Depends(get_db),
+    x_webhook_token: Optional[str] = Header(None, alias="X-Webhook-Token"),
 ):
     """Receive a run event from the agent's run-manager.sh script.
 
@@ -33,6 +37,10 @@ async def receive_run_event(
     Also accepts legacy short names:
       started, finished, verdict
     """
+    # Authenticate if a shared secret is configured
+    if settings.webhook_secret and x_webhook_token != settings.webhook_secret:
+        raise HTTPException(status_code=401, detail="Invalid or missing webhook token")
+
     # Normalize event names from run-manager.sh to internal names
     event_name = _normalize_event_name(event.event)
 
