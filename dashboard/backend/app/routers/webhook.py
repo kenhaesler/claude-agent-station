@@ -190,7 +190,9 @@ async def receive_run_event(
         db.add(notification)
 
     elif event_name in ("task_started", "task_completed", "task_failed", "task_ready", "task_blocked"):
-        # Coordinator task events — upsert CoordinatorTask records
+        # Coordinator task events — upsert CoordinatorTask records.
+        # With the DB-backed coordinator, these rows may already exist
+        # (coordinator writes directly). The upsert is idempotent.
         if event.task_id:
             result2 = await db.execute(
                 select(CoordinatorTask).where(CoordinatorTask.id == event.task_id)

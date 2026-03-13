@@ -17,7 +17,6 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from agent.coordinator.config import CoordinatorConfig
-    from agent.coordinator.dag import TaskDAG
 
 # Add parent paths so detect_plan_usage can be imported
 _scripts_dir = str(Path(__file__).resolve().parent.parent / "scripts")
@@ -92,9 +91,9 @@ def check_plan_usage_before_spawn(
 
 def request_graceful_wrapup(
     config: CoordinatorConfig,
-    dag: TaskDAG,
+    dag: object,  # unused, kept for backward compat
     snapshot: PlanUsageSnapshot,
-    running_tasks: dict[str, int],  # task_id -> employee_index
+    running_tasks: dict[str, tuple[int, str]],  # task_id -> (employee_index, workspace)
 ) -> int:
     """Send graceful wrap-up guidance to all running employees.
 
@@ -104,18 +103,17 @@ def request_graceful_wrapup(
 
     Args:
         config: Coordinator configuration
-        dag: The task DAG
+        dag: Unused (kept for signature compatibility)
         snapshot: Current usage snapshot
-        running_tasks: Map of task_id to employee_index for running tasks
+        running_tasks: Map of task_id to (employee_index, workspace)
 
     Returns:
         Number of employees notified
     """
     notified = 0
 
-    for task_id, employee_index in running_tasks.items():
-        task = dag.tasks.get(task_id)
-        if not task or not task.workspace:
+    for task_id, (employee_index, workspace) in running_tasks.items():
+        if not workspace:
             continue
 
         message = (
@@ -127,7 +125,7 @@ def request_graceful_wrapup(
 
         try:
             send_guidance(
-                workspace=task.workspace,
+                workspace=workspace,
                 employee_index=employee_index,
                 guidance_type="warning",
                 content=message,
@@ -145,14 +143,13 @@ def request_graceful_wrapup(
 
     # If usage is critically high, send stop signals
     if snapshot.weekly_usage_percent >= HARD_STOP_USAGE_PERCENT:
-        for task_id, employee_index in running_tasks.items():
-            task = dag.tasks.get(task_id)
-            if not task or not task.workspace:
+        for task_id, (employee_index, workspace) in running_tasks.items():
+            if not workspace:
                 continue
 
             try:
                 send_guidance(
-                    workspace=task.workspace,
+                    workspace=workspace,
                     employee_index=employee_index,
                     guidance_type="stop",
                     content=(
@@ -343,9 +340,9 @@ class RateLimitTracker:
 
 def handle_budget_exhaustion(
     config: CoordinatorConfig,
-    dag: TaskDAG,
+    dag: object,  # unused, kept for backward compat
     tracker: RateLimitTracker,
-    running_tasks: dict[str, int],
+    running_tasks: dict[str, tuple[int, str]],  # task_id -> (employee_index, workspace)
 ) -> int:
     """React to budget exhaustion by notifying running employees to wrap up.
 
@@ -353,18 +350,17 @@ def handle_budget_exhaustion(
 
     Args:
         config: Coordinator configuration.
-        dag: The task DAG.
+        dag: Unused (kept for signature compatibility).
         tracker: The rate limit tracker.
-        running_tasks: Map of task_id to employee_index for running tasks.
+        running_tasks: Map of task_id to (employee_index, workspace).
 
     Returns:
         Number of employees notified.
     """
     notified = 0
 
-    for task_id, employee_index in running_tasks.items():
-        task = dag.tasks.get(task_id)
-        if not task or not task.workspace:
+    for task_id, (employee_index, workspace) in running_tasks.items():
+        if not workspace:
             continue
 
         message = (
@@ -375,7 +371,7 @@ def handle_budget_exhaustion(
 
         try:
             send_guidance(
-                workspace=task.workspace,
+                workspace=workspace,
                 employee_index=employee_index,
                 guidance_type="stop",
                 content=message,

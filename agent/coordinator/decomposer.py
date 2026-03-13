@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from agent.coordinator.config import CoordinatorConfig
 
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
 from agent.coordinator.dag import TaskDAG
 
 logger = logging.getLogger(__name__)
@@ -47,11 +49,13 @@ Return ONLY valid JSON in this exact format:
 The depends_on field uses task indices (0-based) from this array."""
 
 
-def decompose_issue(
+async def decompose_issue(
     issue_body: str,
     repo: str,
     workspace: str,
     config: CoordinatorConfig,
+    session_factory: async_sessionmaker[AsyncSession],
+    run_id: str | None = None,
     issue_number: int | None = None,
     employee_count: int = 2,
 ) -> TaskDAG:
@@ -60,11 +64,13 @@ def decompose_issue(
     Uses Claude Haiku for fast, cheap decomposition.
     Falls back to a single-task DAG on any failure.
     """
+    effective_run_id = run_id or config.run_id
+
     # For single employee, skip decomposition
     if employee_count <= 1:
         logger.info("Single employee — skipping decomposition")
-        return TaskDAG.single_task(
-            config.run_id, repo,
+        return await TaskDAG.single_task(
+            effective_run_id, repo, session_factory,
             title=f"Implement issue #{issue_number}" if issue_number else "Implement feature",
             description=issue_body[:2000],
             issue_number=issue_number,
@@ -105,20 +111,29 @@ Decompose this issue into sub-tasks for {employee_count} employees."""
 
         if result.returncode != 0:
             logger.warning("Decomposition agent failed (exit %d), using single task", result.returncode)
-            return _fallback_dag(config, repo, issue_body, issue_number)
+            return await _fallback_dag(config, session_factory, repo, issue_body, issue_number, effective_run_id)
 
-        return _parse_decomposition(result.stdout, config, repo, issue_number)
+        return await _parse_decomposition(result.stdout, config, session_factory, repo, issue_number, effective_run_id)
 
     except subprocess.TimeoutExpired:
         logger.warning("Decomposition agent timed out, using single task")
-        return _fallback_dag(config, repo, issue_body, issue_number)
+        return await _fallback_dag(config, session_factory, repo, issue_body, issue_number, effective_run_id)
     except Exception as e:
         logger.warning("Decomposition failed: %s, using single task", e)
-        return _fallback_dag(config, repo, issue_body, issue_number)
+        return await _fallback_dag(config, session_factory, repo, issue_body, issue_number, effective_run_id)
 
 
-def _parse_decomposition(output: str, config: CoordinatorConfig, repo: str, issue_number: int | None) -> TaskDAG:
+async def _parse_decomposition(
+    output: str,
+    config: CoordinatorConfig,
+    session_factory: async_sessionmaker[AsyncSession],
+    repo: str,
+    issue_number: int | None,
+    run_id: str | None = None,
+) -> TaskDAG:
     """Parse the decomposition agent's JSON output into a TaskDAG."""
+    effective_run_id = run_id or config.run_id
+
     # Extract JSON from potential markdown wrapping
     match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", output, re.DOTALL)
     text = match.group(1) if match else output.strip()
@@ -127,14 +142,14 @@ def _parse_decomposition(output: str, config: CoordinatorConfig, repo: str, issu
         data = json.loads(text)
     except json.JSONDecodeError:
         logger.warning("Failed to parse decomposition JSON, using single task")
-        return _fallback_dag(config, repo, "", issue_number)
+        return await _fallback_dag(config, session_factory, repo, "", issue_number, effective_run_id)
 
     tasks_data = data.get("tasks", [])
     if not tasks_data or len(tasks_data) < 1:
         logger.warning("Decomposition returned empty tasks, using single task")
-        return _fallback_dag(config, repo, "", issue_number)
+        return await _fallback_dag(config, session_factory, repo, "", issue_number, effective_run_id)
 
-    dag = TaskDAG(config.run_id, repo)
+    dag = TaskDAG(effective_run_id, repo, session_factory)
 
     # Map index-based depends_on to task IDs
     task_ids: list[str] = []
@@ -144,7 +159,7 @@ def _parse_decomposition(output: str, config: CoordinatorConfig, repo: str, issu
             if isinstance(dep_idx, int) and 0 <= dep_idx < len(task_ids):
                 deps.append(task_ids[dep_idx])
 
-        task = dag.add_task(
+        task = await dag.add_task(
             title=td.get("title", f"Task {i}"),
             description=td.get("description", ""),
             depends_on=deps,
@@ -157,10 +172,18 @@ def _parse_decomposition(output: str, config: CoordinatorConfig, repo: str, issu
     return dag
 
 
-def _fallback_dag(config: CoordinatorConfig, repo: str, description: str, issue_number: int | None) -> TaskDAG:
+async def _fallback_dag(
+    config: CoordinatorConfig,
+    session_factory: async_sessionmaker[AsyncSession],
+    repo: str,
+    description: str,
+    issue_number: int | None,
+    run_id: str | None = None,
+) -> TaskDAG:
     """Create a single-task DAG as fallback."""
-    return TaskDAG.single_task(
-        config.run_id, repo,
+    effective_run_id = run_id or config.run_id
+    return await TaskDAG.single_task(
+        effective_run_id, repo, session_factory,
         title=f"Implement issue #{issue_number}" if issue_number else "Implement feature",
         description=description[:2000],
         issue_number=issue_number,

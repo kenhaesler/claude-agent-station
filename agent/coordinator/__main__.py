@@ -14,6 +14,7 @@ from pathlib import Path
 
 from agent.coordinator.config import CoordinatorConfig
 from agent.coordinator.dag import TaskDAG
+from agent.coordinator.db import init_db
 from agent.coordinator.decomposer import decompose_issue
 from agent.coordinator.scheduler import run_scheduler
 from agent.coordinator.reporter import post_event
@@ -63,12 +64,20 @@ def _fetch_issue_body(repo: str, issue_number: int, workspace: str) -> str:
 
 async def coordinate(config: CoordinatorConfig) -> int:
     """Main coordination flow: decompose → schedule → monitor."""
+    # Initialize coordinator's own DB connection (same file as dashboard)
+    session_factory = await init_db(config.db_path)
+
     assignments = _load_assignments(config.assignments_file)
     if not assignments:
         logger.warning("No assignments found")
         return 0
 
-    logger.info("Coordinator starting with %d project assignments", len(assignments))
+    # Normalize run_id to include "run-" prefix (matches run-manager.sh convention)
+    run_id = config.run_id
+    if not run_id.startswith("run-"):
+        run_id = f"run-{run_id}"
+
+    logger.info("Coordinator starting with %d project assignments (run_id=%s)", len(assignments), run_id)
 
     # Process each project assignment
     for assignment in assignments:
@@ -82,27 +91,40 @@ async def coordinate(config: CoordinatorConfig) -> int:
         if issue_number and not issue_body:
             issue_body = _fetch_issue_body(repo, issue_number, workspace)
 
-        # Decompose the issue into a task DAG
-        logger.info("Decomposing work for %s (issue #%s, %d employees)", repo, issue_number, employee_count)
-        dag = decompose_issue(
-            issue_body=issue_body,
-            repo=repo,
-            workspace=workspace,
-            config=config,
-            issue_number=issue_number,
-            employee_count=employee_count,
-        )
+        # Check for existing tasks in DB (crash recovery)
+        dag = TaskDAG(run_id, repo, session_factory)
+        existing = await dag.task_count()
+
+        if existing > 0:
+            logger.info("Resuming run %s: %d tasks in DB", run_id, existing)
+            recovered = await dag.recover_from_crash()
+            if recovered:
+                logger.info("Reset %d running tasks to ready", recovered)
+        else:
+            # Decompose the issue into a task DAG
+            logger.info("Decomposing work for %s (issue #%s, %d employees)", repo, issue_number, employee_count)
+            dag = await decompose_issue(
+                issue_body=issue_body,
+                repo=repo,
+                workspace=workspace,
+                config=config,
+                session_factory=session_factory,
+                run_id=run_id,
+                issue_number=issue_number,
+                employee_count=employee_count,
+            )
 
         # Save DAG to log directory for dashboard access
-        dag_file = os.path.join(config.log_dir, f"run-{config.run_id}-{_repo_name(repo)}-dag.json")
+        dag_data = await dag.to_dict()
+        dag_file = os.path.join(config.log_dir, f"{run_id}-{_repo_name(repo)}-dag.json")
         with open(dag_file, "w") as f:
-            json.dump(dag.to_dict(), f, indent=2)
-        logger.info("Task DAG saved: %s (%d tasks)", dag_file, len(dag.tasks))
+            json.dump(dag_data, f, indent=2)
+        logger.info("Task DAG saved: %s (%d tasks)", dag_file, len(dag_data["tasks"]))
 
         # Post DAG info to dashboard
         post_event(config, "dag_created", {
             "project": repo,
-            "task_count": len(dag.tasks),
+            "task_count": len(dag_data["tasks"]),
             "dag_file": dag_file,
         })
 
@@ -110,11 +132,12 @@ async def coordinate(config: CoordinatorConfig) -> int:
         await run_scheduler(dag, config)
 
         # Save final DAG state
+        dag_data = await dag.to_dict()
         with open(dag_file, "w") as f:
-            json.dump(dag.to_dict(), f, indent=2)
+            json.dump(dag_data, f, indent=2)
 
         # Log results
-        summary = dag.summary()
+        summary = await dag.summary()
         logger.info("Project %s complete: %s", repo, summary)
         post_event(config, "dag_completed", {
             "project": repo,

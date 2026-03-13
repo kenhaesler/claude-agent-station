@@ -38,19 +38,20 @@ async def run_scheduler(dag: TaskDAG, config: CoordinatorConfig) -> None:
     semaphore = asyncio.Semaphore(config.max_concurrent)
     running: dict[str, asyncio.Task] = {}
     activities: dict[str, EmployeeActivity] = {}
+    task_workspaces: dict[str, str] = {}  # task_id -> workspace path
     stop_events: dict[str, asyncio.Event] = {}
     conflict_detector = ConflictDetector()
     rate_limit_tracker = RateLimitTracker()
     next_employee_index = 0
 
-    logger.info("Scheduler started: %d tasks, max_concurrent=%d", len(dag.tasks), config.max_concurrent)
+    logger.info("Scheduler started: %d tasks, max_concurrent=%d", await dag.task_count(), config.max_concurrent)
 
     # Track usage check interval (don't check every loop iteration)
     usage_check_counter = 0
     usage_check_interval = 5  # Check every N loop iterations
     last_usage_ok = True
 
-    while not dag.all_done():
+    while not await dag.all_done():
         # Periodic plan usage check
         usage_check_counter += 1
         if usage_check_counter % usage_check_interval == 0 and running:
@@ -61,9 +62,10 @@ async def run_scheduler(dag: TaskDAG, config: CoordinatorConfig) -> None:
                 )
                 if not can_spawn and last_usage_ok:
                     # Usage just crossed the threshold — notify running employees
-                    running_map = {}
+                    running_map: dict[str, tuple[int, str]] = {}
                     for tid, atask in activities.items():
-                        running_map[tid] = atask.employee_index
+                        ws = task_workspaces.get(tid, "")
+                        running_map[tid] = (atask.employee_index, ws)
                     request_graceful_wrapup(config, dag, snapshot, running_map)
                     logger.warning("Plan usage threshold reached: %s", reason)
                 last_usage_ok = can_spawn
@@ -97,10 +99,11 @@ async def run_scheduler(dag: TaskDAG, config: CoordinatorConfig) -> None:
                     activity = activities[task_id]
                     conflict_detector.clear(activity.employee_index)
                     del activities[task_id]
+                task_workspaces.pop(task_id, None)
             continue
 
         # Spawn employees for ready tasks
-        for task in dag.ready_tasks():
+        for task in await dag.ready_tasks():
             if task.id in running:
                 continue
 
@@ -127,11 +130,15 @@ async def run_scheduler(dag: TaskDAG, config: CoordinatorConfig) -> None:
             workspace = await _setup_task_workspace(task, config, employee_index)
             if not workspace:
                 semaphore.release()
-                dag.mark_failed(task.id, "Failed to setup workspace")
+                await dag.mark_failed(task.id, "Failed to setup workspace")
                 post_task_event(config, "task_failed", task)
                 continue
 
-            dag.mark_running(task.id, employee_index, workspace)
+            await dag.mark_running(task.id, employee_index, workspace)
+            # Update the local DTO so downstream code (employee_runner) sees the workspace
+            task.workspace = workspace
+            task.employee_index = employee_index
+            task_workspaces[task.id] = workspace
             post_task_event(config, "task_started", task)
 
             # Create activity tracker and stop event
@@ -176,6 +183,7 @@ async def run_scheduler(dag: TaskDAG, config: CoordinatorConfig) -> None:
                 activity = activities[task_id]
                 conflict_detector.clear(activity.employee_index)
                 del activities[task_id]
+            task_workspaces.pop(task_id, None)
 
         # Periodic conflict detection
         if config.conflict_detection:
@@ -183,7 +191,7 @@ async def run_scheduler(dag: TaskDAG, config: CoordinatorConfig) -> None:
                 conflict_detector.update(activity.employee_index, activity.files_touched)
                 conflicts = conflict_detector.check_conflicts(activity.employee_index)
                 for file_path, other_idx in conflicts:
-                    task = dag.tasks[task_id]
+                    task = await dag.get_task(task_id)
                     logger.warning(
                         "Conflict: employee %d and %d both editing %s",
                         activity.employee_index, other_idx, file_path,
@@ -203,7 +211,7 @@ async def run_scheduler(dag: TaskDAG, config: CoordinatorConfig) -> None:
                         )
 
     # Final summary
-    summary = dag.summary()
+    summary = await dag.summary()
     logger.info("Scheduler complete: %s", summary)
 
 
@@ -252,25 +260,27 @@ async def _run_and_monitor(
                 exit_code=exit_code,
             )
             if newly_exhausted:
-                # Budget just became exhausted — notify other running employees
-                running_map = {
-                    tid: act.employee_index
-                    for tid, act in _get_running_activities(dag, activity).items()
-                }
-                handle_budget_exhaustion(config, dag, rate_limit_tracker, running_map)
+                # Budget just became exhausted — the scheduler's main loop
+                # handles notification via the usage_check_counter path.
+                # We can't reconstruct workspace info here, so we pass empty.
+                handle_budget_exhaustion(config, dag, rate_limit_tracker, {})
+
+        # Flush touched files to DB
+        if activity.files_touched:
+            await dag.update_touched_files(task.id, list(activity.files_touched))
 
         # Update DAG based on result
         if exit_code == 0:
-            dag.mark_completed(task.id, exit_code)
+            await dag.mark_completed(task.id, exit_code)
             post_task_event(config, "task_completed", task)
             logger.info("Task '%s' completed successfully (employee %d)", task.title, employee_index)
         elif result.rate_limited:
             error_msg = f"Rate limited: {result.rate_limit_reason}"
-            dag.mark_failed(task.id, error_msg, exit_code)
+            await dag.mark_failed(task.id, error_msg, exit_code)
             post_task_event(config, "task_failed", task)
             logger.warning("Task '%s' rate-limited (employee %d): %s", task.title, employee_index, result.rate_limit_reason)
         else:
-            dag.mark_failed(task.id, f"Employee exited with code {exit_code}", exit_code)
+            await dag.mark_failed(task.id, f"Employee exited with code {exit_code}", exit_code)
             post_task_event(config, "task_failed", task)
             logger.warning("Task '%s' failed (employee %d, exit %d)", task.title, employee_index, exit_code)
 
@@ -283,27 +293,13 @@ async def _run_and_monitor(
 
     except Exception as e:
         logger.exception("Error running task '%s'", task.title)
-        dag.mark_failed(task.id, str(e))
+        await dag.mark_failed(task.id, str(e))
         post_task_event(config, "task_failed", task)
 
     finally:
         semaphore.release()
 
     return task.id
-
-
-def _get_running_activities(dag: TaskDAG, exclude_activity: EmployeeActivity) -> dict[str, int]:
-    """Get a map of task_id -> employee_index for currently running tasks.
-
-    Used when budget exhaustion is detected to notify other running employees.
-    This is a best-effort helper — the scheduler's activities dict isn't directly
-    accessible here, so we reconstruct from the DAG.
-    """
-    result: dict[str, int] = {}
-    for task in dag.running_tasks():
-        if task.employee_index is not None and task.employee_index != exclude_activity.employee_index:
-            result[task.id] = task.employee_index
-    return result
 
 
 async def _setup_task_workspace(task: Task, config: CoordinatorConfig, employee_index: int) -> str | None:

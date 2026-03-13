@@ -380,16 +380,36 @@ async function refreshActiveRuns() {
       getLatestRun(),
     ]);
 
+    let activeEmployees: ActiveEmployeeData[] = [];
     if (employees.status === 'fulfilled') {
-      agentPresence.activeRuns = employees.value;
-      agentPresence.phase = derivePhase(employees.value);
-      agentPresence.agents = deriveAgents(employees.value);
+      activeEmployees = employees.value;
     }
 
+    let latestRun: Run | null = null;
     if (latest.status === 'fulfilled') {
-      agentPresence.latestRun = latest.value;
-      agentPresence.latestRunId = latest.value.run_id;
+      latestRun = latest.value;
+      agentPresence.latestRun = latestRun;
+      agentPresence.latestRunId = latestRun.run_id;
     }
+
+    // Fallback: if active-employees returns empty but latest run is still active,
+    // synthesize agent data from the latest run. This happens when project_id
+    // hasn't been assigned yet (run just started) or during manager phase.
+    if (activeEmployees.length === 0 && latestRun && !latestRun.finished_at &&
+        (latestRun.status === 'running' || latestRun.status === 'reviewing')) {
+      activeEmployees = [{
+        run_id: latestRun.run_id,
+        project_id: latestRun.project_id ?? 0,
+        mode: latestRun.mode ?? 'employee',
+        status: latestRun.status ?? 'running',
+        issue_number: latestRun.issue_number,
+        turns: latestRun.turns,
+      }];
+    }
+
+    agentPresence.activeRuns = activeEmployees;
+    agentPresence.phase = derivePhase(activeEmployees);
+    agentPresence.agents = deriveAgents(activeEmployees);
   } catch {
     // silent
   }
