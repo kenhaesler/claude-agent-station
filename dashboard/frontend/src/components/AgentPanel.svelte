@@ -10,25 +10,8 @@
 
   let { onClose }: Props = $props();
 
-  let feedContainer: HTMLDivElement;
-  let autoScroll = $state(true);
-
-  // Auto-scroll to bottom on new entries
-  $effect(() => {
-    // Track length to trigger effect
-    const _len = agentPresence.conversationLog.length;
-    if (autoScroll && feedContainer) {
-      requestAnimationFrame(() => {
-        feedContainer.scrollTop = feedContainer.scrollHeight;
-      });
-    }
-  });
-
-  function handleScroll() {
-    if (!feedContainer) return;
-    const { scrollTop, scrollHeight, clientHeight } = feedContainer;
-    autoScroll = scrollHeight - scrollTop - clientHeight < 60;
-  }
+  // Reversed view — newest messages on top, no auto-scroll needed
+  let reversedLog = $derived(agentPresence.conversationLog.toReversed());
 
   let phaseLabel = $derived(
     agentPresence.phase === 'idle' ? 'Idle' :
@@ -60,7 +43,7 @@
 ></div>
 
 <!-- Panel -->
-<aside class="agent-panel-enter fixed md:relative right-0 top-0 md:top-auto h-full w-full md:w-[400px] md:max-w-[400px] bg-surface border-l border-border flex flex-col z-40 md:z-auto shrink-0">
+<aside class="agent-panel-enter fixed md:relative right-0 top-0 md:top-auto h-full w-full md:w-[400px] md:max-w-[400px] bg-surface border-l border-border flex flex-col z-40 md:z-auto shrink-0 overflow-hidden">
   <!-- Header -->
   <div class="flex items-center justify-between px-3 h-12 border-b border-border shrink-0">
     <div class="flex items-center gap-2">
@@ -87,16 +70,25 @@
 
   <!-- Conversation feed -->
   <div
-    bind:this={feedContainer}
-    onscroll={handleScroll}
-    class="flex-1 overflow-auto px-3 py-2 space-y-1"
+    class="flex-1 overflow-y-auto min-h-0 px-3 py-2 space-y-1"
   >
     {#if agentPresence.conversationLog.length === 0}
       <div class="flex items-center justify-center h-full text-text-muted text-sm">
         <p>No agent activity yet. Trigger a run to begin.</p>
       </div>
     {:else}
-      {#each agentPresence.conversationLog as entry (entry.id)}
+      <!-- Thinking indicator (newest activity, shown at top) -->
+      {#if agentPresence.agents.some(a => a.status === 'thinking')}
+        {@const thinkingAgent = agentPresence.agents.find(a => a.status === 'thinking')}
+        {#if thinkingAgent}
+          <div class="flex items-center gap-2 py-1">
+            <span class="text-[11px] font-semibold" style="color: {thinkingAgent.color}">{thinkingAgent.name}</span>
+            <AgentThinking color={thinkingAgent.color} />
+          </div>
+        {/if}
+      {/if}
+
+      {#each reversedLog as entry (entry.id)}
         <div class="flex gap-2 py-1 animate-slide-in-right {entry.type === 'guidance' ? 'flex-row-reverse' : ''}">
           <!-- Agent indicator -->
           <div class="shrink-0 w-5 text-center">
@@ -143,17 +135,6 @@
           </div>
         </div>
       {/each}
-
-      <!-- Thinking indicator -->
-      {#if agentPresence.agents.some(a => a.status === 'thinking')}
-        {@const thinkingAgent = agentPresence.agents.find(a => a.status === 'thinking')}
-        {#if thinkingAgent}
-          <div class="flex items-center gap-2 py-1">
-            <span class="text-[11px] font-semibold" style="color: {thinkingAgent.color}">{thinkingAgent.name}</span>
-            <AgentThinking color={thinkingAgent.color} />
-          </div>
-        {/if}
-      {/if}
     {/if}
   </div>
 
