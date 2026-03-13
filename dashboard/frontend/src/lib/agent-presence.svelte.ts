@@ -7,7 +7,7 @@
 import { LogWebSocket } from './ws';
 import { parseLogLine, formatToolInput, truncate } from './log-parser';
 import type { ParsedLogEvent } from './log-parser';
-import { getActiveEmployees, getLatestRun, listPlans } from './api';
+import { getActiveEmployees, getLatestRun, listPlans, getStoredApiKey } from './api';
 import type { ActiveEmployeeData, Run } from './types';
 
 // --- Agent Identity ---
@@ -271,7 +271,11 @@ function handleWsMessage(data: string) {
 
 function connectSSE() {
   const base = import.meta.env.VITE_API_URL || '';
-  sse = new EventSource(`${base}/api/events/stream`);
+  const apiKey = getStoredApiKey();
+  const sseUrl = apiKey
+    ? `${base}/api/events/stream?token=${encodeURIComponent(apiKey)}`
+    : `${base}/api/events/stream`;
+  sse = new EventSource(sseUrl);
 
   sse.onopen = () => {
     agentPresence.sseConnected = true;

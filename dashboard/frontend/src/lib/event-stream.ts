@@ -55,6 +55,8 @@ const EVENT_TYPES = [
   'dag_completed',
 ];
 
+import { getStoredApiKey } from './api';
+
 export class AgentEventStream {
   private source: EventSource | null = null;
   private options: AgentEventStreamOptions;
@@ -76,7 +78,11 @@ export class AgentEventStream {
     }
 
     const base = import.meta.env.VITE_API_URL || '';
-    this.source = new EventSource(`${base}/api/events/stream`);
+    const apiKey = getStoredApiKey();
+    const sseUrl = apiKey
+      ? `${base}/api/events/stream?token=${encodeURIComponent(apiKey)}`
+      : `${base}/api/events/stream`;
+    this.source = new EventSource(sseUrl);
 
     this.source.onopen = () => {
       this.options.onStatusChange?.(true);

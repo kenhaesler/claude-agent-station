@@ -26,6 +26,12 @@ class Settings(BaseSettings):
     # WebSocket polling interval (seconds)
     ws_poll_interval: float = 0.5
 
+    # API key for authenticating dashboard API requests.
+    # When set via STATION_API_KEY, all API endpoints (except /api/health and
+    # /api/webhook/*) require a matching Bearer token or ?token= query param.
+    # When None (default), no auth is required (backward-compatible open access).
+    api_key: Optional[str] = None
+
     # Shared secret for authenticating webhook requests from the agent.
     # When set, all POST /api/webhook/* requests must include a matching
     # X-Webhook-Token header.  When empty (default), no auth is required

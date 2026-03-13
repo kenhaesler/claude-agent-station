@@ -3,6 +3,7 @@
   import ArcGauge from './ArcGauge.svelte';
   import AgentAvatar from './AgentAvatar.svelte';
   import { agentPresence } from '../lib/agent-presence.svelte';
+  import { getStoredApiKey } from '../lib/api';
 
   interface Props {
     serviceActive: boolean;
@@ -13,6 +14,7 @@
     onTrigger: () => void;
     triggering: boolean;
     onPanelToggle?: () => void;
+    onAuthClick?: () => void;
   }
 
   let {
@@ -24,7 +26,10 @@
     onTrigger,
     triggering,
     onPanelToggle,
+    onAuthClick,
   }: Props = $props();
+
+  let hasApiKey = $derived(getStoredApiKey() !== null);
 
   let usageColor = $derived(
     usagePercent > 80 ? '#ef4444' :
@@ -107,6 +112,27 @@
         {triggering ? 'opacity-50 cursor-not-allowed' : 'active:scale-95'}"
     >
       {triggering ? '...' : 'Run'}
+    </button>
+
+    <!-- API Key lock icon -->
+    <button
+      onclick={() => onAuthClick?.()}
+      class="p-1.5 rounded-md text-text-dim hover:text-text hover:bg-white/5 cursor-pointer transition-colors"
+      title={hasApiKey ? 'API Key (set)' : 'Set API Key'}
+    >
+      {#if hasApiKey}
+        <!-- Locked icon -->
+        <svg class="w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="7" width="10" height="7" rx="1.5" />
+          <path d="M5 7V5a3 3 0 0 1 6 0v2" />
+        </svg>
+      {:else}
+        <!-- Unlocked icon -->
+        <svg class="w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="7" width="10" height="7" rx="1.5" />
+          <path d="M5 7V5a3 3 0 0 1 6 0" />
+        </svg>
+      {/if}
     </button>
 
     <!-- Panel toggle -->
