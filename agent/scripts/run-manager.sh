@@ -992,7 +992,11 @@ $custom_instructions"
     cmd+=(--fallback-model "$fallback_model")
     cmd+=(--max-turns "$max_turns")
     cmd+=(--system-prompt-file "$system_prompt")
-    # No --allowedTools/--disallowedTools: full VM access, prompt-enforced guardrails
+    # Analyze/plan modes: block file-mutation tools at CLI level (defense in depth)
+    if [ "$mode" = "analyze" ] || [ "$mode" = "plan" ]; then
+        cmd+=(--disallowedTools "Edit" "Write" "NotebookEdit")
+    fi
+    # Full mode: unrestricted tools (dedicated VM, prompt-enforced guardrails)
 
     log_info "Employee command: ${cmd[*]} '<prompt>'"
 
@@ -1366,6 +1370,21 @@ collect_employee_reports() {
             echo "" >> "$review_package"
             echo "This project is running in **analyze mode**. The employee was instructed to read code and create/refine GitHub issues ONLY — not to make any code changes. **Do NOT reject for absence of code changes.** Review the quality of created/refined issues instead." >> "$review_package"
             echo "" >> "$review_package"
+        fi
+
+        # Verify no source files were modified in analyze/plan modes (defense in depth)
+        if [ "$project_mode" = "analyze" ] || [ "$project_mode" = "plan" ]; then
+            local dirty_files
+            dirty_files=$(cd "$workspace" && { git diff --name-only 2>/dev/null; git ls-files --others --exclude-standard 2>/dev/null; } | grep -v '\.claude-' | grep -v 'node_modules')
+            if [ -n "$dirty_files" ]; then
+                echo "### ⚠️ READ-ONLY VIOLATION DETECTED" >> "$review_package"
+                echo "The following files were modified or created despite analyze/plan mode:" >> "$review_package"
+                echo '```' >> "$review_package"
+                echo "$dirty_files" >> "$review_package"
+                echo '```' >> "$review_package"
+                echo "**This employee violated read-only mode. REJECT immediately.**" >> "$review_package"
+                echo "" >> "$review_package"
+            fi
         fi
 
         # Find all employee reports (main workspace + worktree paths)

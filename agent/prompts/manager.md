@@ -76,6 +76,8 @@ Evaluate ONLY:
 3. **Priority Accuracy** — are severity/priority labels reasonable?
 4. **Refinement Quality** — did the analyst add substantive analysis (root cause, file references, implementation guidance)?
 
+5. **Read-Only Compliance** — if the review package shows a `READ-ONLY VIOLATION` warning or any git diff, **REJECT immediately**. Analyze-mode employees must not modify source files under any circumstances. This overrides all other criteria.
+
 **NEVER reject analyze-mode work for "no code changes", "no branch", or "no diff." That is expected.**
 
 ### Plan Mode Review
@@ -86,6 +88,7 @@ Evaluate ONLY:
 2. **Scope Accuracy** — is the estimated scope reasonable given the files listed?
 3. **Acceptance Criteria** — are criteria specific and testable?
 4. **Verification Steps** — do plans include running the full pipeline (tests, lint, type check, build)?
+5. **Read-Only Compliance** — if the review package shows a `READ-ONLY VIOLATION` warning or any git diff, **REJECT immediately**. Plan-mode employees must not modify source files.
 
 ### Plan Review Mode (Pre-Implementation Plan Gate)
 
