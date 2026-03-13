@@ -11,8 +11,7 @@ import time
 from pathlib import Path
 from typing import Dict, Optional
 from urllib.parse import urlencode, unquote, urlparse, parse_qs
-from urllib.request import Request, urlopen
-from urllib.error import HTTPError, URLError
+import httpx
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -150,35 +149,31 @@ async def oauth_callback(req: OAuthCallbackRequest):
         len(req.code), len(code), req.code[:20], code[:20],
     )
 
-    payload = json.dumps({
+    token_payload = {
         "grant_type": "authorization_code",
         "code": code,
         "redirect_uri": REDIRECT_URI,
         "client_id": CLIENT_ID,
         "code_verifier": code_verifier,
         "state": req.state,
-    }).encode("utf-8")
-
-    request = Request(
-        TOKEN_URL,
-        data=payload,
-        headers={
-            "Content-Type": "application/json",
-            "User-Agent": "claude-agent-station/1.0",
-        },
-        method="POST",
-    )
+    }
 
     try:
-        with urlopen(request, timeout=30) as resp:
-            result = json.loads(resp.read())
-    except HTTPError as e:
-        body = e.read().decode("utf-8", errors="replace")
-        logger.error("Token exchange failed: HTTP %d: %s", e.code, body)
+        async with httpx.AsyncClient(timeout=30.0) as http_client:
+            response = await http_client.post(
+                TOKEN_URL,
+                json=token_payload,
+                headers={"User-Agent": "claude-agent-station/1.0"},
+            )
+            response.raise_for_status()
+            result = response.json()
+    except httpx.HTTPStatusError as e:
+        body = e.response.text
+        logger.error("Token exchange failed: HTTP %d: %s", e.response.status_code, body)
         return OAuthCallbackResponse(success=False, error=f"Token exchange failed: {body}")
-    except URLError as e:
-        logger.error("Token exchange failed: %s", e.reason)
-        return OAuthCallbackResponse(success=False, error=f"Token exchange failed: {e.reason}")
+    except httpx.RequestError as e:
+        logger.error("Token exchange failed: %s", e)
+        return OAuthCallbackResponse(success=False, error=f"Token exchange failed: {e}")
 
     # Build credentials in the expected format
     expires_at_ms = int((time.time() + result.get("expires_in", 3600)) * 1000)

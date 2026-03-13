@@ -68,23 +68,29 @@ class TestOAuthCallback:
         # State should be removed from pending after rejection
         assert "expired-state" not in _pending
 
-    @patch("app.routers.oauth.urlopen")
     @patch("app.routers.oauth._write_credentials")
-    def test_callback_accepts_valid_state(self, mock_write, mock_urlopen):
+    @patch("app.routers.oauth.httpx.AsyncClient")
+    def test_callback_accepts_valid_state(self, mock_async_client_cls, mock_write):
         """Valid (non-expired) state should proceed to token exchange."""
+        import json as _json
+        from unittest.mock import AsyncMock, MagicMock
+
         _pending["valid-state"] = ("verifier456", time.time() + 300)
 
-        # Mock the token exchange response
-        import io
-        import json
-        mock_resp = io.BytesIO(json.dumps({
+        # Mock the httpx.AsyncClient async context manager and post
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
             "access_token": "test-token",
             "refresh_token": "test-refresh",
             "expires_in": 3600,
-        }).encode())
-        mock_resp.status = 200
-        mock_urlopen.return_value.__enter__ = lambda s: mock_resp
-        mock_urlopen.return_value.__exit__ = lambda s, *a: None
+        }
+        mock_response.raise_for_status = MagicMock()
+
+        mock_client_instance = AsyncMock()
+        mock_client_instance.post.return_value = mock_response
+        mock_client_instance.__aenter__.return_value = mock_client_instance
+        mock_client_instance.__aexit__.return_value = None
+        mock_async_client_cls.return_value = mock_client_instance
 
         resp = client.post("/api/oauth/callback", json={
             "code": "test-code",
