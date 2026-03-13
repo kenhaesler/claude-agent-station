@@ -23,6 +23,14 @@ See `ARCHITECTURE.md` for full system design.
 - SQLite database at `/var/lib/claude-agent-station/station.db`
 - Dashboard port: 8420
 
+## Git Workflow
+- **`main` is protected.** Direct pushes are blocked — even for admins.
+- All changes go through pull requests (no approval required — solo project).
+- Force pushes and branch deletion on `main` are blocked.
+- **Workflow**: Create a feature branch → commit changes → open PR via `gh pr create` → merge.
+- Branch naming: `feature/<description>`, `fix/<description>`, or `autonomous/issue-<number>`.
+- Never commit `.env`, credentials, or binary files.
+
 ## Development
 ```bash
 # Backend
