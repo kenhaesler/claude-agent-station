@@ -17,6 +17,8 @@ from agent.coordinator.dag import TaskDAG, Task, TaskStatus
 from agent.coordinator.employee_runner import (
     run_employee,
     run_employee_plan_phase,
+    _run_claude_subprocess,
+    _get_stream_file as _employee_get_stream_file,
     EmployeeResult,
     PROMPTS_DIR,
 )
@@ -106,59 +108,38 @@ Write your plan verdict to: {verdict_file}
         "if it needs changes, or REJECT_PLAN if the plan is fundamentally flawed."
     )
 
-    manager_system = str(PROMPTS_DIR / "manager.md")
     stream_file = str(
         Path(config.log_dir) / f"run-{config.run_id}-plan-review-e{employee_index}.stream.jsonl"
     )
-    stderr_file = stream_file.replace(".stream.jsonl", ".stderr.log")
 
     env = os.environ.copy()
     env["GITHUB_REPO"] = task.project_repo
 
-    Path(stream_file).parent.mkdir(parents=True, exist_ok=True)
+    # Use shared subprocess helper (also adds rate limit detection that was
+    # previously missing from manager plan review)
+    manager_fallback = (
+        "claude-haiku-4-5-20251001"
+        if manager_model != "claude-haiku-4-5-20251001"
+        else "claude-sonnet-4-6"
+    )
 
-    stderr_fh = open(stderr_file, "w")
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "claude",
-            "-p",
-            "--verbose",
-            "--output-format",
-            "stream-json",
-            "--no-session-persistence",
-            "--dangerously-skip-permissions",
-            "--model",
-            manager_model,
-            "--max-turns",
-            "10",
-            "--system-prompt-file",
-            manager_system,
-            "--",
-            manager_prompt,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=stderr_fh,
-            cwd=task.workspace,
-            env=env,
+    result = await _run_claude_subprocess(
+        prompt=manager_prompt,
+        system_prompt_file=str(PROMPTS_DIR / "manager.md"),
+        model=manager_model,
+        fallback_model=manager_fallback,
+        max_turns=5,
+        stream_file=stream_file,
+        cwd=task.workspace,
+        env=env,
+        label=f"manager-plan-review-e{employee_index}",
+    )
+
+    if result.rate_limited:
+        logger.warning(
+            "Manager plan review rate limited for employee %d: %s",
+            employee_index, result.rate_limit_reason,
         )
-
-        with open(stream_file, "w") as sf:
-            buf = b""
-            while True:
-                chunk = await proc.stdout.read(65536)
-                if not chunk:
-                    if buf:
-                        sf.write(buf.decode(errors="replace"))
-                        sf.flush()
-                    break
-                buf += chunk
-                while b"\n" in buf:
-                    line, buf = buf.split(b"\n", 1)
-                    sf.write(line.decode(errors="replace") + "\n")
-                    sf.flush()
-
-        await proc.wait()
-    finally:
-        stderr_fh.close()
 
     # Parse verdict file
     if verdict_file.exists():
@@ -619,9 +600,8 @@ async def _setup_task_workspace(task: Task, config: CoordinatorConfig, employee_
 
 
 def _get_stream_file(config: CoordinatorConfig, project_repo: str, employee_index: int) -> str:
-    """Get stream file path matching run-manager.sh conventions."""
-    repo_name = project_repo.split("/")[-1] if "/" in project_repo else project_repo
-    return os.path.join(
-        config.log_dir,
-        f"run-{config.run_id}-{repo_name}-e{employee_index}.stream.jsonl",
-    )
+    """Get stream file path matching run-manager.sh conventions.
+
+    Delegates to employee_runner._get_stream_file for the canonical implementation.
+    """
+    return _employee_get_stream_file(config, project_repo, employee_index)

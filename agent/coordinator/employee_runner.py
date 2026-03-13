@@ -132,20 +132,29 @@ def _check_stream_for_rate_limits(stream_file: str) -> tuple[bool, str]:
     return False, ""
 
 
+def _load_assignment(workspace: str, employee_index: int) -> dict:
+    """Load .claude-assignment-{index}.json, return dict or empty dict."""
+    assignment_file = Path(workspace) / f".claude-assignment-{employee_index}.json"
+    if assignment_file.exists():
+        try:
+            return json.loads(assignment_file.read_text())
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {}
+
+
 def _build_employee_prompt(task: Task, config: CoordinatorConfig, employee_index: int) -> str:
     """Build the employee prompt for a coordinated task."""
     report_suffix = f"-{employee_index}" if employee_index > 0 else ""
 
     # Check for assignment file
-    assignment_file = Path(task.workspace) / f".claude-assignment-{employee_index}.json"
+    assignment = _load_assignment(task.workspace, employee_index)
     assignment_section = ""
-    if assignment_file.exists():
-        try:
-            assignment = json.loads(assignment_file.read_text())
-            assign_issue = assignment.get("issue_number", "")
-            assign_title = assignment.get("issue_title", "")
-            assign_instructions = assignment.get("instructions", "")
-            assignment_section = f"""
+    if assignment:
+        assign_issue = assignment.get("issue_number", "")
+        assign_title = assignment.get("issue_title", "")
+        assign_instructions = assignment.get("instructions", "")
+        assignment_section = f"""
 ## DIRECTED MODE: Pre-Assigned Issue
 
 The manager has assigned you a specific issue. Do NOT pick your own issue.
@@ -156,8 +165,6 @@ The manager has assigned you a specific issue. Do NOT pick your own issue.
 
 Skip Step 1 (Find Work). Go directly to Step 1b, then proceed with Step 2.
 """
-        except (json.JSONDecodeError, OSError):
-            pass
 
     # Build task context for coordinated mode
     deps_section = ""
@@ -237,22 +244,18 @@ The manager reviewed your previous plan and requested changes:
 Revise your plan based on this feedback and write the updated plan.
 """
 
-    # Check for assignment file (same as regular prompt)
+    # Check for assignment file
+    assignment = _load_assignment(task.workspace, employee_index)
     assignment_section = ""
-    assignment_file = Path(task.workspace) / f".claude-assignment-{employee_index}.json"
-    if assignment_file.exists():
-        try:
-            assignment = json.loads(assignment_file.read_text())
-            assign_issue = assignment.get("issue_number", "")
-            assign_title = assignment.get("issue_title", "")
-            assignment_section = f"""
+    if assignment:
+        assign_issue = assignment.get("issue_number", "")
+        assign_title = assignment.get("issue_title", "")
+        assignment_section = f"""
 ## DIRECTED MODE: Pre-Assigned Issue
 
 - **Issue**: #{assign_issue}
 - **Title**: {assign_title}
 """
-        except (json.JSONDecodeError, OSError):
-            pass
 
     prompt = f"""Work on the repository: {task.project_repo}
 
@@ -280,6 +283,21 @@ Remember: Plan only. Do NOT create branches, modify source files, or commit anyt
     return prompt
 
 
+def _summarize_plan_for_implementation(plan: dict) -> str:
+    """Extract only implementation-relevant fields from an approved plan.
+
+    Drops review-only fields (risks, approach, summary) that add token noise
+    during implementation without aiding execution.
+    """
+    essential_keys = ("steps", "files_to_modify", "files_to_create", "testing_strategy")
+    summary = {k: plan[k] for k in essential_keys if k in plan}
+    # Preserve issue reference if present
+    for key in ("issue_number", "issue_title"):
+        if key in plan:
+            summary[key] = plan[key]
+    return json.dumps(summary, indent=2)
+
+
 def _build_implement_with_plan_prompt(
     task: Task,
     config: CoordinatorConfig,
@@ -288,17 +306,15 @@ def _build_implement_with_plan_prompt(
 ) -> str:
     """Build the employee prompt for implementation with an approved plan."""
     report_suffix = f"-{employee_index}" if employee_index > 0 else ""
-    plan_json = json.dumps(approved_plan, indent=2)
+    plan_json = _summarize_plan_for_implementation(approved_plan)
 
     # Include assignment section if present
+    assignment = _load_assignment(task.workspace, employee_index)
     assignment_section = ""
-    assignment_file = Path(task.workspace) / f".claude-assignment-{employee_index}.json"
-    if assignment_file.exists():
-        try:
-            assignment = json.loads(assignment_file.read_text())
-            assign_issue = assignment.get("issue_number", "")
-            assign_title = assignment.get("issue_title", "")
-            assignment_section = f"""
+    if assignment:
+        assign_issue = assignment.get("issue_number", "")
+        assign_title = assignment.get("issue_title", "")
+        assignment_section = f"""
 ## DIRECTED MODE: Pre-Assigned Issue
 
 - **Issue**: #{assign_issue}
@@ -306,8 +322,6 @@ def _build_implement_with_plan_prompt(
 
 Skip Step 1 (Find Work). Go directly to Step 1b, then Step 2.
 """
-        except (json.JSONDecodeError, OSError):
-            pass
 
     prompt = f"""Work on the repository: {task.project_repo}
 
@@ -336,203 +350,32 @@ Remember: commit locally but NEVER push. The manager will review and push if app
     return prompt
 
 
-async def run_employee_plan_phase(
-    task: Task,
-    config: CoordinatorConfig,
-    employee_index: int,
-    revision_feedback: str | None = None,
+async def _run_claude_subprocess(
+    *,
+    prompt: str,
+    system_prompt_file: str,
+    model: str,
+    fallback_model: str,
+    max_turns: int,
+    stream_file: str,
+    cwd: str,
+    env: dict[str, str],
+    label: str = "employee",
 ) -> EmployeeResult:
-    """Spawn employee in plan-only mode.
+    """Spawn a Claude CLI subprocess with stream capture and rate limit detection.
 
-    Returns EmployeeResult. The plan is written to
-    .claude-employee-plan-{employee_index}.json in the workspace.
+    This is the single shared implementation for all Claude subprocess spawning:
+    employee work, plan phase, and manager plan review.
     """
-    prompt = _build_plan_prompt(task, config, employee_index, revision_feedback)
-    system_prompt_file = str(PROMPTS_DIR / "employee.md")
-    stream_file = _get_stream_file(config, task.project_repo, employee_index)
-    # Append "-plan" to distinguish plan phase streams
-    stream_file = stream_file.replace(".stream.jsonl", "-plan.stream.jsonl")
     stderr_file = stream_file.replace(".stream.jsonl", ".stderr.log")
 
-    # Plan phase uses fewer turns (planning is simpler than implementing)
-    max_turns = min(50, config.max_employee_turns)
-
-    model = config.employee_model
-    fallback_model = (
-        "claude-sonnet-4-6"
-        if model != "claude-sonnet-4-6"
-        else "claude-haiku-4-5-20251001"
-    )
-
-    env = os.environ.copy()
-    env["GITHUB_REPO"] = task.project_repo
+    Path(stream_file).parent.mkdir(parents=True, exist_ok=True)
 
     logger.info(
-        "Spawning employee %d PLAN PHASE for task '%s' (model=%s, turns=%d)",
-        employee_index,
-        task.title,
-        model,
-        max_turns,
+        "Spawning %s subprocess (model=%s, turns=%d)",
+        label, model, max_turns,
     )
 
-    stream_path = Path(stream_file)
-    stream_path.parent.mkdir(parents=True, exist_ok=True)
-
-    stderr_fh = open(stderr_file, "w")
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "claude",
-            "-p",
-            "--verbose",
-            "--output-format",
-            "stream-json",
-            "--no-session-persistence",
-            "--dangerously-skip-permissions",
-            "--model",
-            model,
-            "--fallback-model",
-            fallback_model,
-            "--max-turns",
-            str(max_turns),
-            "--system-prompt-file",
-            system_prompt_file,
-            "--",
-            prompt,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=stderr_fh,
-            cwd=task.workspace,
-            env=env,
-        )
-
-        with open(stream_file, "w") as sf:
-            buf = b""
-            while True:
-                chunk = await proc.stdout.read(65536)
-                if not chunk:
-                    if buf:
-                        sf.write(buf.decode(errors="replace"))
-                        sf.flush()
-                    break
-                buf += chunk
-                while b"\n" in buf:
-                    line, buf = buf.split(b"\n", 1)
-                    sf.write(line.decode(errors="replace") + "\n")
-                    sf.flush()
-
-        await proc.wait()
-    finally:
-        stderr_fh.close()
-
-    exit_code = proc.returncode or 0
-    stderr_content = ""
-    try:
-        stderr_content = Path(stderr_file).read_text().strip()
-    except OSError:
-        pass
-
-    if exit_code != 0 and stderr_content:
-        logger.warning("Employee %d plan phase stderr: %s", employee_index, stderr_content[:500])
-
-    logger.info(
-        "Employee %d PLAN PHASE exited with code %d",
-        employee_index,
-        exit_code,
-    )
-
-    # Rate limit detection (same as run_employee)
-    rate_limited = False
-    rate_limit_reason = ""
-
-    if stderr_content:
-        found, reason = detect_rate_limit_in_text(stderr_content)
-        if found:
-            rate_limited = True
-            rate_limit_reason = f"stderr: {reason}"
-
-    if not rate_limited:
-        found, reason = _check_stream_for_rate_limits(stream_file)
-        if found:
-            rate_limited = True
-            rate_limit_reason = f"stream: {reason}"
-
-    if not rate_limited and exit_code in RATE_LIMIT_EXIT_CODES:
-        try:
-            stream_size = Path(stream_file).stat().st_size
-        except OSError:
-            stream_size = 0
-        if stream_size < 1024:
-            rate_limited = True
-            rate_limit_reason = (
-                f"Exit code {exit_code} with minimal output "
-                f"({stream_size} bytes) suggests plan exhaustion"
-            )
-
-    return EmployeeResult(
-        exit_code=exit_code,
-        stream_file=stream_file,
-        rate_limited=rate_limited,
-        rate_limit_reason=rate_limit_reason,
-        stderr_snippet=stderr_content[:500] if stderr_content else "",
-        stdout_snippet="",
-    )
-
-
-def _get_stream_file(config: CoordinatorConfig, project_repo: str, employee_index: int) -> str:
-    """Get the stream file path matching run-manager.sh conventions."""
-    repo_name = project_repo.split("/")[-1] if "/" in project_repo else project_repo
-    return os.path.join(
-        config.log_dir,
-        f"run-{config.run_id}-employee-{repo_name}-e{employee_index}.stream.jsonl",
-    )
-
-
-async def run_employee(
-    task: Task,
-    config: CoordinatorConfig,
-    employee_index: int,
-    approved_plan: dict | None = None,
-) -> EmployeeResult:
-    """Spawn a Claude employee subprocess for a task.
-
-    Returns an EmployeeResult with exit code, stream file path,
-    and rate limit detection information.
-
-    Matches the CLI invocation pattern from run-manager.sh run_employee().
-    """
-    if approved_plan is not None:
-        prompt = _build_implement_with_plan_prompt(task, config, employee_index, approved_plan)
-    else:
-        prompt = _build_employee_prompt(task, config, employee_index)
-    system_prompt_file = str(PROMPTS_DIR / "employee.md")
-    stream_file = _get_stream_file(config, task.project_repo, employee_index)
-    stderr_file = stream_file.replace(".stream.jsonl", ".stderr.log")
-
-    # Calculate per-employee turn budget
-    max_turns = config.max_employee_turns
-    running_count = max(1, config.max_concurrent)
-    if running_count > 1:
-        max_turns = max(50, max_turns // running_count)
-
-    # Determine fallback model
-    model = config.employee_model
-    fallback_model = "claude-sonnet-4-6" if model != "claude-sonnet-4-6" else "claude-haiku-4-5-20251001"
-
-    env = os.environ.copy()
-    env["GITHUB_REPO"] = task.project_repo
-
-    logger.info(
-        "Spawning employee %d for task '%s' (model=%s, turns=%d, workspace=%s)",
-        employee_index, task.title, model, max_turns, task.workspace,
-    )
-
-    # Open stream file for writing
-    stream_path = Path(stream_file)
-    stream_path.parent.mkdir(parents=True, exist_ok=True)
-
-    # Match run-manager.sh invocation exactly:
-    #   claude -p --verbose --output-format stream-json --no-session-persistence
-    #     --dangerously-skip-permissions --model X --fallback-model Y
-    #     --max-turns N --system-prompt-file FILE -- "$prompt"
     stderr_fh = open(stderr_file, "w")
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -548,7 +391,7 @@ async def run_employee(
             "--", prompt,
             stdout=asyncio.subprocess.PIPE,
             stderr=stderr_fh,
-            cwd=task.workspace,
+            cwd=cwd,
             env=env,
         )
 
@@ -584,16 +427,12 @@ async def run_employee(
     except OSError:
         pass
 
-    # Log stderr if employee failed
     if exit_code != 0 and stderr_content:
-        logger.warning("Employee %d stderr: %s", employee_index, stderr_content[:500])
+        logger.warning("%s stderr: %s", label, stderr_content[:500])
 
-    logger.info(
-        "Employee %d for task '%s' exited with code %d",
-        employee_index, task.title, exit_code,
-    )
+    logger.info("%s exited with code %d", label, exit_code)
 
-    # --- Rate limit detection ---
+    # --- Rate limit detection (3-step) ---
     rate_limited = False
     rate_limit_reason = ""
 
@@ -603,10 +442,7 @@ async def run_employee(
         if found:
             rate_limited = True
             rate_limit_reason = f"stderr: {reason}"
-            logger.warning(
-                "Employee %d RATE LIMITED (stderr): %s",
-                employee_index, reason,
-            )
+            logger.warning("%s RATE LIMITED (stderr): %s", label, reason)
 
     # Check 2: Scan stream file for rate limit error events
     if not rate_limited:
@@ -614,31 +450,21 @@ async def run_employee(
         if found:
             rate_limited = True
             rate_limit_reason = f"stream: {reason}"
-            logger.warning(
-                "Employee %d RATE LIMITED (stream): %s",
-                employee_index, reason,
-            )
+            logger.warning("%s RATE LIMITED (stream): %s", label, reason)
 
-    # Check 3: Non-zero exit code that commonly indicates rate limiting
-    # Only flag if exit code is in the known set AND the employee produced
-    # very little output (suggesting it failed early due to API rejection)
+    # Check 3: Non-zero exit code with minimal output suggests rate limiting
     if not rate_limited and exit_code in RATE_LIMIT_EXIT_CODES:
         try:
             stream_size = Path(stream_file).stat().st_size
         except OSError:
             stream_size = 0
-
-        # If the process failed quickly with minimal output, likely rate limited
         if stream_size < 1024:
             rate_limited = True
             rate_limit_reason = (
                 f"Exit code {exit_code} with minimal output "
                 f"({stream_size} bytes) suggests plan exhaustion"
             )
-            logger.warning(
-                "Employee %d RATE LIMITED (exit code): %s",
-                employee_index, rate_limit_reason,
-            )
+            logger.warning("%s RATE LIMITED (exit code): %s", label, rate_limit_reason)
 
     return EmployeeResult(
         exit_code=exit_code,
@@ -646,5 +472,95 @@ async def run_employee(
         rate_limited=rate_limited,
         rate_limit_reason=rate_limit_reason,
         stderr_snippet=stderr_content[:500] if stderr_content else "",
-        stdout_snippet="",  # stdout goes to stream file
+        stdout_snippet="",
+    )
+
+
+async def run_employee_plan_phase(
+    task: Task,
+    config: CoordinatorConfig,
+    employee_index: int,
+    revision_feedback: str | None = None,
+) -> EmployeeResult:
+    """Spawn employee in plan-only mode.
+
+    Returns EmployeeResult. The plan is written to
+    .claude-employee-plan-{employee_index}.json in the workspace.
+    """
+    prompt = _build_plan_prompt(task, config, employee_index, revision_feedback)
+    stream_file = _get_stream_file(config, task.project_repo, employee_index)
+    stream_file = stream_file.replace(".stream.jsonl", "-plan.stream.jsonl")
+
+    model = config.employee_model
+    fallback_model = (
+        "claude-sonnet-4-6"
+        if model != "claude-sonnet-4-6"
+        else "claude-haiku-4-5-20251001"
+    )
+
+    env = os.environ.copy()
+    env["GITHUB_REPO"] = task.project_repo
+
+    return await _run_claude_subprocess(
+        prompt=prompt,
+        system_prompt_file=str(PROMPTS_DIR / "employee.md"),
+        model=model,
+        fallback_model=fallback_model,
+        max_turns=min(20, config.max_employee_turns),
+        stream_file=stream_file,
+        cwd=task.workspace,
+        env=env,
+        label=f"employee-{employee_index}-plan",
+    )
+
+
+def _get_stream_file(config: CoordinatorConfig, project_repo: str, employee_index: int) -> str:
+    """Get the stream file path matching run-manager.sh conventions."""
+    repo_name = project_repo.split("/")[-1] if "/" in project_repo else project_repo
+    return os.path.join(
+        config.log_dir,
+        f"run-{config.run_id}-employee-{repo_name}-e{employee_index}.stream.jsonl",
+    )
+
+
+async def run_employee(
+    task: Task,
+    config: CoordinatorConfig,
+    employee_index: int,
+    approved_plan: dict | None = None,
+) -> EmployeeResult:
+    """Spawn a Claude employee subprocess for a task.
+
+    Returns an EmployeeResult with exit code, stream file path,
+    and rate limit detection information.
+    """
+    if approved_plan is not None:
+        prompt = _build_implement_with_plan_prompt(task, config, employee_index, approved_plan)
+    else:
+        prompt = _build_employee_prompt(task, config, employee_index)
+
+    stream_file = _get_stream_file(config, task.project_repo, employee_index)
+
+    # Calculate per-employee turn budget
+    max_turns = config.max_employee_turns
+    running_count = max(1, config.max_concurrent)
+    if running_count > 1:
+        max_turns = max(50, max_turns // running_count)
+
+    model = config.employee_model
+    fallback_model = "claude-sonnet-4-6" if model != "claude-sonnet-4-6" else "claude-haiku-4-5-20251001"
+
+    env = os.environ.copy()
+    env["GITHUB_REPO"] = task.project_repo
+
+    return await _run_claude_subprocess(
+        prompt=prompt,
+        system_prompt_file=str(PROMPTS_DIR / "employee.md"),
+        model=model,
+        fallback_model=fallback_model,
+        max_turns=max_turns,
+        stream_file=stream_file,
+        cwd=task.workspace,
+        env=env,
+        label=f"employee-{employee_index}",
     )

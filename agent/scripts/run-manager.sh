@@ -1085,6 +1085,33 @@ print(f'{t:,}')
 }
 
 # ============================================================================
+# SHARED: Claude CLI subprocess helper
+# ============================================================================
+
+run_claude_agent() {
+    # Shared helper to build and execute the standard Claude CLI command.
+    # Used by run_employee_plan_only() and run_manager_plan_review().
+    # run_employee() keeps its own execution (has special inline stream parsing).
+    local model="$1" fallback="$2" turns="$3" sysprompt="$4"
+    local prompt="$5" stream="$6" stderr="$7" workspace="$8" repo="$9"
+
+    local -a cmd=(claude -p --verbose --output-format stream-json --no-session-persistence --dangerously-skip-permissions)
+    cmd+=(--model "$model")
+    cmd+=(--fallback-model "$fallback")
+    cmd+=(--max-turns "$turns")
+    cmd+=(--system-prompt-file "$sysprompt")
+
+    if [ "$DRY_RUN" = true ]; then
+        log_info "[DRY RUN] Would run claude agent (model=$model, turns=$turns)"
+        return 0
+    fi
+
+    cd "$workspace"
+    GITHUB_REPO="$repo" "${cmd[@]}" -- "$prompt" > "$stream" 2>>"$stderr"
+    return $?
+}
+
+# ============================================================================
 # PLAN REVIEW (Phase 1.5: Plan-before-implement loop)
 # ============================================================================
 
@@ -1130,7 +1157,7 @@ run_employee_plan_only() {
 
     local model max_turns
     model=$(json_get "$CONFIG_FILE" "models.employee" 2>/dev/null || echo "claude-opus-4-6")
-    max_turns=50  # Plan phase is lighter
+    max_turns=20  # Plan phase is lighter — 20 turns is generous
 
     local fallback_model="claude-sonnet-4-6"
     [ "$model" = "claude-sonnet-4-6" ] && fallback_model="claude-haiku-4-5-20251001"
@@ -1188,24 +1215,13 @@ ${revision_section}
 
 Remember: Plan only. Do NOT create branches, modify source files, or commit anything."
 
-    local -a cmd=(claude -p --verbose --output-format stream-json --no-session-persistence --dangerously-skip-permissions)
-    cmd+=(--model "$model")
-    cmd+=(--fallback-model "$fallback_model")
-    cmd+=(--max-turns "$max_turns")
-    cmd+=(--system-prompt-file "$system_prompt")
-
-    log_info "Running employee plan phase for $repo (employee $employee_index)"
-
-    if [ "$DRY_RUN" = true ]; then
-        log_info "[DRY RUN] Would run employee plan phase for: $repo"
-        return 0
-    fi
-
     local stream_file="$LOG_DIR/run-${RUN_ID}-employee-${name}-plan.stream.jsonl"
     local stderr_file="$LOG_DIR/run-${RUN_ID}-employee-${name}-plan.stderr.log"
 
-    cd "$workspace"
-    GITHUB_REPO="$repo" "${cmd[@]}" -- "$employee_prompt" > "$stream_file" 2>>"$stderr_file"
+    log_info "Running employee plan phase for $repo (employee $employee_index)"
+
+    run_claude_agent "$model" "$fallback_model" "$max_turns" "$system_prompt" \
+        "$employee_prompt" "$stream_file" "$stderr_file" "$workspace" "$repo"
     local exit_code=$?
 
     record_session
@@ -1255,31 +1271,19 @@ run_manager_plan_review() {
     local manager_fallback="claude-haiku-4-5-20251001"
     [ "$model" = "claude-haiku-4-5-20251001" ] && manager_fallback="claude-sonnet-4-6"
 
-    local -a cmd=(claude -p --verbose --output-format stream-json --no-session-persistence --dangerously-skip-permissions)
-    cmd+=(--model "$model")
-    cmd+=(--fallback-model "$manager_fallback")
-    cmd+=(--max-turns 10)
-    cmd+=(--system-prompt-file "$(resolve_prompt manager)")
-
     local manager_prompt="Review the employee's implementation plan in: $review_file
 
 Write your plan verdict to: $verdict_file
 
 Use APPROVE_PLAN if the plan is solid, REVISE_PLAN with specific feedback if it needs changes, or REJECT_PLAN if fundamentally flawed."
 
-    log_info "Running manager plan review for $repo"
-
-    if [ "$DRY_RUN" = true ]; then
-        log_info "[DRY RUN] Would run manager plan review for: $repo"
-        echo "APPROVE_PLAN"
-        return 0
-    fi
-
     local stream_file="$LOG_DIR/run-${RUN_ID}-plan-review-${name}.stream.jsonl"
     local stderr_file="$LOG_DIR/run-${RUN_ID}-plan-review-${name}.stderr.log"
 
-    cd "$workspace"
-    GITHUB_REPO="$repo" "${cmd[@]}" -- "$manager_prompt" > "$stream_file" 2>>"$stderr_file"
+    log_info "Running manager plan review for $repo"
+
+    run_claude_agent "$model" "$manager_fallback" 5 "$(resolve_prompt manager)" \
+        "$manager_prompt" "$stream_file" "$stderr_file" "$workspace" "$repo"
 
     record_session
 
