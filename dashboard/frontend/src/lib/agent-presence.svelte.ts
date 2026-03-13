@@ -358,6 +358,16 @@ function handleSSEEvent(data: any) {
         content: `Conflict detected: ${data.message ?? 'overlapping file changes'}`,
       });
       break;
+    case 'run_interrupted':
+      // Reaper terminated a stale run
+      addConversationEntry({
+        agentName: 'Manager',
+        agentColor,
+        type: 'system',
+        content: `REAPER: stale run ${data.run_id ?? 'unknown'} terminated`,
+      });
+      refreshActiveRuns();
+      break;
   }
 }
 
