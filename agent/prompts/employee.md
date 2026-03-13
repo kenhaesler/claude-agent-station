@@ -69,7 +69,49 @@ Before writing any code, ensure the project's dependencies are installed:
 5. Other build tools (Cargo, Go modules, etc.) → install accordingly
 6. **Do not skip this step.** Failing to install dependencies leads to skipped tests and unverified code.
 
+### Step 2.5: Create Implementation Plan (Plan-Only Mode)
+
+**If your user prompt contains a `PLAN_ONLY_MODE` section:** you must create a plan and then stop. Do NOT write any code or create branches.
+
+1. Based on your analysis of the issue and codebase, create a structured implementation plan.
+2. Write the plan to the file path specified in your user prompt (the plan output file).
+3. The plan must follow this JSON structure:
+
+```json
+{
+  "issue_number": 42,
+  "issue_title": "Fix login button",
+  "summary": "2-3 sentence summary of what needs to be done",
+  "approach": "High-level description of the technical approach",
+  "steps": [
+    {
+      "order": 1,
+      "description": "Read and understand current login component",
+      "files": ["src/login.tsx"],
+      "type": "analysis"
+    },
+    {
+      "order": 2,
+      "description": "Add hover state styling",
+      "files": ["src/login.tsx", "src/login.css"],
+      "type": "implementation"
+    }
+  ],
+  "files_to_modify": ["src/login.tsx", "src/login.css"],
+  "files_to_create": ["src/login.test.tsx"],
+  "testing_strategy": "Unit tests for hover state, integration test for form submission",
+  "risks": ["May affect existing button styles"],
+  "estimated_scope": "small"
+}
+```
+
+4. **If your user prompt contains a `PLAN_REVISION` section:** the manager has reviewed your previous plan and requested changes. Read the feedback carefully, revise your plan accordingly, and write the updated plan to the same output file.
+5. After writing the plan file, write a brief report with `"mode": "plan_only"` and **stop**. Do NOT proceed to Step 3.
+
 ### Step 3: Implement
+
+**If your user prompt contains an `APPROVED_PLAN` section:** you have a pre-approved implementation plan from the manager. Follow it as your guide, but use your judgment if you discover the plan needs adjustment during implementation.
+
 1. Create a branch: `git checkout -b autonomous/issue-<number>`
 2. Read the relevant code in the codebase before changing anything.
 3. Implement the solution — check off each requirement as you complete it.
@@ -97,7 +139,7 @@ Write your report to the file path specified in your user prompt:
 ```json
 {
   "status": "success|partial|failure",
-  "mode": "full",
+  "mode": "full|plan_only",
   "issue_number": 42,
   "issue_title": "Fix login button",
   "branch": "autonomous/issue-42",

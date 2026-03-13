@@ -215,6 +215,268 @@ Remember: commit locally but NEVER push. The manager will review and push if app
     return prompt
 
 
+def _build_plan_prompt(
+    task: Task,
+    config: CoordinatorConfig,
+    employee_index: int,
+    revision_feedback: str | None = None,
+) -> str:
+    """Build the employee prompt for plan-only mode."""
+    report_suffix = f"-{employee_index}" if employee_index > 0 else ""
+    plan_file = Path(task.workspace) / f".claude-employee-plan-{employee_index}.json"
+
+    revision_section = ""
+    if revision_feedback:
+        revision_section = f"""
+## PLAN_REVISION: Manager Feedback on Previous Plan
+
+The manager reviewed your previous plan and requested changes:
+
+{revision_feedback}
+
+Revise your plan based on this feedback and write the updated plan.
+"""
+
+    # Check for assignment file (same as regular prompt)
+    assignment_section = ""
+    assignment_file = Path(task.workspace) / f".claude-assignment-{employee_index}.json"
+    if assignment_file.exists():
+        try:
+            assignment = json.loads(assignment_file.read_text())
+            assign_issue = assignment.get("issue_number", "")
+            assign_title = assignment.get("issue_title", "")
+            assignment_section = f"""
+## DIRECTED MODE: Pre-Assigned Issue
+
+- **Issue**: #{assign_issue}
+- **Title**: {assign_title}
+"""
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    prompt = f"""Work on the repository: {task.project_repo}
+
+Environment variables available:
+- GITHUB_REPO={task.project_repo}
+- GH_TOKEN is set
+
+Your workspace is: {task.workspace}
+
+## PLAN_ONLY_MODE
+
+You are in **plan-only mode**. Create an implementation plan but do NOT write any code.
+
+1. Read the issue fully (including all comments)
+2. Read all relevant source code
+3. Create a detailed implementation plan
+4. Write the plan JSON to: {plan_file}
+5. Write your report to: {task.workspace}/.claude-employee-report{report_suffix}.json with mode "plan_only"
+6. STOP. Do not implement anything.
+{assignment_section}
+{revision_section}
+
+Remember: Plan only. Do NOT create branches, modify source files, or commit anything."""
+
+    return prompt
+
+
+def _build_implement_with_plan_prompt(
+    task: Task,
+    config: CoordinatorConfig,
+    employee_index: int,
+    approved_plan: dict,
+) -> str:
+    """Build the employee prompt for implementation with an approved plan."""
+    report_suffix = f"-{employee_index}" if employee_index > 0 else ""
+    plan_json = json.dumps(approved_plan, indent=2)
+
+    # Include assignment section if present
+    assignment_section = ""
+    assignment_file = Path(task.workspace) / f".claude-assignment-{employee_index}.json"
+    if assignment_file.exists():
+        try:
+            assignment = json.loads(assignment_file.read_text())
+            assign_issue = assignment.get("issue_number", "")
+            assign_title = assignment.get("issue_title", "")
+            assignment_section = f"""
+## DIRECTED MODE: Pre-Assigned Issue
+
+- **Issue**: #{assign_issue}
+- **Title**: {assign_title}
+
+Skip Step 1 (Find Work). Go directly to Step 1b, then Step 2.
+"""
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    prompt = f"""Work on the repository: {task.project_repo}
+
+Environment variables available:
+- GITHUB_REPO={task.project_repo}
+- GH_TOKEN is set
+
+Your workspace is: {task.workspace}
+
+## APPROVED_PLAN: Implementation Plan (Manager-Approved)
+
+You have a pre-approved implementation plan. Follow it as your guide, but use your judgment
+if you discover the plan needs adjustment during implementation.
+
+```json
+{plan_json}
+```
+
+Implement each step, write tests, run the full pipeline, and verify everything works.
+{assignment_section}
+
+Write your report to {task.workspace}/.claude-employee-report{report_suffix}.json
+
+Remember: commit locally but NEVER push. The manager will review and push if approved."""
+
+    return prompt
+
+
+async def run_employee_plan_phase(
+    task: Task,
+    config: CoordinatorConfig,
+    employee_index: int,
+    revision_feedback: str | None = None,
+) -> EmployeeResult:
+    """Spawn employee in plan-only mode.
+
+    Returns EmployeeResult. The plan is written to
+    .claude-employee-plan-{employee_index}.json in the workspace.
+    """
+    prompt = _build_plan_prompt(task, config, employee_index, revision_feedback)
+    system_prompt_file = str(PROMPTS_DIR / "employee.md")
+    stream_file = _get_stream_file(config, task.project_repo, employee_index)
+    # Append "-plan" to distinguish plan phase streams
+    stream_file = stream_file.replace(".stream.jsonl", "-plan.stream.jsonl")
+    stderr_file = stream_file.replace(".stream.jsonl", ".stderr.log")
+
+    # Plan phase uses fewer turns (planning is simpler than implementing)
+    max_turns = min(50, config.max_employee_turns)
+
+    model = config.employee_model
+    fallback_model = (
+        "claude-sonnet-4-6"
+        if model != "claude-sonnet-4-6"
+        else "claude-haiku-4-5-20251001"
+    )
+
+    env = os.environ.copy()
+    env["GITHUB_REPO"] = task.project_repo
+
+    logger.info(
+        "Spawning employee %d PLAN PHASE for task '%s' (model=%s, turns=%d)",
+        employee_index,
+        task.title,
+        model,
+        max_turns,
+    )
+
+    stream_path = Path(stream_file)
+    stream_path.parent.mkdir(parents=True, exist_ok=True)
+
+    stderr_fh = open(stderr_file, "w")
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "claude",
+            "-p",
+            "--verbose",
+            "--output-format",
+            "stream-json",
+            "--no-session-persistence",
+            "--dangerously-skip-permissions",
+            "--model",
+            model,
+            "--fallback-model",
+            fallback_model,
+            "--max-turns",
+            str(max_turns),
+            "--system-prompt-file",
+            system_prompt_file,
+            "--",
+            prompt,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=stderr_fh,
+            cwd=task.workspace,
+            env=env,
+        )
+
+        with open(stream_file, "w") as sf:
+            buf = b""
+            while True:
+                chunk = await proc.stdout.read(65536)
+                if not chunk:
+                    if buf:
+                        sf.write(buf.decode(errors="replace"))
+                        sf.flush()
+                    break
+                buf += chunk
+                while b"\n" in buf:
+                    line, buf = buf.split(b"\n", 1)
+                    sf.write(line.decode(errors="replace") + "\n")
+                    sf.flush()
+
+        await proc.wait()
+    finally:
+        stderr_fh.close()
+
+    exit_code = proc.returncode or 0
+    stderr_content = ""
+    try:
+        stderr_content = Path(stderr_file).read_text().strip()
+    except OSError:
+        pass
+
+    if exit_code != 0 and stderr_content:
+        logger.warning("Employee %d plan phase stderr: %s", employee_index, stderr_content[:500])
+
+    logger.info(
+        "Employee %d PLAN PHASE exited with code %d",
+        employee_index,
+        exit_code,
+    )
+
+    # Rate limit detection (same as run_employee)
+    rate_limited = False
+    rate_limit_reason = ""
+
+    if stderr_content:
+        found, reason = detect_rate_limit_in_text(stderr_content)
+        if found:
+            rate_limited = True
+            rate_limit_reason = f"stderr: {reason}"
+
+    if not rate_limited:
+        found, reason = _check_stream_for_rate_limits(stream_file)
+        if found:
+            rate_limited = True
+            rate_limit_reason = f"stream: {reason}"
+
+    if not rate_limited and exit_code in RATE_LIMIT_EXIT_CODES:
+        try:
+            stream_size = Path(stream_file).stat().st_size
+        except OSError:
+            stream_size = 0
+        if stream_size < 1024:
+            rate_limited = True
+            rate_limit_reason = (
+                f"Exit code {exit_code} with minimal output "
+                f"({stream_size} bytes) suggests plan exhaustion"
+            )
+
+    return EmployeeResult(
+        exit_code=exit_code,
+        stream_file=stream_file,
+        rate_limited=rate_limited,
+        rate_limit_reason=rate_limit_reason,
+        stderr_snippet=stderr_content[:500] if stderr_content else "",
+        stdout_snippet="",
+    )
+
+
 def _get_stream_file(config: CoordinatorConfig, project_repo: str, employee_index: int) -> str:
     """Get the stream file path matching run-manager.sh conventions."""
     repo_name = project_repo.split("/")[-1] if "/" in project_repo else project_repo
@@ -228,6 +490,7 @@ async def run_employee(
     task: Task,
     config: CoordinatorConfig,
     employee_index: int,
+    approved_plan: dict | None = None,
 ) -> EmployeeResult:
     """Spawn a Claude employee subprocess for a task.
 
@@ -236,7 +499,10 @@ async def run_employee(
 
     Matches the CLI invocation pattern from run-manager.sh run_employee().
     """
-    prompt = _build_employee_prompt(task, config, employee_index)
+    if approved_plan is not None:
+        prompt = _build_implement_with_plan_prompt(task, config, employee_index, approved_plan)
+    else:
+        prompt = _build_employee_prompt(task, config, employee_index)
     system_prompt_file = str(PROMPTS_DIR / "employee.md")
     stream_file = _get_stream_file(config, task.project_repo, employee_index)
     stderr_file = stream_file.replace(".stream.jsonl", ".stderr.log")

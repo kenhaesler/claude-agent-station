@@ -14,7 +14,12 @@ if TYPE_CHECKING:
     from agent.coordinator.config import CoordinatorConfig
 
 from agent.coordinator.dag import TaskDAG, Task, TaskStatus
-from agent.coordinator.employee_runner import run_employee, EmployeeResult
+from agent.coordinator.employee_runner import (
+    run_employee,
+    run_employee_plan_phase,
+    EmployeeResult,
+    PROMPTS_DIR,
+)
 from agent.coordinator.stream_monitor import (
     EmployeeActivity,
     ConflictDetector,
@@ -31,6 +36,228 @@ from agent.coordinator.manager import (
 from agent.coordinator.reporter import post_task_event, post_conflict, post_guidance
 
 logger = logging.getLogger(__name__)
+
+
+def _should_skip_planning(task: Task, config: CoordinatorConfig) -> bool:
+    """Check if planning phase should be skipped for this task."""
+    if not config.planning_enabled:
+        return True
+
+    # Check for skip-planning label in assignment file
+    assignment_file = Path(task.workspace) / f".claude-assignment-{task.employee_index}.json"
+    if assignment_file.exists():
+        try:
+            assignment = json.loads(assignment_file.read_text())
+            labels = assignment.get("labels", [])
+            # Labels may be strings or dicts with a "name" key
+            label_names = [
+                l.get("name", "") if isinstance(l, dict) else str(l)
+                for l in labels
+            ]
+            if "skip-planning" in label_names:
+                return True
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    return False
+
+
+async def _run_manager_plan_review(
+    task: Task,
+    config: CoordinatorConfig,
+    employee_index: int,
+    plan: dict,
+) -> tuple[str, str]:
+    """Run manager agent to review an employee's plan.
+
+    Returns (verdict, feedback) where verdict is one of:
+    APPROVE_PLAN, REVISE_PLAN, REJECT_PLAN.
+    """
+    plan_json = json.dumps(plan, indent=2)
+    review_file = Path(config.log_dir) / f"run-{config.run_id}-plan-review-e{employee_index}.md"
+    verdict_file = Path(config.log_dir) / f"run-{config.run_id}-plan-verdict-e{employee_index}.json"
+
+    # Build plan review package
+    review_content = f"""# Plan Review Package - Employee {employee_index}
+
+## MODE: PLAN_REVIEW
+
+Review the implementation plan below. This is NOT code review -- it is plan review before implementation.
+
+## Project: {task.project_repo}
+## Task: {task.title}
+## Description: {task.description}
+
+## Employee's Implementation Plan:
+```json
+{plan_json}
+```
+
+Write your plan verdict to: {verdict_file}
+"""
+    review_file.write_text(review_content)
+
+    # Run manager for plan review
+    manager_model = "claude-sonnet-4-6"
+    manager_prompt = (
+        f"Review the employee's implementation plan in: {review_file}\n\n"
+        f"Write your plan verdict to: {verdict_file}\n\n"
+        "Use APPROVE_PLAN if the plan is solid, REVISE_PLAN with specific feedback "
+        "if it needs changes, or REJECT_PLAN if the plan is fundamentally flawed."
+    )
+
+    manager_system = str(PROMPTS_DIR / "manager.md")
+    stream_file = str(
+        Path(config.log_dir) / f"run-{config.run_id}-plan-review-e{employee_index}.stream.jsonl"
+    )
+    stderr_file = stream_file.replace(".stream.jsonl", ".stderr.log")
+
+    env = os.environ.copy()
+    env["GITHUB_REPO"] = task.project_repo
+
+    Path(stream_file).parent.mkdir(parents=True, exist_ok=True)
+
+    stderr_fh = open(stderr_file, "w")
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "claude",
+            "-p",
+            "--verbose",
+            "--output-format",
+            "stream-json",
+            "--no-session-persistence",
+            "--dangerously-skip-permissions",
+            "--model",
+            manager_model,
+            "--max-turns",
+            "10",
+            "--system-prompt-file",
+            manager_system,
+            "--",
+            manager_prompt,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=stderr_fh,
+            cwd=task.workspace,
+            env=env,
+        )
+
+        with open(stream_file, "w") as sf:
+            buf = b""
+            while True:
+                chunk = await proc.stdout.read(65536)
+                if not chunk:
+                    if buf:
+                        sf.write(buf.decode(errors="replace"))
+                        sf.flush()
+                    break
+                buf += chunk
+                while b"\n" in buf:
+                    line, buf = buf.split(b"\n", 1)
+                    sf.write(line.decode(errors="replace") + "\n")
+                    sf.flush()
+
+        await proc.wait()
+    finally:
+        stderr_fh.close()
+
+    # Parse verdict file
+    if verdict_file.exists():
+        try:
+            verdict_data = json.loads(verdict_file.read_text())
+            verdicts = verdict_data.get("plan_verdicts", [])
+            if verdicts:
+                v = verdicts[0]
+                return v.get("verdict", "APPROVE_PLAN"), v.get("feedback", "")
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    # Default to approve if manager didn't produce parseable verdict
+    logger.warning("Could not parse plan verdict for employee %d, defaulting to APPROVE_PLAN", employee_index)
+    return "APPROVE_PLAN", ""
+
+
+async def _run_plan_review_loop(
+    task: Task,
+    config: CoordinatorConfig,
+    employee_index: int,
+) -> dict | None:
+    """Run the plan-create -> manager-review -> revise loop.
+
+    Returns the approved plan dict, or None if planning failed/was rejected.
+    """
+    max_revisions = config.planning_max_revisions
+    revision_feedback: str | None = None
+
+    for attempt in range(max_revisions + 1):  # initial + N revisions
+        # Run employee in plan-only mode
+        result = await run_employee_plan_phase(
+            task,
+            config,
+            employee_index,
+            revision_feedback=revision_feedback,
+        )
+
+        if result.exit_code != 0 or result.rate_limited:
+            logger.warning(
+                "Employee %d plan phase failed (exit=%d, rate_limited=%s)",
+                employee_index,
+                result.exit_code,
+                result.rate_limited,
+            )
+            return None
+
+        # Read the plan file
+        plan_file = Path(task.workspace) / f".claude-employee-plan-{employee_index}.json"
+        if not plan_file.exists():
+            logger.warning("Employee %d did not produce a plan file", employee_index)
+            return None
+
+        try:
+            plan = json.loads(plan_file.read_text())
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning("Failed to read plan file for employee %d: %s", employee_index, e)
+            return None
+
+        # Run manager plan review
+        verdict, feedback = await _run_manager_plan_review(
+            task,
+            config,
+            employee_index,
+            plan,
+        )
+
+        if verdict == "APPROVE_PLAN":
+            logger.info("Plan APPROVED for employee %d", employee_index)
+            # Write approved plan for reference during implementation
+            approved_file = Path(task.workspace) / f".claude-approved-plan-{employee_index}.json"
+            approved_file.write_text(json.dumps(plan, indent=2))
+            return plan
+
+        elif verdict == "REJECT_PLAN":
+            logger.warning("Plan REJECTED for employee %d: %s", employee_index, feedback)
+            return None
+
+        elif verdict == "REVISE_PLAN":
+            if attempt < max_revisions:
+                logger.info(
+                    "Plan needs revision for employee %d (attempt %d/%d): %s",
+                    employee_index,
+                    attempt + 1,
+                    max_revisions,
+                    feedback[:200],
+                )
+                revision_feedback = feedback
+            else:
+                logger.warning(
+                    "Max plan revisions (%d) reached for employee %d, auto-approving",
+                    max_revisions,
+                    employee_index,
+                )
+                approved_file = Path(task.workspace) / f".claude-approved-plan-{employee_index}.json"
+                approved_file.write_text(json.dumps(plan, indent=2))
+                return plan
+
+    return None
 
 
 async def run_scheduler(dag: TaskDAG, config: CoordinatorConfig) -> None:
@@ -228,9 +455,27 @@ async def _run_and_monitor(
 ) -> str:
     """Run an employee and monitor their stream. Returns task_id when done."""
     try:
-        # Start employee subprocess
+        # --- Plan review gate ---
+        approved_plan: dict | None = None
+        if not _should_skip_planning(task, config):
+            logger.info(
+                "Starting plan phase for employee %d, task '%s'",
+                employee_index,
+                task.title,
+            )
+            approved_plan = await _run_plan_review_loop(task, config, employee_index)
+            if approved_plan is None:
+                logger.warning(
+                    "Plan phase failed for employee %d, marking task failed",
+                    employee_index,
+                )
+                await dag.mark_failed(task.id, "Plan phase failed or was rejected")
+                post_task_event(config, "task_failed", task)
+                return task.id
+
+        # Start employee subprocess (with approved plan if available)
         employee_task = asyncio.create_task(
-            run_employee(task, config, employee_index)
+            run_employee(task, config, employee_index, approved_plan=approved_plan)
         )
 
         # Wait briefly for stream file to appear, then start monitoring
