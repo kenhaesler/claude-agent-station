@@ -563,57 +563,61 @@ export class WorkspaceRenderer {
     if (count === 0) return;
 
     const phase = this.phase;
-    const r = this.orbitRadius;
+    // Elliptical orbit — wide landscape spread, compact vertical.
+    // hubX = w/2, hubY = h/2.
+    const w = this.hubX * 2;
+    const h = this.hubY * 2;
+    const baseRx = w * 0.40;   // generous horizontal spread
+    const baseRy = h * 0.25;   // compact vertical band
 
-    // Minimum radius to prevent node overlap.
-    // For n nodes on a circle of radius R, closest pair distance = 2R·sin(π/n).
-    // Require this >= MIN_NODE_SPACING (outer tech ring × 2).
-    const MIN_NODE_SPACING = 80;
+    // Overlap guard: on an ellipse, minimum adjacent-node distance =
+    // 2·sin(π/n)·min(rx,ry). We only need to floor the shorter axis.
+    const MIN_NODE_SPACING = 100;
     const minR = count >= 2
       ? MIN_NODE_SPACING / (2 * Math.sin(Math.PI / count))
       : MIN_NODE_SPACING * 0.5;
+    // Keep nodes outside the hub's outermost visible ring + small gap
+    const minHubClearance = this.hubRadius * 2 + 30;
+    const floor = Math.max(minR, minHubClearance);
 
     for (let i = 0; i < count; i++) {
       const node = this.nodes[i];
-      const angle = (i / count) * Math.PI * 2 - Math.PI / 2;
+      // Start at 0 (rightward) so 2-node layouts spread horizontally,
+      // not vertically (the old -π/2 put 2 nodes at top/bottom).
+      const angle = (i / count) * Math.PI * 2;
 
-      let targetR = r;
+      let mult = 1.0;
       if (phase === 'idle') {
-        targetR = r;
+        mult = 1.0;
         node.opacity = Math.max(node.opacity, 0.5);
       } else if (phase === 'manager_review') {
-        if (node.role === 'manager') {
-          targetR = r * 0.3;
-        } else if (node.isActive) {
-          targetR = r * 0.5;
-        } else {
-          targetR = r * 0.65;
-        }
+        if (node.role === 'manager') mult = 0.45;
+        else if (node.isActive) mult = 0.6;
+        else mult = 0.75;
       } else if (phase === 'employee') {
-        if (node.isActive) {
-          targetR = r * 0.45;
-        } else if (node.role === 'manager') {
-          targetR = r;
-        } else {
-          targetR = r * 0.6;
-        }
+        if (node.isActive) mult = 0.55;
+        else if (node.role === 'manager') mult = 1.0;
+        else mult = 0.7;
       } else if (phase === 'coordinating') {
-        if (node.role === 'coordinator') {
-          targetR = r * 0.3;
-        } else if (node.role === 'manager') {
-          targetR = r;
-        } else {
-          targetR = r * 0.6;
-        }
+        if (node.role === 'coordinator') mult = 0.45;
+        else if (node.role === 'manager') mult = 1.0;
+        else mult = 0.7;
       } else if (phase === 'executing_verdict') {
-        targetR = r * 0.35;
+        mult = 0.5;
       }
 
-      // Enforce minimum radius to prevent overlapping nodes
-      targetR = Math.max(targetR, minR);
+      let targetRx = baseRx * mult;
+      let targetRy = baseRy * mult;
 
-      node.targetX = this.hubX + Math.cos(angle) * targetR;
-      node.targetY = this.hubY + Math.sin(angle) * targetR;
+      // Only clamp the shorter axis to the floor — keeps the ellipse wide
+      if (targetRx <= targetRy) {
+        targetRx = Math.max(targetRx, floor);
+      } else {
+        targetRy = Math.max(targetRy, floor);
+      }
+
+      node.targetX = this.hubX + Math.cos(angle) * targetRx;
+      node.targetY = this.hubY + Math.sin(angle) * targetRy;
     }
   }
 
