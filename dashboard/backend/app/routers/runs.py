@@ -76,6 +76,10 @@ async def get_active_employees(db: AsyncSession = Depends(get_db)):
             status=r.status or "running",
             issue_number=r.issue_number,
             turns=r.turns,
+            employee_index=r.employee_index,
+            concurrent_group_id=r.concurrent_group_id,
+            model=r.model,
+            branch=r.branch,
         )
         for r in runs
     ]

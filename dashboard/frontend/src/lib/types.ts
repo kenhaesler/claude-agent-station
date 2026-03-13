@@ -67,6 +67,10 @@ export interface ActiveEmployeeData {
   status: string;
   issue_number: number | null;
   turns: number | null;
+  employee_index: number | null;
+  concurrent_group_id: string | null;
+  model: string | null;
+  branch: string | null;
 }
 
 export interface Plan {

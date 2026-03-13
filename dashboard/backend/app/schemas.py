@@ -84,6 +84,10 @@ class ActiveEmployeeOut(BaseModel):
     status: str
     issue_number: Optional[int] = None
     turns: Optional[int] = None
+    employee_index: Optional[int] = None
+    concurrent_group_id: Optional[str] = None
+    model: Optional[str] = None
+    branch: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 

@@ -15,6 +15,10 @@
   let renderer: WorkspaceRenderer | null = null;
   let tooltip = $state<{ text: string; x: number; y: number } | null>(null);
 
+  // HUD tool cycling state
+  let hudToolCycleIndex = $state(0);
+  let hudToolCycleTimer: ReturnType<typeof setInterval> | null = null;
+
   // Initialize renderer
   $effect(() => {
     if (!canvas || !container) return;
@@ -23,6 +27,15 @@
     const rect = container.getBoundingClientRect();
     renderer.resize(rect.width, rect.height);
     renderer.start();
+
+    // Sound event hook architecture — custom event for Web Audio integration
+    const unsubSound = renderer.onSoundEvent((event) => {
+      // Dispatch custom DOM event for Web Audio API consumers
+      container.dispatchEvent(new CustomEvent('workspace-sound', {
+        detail: event,
+        bubbles: true,
+      }));
+    });
 
     const ro = new ResizeObserver((entries) => {
       for (const entry of entries) {
@@ -34,14 +47,21 @@
     });
     ro.observe(container);
 
+    // HUD tool cycling timer (every 3s)
+    hudToolCycleTimer = setInterval(() => {
+      hudToolCycleIndex++;
+    }, 3000);
+
     return () => {
       renderer?.stop();
+      unsubSound();
       renderer = null;
       ro.disconnect();
+      if (hudToolCycleTimer) { clearInterval(hudToolCycleTimer); hudToolCycleTimer = null; }
     };
   });
 
-  // Feed agent-presence data to renderer
+  // Feed agent-presence data to renderer (with employee data)
   $effect(() => {
     renderer?.setData({
       agents: agentPresence.agents.map(a => ({
@@ -54,6 +74,18 @@
         currentAction: a.currentAction,
         turnCount: agentPresence.turnCount,
         tokenCount: agentPresence.tokensBurned,
+        employees: agentPresence.activeRuns
+          .filter(r => r.mode !== 'manager' && r.mode !== 'analyst')
+          .map((r, i) => ({
+            index: i,
+            runId: r.run_id,
+            status: r.status === 'running' ? 'working' as const : 'waiting' as const,
+            tool: null,
+            issueNumber: r.issue_number,
+            inWorktree: false, // TODO: populate from backend when available
+            tokensUsed: 0,
+            turnsUsed: r.turns ?? 0,
+          })),
       })),
       phase: agentPresence.phase,
       serviceActive: systemStatus?.service.active ?? false,
@@ -89,6 +121,11 @@
           renderer.triggerEvent('run_start');
         } else if (entry.type === 'phase' && entry.content.includes('completed')) {
           renderer.triggerEvent('run_complete');
+        } else if (entry.type === 'system' && entry.content.includes('REAPER')) {
+          // Parse reaper count from message
+          const match = entry.content.match(/(\d+)/);
+          const count = match ? parseInt(match[1]) : 1;
+          renderer.triggerEvent('reaper_sweep', { reaperCount: count });
         }
       }
     }
@@ -97,18 +134,31 @@
 
   function handleMouseMove(e: MouseEvent) {
     if (!renderer) return;
+    // Update parallax
+    const rect = container.getBoundingClientRect();
+    renderer.setMousePosition(e.clientX - rect.left, e.clientY - rect.top);
+
+    // Check employee orbitals first (more specific)
+    const empTooltip = renderer.getEmployeeTooltip(e.clientX, e.clientY);
+    if (empTooltip) {
+      tooltip = {
+        text: empTooltip,
+        x: e.clientX - rect.left,
+        y: e.clientY - rect.top - 28,
+      };
+      return;
+    }
+
     const node = renderer.getNodeAt(e.clientX, e.clientY);
     if (node) {
-      const rect = container.getBoundingClientRect();
       tooltip = {
-        text: `${node.name} — ${node.isActive ? 'Active' : node.isThinking ? 'Thinking' : 'Idle'}`,
+        text: `${node.name} -- ${node.isActive ? 'Active' : node.isThinking ? 'Thinking' : 'Idle'}`,
         x: e.clientX - rect.left,
         y: e.clientY - rect.top - 28,
       };
     } else if (renderer.isHubAt(e.clientX, e.clientY)) {
-      const rect = container.getBoundingClientRect();
       tooltip = {
-        text: `Station — ${agentPresence.phase === 'idle' ? 'Idle' : agentPresence.phase.replace('_', ' ')}`,
+        text: `Station -- ${agentPresence.phase === 'idle' ? 'Idle' : agentPresence.phase.replace('_', ' ')}`,
         x: e.clientX - rect.left,
         y: e.clientY - rect.top - 28,
       };
@@ -123,6 +173,15 @@
 
   function handleClick(e: MouseEvent) {
     if (!renderer) return;
+
+    // Check employee orbital click -> navigate to run detail
+    const emp = renderer.getEmployeeAt(e.clientX, e.clientY);
+    if (emp) {
+      // Navigate to run detail page
+      window.location.hash = `#/runs/${emp.runId}`;
+      return;
+    }
+
     const node = renderer.getNodeAt(e.clientX, e.clientY);
     if (node) {
       togglePanel(node.name);
@@ -146,13 +205,52 @@
     : agentPresence.phase === 'executing_verdict' ? 'text-approve'
     : 'text-text-dim'
   );
+
+  // Active employee count
+  let activeEmployeeCount = $derived(
+    agentPresence.activeRuns.filter(r => r.mode !== 'manager' && r.mode !== 'analyst' && r.status === 'running').length
+  );
+
+  // Employee heartbeat dots for top-right HUD
+  let employeeStatuses = $derived(
+    agentPresence.activeRuns
+      .filter(r => r.mode !== 'manager' && r.mode !== 'analyst')
+      .map((r, i) => ({
+        index: i,
+        status: r.status === 'running' ? 'working' : 'waiting',
+        color: r.status === 'running' ? 'bg-info' : 'bg-warning',
+      }))
+  );
+
+  // HUD bottom-left: cycle through active employee tools
+  let cyclingToolText = $derived(() => {
+    const employees = agentPresence.activeRuns.filter(r => r.mode !== 'manager' && r.mode !== 'analyst');
+    if (employees.length === 0) return null;
+    const idx = hudToolCycleIndex % employees.length;
+    const emp = employees[idx];
+    const tool = agentPresence.currentTool;
+    if (tool) {
+      return `E${idx}: ${tool.name} -- ${tool.summary.slice(0, 30)}`;
+    }
+    return `E${idx}: idle`;
+  });
+
+  // HUD bottom-right: per-employee token/turn breakdown
+  let employeeTokenBreakdown = $derived(
+    agentPresence.activeRuns
+      .filter(r => r.mode !== 'manager' && r.mode !== 'analyst')
+      .map((r, i) => ({
+        index: i,
+        turns: r.turns ?? 0,
+      }))
+  );
 </script>
 
 <div
   bind:this={container}
   class="relative w-full h-full"
   role="img"
-  aria-label="Agent network visualization — Mission Cortex"
+  aria-label="Agent network visualization -- Mission Cortex"
 >
   <canvas
     bind:this={canvas}
@@ -171,17 +269,17 @@
     </div>
   {/if}
 
-  <!-- Status overlay: top-left -->
+  <!-- HUD: top-left — phase + active employee count -->
   <div class="absolute top-2 left-2 pointer-events-none z-10">
     <div class="text-[9px] font-data tracking-widest {phaseColorClass}">
-      {phaseLabel}
+      {phaseLabel}{#if activeEmployeeCount > 0} &middot; {activeEmployeeCount} EMPLOYEE{activeEmployeeCount !== 1 ? 'S' : ''}{/if}
     </div>
     <div class="text-[8px] font-data text-text-dim mt-0.5 opacity-60">
       Mission Cortex
     </div>
   </div>
 
-  <!-- Status overlay: top-right -->
+  <!-- HUD: top-right — connection status + employee heartbeat dots -->
   <div class="absolute top-2 right-2 pointer-events-none z-10 text-right">
     <div class="flex items-center justify-end gap-1">
       <span class="text-[8px] font-data tracking-wider {agentPresence.wsConnected ? 'text-approve' : 'text-reject'}">
@@ -194,13 +292,43 @@
         {agentPresence.turnCount} turns
       </div>
     {/if}
+    <!-- Employee heartbeat indicators -->
+    {#if employeeStatuses.length > 0}
+      <div class="flex items-center justify-end gap-0.5 mt-1">
+        {#each employeeStatuses as emp}
+          <div
+            class="w-1.5 h-1.5 rounded-full {emp.color}"
+            class:animate-pulse={emp.status === 'working'}
+            title="Employee {emp.index}: {emp.status}"
+          ></div>
+        {/each}
+      </div>
+    {/if}
   </div>
 
-  <!-- Bottom-right: usage -->
+  <!-- HUD: bottom-left — cycling through active employee tools -->
+  <div class="absolute bottom-2 left-2 pointer-events-none z-10">
+    {#if cyclingToolText()}
+      <div class="text-[8px] font-data text-text-dim opacity-60 transition-opacity duration-300">
+        {cyclingToolText()}
+      </div>
+    {/if}
+  </div>
+
+  <!-- HUD: bottom-right — usage + per-employee token breakdown -->
   <div class="absolute bottom-2 right-2 pointer-events-none z-10 text-right">
     {#if usage}
       <div class="text-[8px] font-data text-text-dim opacity-60">
         Usage {Math.round(usage.usage_percent)}%
+      </div>
+    {/if}
+    {#if employeeTokenBreakdown.length > 0}
+      <div class="mt-0.5">
+        {#each employeeTokenBreakdown as emp}
+          <div class="text-[7px] font-data text-text-dim opacity-40">
+            E{emp.index}: {emp.turns}t
+          </div>
+        {/each}
       </div>
     {/if}
   </div>
