@@ -797,9 +797,43 @@ Remember: You are in ANALYZE mode. Read and analyze only — do NOT modify any s
     else
         system_prompt="$(resolve_prompt employee)"
 
-        # Check if there's a plan file to implement
-        local plan_file="$workspace/.claude-plan-to-implement.json"
-        if [ -f "$plan_file" ]; then
+        # Check if there's an approved plan from the plan-review phase
+        local approved_plan_file="$workspace/.claude-approved-plan-${employee_index}.json"
+        if [ -f "$approved_plan_file" ]; then
+            local aplan_json aplan_issue
+            aplan_json=$(cat "$approved_plan_file")
+            aplan_issue=$(python3 -c "import json; print(json.load(open('$approved_plan_file')).get('issue_number',''))" 2>/dev/null || echo "")
+
+            log_info "Found approved plan for employee $employee_index (issue #$aplan_issue)"
+            employee_prompt="Work on the repository: $repo
+
+Environment variables available:
+- GITHUB_REPO=$repo
+- GH_TOKEN is set
+
+Your workspace is: $workspace
+
+## APPROVED_PLAN: Implementation Plan (Manager-Approved)
+
+You have a pre-approved implementation plan. Follow it as your guide, but use your judgment
+if you discover the plan needs adjustment during implementation.
+
+\`\`\`json
+$aplan_json
+\`\`\`
+
+Implement each step, write tests, run the full pipeline, and verify everything works.
+
+Write your report to $workspace/.claude-employee-report${report_suffix}.json
+
+Remember: commit locally but NEVER push. The manager will review and push if approved."
+
+            # Keep the approved plan file for cross-reference during manager review
+            # It will be cleaned up at the end of the run
+
+        # Check if there's a plan file to implement (legacy dashboard-approved plans)
+        elif [ -f "$workspace/.claude-plan-to-implement.json" ]; then
+            local plan_file="$workspace/.claude-plan-to-implement.json"
             local plan_title plan_issue plan_description plan_steps
             plan_title=$(python3 -c "import json; print(json.load(open('$plan_file')).get('title',''))" 2>/dev/null || echo "")
             plan_issue=$(python3 -c "import json; print(json.load(open('$plan_file')).get('issue_number',''))" 2>/dev/null || echo "")
@@ -1051,6 +1085,247 @@ print(f'{t:,}')
 }
 
 # ============================================================================
+# SHARED: Claude CLI subprocess helper
+# ============================================================================
+
+run_claude_agent() {
+    # Shared helper to build and execute the standard Claude CLI command.
+    # Used by run_employee_plan_only() and run_manager_plan_review().
+    # run_employee() keeps its own execution (has special inline stream parsing).
+    local model="$1" fallback="$2" turns="$3" sysprompt="$4"
+    local prompt="$5" stream="$6" stderr="$7" workspace="$8" repo="$9"
+
+    local -a cmd=(claude -p --verbose --output-format stream-json --no-session-persistence --dangerously-skip-permissions)
+    cmd+=(--model "$model")
+    cmd+=(--fallback-model "$fallback")
+    cmd+=(--max-turns "$turns")
+    cmd+=(--system-prompt-file "$sysprompt")
+
+    if [ "$DRY_RUN" = true ]; then
+        log_info "[DRY RUN] Would run claude agent (model=$model, turns=$turns)"
+        return 0
+    fi
+
+    cd "$workspace"
+    GITHUB_REPO="$repo" "${cmd[@]}" -- "$prompt" > "$stream" 2>>"$stderr"
+    return $?
+}
+
+# ============================================================================
+# PLAN REVIEW (Phase 1.5: Plan-before-implement loop)
+# ============================================================================
+
+should_skip_planning() {
+    local repo="$1" project_index="$2" employee_index="${3:-0}"
+
+    # Check global config flag
+    local planning_enabled
+    planning_enabled=$(json_get "$CONFIG_FILE" "planning.enabled" 2>/dev/null || echo "true")
+    [ "$planning_enabled" = "false" ] && return 0
+
+    # Check for skip-planning label on the assigned issue
+    local name workspace
+    name=$(repo_name "$repo")
+    workspace="$WORKSPACES_DIR/$name"
+    local assignment_file="$workspace/.claude-assignment-${employee_index}.json"
+    if [ -f "$assignment_file" ]; then
+        local has_skip_label
+        has_skip_label=$(python3 -c "
+import json
+a = json.load(open('$assignment_file'))
+labels = [l.get('name','') if isinstance(l, dict) else str(l) for l in a.get('labels', [])]
+print('true' if 'skip-planning' in labels else 'false')
+" 2>/dev/null || echo "false")
+        [ "$has_skip_label" = "true" ] && return 0
+    fi
+
+    return 1  # Don't skip (planning is required)
+}
+
+run_employee_plan_only() {
+    local repo="$1" workspace="$2" project_index="$3"
+    local employee_index="${4:-0}"
+    local revision_feedback="${5:-}"
+    local name
+    name=$(repo_name "$repo")
+
+    local report_suffix=""
+    [ "$employee_index" -gt 0 ] && report_suffix="-${employee_index}"
+
+    local plan_output="$workspace/.claude-employee-plan-${employee_index}.json"
+    rm -f "$plan_output"
+
+    local model max_turns
+    model=$(json_get "$CONFIG_FILE" "models.employee" 2>/dev/null || echo "claude-opus-4-6")
+    max_turns=20  # Plan phase is lighter — 20 turns is generous
+
+    local fallback_model="claude-sonnet-4-6"
+    [ "$model" = "claude-sonnet-4-6" ] && fallback_model="claude-haiku-4-5-20251001"
+
+    local system_prompt="$(resolve_prompt employee)"
+
+    # Check for assignment
+    local assignment_section=""
+    local assignment_file="$workspace/.claude-assignment-${employee_index}.json"
+    if [ -f "$assignment_file" ]; then
+        local assign_issue assign_title
+        assign_issue=$(python3 -c "import json; print(json.load(open('$assignment_file')).get('issue_number',''))" 2>/dev/null || echo "")
+        assign_title=$(python3 -c "import json; print(json.load(open('$assignment_file')).get('issue_title',''))" 2>/dev/null || echo "")
+        assignment_section="
+## DIRECTED MODE: Pre-Assigned Issue
+
+- **Issue**: #${assign_issue}
+- **Title**: ${assign_title}
+"
+    fi
+
+    local revision_section=""
+    if [ -n "$revision_feedback" ]; then
+        revision_section="
+## PLAN_REVISION: Manager Feedback on Previous Plan
+
+The manager reviewed your previous plan and requested changes:
+
+${revision_feedback}
+
+Revise your plan based on this feedback.
+"
+    fi
+
+    local employee_prompt="Work on the repository: $repo
+
+Environment variables available:
+- GITHUB_REPO=$repo
+- GH_TOKEN is set
+
+Your workspace is: $workspace
+
+## PLAN_ONLY_MODE
+
+You are in **plan-only mode**. Create an implementation plan but do NOT write any code.
+
+1. Read the issue fully (including all comments)
+2. Read all relevant source code
+3. Create a detailed implementation plan
+4. Write the plan JSON to: $plan_output
+5. Write your report to: $workspace/.claude-employee-report${report_suffix}.json with mode \"plan_only\"
+6. STOP. Do not implement anything.
+${assignment_section}
+${revision_section}
+
+Remember: Plan only. Do NOT create branches, modify source files, or commit anything."
+
+    local stream_file="$LOG_DIR/run-${RUN_ID}-employee-${name}-plan.stream.jsonl"
+    local stderr_file="$LOG_DIR/run-${RUN_ID}-employee-${name}-plan.stderr.log"
+
+    log_info "Running employee plan phase for $repo (employee $employee_index)"
+
+    run_claude_agent "$model" "$fallback_model" "$max_turns" "$system_prompt" \
+        "$employee_prompt" "$stream_file" "$stderr_file" "$workspace" "$repo"
+    local exit_code=$?
+
+    record_session
+
+    if [ $exit_code -eq 0 ] && [ -f "$plan_output" ]; then
+        log_ok "Employee plan phase complete for $repo"
+        return 0
+    else
+        log_warn "Employee plan phase failed for $repo (exit $exit_code)"
+        return 1
+    fi
+}
+
+run_manager_plan_review() {
+    local repo="$1" workspace="$2" employee_index="${3:-0}"
+    local name
+    name=$(repo_name "$repo")
+
+    local plan_file="$workspace/.claude-employee-plan-${employee_index}.json"
+    local verdict_file="$LOG_DIR/run-${RUN_ID}-plan-verdict-${name}.json"
+    local review_file="$LOG_DIR/run-${RUN_ID}-plan-review-${name}.md"
+
+    if [ ! -f "$plan_file" ]; then
+        log_warn "No plan file found for $repo employee $employee_index"
+        return 1
+    fi
+
+    # Build review package
+    {
+        echo "# Plan Review Package - Employee $employee_index"
+        echo ""
+        echo "## MODE: PLAN_REVIEW"
+        echo ""
+        echo "## Project: $repo"
+        echo ""
+        echo "## Employee's Implementation Plan:"
+        echo '```json'
+        cat "$plan_file"
+        echo '```'
+        echo ""
+        echo "Write your plan verdict to: $verdict_file"
+    } > "$review_file"
+
+    local model
+    model=$(json_get "$CONFIG_FILE" "models.manager" 2>/dev/null || echo "claude-sonnet-4-6")
+
+    local manager_fallback="claude-haiku-4-5-20251001"
+    [ "$model" = "claude-haiku-4-5-20251001" ] && manager_fallback="claude-sonnet-4-6"
+
+    local manager_prompt="Review the employee's implementation plan in: $review_file
+
+Write your plan verdict to: $verdict_file
+
+Use APPROVE_PLAN if the plan is solid, REVISE_PLAN with specific feedback if it needs changes, or REJECT_PLAN if fundamentally flawed."
+
+    local stream_file="$LOG_DIR/run-${RUN_ID}-plan-review-${name}.stream.jsonl"
+    local stderr_file="$LOG_DIR/run-${RUN_ID}-plan-review-${name}.stderr.log"
+
+    log_info "Running manager plan review for $repo"
+
+    run_claude_agent "$model" "$manager_fallback" 5 "$(resolve_prompt manager)" \
+        "$manager_prompt" "$stream_file" "$stderr_file" "$workspace" "$repo"
+
+    record_session
+
+    # Parse verdict
+    if [ -f "$verdict_file" ]; then
+        local plan_verdict
+        plan_verdict=$(python3 -c "
+import json
+with open('$verdict_file') as f:
+    data = json.load(f)
+verdicts = data.get('plan_verdicts', [])
+if verdicts:
+    print(verdicts[0].get('verdict', 'APPROVE_PLAN'))
+else:
+    print('APPROVE_PLAN')
+" 2>/dev/null || echo "APPROVE_PLAN")
+        echo "$plan_verdict"
+    else
+        log_warn "No plan verdict file produced for $repo, defaulting to APPROVE_PLAN"
+        echo "APPROVE_PLAN"
+    fi
+}
+
+get_plan_review_feedback() {
+    local repo="$1"
+    local name
+    name=$(repo_name "$repo")
+    local verdict_file="$LOG_DIR/run-${RUN_ID}-plan-verdict-${name}.json"
+
+    if [ -f "$verdict_file" ]; then
+        python3 -c "
+import json
+with open('$verdict_file') as f:
+    data = json.load(f)
+verdicts = data.get('plan_verdicts', [])
+if verdicts:
+    print(verdicts[0].get('feedback', ''))
+" 2>/dev/null || echo ""
+    fi
+}
+
+# ============================================================================
 # MANAGER REVIEW
 # ============================================================================
 
@@ -1136,6 +1411,16 @@ collect_employee_reports() {
             cat "$report_file" >> "$review_package"
             echo '```' >> "$review_package"
             echo "" >> "$review_package"
+
+            # Include approved plan if it exists (for cross-reference during review)
+            local approved_plan_f="$workspace/.claude-approved-plan-${report_idx}.json"
+            if [ -f "$approved_plan_f" ]; then
+                echo "### ${employee_label} Approved Plan (for cross-reference)" >> "$review_package"
+                echo '```json' >> "$review_package"
+                cat "$approved_plan_f" >> "$review_package"
+                echo '```' >> "$review_package"
+                echo "" >> "$review_package"
+            fi
 
             # Git diff (main vs current branch)
             cd "$workspace"
@@ -1973,6 +2258,58 @@ print(f'Wrote {len(assignments)} assignments')
                 workspace="$WORKSPACES_DIR/$(repo_name "$repo")"
             fi
 
+            # ---- Plan review gate ----
+            if ! should_skip_planning "$repo" "$i" "$ei"; then
+                local max_plan_revisions
+                max_plan_revisions=$(json_get "$CONFIG_FILE" "planning.max_revisions" 2>/dev/null || echo "2")
+                local plan_approved=false
+
+                for ((pr = 0; pr <= max_plan_revisions; pr++)); do
+                    local plan_feedback=""
+                    [ "$pr" -gt 0 ] && plan_feedback=$(get_plan_review_feedback "$repo")
+
+                    if ! run_employee_plan_only "$repo" "$workspace" "$i" "$ei" "$plan_feedback"; then
+                        log_warn "Plan phase failed for $repo employee $ei"
+                        break
+                    fi
+
+                    if ! check_rate_limit; then
+                        log_warn "Rate limit reached during plan review"
+                        break 3
+                    fi
+
+                    local plan_verdict
+                    plan_verdict=$(run_manager_plan_review "$repo" "$workspace" "$ei")
+
+                    if [ "$plan_verdict" = "APPROVE_PLAN" ]; then
+                        # Copy plan as approved plan for implementation
+                        cp "$workspace/.claude-employee-plan-${ei}.json" \
+                           "$workspace/.claude-approved-plan-${ei}.json"
+                        plan_approved=true
+                        log_ok "Plan APPROVED for $repo employee $ei"
+                        break
+                    elif [ "$plan_verdict" = "REJECT_PLAN" ]; then
+                        log_warn "Plan REJECTED for $repo employee $ei"
+                        break
+                    else
+                        # REVISE_PLAN
+                        log_info "Plan needs revision for $repo employee $ei (attempt $((pr+1))/$max_plan_revisions)"
+                        if [ "$pr" -eq "$max_plan_revisions" ]; then
+                            log_warn "Max plan revisions reached, auto-approving"
+                            cp "$workspace/.claude-employee-plan-${ei}.json" \
+                               "$workspace/.claude-approved-plan-${ei}.json"
+                            plan_approved=true
+                        fi
+                    fi
+                done
+
+                if [ "$plan_approved" = false ]; then
+                    log_warn "Skipping implementation for $repo employee $ei (plan not approved)"
+                    continue
+                fi
+            fi
+            # ---- End plan review gate ----
+
             # Calculate per-employee turn budget
             local employee_turns
             employee_turns=$(calculate_employee_budget "$total_employees" "$priority")
@@ -2040,8 +2377,11 @@ print(f'Wrote {len(assignments)} assignments')
         # Clean up worktrees
         cleanup_worktrees "$repo_wt" 2>/dev/null || true
 
-        # Clean up assignment files
+        # Clean up assignment files and plan files
         rm -f "$main_ws_wt"/.claude-assignment-*.json 2>/dev/null || true
+        rm -f "$main_ws_wt"/.claude-employee-plan-*.json 2>/dev/null || true
+        rm -f "$main_ws_wt"/.claude-plan-feedback-*.json 2>/dev/null || true
+        # Note: .claude-approved-plan-*.json is cleaned up AFTER manager review (needed for cross-reference)
     done
 
     # ---- PHASE 2: Manager review ----
@@ -2091,6 +2431,15 @@ print(f'Wrote {len(assignments)} assignments')
 
     # ---- PHASE 3: Execute verdicts ----
     execute_verdicts "$verdicts_file"
+
+    # ---- PHASE 3a: Clean up approved plan files (no longer needed after review) ----
+    for ((i = 0; i < project_count; i++)); do
+        local repo_ap
+        repo_ap=$(get_project_field "$i" "repo")
+        local name_ap
+        name_ap=$(repo_name "$repo_ap")
+        rm -f "$WORKSPACES_DIR/$name_ap"/.claude-approved-plan-*.json 2>/dev/null || true
+    done
 
     # ---- PHASE 3b: Retry loop for rejected projects ----
     local max_retries

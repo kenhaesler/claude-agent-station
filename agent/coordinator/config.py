@@ -40,6 +40,10 @@ class CoordinatorConfig:
     plan_tier: str = "max_5x"
     max_usage_percent: float = 85.0
 
+    # Planning phase configuration (plan-before-implement)
+    planning_enabled: bool = True
+    planning_max_revisions: int = 2
+
     @classmethod
     def from_args(
         cls,
@@ -90,6 +94,10 @@ class CoordinatorConfig:
             cfg.db_path = coordinator.get("db_path", cfg.db_path)
             cfg.plan_tier = coordinator.get("plan_tier", cfg.plan_tier)
             cfg.max_usage_percent = coordinator.get("max_usage_percent", cfg.max_usage_percent)
+
+            planning = data.get("planning", {})
+            cfg.planning_enabled = planning.get("enabled", cfg.planning_enabled)
+            cfg.planning_max_revisions = planning.get("max_revisions", cfg.planning_max_revisions)
 
         # Environment overrides
         cfg.db_path = os.environ.get("STATION_DB", cfg.db_path)
