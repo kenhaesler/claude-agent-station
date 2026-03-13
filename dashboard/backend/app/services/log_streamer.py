@@ -5,16 +5,16 @@ No inotify or aiofiles dependency needed.
 """
 
 import asyncio
-import os
 import logging
-from typing import AsyncGenerator, Optional
+import os
+from collections.abc import AsyncGenerator
 
 from app.config import settings
 
 logger = logging.getLogger(__name__)
 
 
-def _get_latest_stream_file(log_dir: str) -> Optional[str]:
+def _get_latest_stream_file(log_dir: str) -> str | None:
     """Find the most recently modified .stream.jsonl file."""
     try:
         candidates = [
@@ -38,7 +38,7 @@ def _read_new_lines(filepath: str, position: int) -> tuple:
         if size <= position:
             return [], position
 
-        with open(filepath, "r") as f:
+        with open(filepath) as f:
             f.seek(position)
             lines = f.readlines()
             new_pos = f.tell()
@@ -48,7 +48,7 @@ def _read_new_lines(filepath: str, position: int) -> tuple:
 
 
 async def tail_log_file(
-    filepath: Optional[str] = None,
+    filepath: str | None = None,
     from_beginning: bool = False,
 ) -> AsyncGenerator[str, None]:
     """Async generator that yields new lines from a log file.
@@ -62,7 +62,7 @@ async def tail_log_file(
             return
 
     if not os.path.exists(filepath):
-        yield '{"error": "File not found: %s"}' % filepath
+        yield f'{{"error": "File not found: {filepath}"}}'
         return
 
     position = 0 if from_beginning else os.path.getsize(filepath)

@@ -287,7 +287,8 @@ class RateLimitTracker:
                 reason=rate_limit_reason,
                 exit_code=exit_code,
             )
-            self.events.append(event)
+            if len(self.events) < 200:
+                self.events.append(event)
             self.consecutive_rate_limits += 1
 
             logger.warning(

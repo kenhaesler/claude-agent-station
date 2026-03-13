@@ -2,11 +2,11 @@
 
 import json
 import logging
-import re
 import os
+import re
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Dict, Any, List, Tuple
+from typing import Any
 
 from app.config import settings
 
@@ -20,13 +20,13 @@ REPO_FROM_EMPLOYEE_RE = re.compile(r"employee-(.+?)\.(?:stream\.jsonl|stderr\.lo
 REPO_FROM_OLD_FORMAT_RE = re.compile(r"run-\d{8}T\d{6}Z-(.+?)\.(?:stream\.jsonl|json|stderr\.log)")
 
 
-def parse_run_id_from_filename(filename: str) -> Optional[str]:
+def parse_run_id_from_filename(filename: str) -> str | None:
     """Extract run ID (e.g. '20260308T130028Z') from a log filename."""
     m = RUN_ID_RE.search(filename)
     return m.group(1) if m else None
 
 
-def parse_repo_from_filename(filename: str) -> Optional[str]:
+def parse_repo_from_filename(filename: str) -> str | None:
     """Extract repo name from employee log filename.
 
     'run-20260308T130028Z-employee-ai-portainer-dashboard.stream.jsonl'
@@ -44,7 +44,7 @@ def parse_repo_from_filename(filename: str) -> Optional[str]:
     return None
 
 
-def parse_run_timestamp(run_id: str) -> Optional[datetime]:
+def parse_run_timestamp(run_id: str) -> datetime | None:
     """Parse '20260308T130028Z' into a datetime."""
     try:
         return datetime.strptime(run_id, "%Y%m%dT%H%M%SZ")
@@ -52,14 +52,14 @@ def parse_run_timestamp(run_id: str) -> Optional[datetime]:
         return None
 
 
-def parse_result_json(filepath: str) -> Optional[Dict[str, Any]]:
+def parse_result_json(filepath: str) -> dict[str, Any] | None:
     """Parse a run result .json file (the old format summary).
 
     Returns dict with: cost_usd, tokens_input, tokens_output, tokens_total,
     turns, duration_ms, status, model.
     """
     try:
-        with open(filepath, "r") as f:
+        with open(filepath) as f:
             data = json.load(f)
         if data.get("type") != "result":
             return None
@@ -79,14 +79,14 @@ def parse_result_json(filepath: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-def parse_stream_result(filepath: str) -> Optional[Dict[str, Any]]:
+def parse_stream_result(filepath: str) -> dict[str, Any] | None:
     """Parse the 'result' event from a stream JSONL file (last line usually).
 
     Returns dict with: cost_usd, turns, duration_ms, status, model.
     """
     try:
         result_line = None
-        with open(filepath, "r") as f:
+        with open(filepath) as f:
             for line in f:
                 line = line.strip()
                 if not line:
@@ -117,13 +117,13 @@ def parse_stream_result(filepath: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-def parse_verdicts_file(filepath: str) -> Optional[Dict[str, Any]]:
+def parse_verdicts_file(filepath: str) -> dict[str, Any] | None:
     """Parse a verdicts JSON file.
 
     Returns dict with: verdicts list, summary.
     """
     try:
-        with open(filepath, "r") as f:
+        with open(filepath) as f:
             data = json.load(f)
         return data
     except Exception as e:
@@ -131,25 +131,25 @@ def parse_verdicts_file(filepath: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-def parse_employee_report(repo_name: str) -> Optional[Dict[str, Any]]:
+def parse_employee_report(repo_name: str) -> dict[str, Any] | None:
     """Read employee report from workspace directory."""
     report_path = Path(settings.workspaces_dir) / repo_name / ".claude-employee-report.json"
     if not report_path.exists():
         return None
     try:
-        with open(report_path, "r") as f:
+        with open(report_path) as f:
             return json.load(f)
     except Exception as e:
         logger.warning("Failed to parse employee report %s: %s", report_path, e)
         return None
 
 
-def discover_run_files(log_dir: str) -> Dict[str, Dict[str, List[str]]]:
+def discover_run_files(log_dir: str) -> dict[str, dict[str, list[str]]]:
     """Scan log directory and group files by run_id.
 
     Returns: {run_id: {"streams": [...], "results": [...], "verdicts": [...], "stderr": [...]}}
     """
-    runs: Dict[str, Dict[str, List[str]]] = {}
+    runs: dict[str, dict[str, list[str]]] = {}
 
     try:
         filenames = os.listdir(log_dir)
@@ -179,15 +179,15 @@ def discover_run_files(log_dir: str) -> Dict[str, Dict[str, List[str]]]:
     return runs
 
 
-def _extract_model(data: Dict[str, Any]) -> Optional[str]:
+def _extract_model(data: dict[str, Any]) -> str | None:
     """Extract model name from result data."""
     model_usage = data.get("modelUsage", {})
     if model_usage:
-        return list(model_usage.keys())[0]
+        return next(iter(model_usage.keys()))
     return None
 
 
-def _extract_tokens(data: Dict[str, Any]) -> Tuple[Optional[int], Optional[int], Optional[int]]:
+def _extract_tokens(data: dict[str, Any]) -> tuple[int | None, int | None, int | None]:
     """Extract token usage from result data.
 
     Claude CLI result events contain a modelUsage dict with per-model token counts.

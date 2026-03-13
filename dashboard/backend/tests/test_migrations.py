@@ -1,20 +1,20 @@
 """Tests for database migrations, especially _migrate_add_columns."""
 
-import pytest
+import os
 import sqlite3
 import tempfile
-import os
 
-import pytest_asyncio
+import pytest
 
 # Override DB path before any app imports
 _tmp_db = tempfile.mktemp(suffix=".db")
 os.environ["STATION_DB_PATH"] = _tmp_db
 
 
-from app.database import engine, init_db, _migrate_add_columns, Base
-from app.models import CoordinatorTask  # noqa: F401
 from sqlalchemy import text
+
+from app.database import _migrate_add_columns
+from app.models import CoordinatorTask  # noqa: F401
 
 
 @pytest.fixture(autouse=True)

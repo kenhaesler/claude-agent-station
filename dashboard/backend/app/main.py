@@ -2,10 +2,9 @@
 
 import asyncio
 import logging
-import os
-from contextlib import asynccontextmanager
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
-from typing import AsyncGenerator
 
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,28 +13,27 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
 from app.dependencies import verify_api_key
-from app.database import init_db, async_session
+from app.database import async_session, init_db
+from app.routers import (
+    analytics,
+    config_router,
+    coordinator,
+    events,
+    health,
+    logs,
+    oauth,
+    plan_usage,
+    plans,
+    projects,
+    prompts,
+    queue,
+    runs,
+    system,
+    webhook,
+)
 from app.services.config_sync import sync_config_to_db
 from app.services.log_importer import import_historical_runs
 from app.services.stale_run_reaper import reap_stale_runs
-
-from app.routers import (
-    analytics,
-    health,
-    projects,
-    runs,
-    logs,
-    config_router,
-    system,
-    webhook,
-    oauth,
-    plans,
-    events,
-    coordinator,
-    plan_usage,
-    prompts,
-    queue,
-)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -116,10 +114,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     rescan_task.cancel()
     reaper_task.cancel()
     for task in (rescan_task, reaper_task):
-        try:
+        with suppress(asyncio.CancelledError):
             await task
-        except asyncio.CancelledError:
-            pass
     logger.info("Shutting down dashboard backend")
 
 

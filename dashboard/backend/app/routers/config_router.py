@@ -1,14 +1,15 @@
 """Config management endpoints."""
 
+import asyncio
 import json
-import time
 import logging
-from datetime import datetime, timedelta, timezone
+import time
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select, func
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -37,7 +38,7 @@ _NEW_LIMIT_DEFAULTS = {
 }
 
 
-def _migrate_limits_in_memory(limits: Dict[str, Any]) -> Dict[str, Any]:
+def _migrate_limits_in_memory(limits: dict[str, Any]) -> dict[str, Any]:
     """Migrate old limit fields to new schema in-memory.
 
     If old fields are present, derive new field values from them and strip
@@ -66,7 +67,7 @@ def _migrate_limits_in_memory(limits: Dict[str, Any]) -> Dict[str, Any]:
     return migrated
 
 
-def _normalize_config(config: Dict[str, Any]) -> Dict[str, Any]:
+def _normalize_config(config: dict[str, Any]) -> dict[str, Any]:
     """Normalize config by migrating any old-style limits to new schema."""
     if "limits" in config:
         config["limits"] = _migrate_limits_in_memory(config["limits"])
@@ -80,12 +81,12 @@ async def get_config():
     Automatically migrates old limit fields to the new simplified schema
     in the response.  The on-disk file is not modified until a PUT.
     """
-    config = _read_config_json()
+    config = await asyncio.to_thread(_read_config_json)
     return _normalize_config(config)
 
 
 @router.put("")
-async def update_config(body: Dict[str, Any], db: AsyncSession = Depends(get_db)):
+async def update_config(body: dict[str, Any], db: AsyncSession = Depends(get_db)):
     """Update the full station config (writes to JSON file + syncs DB).
 
     Accepts the full config object. Projects are synced to the DB.
@@ -96,7 +97,7 @@ async def update_config(body: Dict[str, Any], db: AsyncSession = Depends(get_db)
     automatically before writing.
     """
     # Read current config to preserve any fields not sent by frontend
-    current = _read_config_json()
+    current = await asyncio.to_thread(_read_config_json)
     # Merge: update only keys the frontend sends
     for key in ("models", "limits", "schedule", "notifications", "logging"):
         if key in body:
@@ -105,7 +106,7 @@ async def update_config(body: Dict[str, Any], db: AsyncSession = Depends(get_db)
     # Normalize limits (migrate old -> new) before persisting
     current = _normalize_config(current)
 
-    _write_config_json(current)
+    await asyncio.to_thread(_write_config_json, current)
 
     # Re-sync projects from JSON -> DB (in case anything changed)
     await sync_config_to_db(db)
@@ -122,9 +123,28 @@ async def get_config_db(db: AsyncSession = Depends(get_db)):
     return {e.key: json.loads(e.value) if e.value else None for e in entries}
 
 
+# Allowed config keys for the key-value store
+ALLOWED_CONFIG_KEYS = {
+    "notifications",
+    "schedule",
+    "dashboard_theme",
+    "prompt_override_manager",
+    "prompt_override_employee",
+    "prompt_override_analyst",
+    "prompt_override_planner",
+    "prompt_override_assigner",
+}
+
+
 @router.put("/{key}")
 async def set_config_entry(key: str, body: dict, db: AsyncSession = Depends(get_db)):
     """Set a config entry in the DB key-value store."""
+    # Allow prompt overrides dynamically
+    if key not in ALLOWED_CONFIG_KEYS and not key.startswith("prompt_override_"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Config key '{key}' is not in the allowed list. Allowed keys: {sorted(ALLOWED_CONFIG_KEYS)}",
+        )
     value = json.dumps(body.get("value"))
 
     result = await db.execute(select(ConfigEntry).where(ConfigEntry.key == key))
@@ -147,7 +167,7 @@ async def get_usage():
     Uses the new simplified max_usage_percent field. Falls back gracefully
     to old field names for unmigrated configs.
     """
-    config = _read_config_json()
+    config = await asyncio.to_thread(_read_config_json)
     limits = config.get("limits", {})
 
     # Use new field, fall back to old for backward compat
@@ -166,7 +186,7 @@ async def get_usage():
             "usage_percent": 0.0,
         }
 
-    with open(usage_path, "r") as f:
+    with open(usage_path) as f:
         data = json.load(f)
 
     sessions_used = data.get("sessions_used", 0)
@@ -207,7 +227,7 @@ async def get_token_usage(db: AsyncSession = Depends(get_db)):
     Uses the new simplified reserve_percent field. The old per-day/per-month
     hard limits have been removed in favor of plan-aware usage tracking.
     """
-    config = _read_config_json()
+    config = await asyncio.to_thread(_read_config_json)
     limits = config.get("limits", {})
 
     # New simplified fields (with backward-compat fallback)
@@ -220,7 +240,7 @@ async def get_token_usage(db: AsyncSession = Depends(get_db)):
         limits.get("token_reserve_percent", _NEW_LIMIT_DEFAULTS["reserve_percent"]),
     )
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     # Daily tokens consumed (last 24h)
     day_ago = now - timedelta(hours=24)

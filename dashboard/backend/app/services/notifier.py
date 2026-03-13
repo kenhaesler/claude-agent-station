@@ -4,9 +4,8 @@ Sends notifications when runs complete, verdicts are issued, or errors occur.
 Failures are logged but never raise — notifications must not crash the backend.
 """
 
-import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import httpx
 
@@ -33,13 +32,13 @@ _DISCORD_COLORS = {
 }
 
 
-def _get_notification_config() -> Dict[str, Any]:
+def _get_notification_config() -> dict[str, Any]:
     """Read notification config from manager-config.json."""
     config = _read_config_json()
     return config.get("notifications", {})
 
 
-def _should_notify(event_type: str, config: Dict[str, Any]) -> bool:
+def _should_notify(event_type: str, config: dict[str, Any]) -> bool:
     """Check if we should send a notification for this event type."""
     if not config.get("enabled", False):
         return False
@@ -55,13 +54,13 @@ def _should_notify(event_type: str, config: Dict[str, Any]) -> bool:
 def _format_slack(
     event_type: str,
     project: str,
-    issue_number: Optional[int],
-    issue_title: Optional[str],
-    tokens_total: Optional[int],
-    summary: Optional[str],
-    run_id: Optional[str],
-    dashboard_url: Optional[str],
-) -> Dict[str, Any]:
+    issue_number: int | None,
+    issue_title: str | None,
+    tokens_total: int | None,
+    summary: str | None,
+    run_id: str | None,
+    dashboard_url: str | None,
+) -> dict[str, Any]:
     """Format a Slack Block Kit message."""
     emoji = _STATUS_EMOJI.get(event_type, "\u2139\uFE0F")
     header = f"{emoji} {event_type} \u2014 {project}"
@@ -76,7 +75,7 @@ def _format_slack(
     if tokens_total is not None:
         fields.append({"type": "mrkdwn", "text": f"*Tokens*: {tokens_total:,}"})
 
-    blocks: List[Dict[str, Any]] = [
+    blocks: list[dict[str, Any]] = [
         {"type": "header", "text": {"type": "plain_text", "text": header[:150]}},
     ]
 
@@ -103,13 +102,13 @@ def _format_slack(
 def _format_discord(
     event_type: str,
     project: str,
-    issue_number: Optional[int],
-    issue_title: Optional[str],
-    tokens_total: Optional[int],
-    summary: Optional[str],
-    run_id: Optional[str],
-    dashboard_url: Optional[str],
-) -> Dict[str, Any]:
+    issue_number: int | None,
+    issue_title: str | None,
+    tokens_total: int | None,
+    summary: str | None,
+    run_id: str | None,
+    dashboard_url: str | None,
+) -> dict[str, Any]:
     """Format a Discord embed message."""
     emoji = _STATUS_EMOJI.get(event_type, "\u2139\uFE0F")
     color = _DISCORD_COLORS.get(event_type, 8421504)  # grey default
@@ -124,7 +123,7 @@ def _format_discord(
     if tokens_total is not None:
         fields.append({"name": "Tokens", "value": f"{tokens_total:,}", "inline": True})
 
-    embed: Dict[str, Any] = {
+    embed: dict[str, Any] = {
         "title": f"{emoji} {event_type} \u2014 {project}",
         "color": color,
         "fields": fields,
@@ -142,14 +141,14 @@ def _format_discord(
 def _format_telegram(
     event_type: str,
     project: str,
-    issue_number: Optional[int],
-    issue_title: Optional[str],
-    tokens_total: Optional[int],
-    summary: Optional[str],
-    run_id: Optional[str],
-    dashboard_url: Optional[str],
-    chat_id: Optional[str] = None,
-) -> Dict[str, Any]:
+    issue_number: int | None,
+    issue_title: str | None,
+    tokens_total: int | None,
+    summary: str | None,
+    run_id: str | None,
+    dashboard_url: str | None,
+    chat_id: str | None = None,
+) -> dict[str, Any]:
     """Format a Telegram Bot API message.
 
     Expects webhook_url to be: https://api.telegram.org/bot<TOKEN>/sendMessage
@@ -176,7 +175,7 @@ def _format_telegram(
 
     text = "\n".join(lines)
 
-    payload: Dict[str, Any] = {
+    payload: dict[str, Any] = {
         "text": text,
         "parse_mode": "HTML",
         "disable_web_page_preview": True,
@@ -190,13 +189,13 @@ def _format_telegram(
 def _format_generic(
     event_type: str,
     project: str,
-    issue_number: Optional[int],
-    issue_title: Optional[str],
-    tokens_total: Optional[int],
-    summary: Optional[str],
-    run_id: Optional[str],
-    dashboard_url: Optional[str],
-) -> Dict[str, Any]:
+    issue_number: int | None,
+    issue_title: str | None,
+    tokens_total: int | None,
+    summary: str | None,
+    run_id: str | None,
+    dashboard_url: str | None,
+) -> dict[str, Any]:
     """Format a simple JSON payload for generic webhooks."""
     return {
         "event_type": event_type,
@@ -213,11 +212,11 @@ def _format_generic(
 async def _send_notification_detailed(
     event_type: str,
     project: str,
-    issue_number: Optional[int] = None,
-    issue_title: Optional[str] = None,
-    tokens_total: Optional[int] = None,
-    summary: Optional[str] = None,
-    run_id: Optional[str] = None,
+    issue_number: int | None = None,
+    issue_title: str | None = None,
+    tokens_total: int | None = None,
+    summary: str | None = None,
+    run_id: str | None = None,
     _bypass_filter: bool = False,
 ) -> tuple[bool, Optional[str]]:
     """Send a webhook notification, returning (success, error_detail).
@@ -319,7 +318,7 @@ async def send_notification(
     return success
 
 
-async def send_test_notification() -> Dict[str, Any]:
+async def send_test_notification() -> dict[str, Any]:
     """Send a test notification to verify webhook configuration.
 
     Returns a dict with status and details.

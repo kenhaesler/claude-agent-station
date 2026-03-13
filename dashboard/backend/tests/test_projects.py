@@ -10,14 +10,15 @@ Covers:
 - 409 for duplicate repo
 """
 
+from unittest.mock import AsyncMock, patch
+
 import pytest
 import pytest_asyncio
-from unittest.mock import AsyncMock, patch
 from httpx import ASGITransport, AsyncClient
 
+from app.database import Base, async_session, engine
 from app.main import app
-from app.database import engine, Base, async_session
-from app.models import Project, Run, Plan
+from app.models import Plan, Project, Run
 
 
 @pytest_asyncio.fixture

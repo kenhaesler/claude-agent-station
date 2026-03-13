@@ -1,7 +1,5 @@
 """Application configuration via pydantic-settings."""
 
-from pathlib import Path
-from typing import List, Optional
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -19,6 +17,9 @@ class Settings(BaseSettings):
     # Employee report base directory
     workspaces_dir: str = "/home/claude-agent/workspaces"
 
+    # Path to Claude CLI credentials file
+    credentials_path: str = "/home/claude-agent/.claude/.credentials.json"
+
     # Server
     host: str = "127.0.0.1"
     port: int = 8420
@@ -30,17 +31,17 @@ class Settings(BaseSettings):
     # When set via STATION_API_KEY, all API endpoints (except /api/health and
     # /api/webhook/*) require a matching Bearer token or ?token= query param.
     # When None (default), no auth is required (backward-compatible open access).
-    api_key: Optional[str] = None
+    api_key: str | None = None
 
     # Shared secret for authenticating webhook requests from the agent.
     # When set, all POST /api/webhook/* requests must include a matching
     # X-Webhook-Token header.  When empty (default), no auth is required
     # (backward-compatible with existing deployments).
-    webhook_secret: Optional[str] = None
+    webhook_secret: str | None = None
 
     # CORS allowed origins for cross-origin requests (e.g. frontend dev server)
     # Override with STATION_ALLOWED_ORIGINS as a JSON list or comma-separated string
-    allowed_origins: List[str] = [
+    allowed_origins: list[str] = [
         "http://localhost:5173",
         "http://localhost:4173",
         "http://127.0.0.1:5173",

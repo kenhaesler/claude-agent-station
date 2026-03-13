@@ -1,7 +1,8 @@
 """FastAPI dependencies."""
 
 import secrets
-from typing import AsyncGenerator, Optional
+from collections.abc import AsyncGenerator
+from typing import Optional
 
 from fastapi import HTTPException, Query, Security
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer

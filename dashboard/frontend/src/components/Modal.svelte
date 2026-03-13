@@ -29,13 +29,13 @@
 </script>
 
 {#if open}
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
     use:portal
     class="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[999]"
     role="dialog"
     aria-modal="true"
     aria-labelledby="modal-title"
+    tabindex="-1"
     onclick={onBackdropClick}
     onkeydown={onKeydown}
   >

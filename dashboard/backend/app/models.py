@@ -1,18 +1,15 @@
 """SQLAlchemy ORM models."""
 
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
-from sqlalchemy import (
-    Column, Integer, Text, Boolean, Float, DateTime, ForeignKey
-)
+from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, Text
 
 from app.database import Base
 
 
 def _utcnow() -> datetime:
     """Return current UTC time as a timezone-aware datetime."""
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class Project(Base):
@@ -53,6 +50,7 @@ class Run(Base):
     employee_report = Column(Text, nullable=True)  # JSON as text
     verdict_detail = Column(Text, nullable=True)  # JSON as text
     log_file = Column(Text, nullable=True)
+    trace_id = Column(Text, nullable=True)
     employee_index = Column(Integer, nullable=True, default=0)
     concurrent_group_id = Column(Text, nullable=True)
 

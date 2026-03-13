@@ -14,12 +14,12 @@ import os
 import tempfile
 
 from app.services.log_parser import (
-    parse_run_id_from_filename,
-    parse_repo_from_filename,
-    parse_run_timestamp,
-    parse_result_json,
-    parse_stream_result,
     discover_run_files,
+    parse_repo_from_filename,
+    parse_result_json,
+    parse_run_id_from_filename,
+    parse_run_timestamp,
+    parse_stream_result,
 )
 
 

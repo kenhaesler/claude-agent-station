@@ -1,20 +1,21 @@
 """CRUD endpoints for projects. Mutations sync back to config JSON."""
 
-from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select, update as sa_update, delete as sa_delete
+from sqlalchemy import delete as sa_delete
+from sqlalchemy import select
+from sqlalchemy import update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db
-from app.models import Project, Run, Plan
-from app.schemas import ProjectCreate, ProjectUpdate, ProjectOut
+from app.models import Plan, Project, Run
+from app.schemas import ProjectCreate, ProjectOut, ProjectUpdate
 from app.services.config_sync import sync_db_to_config
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
 
-@router.get("", response_model=List[ProjectOut])
+@router.get("", response_model=list[ProjectOut])
 async def list_projects(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Project).order_by(Project.id))
     return result.scalars().all()

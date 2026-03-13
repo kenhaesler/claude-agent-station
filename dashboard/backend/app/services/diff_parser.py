@@ -1,6 +1,6 @@
 """Parse unified git diff output into structured JSON data."""
 
-from typing import List, Optional
+
 from pydantic import BaseModel
 
 
@@ -8,8 +8,8 @@ class DiffLine(BaseModel):
     """A single line in a diff hunk."""
     type: str  # 'add', 'remove', 'context'
     content: str
-    old_line: Optional[int] = None
-    new_line: Optional[int] = None
+    old_line: int | None = None
+    new_line: int | None = None
 
 
 class DiffHunk(BaseModel):
@@ -19,24 +19,24 @@ class DiffHunk(BaseModel):
     old_count: int
     new_start: int
     new_count: int
-    lines: List[DiffLine]
+    lines: list[DiffLine]
 
 
 class DiffFile(BaseModel):
     """A single file's diff data."""
     filename: str
-    old_filename: Optional[str] = None  # For renames
+    old_filename: str | None = None  # For renames
     additions: int = 0
     deletions: int = 0
     is_new: bool = False
     is_deleted: bool = False
     is_binary: bool = False
-    hunks: List[DiffHunk] = []
+    hunks: list[DiffHunk] = []
 
 
 class DiffResult(BaseModel):
     """Complete parsed diff result."""
-    files: List[DiffFile] = []
+    files: list[DiffFile] = []
     total_additions: int = 0
     total_deletions: int = 0
     total_files: int = 0
@@ -54,9 +54,9 @@ def parse_unified_diff(diff_text: str) -> DiffResult:
     if not diff_text or not diff_text.strip():
         return DiffResult()
 
-    files: List[DiffFile] = []
-    current_file: Optional[DiffFile] = None
-    current_hunk: Optional[DiffHunk] = None
+    files: list[DiffFile] = []
+    current_file: DiffFile | None = None
+    current_hunk: DiffHunk | None = None
     old_line = 0
     new_line = 0
 

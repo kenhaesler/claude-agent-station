@@ -3,16 +3,15 @@
 import json
 import logging
 from pathlib import Path
-from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, func, desc
+from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.dependencies import get_db
 from app.models import Plan, Project
-from app.schemas import PlanCreate, PlanUpdate, PlanOut, PlanList
+from app.schemas import PlanCreate, PlanList, PlanOut, PlanUpdate
 from app.services.systemd import systemctl
 
 logger = logging.getLogger(__name__)
@@ -24,8 +23,8 @@ router = APIRouter(prefix="/api/plans", tags=["plans"])
 async def list_plans(
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
-    project_id: Optional[int] = None,
-    status: Optional[str] = None,
+    project_id: int | None = None,
+    status: str | None = None,
     db: AsyncSession = Depends(get_db),
 ) -> PlanList:
     query = select(Plan)
@@ -177,7 +176,7 @@ async def implement_plan(plan_id: int, db: AsyncSession = Depends(get_db)) -> Pl
         plan_file.write_text(json.dumps(plan_data, indent=2))
         logger.info("Wrote plan file to %s", plan_file)
     except OSError as e:
-        raise HTTPException(status_code=500, detail=f"Failed to write plan file: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to write plan file: {e}") from e
 
     # Update plan status
     plan.status = "implementing"

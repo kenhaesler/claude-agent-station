@@ -2,16 +2,15 @@
 
 import json
 import logging
-from datetime import datetime, timezone, timedelta
-from typing import Optional, List
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import select, func, text
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db
-from app.models import Run, PlanUsageHistory
+from app.models import PlanUsageHistory, Run
 
 logger = logging.getLogger(__name__)
 
@@ -42,23 +41,23 @@ class PlanUsageOut(BaseModel):
     weekly_usage_percent: float = 0.0
     weekly_reset_at: str = ""
     # Per model
-    per_model: List[ModelUsageOut] = []
+    per_model: list[ModelUsageOut] = []
     # Status
     is_throttled: bool = False
     should_throttle: bool = False
     throttle_reason: str = ""
-    error: Optional[str] = None
+    error: str | None = None
 
 
 class PlanUsageHistoryOut(BaseModel):
     id: int
     timestamp: str
-    detection_method: Optional[str] = None
-    plan_tier: Optional[str] = None
+    detection_method: str | None = None
+    plan_tier: str | None = None
     weekly_tokens_used: int = 0
     weekly_usage_percent: float = 0.0
     is_throttled: bool = False
-    created_at: Optional[datetime] = None
+    created_at: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -90,7 +89,7 @@ DEFAULT_WEEKLY_LIMIT = 180_000_000
 
 def _get_week_boundaries() -> tuple[datetime, datetime]:
     """Get current week start (Monday 00:00 UTC) and next reset time."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     days_since_monday = now.weekday()
     week_start = (now - timedelta(days=days_since_monday)).replace(
         hour=0, minute=0, second=0, microsecond=0
@@ -110,7 +109,7 @@ async def get_plan_usage(
     Returns session-level, weekly, and per-model usage percentages,
     plus throttle recommendation.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     week_start, next_reset = _get_week_boundaries()
 
     tier_limits = PLAN_LIMITS.get(plan_tier, PLAN_LIMITS.get("pro", {}))
@@ -181,7 +180,7 @@ async def get_plan_usage(
         should_throttle = True
         high_models = [m for m in per_model if m.usage_percent >= max_usage_percent]
         throttle_reason = (
-            f"Model(s) near limit: "
+            "Model(s) near limit: "
             + ", ".join(f"{m.model} at {m.usage_percent:.1f}%" for m in high_models)
         )
 
@@ -203,7 +202,7 @@ async def get_plan_usage(
     )
 
 
-@router.get("/history", response_model=List[PlanUsageHistoryOut])
+@router.get("/history", response_model=list[PlanUsageHistoryOut])
 async def get_plan_usage_history(
     limit: int = Query(50, ge=1, le=500),
     db: AsyncSession = Depends(get_db),
@@ -223,7 +222,7 @@ async def record_usage_snapshot(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Record a usage snapshot to history (called periodically or on-demand)."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     week_start, next_reset = _get_week_boundaries()
 
     tier_limits = PLAN_LIMITS.get(plan_tier, PLAN_LIMITS.get("pro", {}))

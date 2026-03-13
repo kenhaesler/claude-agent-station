@@ -3,17 +3,19 @@
 import json
 import logging
 from pathlib import Path
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, desc
+from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db
-from app.models import CoordinatorTask, CoordinatorMessage, Run
+from app.models import CoordinatorMessage, CoordinatorTask, Run
 from app.schemas import (
-    CoordinatorTaskOut, CoordinatorTaskDetailOut, CoordinatorDAGOut,
-    CoordinatorMessageOut, GuidanceSend,
+    CoordinatorDAGOut,
+    CoordinatorMessageOut,
+    CoordinatorTaskDetailOut,
+    CoordinatorTaskOut,
+    GuidanceSend,
 )
 from app.services.event_bus import publish as event_bus_publish
 
@@ -24,8 +26,8 @@ router = APIRouter(prefix="/api/coordinator", tags=["coordinator"])
 
 @router.get("/tasks", response_model=list[CoordinatorTaskOut])
 async def list_tasks(
-    run_id: Optional[str] = Query(None),
-    status: Optional[str] = Query(None),
+    run_id: str | None = Query(None),
+    status: str | None = Query(None),
     limit: int = Query(100, le=500),
     db: AsyncSession = Depends(get_db),
 ):
@@ -91,7 +93,7 @@ async def get_task_details(task_id: str, db: AsyncSession = Depends(get_db)):
     log_file = task.log_path or (task_data.log_path if task_data.log_path else None)
     if log_file and os.path.isfile(log_file):
         try:
-            with open(log_file, "r", errors="replace") as f:
+            with open(log_file, errors="replace") as f:
                 lines = f.readlines()
                 task_data.log_excerpt = "".join(lines[-100:])
         except OSError:
@@ -127,8 +129,8 @@ async def get_dag(run_id: str, db: AsyncSession = Depends(get_db)):
 
 @router.get("/messages", response_model=list[CoordinatorMessageOut])
 async def list_messages(
-    run_id: Optional[str] = Query(None),
-    task_id: Optional[str] = Query(None),
+    run_id: str | None = Query(None),
+    task_id: str | None = Query(None),
     limit: int = Query(100, le=500),
     db: AsyncSession = Depends(get_db),
 ):
@@ -200,7 +202,7 @@ async def send_guidance_api(
             detail=f"OS error writing guidance file: {e}",
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to send guidance: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to send guidance: {e}") from e
 
     # Record the message
     msg = CoordinatorMessage(

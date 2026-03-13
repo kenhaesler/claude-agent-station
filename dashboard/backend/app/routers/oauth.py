@@ -1,7 +1,8 @@
 """OAuth PKCE login flow for claude-agent user."""
 
-import hashlib
 import base64
+import contextlib
+import hashlib
 import json
 import logging
 import os
@@ -9,12 +10,14 @@ import secrets
 import tempfile
 import time
 from pathlib import Path
-from typing import Dict, Optional
-from urllib.parse import urlencode, unquote, urlparse, parse_qs
+from urllib.parse import parse_qs, unquote, urlencode, urlparse
+
 import httpx
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -25,10 +28,10 @@ CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 REDIRECT_URI = "https://platform.claude.com/oauth/code/callback"
 AUTHORIZE_URL = "https://claude.ai/oauth/authorize"
 SCOPES = "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers"
-CREDS_PATH = Path("/home/claude-agent/.claude/.credentials.json")
+CREDS_PATH = Path(settings.credentials_path)
 
 # In-memory store for pending PKCE flows: {state: (code_verifier, expires_at)}
-_pending: Dict[str, tuple[str, float]] = {}
+_pending: dict[str, tuple[str, float]] = {}
 STATE_TTL_SECONDS = 600  # 10 minutes
 
 
@@ -52,7 +55,7 @@ class OAuthCallbackRequest(BaseModel):
 
 class OAuthCallbackResponse(BaseModel):
     success: bool
-    error: Optional[str] = None
+    error: str | None = None
 
 
 def _generate_pkce() -> tuple[str, str]:
@@ -73,10 +76,8 @@ def _write_credentials(path: Path, data: dict) -> None:
         os.replace(tmp, path)
         # Ensure the claude-agent user can read the credentials
         import shutil
-        try:
+        with contextlib.suppress(LookupError, OSError):
             shutil.chown(path, user="claude-agent", group="claude-agent")
-        except (LookupError, OSError):
-            pass
         os.chmod(path, 0o600)
     except Exception:
         os.unlink(tmp)

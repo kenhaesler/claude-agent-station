@@ -2,9 +2,8 @@
 
 import json
 import logging
-from datetime import datetime, timezone
-
-from typing import Optional
+import uuid
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy import select
@@ -12,9 +11,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.dependencies import get_db
-from app.models import Run, Project, Notification, CoordinatorTask, CoordinatorMessage
+from app.models import CoordinatorMessage, CoordinatorTask, Notification, Project, Run
 from app.schemas import WebhookRunEvent
 from app.services.event_bus import publish as event_bus_publish
+from app.services.idempotency import is_duplicate
 from app.services.log_parser import parse_employee_report
 from app.services.notifier import send_notification
 
@@ -27,7 +27,7 @@ router = APIRouter(prefix="/api/webhook", tags=["webhook"])
 async def receive_run_event(
     event: WebhookRunEvent,
     db: AsyncSession = Depends(get_db),
-    x_webhook_token: Optional[str] = Header(None, alias="X-Webhook-Token"),
+    x_webhook_token: str | None = Header(None, alias="X-Webhook-Token"),
 ):
     """Receive a run event from the agent's run-manager.sh script.
 
@@ -40,6 +40,17 @@ async def receive_run_event(
     # Authenticate if a shared secret is configured
     if settings.webhook_secret and x_webhook_token != settings.webhook_secret:
         raise HTTPException(status_code=401, detail="Invalid or missing webhook token")
+
+    # Auto-generate trace and event IDs if not provided
+    if not event.event_id:
+        event.event_id = f"evt-{uuid.uuid4().hex[:12]}"
+    if not event.trace_id:
+        event.trace_id = f"trace-{event.run_id}"
+
+    # Check for duplicate events
+    if is_duplicate(event.event_id):
+        logger.info("Skipping duplicate event: %s", event.event_id)
+        return {"status": "duplicate", "run_id": event.run_id, "event_id": event.event_id}
 
     # Normalize event names from run-manager.sh to internal names
     event_name = _normalize_event_name(event.event)
@@ -75,9 +86,10 @@ async def receive_run_event(
                 mode=event.mode,
                 model=event.model,
                 status="running",
-                started_at=datetime.now(timezone.utc),
+                started_at=datetime.now(UTC),
                 employee_index=event.employee_index,
                 concurrent_group_id=event.concurrent_group_id,
+                trace_id=event.trace_id,
             )
             db.add(run)
         else:
@@ -85,6 +97,7 @@ async def receive_run_event(
             run.project_id = project_id or run.project_id
             run.mode = event.mode or run.mode
             run.model = event.model or run.model
+            run.trace_id = event.trace_id or run.trace_id
             if event.employee_index is not None:
                 run.employee_index = event.employee_index
             if event.concurrent_group_id:
@@ -102,17 +115,19 @@ async def receive_run_event(
                 run_id=event.run_id,
                 project_id=project_id,
                 status=final_status,
+                trace_id=event.trace_id,
             )
             db.add(run)
 
         run.status = final_status
+        run.trace_id = event.trace_id or run.trace_id
         run.cost_usd = event.cost_usd
         run.tokens_input = event.tokens_input
         run.tokens_output = event.tokens_output
         run.tokens_total = event.tokens_total
         run.turns = event.turns
         run.duration_ms = event.duration_ms
-        run.finished_at = datetime.now(timezone.utc)
+        run.finished_at = datetime.now(UTC)
         run.model = event.model or run.model
 
         # Read employee report from disk if not already populated
@@ -131,7 +146,8 @@ async def receive_run_event(
                 run_id=event.run_id,
                 project_id=project_id,
                 status="running",
-                started_at=datetime.now(timezone.utc),
+                started_at=datetime.now(UTC),
+                trace_id=event.trace_id,
             )
             db.add(run)
         # Keep status as "running" — do NOT set to finished
@@ -141,6 +157,7 @@ async def receive_run_event(
             run.model = event.model
         if project_id:
             run.project_id = project_id
+        run.trace_id = event.trace_id or run.trace_id
 
     elif event_name == "reviewing":
         # Manager review phase — transition to a meaningful intermediate status
@@ -149,21 +166,25 @@ async def receive_run_event(
                 run_id=event.run_id,
                 project_id=project_id,
                 status="reviewing",
-                started_at=datetime.now(timezone.utc),
+                started_at=datetime.now(UTC),
+                trace_id=event.trace_id,
             )
             db.add(run)
         else:
             run.status = "reviewing"
+            run.trace_id = event.trace_id or run.trace_id
 
     elif event_name == "verdict":
         if not run:
             run = Run(
                 run_id=event.run_id,
                 project_id=project_id,
+                trace_id=event.trace_id,
             )
             db.add(run)
 
         run.verdict = event.verdict
+        run.trace_id = event.trace_id or run.trace_id
         run.issue_number = event.issue_number
         run.branch = event.branch or run.branch
         run.verdict_detail = json.dumps({
@@ -218,10 +239,10 @@ async def receive_run_event(
             }
             ctask.status = status_map.get(event_name, ctask.status)
             if event_name == "task_started":
-                ctask.started_at = datetime.now(timezone.utc)
+                ctask.started_at = datetime.now(UTC)
                 ctask.employee_index = event.employee_index
             elif event_name in ("task_completed", "task_failed"):
-                ctask.finished_at = datetime.now(timezone.utc)
+                ctask.finished_at = datetime.now(UTC)
 
     elif event_name in ("conflict_detected", "guidance_sent"):
         # Coordinator messages — log them
@@ -254,7 +275,8 @@ async def receive_run_event(
                 run_id=event.run_id,
                 project_id=project_id,
                 status=event.status or "running",
-                started_at=datetime.now(timezone.utc),
+                started_at=datetime.now(UTC),
+                trace_id=event.trace_id,
             )
             db.add(run)
         # Update fields if provided
@@ -266,6 +288,7 @@ async def receive_run_event(
             run.status = event.status
         if project_id:
             run.project_id = project_id
+        run.trace_id = event.trace_id or run.trace_id
 
     await db.commit()
     logger.info("Processed webhook event: %s (normalized: %s) for %s", event.event, event_name, event.run_id)
@@ -273,6 +296,9 @@ async def receive_run_event(
     # Broadcast to SSE subscribers for real-time dashboard updates
     await event_bus_publish({
         "type": event.event,
+        "event_id": event.event_id,
+        "trace_id": event.trace_id,
+        "sequence": event.sequence,
         "data": {
             "run_id": event.run_id,
             "event": event.event,
@@ -319,7 +345,7 @@ async def receive_run_event(
             summary=f"Run finished with status: {event.status}",
         )
 
-    return {"status": "ok", "run_id": event.run_id, "event": event.event}
+    return {"status": "ok", "run_id": event.run_id, "event": event.event, "event_id": event.event_id}
 
 
 def _normalize_event_name(event_name: str) -> str:

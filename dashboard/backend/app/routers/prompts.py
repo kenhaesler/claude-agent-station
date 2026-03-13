@@ -8,7 +8,7 @@ Custom overrides are persisted in:
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
@@ -86,7 +86,7 @@ def _delete_custom_file(role: str) -> None:
 
 
 @router.get("")
-async def list_prompts(db: AsyncSession = Depends(get_db)) -> List[Dict[str, Any]]:
+async def list_prompts(db: AsyncSession = Depends(get_db)) -> list[dict[str, Any]]:
     """List all prompt roles with default content and custom overrides."""
     # Fetch all overrides from DB in one query
     keys = [f"{DB_KEY_PREFIX}{role}" for role in PROMPT_ROLES]
@@ -112,7 +112,7 @@ async def list_prompts(db: AsyncSession = Depends(get_db)) -> List[Dict[str, Any
 
 
 @router.get("/{role}")
-async def get_prompt(role: str, db: AsyncSession = Depends(get_db)) -> Dict[str, Any]:
+async def get_prompt(role: str, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     """Get a single prompt role with its default and custom content."""
     if role not in PROMPT_ROLES:
         from fastapi import HTTPException
@@ -139,9 +139,9 @@ async def get_prompt(role: str, db: AsyncSession = Depends(get_db)) -> Dict[str,
 @router.put("/{role}")
 async def update_prompt(
     role: str,
-    body: Dict[str, Any],
+    body: dict[str, Any],
     db: AsyncSession = Depends(get_db),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Save a custom prompt override for a role.
 
     Body: { "content": "..." }
@@ -187,7 +187,7 @@ async def update_prompt(
 
 
 @router.delete("/{role}")
-async def reset_prompt(role: str, db: AsyncSession = Depends(get_db)) -> Dict[str, Any]:
+async def reset_prompt(role: str, db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     """Reset a prompt to its default (remove custom override)."""
     if role not in PROMPT_ROLES:
         from fastapi import HTTPException

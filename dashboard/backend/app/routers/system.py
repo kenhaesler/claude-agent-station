@@ -2,17 +2,16 @@
 
 import json
 import os
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException
 
 from app.config import settings
 from app.services.systemd import (
+    ALLOWED_ACTIONS,
     get_service_status,
     get_system_resources,
     systemctl,
-    ALLOWED_ACTIONS,
 )
 
 router = APIRouter(prefix="/api/system", tags=["system"])
@@ -53,12 +52,12 @@ async def service_action(action: str, unit: str = "claude-agent.service"):
 @router.get("/auth")
 async def auth_status():
     """Check Claude CLI auth status by inspecting credentials file."""
-    creds_path = "/home/claude-agent/.claude/.credentials.json"
+    creds_path = settings.credentials_path
     if not os.path.exists(creds_path):
         return {"logged_in": False, "expired": True}
 
     try:
-        with open(creds_path, "r") as f:
+        with open(creds_path) as f:
             creds = json.load(f)
 
         # credentials may be nested under claudeAiOauth
@@ -68,8 +67,8 @@ async def auth_status():
             return {"logged_in": True, "expired": False, "expires_at": None}
 
         # expiresAt is epoch milliseconds
-        expires_dt = datetime.fromtimestamp(expires_at / 1000, tz=timezone.utc)
-        expired = datetime.now(timezone.utc) > expires_dt
+        expires_dt = datetime.fromtimestamp(expires_at / 1000, tz=UTC)
+        expired = datetime.now(UTC) > expires_dt
 
         return {
             "logged_in": True,

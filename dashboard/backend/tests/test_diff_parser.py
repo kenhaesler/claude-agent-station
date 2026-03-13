@@ -12,7 +12,7 @@ Covers:
 - No newline at end of file marker
 """
 
-from app.services.diff_parser import parse_unified_diff, DiffResult
+from app.services.diff_parser import DiffResult, parse_unified_diff
 
 
 class TestEmptyInput:

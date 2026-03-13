@@ -7,7 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.routers.oauth import _pending, _cleanup_expired_states, STATE_TTL_SECONDS
+from app.routers.oauth import STATE_TTL_SECONDS, _cleanup_expired_states, _pending
 
 client = TestClient(app)
 

@@ -3,7 +3,7 @@
 import asyncio
 import logging
 import subprocess
-from typing import Optional, Dict, Any
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +35,7 @@ def _run_systemctl(action: str, unit: str) -> subprocess.CompletedProcess:
     )
 
 
-async def systemctl(action: str, unit: str) -> Dict[str, Any]:
+async def systemctl(action: str, unit: str) -> dict[str, Any]:
     """Run systemctl command asynchronously."""
     try:
         result = await asyncio.to_thread(_run_systemctl, action, unit)
@@ -53,7 +53,7 @@ async def systemctl(action: str, unit: str) -> Dict[str, Any]:
         return {"success": False, "error": str(e)}
 
 
-async def get_service_status() -> Dict[str, Any]:
+async def get_service_status() -> dict[str, Any]:
     """Get status of both service and timer."""
     service_result = await systemctl("status", "claude-agent.service")
     timer_result = await systemctl("status", "claude-agent.timer")
@@ -81,13 +81,13 @@ async def get_service_status() -> Dict[str, Any]:
     }
 
 
-async def get_system_resources() -> Dict[str, Any]:
+async def get_system_resources() -> dict[str, Any]:
     """Get system resource info without psutil."""
-    info: Dict[str, Any] = {}
+    info: dict[str, Any] = {}
 
     # Memory from /proc/meminfo
     try:
-        with open("/proc/meminfo", "r") as f:
+        with open("/proc/meminfo") as f:
             meminfo = {}
             for line in f:
                 parts = line.split(":")
@@ -105,7 +105,7 @@ async def get_system_resources() -> Dict[str, Any]:
 
     # Load average from /proc/loadavg
     try:
-        with open("/proc/loadavg", "r") as f:
+        with open("/proc/loadavg") as f:
             parts = f.read().strip().split()
             info["load_avg"] = [float(parts[0]), float(parts[1]), float(parts[2])]
     except Exception:
@@ -123,7 +123,7 @@ async def get_system_resources() -> Dict[str, Any]:
 
     # Uptime
     try:
-        with open("/proc/uptime", "r") as f:
+        with open("/proc/uptime") as f:
             info["uptime_seconds"] = float(f.read().split()[0])
     except Exception:
         pass

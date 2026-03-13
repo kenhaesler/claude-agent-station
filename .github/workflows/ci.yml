@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install dependencies
+        run: |
+          cd dashboard/backend
+          pip install -r requirements-dev.txt
+      - name: Lint with ruff
+        run: ruff check dashboard/backend/app/
+      - name: Run tests
+        run: |
+          cd dashboard/backend
+          python -m pytest tests/ -v --tb=short
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install dependencies
+        run: cd dashboard/frontend && npm ci
+      - name: Build
+        run: cd dashboard/frontend && npm run build

@@ -8,6 +8,8 @@ export class LogWebSocket {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private paused = false;
   private shouldReconnect = true;
+  private reconnectDelay = 1000;
+  private static readonly MAX_RECONNECT_DELAY = 30000;
 
   constructor(url: string, onMessage: MessageHandler, onStatusChange: (connected: boolean) => void) {
     this.url = url;
@@ -32,6 +34,7 @@ export class LogWebSocket {
     this.ws = new WebSocket(`${protocol}//${host}${this.url}`);
 
     this.ws.onopen = () => {
+      this.reconnectDelay = 1000;
       this.onStatusChange(true);
     };
 
@@ -44,7 +47,8 @@ export class LogWebSocket {
     this.ws.onclose = () => {
       this.onStatusChange(false);
       if (this.shouldReconnect) {
-        this.reconnectTimer = setTimeout(() => this.doConnect(), 3000);
+        this.reconnectTimer = setTimeout(() => this.doConnect(), this.reconnectDelay);
+        this.reconnectDelay = Math.min(this.reconnectDelay * 2, LogWebSocket.MAX_RECONNECT_DELAY);
       }
     };
 

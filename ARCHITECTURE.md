@@ -4,40 +4,39 @@
 
 A standalone, self-hosted autonomous Claude Code agent with a web dashboard. Runs on a Linux VM, manages multiple GitHub repositories, and provides full observability through a browser UI.
 
-**Core idea**: The manager/employee agent architecture from `claude-user-memory` extracted into its own project, enhanced with a web dashboard for configuration, monitoring, and log viewing.
+**Core idea**: Manager/Employee/Analyst agent architecture with multi-employee coordination, a web dashboard for configuration, monitoring, and log viewing, plus an intelligent task queue for issue management.
 
 ---
 
 ## System Overview
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    Claude Agent Station                   │
-│                                                          │
-│  ┌──────────────┐    ┌──────────────────────────────┐   │
-│  │  Agent Core   │    │       Web Dashboard           │   │
-│  │              │    │                              │   │
-│  │ ┌──────────┐ │    │  ┌────────┐   ┌───────────┐ │   │
-│  │ │ Manager  │ │    │  │ FastAPI│   │  Frontend  │ │   │
-│  │ │ (Sonnet) │ │    │  │ Backend│   │  (Svelte)  │ │   │
-│  │ └────┬─────┘ │    │  └───┬────┘   └─────┬─────┘ │   │
-│  │      │       │    │      │               │       │   │
-│  │ ┌────▼─────┐ │    │      │         served by     │   │
-│  │ │ Employee │ │    │      │          FastAPI       │   │
-│  │ │ (Opus)   │ │    │      │               │       │   │
-│  │ └──────────┘ │    │  ┌───▼───────────────▼───┐   │   │
-│  │              │    │  │      SQLite DB         │   │   │
-│  │ ┌──────────┐ │    │  │  (config, runs, logs) │   │   │
-│  │ │ Analyst  │ │    │  └───────────────────────┘   │   │
-│  │ │ (Sonnet) │ │    │                              │   │
-│  │ └──────────┘ │    └──────────────────────────────┘   │
-│  └──────┬───────┘                                        │
-│         │                                                │
-│  ┌──────▼───────┐                                        │
-│  │   systemd    │                                        │
-│  │ timer+service│                                        │
-│  └──────────────┘                                        │
-└─────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                     Claude Agent Station                          │
+│                                                                   │
+│  ┌──────────────────┐       ┌────────────────────────────────┐   │
+│  │   Agent Core      │       │        Web Dashboard            │   │
+│  │                   │       │                                 │   │
+│  │ ┌──────────────┐ │  wh   │  ┌─────────┐   ┌────────────┐ │   │
+│  │ │  Coordinator │ │──ok──▶│  │ FastAPI  │   │  Svelte 5  │ │   │
+│  │ │  (Scheduler) │ │       │  │ Backend  │   │  Frontend   │ │   │
+│  │ └──┬───┬───┬───┘ │       │  └────┬─────┘   └──────┬─────┘ │   │
+│  │    │   │   │      │       │       │                │       │   │
+│  │ ┌──▼┐ ┌▼──┐┌▼──┐ │       │       │          served by     │   │
+│  │ │E1 │ │E2 ││E3 │ │       │       │           FastAPI      │   │
+│  │ │   │ │   ││   │ │       │       │                │       │   │
+│  │ └───┘ └───┘└───┘ │       │  ┌────▼────────────────▼────┐  │   │
+│  │  Multi-Employee   │       │  │       SQLite DB (WAL)     │  │   │
+│  │  + Manager Review │       │  │  projects, runs, queue,   │  │   │
+│  │  + Analyst Mode   │       │  │  plans, tasks, config     │  │   │
+│  │                   │       │  └──────────────────────────┘  │   │
+│  └─────┬─────────────┘       │                                 │   │
+│        │                     │  ┌──────────────────────────┐  │   │
+│  ┌─────▼─────────┐          │  │  SSE Event Bus (real-time)│  │   │
+│  │    systemd     │          │  └──────────────────────────┘  │   │
+│  │  timer+service │          └────────────────────────────────┘   │
+│  └───────────────┘                                                │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -46,399 +45,190 @@ A standalone, self-hosted autonomous Claude Code agent with a web dashboard. Run
 
 ```
 claude-agent-station/
-├── agent/                      # Autonomous agent core
-│   ├── prompts/                # System prompts (md files)
-│   │   ├── manager.md          # Manager agent prompt
-│   │   ├── employee.md         # Employee agent prompt
-│   │   └── analyst.md          # Analyst agent prompt
+├── agent/                          # Autonomous agent core
+│   ├── prompts/                    # System prompts (markdown)
+│   │   ├── manager.md              # Manager: reviews work, issues verdicts
+│   │   ├── employee.md             # Employee: implements features/fixes
+│   │   ├── analyst.md              # Analyst: code analysis mode
+│   │   ├── planner.md              # Planner: creates implementation plans
+│   │   ├── assigner.md             # Assigner: distributes issues
+│   │   └── custom/                 # User overrides (dashboard-managed)
 │   ├── scripts/
-│   │   ├── run-manager.sh      # Main orchestrator script
-│   │   └── circuit-breaker.sh  # Circuit breaker utility
-│   ├── systemd/
-│   │   ├── claude-agent.service
-│   │   └── claude-agent.timer
-│   ├── selinux/
-│   │   └── claude-agent.te     # SELinux policy module
-│   └── config/
-│       └── default-config.json # Default configuration template
+│   │   ├── run-manager.sh          # Main orchestrator (2200+ lines)
+│   │   ├── circuit-breaker.sh      # Failure tracking (3-strike rule)
+│   │   ├── detect_plan_usage.py    # Claude plan usage detection
+│   │   └── refresh-token.py        # OAuth token refresh
+│   ├── coordinator/                # Multi-employee coordinator (Python)
+│   │   ├── __main__.py             # Coordinator entry point
+│   │   ├── config.py               # Coordinator config dataclass
+│   │   ├── dag.py                  # Task DAG and dependency graph
+│   │   ├── decomposer.py           # Issue → task decomposition (Haiku)
+│   │   ├── employee_runner.py      # Async subprocess employee spawning
+│   │   ├── guidance.py             # Manager → employee guidance channel
+│   │   ├── manager.py              # Plan usage + rate limit awareness
+│   │   ├── reporter.py             # Webhook event posting
+│   │   ├── scheduler.py            # DAG-based concurrent scheduler
+│   │   └── stream_monitor.py       # Real-time stream file monitoring
+│   ├── systemd/                    # Service definitions
+│   ├── selinux/                    # SELinux policy
+│   └── config/                     # Default configuration template
 │
 ├── dashboard/
-│   ├── backend/                # FastAPI application
+│   ├── backend/                    # FastAPI application
 │   │   ├── app/
-│   │   │   ├── __init__.py
-│   │   │   ├── main.py         # FastAPI app, serves frontend
-│   │   │   ├── config.py       # Settings & env loading
-│   │   │   ├── database.py     # SQLite models & connection
-│   │   │   ├── routers/
-│   │   │   │   ├── projects.py # CRUD for managed repos
-│   │   │   │   ├── runs.py     # Run history & status
-│   │   │   │   ├── logs.py     # Log streaming & search
-│   │   │   │   ├── config.py   # Agent configuration
-│   │   │   │   └── system.py   # VM health, systemd status
-│   │   │   ├── services/
-│   │   │   │   ├── agent.py    # Agent control (start/stop/status)
-│   │   │   │   ├── github.py   # GitHub API integration
-│   │   │   │   ├── logs.py     # Log file parsing & streaming
-│   │   │   │   └── systemd.py  # systemd unit management
-│   │   │   └── models.py       # Pydantic schemas
-│   │   ├── requirements.txt
-│   │   └── alembic/            # DB migrations (if needed)
+│   │   │   ├── main.py             # App, lifespan, router registration
+│   │   │   ├── config.py           # pydantic-settings (STATION_ prefix)
+│   │   │   ├── database.py         # Async SQLAlchemy + migrations
+│   │   │   ├── models.py           # ORM models (9 tables)
+│   │   │   ├── schemas.py          # Pydantic request/response schemas
+│   │   │   ├── dependencies.py     # FastAPI dependency injection
+│   │   │   ├── middleware/
+│   │   │   │   └── auth.py         # API key authentication middleware
+│   │   │   ├── routers/            # 16 API routers
+│   │   │   │   ├── analytics.py    # Token usage charts, verdicts
+│   │   │   │   ├── config_router.py# Agent configuration CRUD
+│   │   │   │   ├── coordinator.py  # DAG, tasks, guidance API
+│   │   │   │   ├── events.py       # SSE real-time event stream
+│   │   │   │   ├── health.py       # Health check endpoint
+│   │   │   │   ├── logs.py         # WebSocket log streaming + search
+│   │   │   │   ├── oauth.py        # Claude OAuth PKCE flow
+│   │   │   │   ├── plans.py        # Implementation plan management
+│   │   │   │   ├── plan_usage.py   # Plan tier usage tracking
+│   │   │   │   ├── prompts.py      # System prompt management
+│   │   │   │   ├── projects.py     # Project CRUD
+│   │   │   │   ├── queue.py        # Task queue management
+│   │   │   │   ├── runs.py         # Run history, diffs, triggers
+│   │   │   │   ├── system.py       # systemd + auth status
+│   │   │   │   └── webhook.py      # Agent event ingestion
+│   │   │   └── services/           # Business logic
+│   │   │       ├── config_sync.py  # JSON ↔ DB bidirectional sync
+│   │   │       ├── diff_parser.py  # Git diff parsing
+│   │   │       ├── event_bus.py    # In-memory pub/sub for SSE
+│   │   │       ├── idempotency.py  # Webhook deduplication
+│   │   │       ├── log_importer.py # Historical log ingestion
+│   │   │       ├── log_parser.py   # Stream JSONL parsing
+│   │   │       ├── log_streamer.py # File tailing for WebSocket
+│   │   │       ├── notifier.py     # Slack/Discord/Telegram webhooks
+│   │   │       ├── stale_run_reaper.py # Orphan run recovery
+│   │   │       └── systemd.py      # systemctl wrapper
+│   │   ├── tests/                  # 21 test files, 325+ tests
+│   │   ├── migrations/             # Config schema migrations
+│   │   ├── requirements.txt        # Runtime dependencies
+│   │   └── requirements-dev.txt    # Dev/test dependencies
 │   │
-│   └── frontend/               # Svelte SPA (compiled to static)
+│   └── frontend/                   # Svelte 5 SPA
 │       ├── src/
-│       │   ├── App.svelte
-│       │   ├── pages/
-│       │   │   ├── Dashboard.svelte    # Overview: runs, costs, status
-│       │   │   ├── Projects.svelte     # Manage repos & modes
-│       │   │   ├── RunDetail.svelte    # Single run: logs, diff, verdict
-│       │   │   ├── Logs.svelte         # Live log viewer
-│       │   │   ├── Config.svelte       # Edit agent configuration
-│       │   │   └── System.svelte       # VM health, services
-│       │   ├── components/
-│       │   │   ├── RunCard.svelte      # Run summary card
-│       │   │   ├── VerdictBadge.svelte # APPROVE/PR/REJECT badge
-│       │   │   ├── LogStream.svelte    # WebSocket log viewer
-│       │   │   ├── CostChart.svelte    # Cost over time chart
-│       │   │   └── ProjectForm.svelte  # Add/edit project form
-│       │   └── lib/
-│       │       ├── api.ts              # API client
-│       │       └── websocket.ts        # WebSocket helpers
-│       ├── package.json
-│       ├── vite.config.ts
-│       └── index.html
+│       │   ├── App.svelte          # Root + hash-based routing
+│       │   ├── pages/              # 4 page components
+│       │   │   ├── CommandCenterPage.svelte  # Overview dashboard
+│       │   │   ├── WorkStreamPage.svelte     # Run history + details
+│       │   │   ├── DecisionsPage.svelte      # Verdict review
+│       │   │   └── ConfigPage.svelte         # Settings + system
+│       │   ├── components/         # 38 reusable components
+│       │   └── lib/                # TypeScript modules
+│       │       ├── api.ts          # API client (typed, with auth + timeout)
+│       │       ├── types.ts        # TypeScript interfaces
+│       │       ├── event-stream.ts # SSE client (exponential backoff)
+│       │       ├── ws.ts           # WebSocket client (exponential backoff)
+│       │       ├── router.svelte.ts# Hash-based SPA router
+│       │       ├── toast.svelte.ts # Toast notification system
+│       │       ├── format.ts       # Date/number formatting
+│       │       ├── log-parser.ts   # Log event parsing
+│       │       ├── agent-presence.svelte.ts  # Real-time agent tracking
+│       │       └── workspace-renderer.ts     # Workspace visualization
+│       └── package.json
 │
-├── install.sh                  # One-command installer
-├── ARCHITECTURE.md             # This file
-├── CLAUDE.md                   # Project conventions
+├── .github/workflows/ci.yml       # GitHub Actions CI/CD
+├── pyproject.toml                  # Project config (pytest, ruff, coverage)
+├── install.sh                      # One-command installer
+├── ARCHITECTURE.md                 # This file
+├── CLAUDE.md                       # Project conventions
 └── README.md
 ```
 
 ---
 
-## Component Details
+## Database Schema (9 tables)
 
-### 1. Agent Core (`agent/`)
+| Table | Purpose | Key fields |
+|-------|---------|------------|
+| `projects` | Managed GitHub repositories | repo, priority, mode, enabled, branch |
+| `runs` | Execution history | run_id, status, verdict, tokens, trace_id |
+| `config` | Key-value settings store | key, value (JSON) |
+| `plans` | Implementation plans | title, steps, status, files_affected |
+| `coordinator_tasks` | DAG task records | task_id, run_id, status, depends_on |
+| `coordinator_messages` | Guidance/conflict messages | direction, message_type, content |
+| `notifications` | Run completion alerts | type (approve/reject/pr/error) |
+| `task_queue` | Work queue with state machine | state, priority, retry_count |
+| `plan_usage_history` | Token usage tracking | plan_tier, weekly_tokens_used |
 
-**Extracted from**: `claude-user-memory/.claude/autonomous/`
+---
 
-The agent core is the existing manager/employee system, restructured into a cleaner layout. Changes from the original:
+## Security
 
-- **Config source**: Instead of reading `manager-config.json` directly, `run-manager.sh` reads from the SQLite database via a helper script (or falls back to JSON file if dashboard is unavailable)
-- **Run logging**: Writes structured run records that the dashboard can ingest
-- **Webhook notifications**: Posts run events to the dashboard's `/api/webhook/run-event` endpoint for real-time updates
+| Layer | Mechanism |
+|-------|-----------|
+| **API authentication** | Optional API key via `STATION_API_KEY` env var. Bearer token or query parameter. Health/webhook/SSE endpoints always public. |
+| **Webhook authentication** | Optional shared secret via `STATION_WEBHOOK_SECRET`. X-Webhook-Token header. |
+| **Event idempotency** | In-memory deduplication with TTL (prevents replay attacks) |
+| **Path traversal** | `os.path.realpath()` + `startswith()` checks on log endpoints |
+| **XSS prevention** | DOMPurify for markdown rendering, Svelte auto-escaping |
+| **CORS** | Explicit origin whitelist (no wildcard with credentials) |
+| **OAuth** | PKCE flow with TTL state parameter |
+| **Input validation** | Config key whitelist, Pydantic schema validation |
+| **Subprocess safety** | 30-second timeouts on all git subprocess calls |
 
-**No changes to core logic** — the manager/employee/analyst prompts and orchestration stay the same.
+---
 
-### 2. Dashboard Backend (`dashboard/backend/`)
-
-**Tech**: Python 3.11+ / FastAPI / SQLite / uvicorn
-
-**Why FastAPI**:
-- Python is already on the VM (required by agent scripts)
-- Async support for WebSocket log streaming
-- Auto-generated OpenAPI docs
-- Lightweight, no heavy framework overhead
-
-**Key endpoints**:
-
-```
-GET  /                          # Serve frontend SPA
-GET  /api/health                # Health check
-
-# Projects (repos the agent manages)
-GET  /api/projects              # List all projects
-POST /api/projects              # Add a project
-PUT  /api/projects/{id}         # Update project config
-DEL  /api/projects/{id}         # Remove a project
-
-# Runs (execution history)
-GET  /api/runs                  # List runs (filterable)
-GET  /api/runs/{id}             # Run detail (logs, diff, verdict)
-GET  /api/runs/latest           # Most recent run per project
-POST /api/runs/trigger          # Manually trigger a run
-
-# Logs
-GET  /api/logs/stream           # WebSocket: live log tail
-GET  /api/logs/search           # Search across log files
-GET  /api/logs/{run_id}         # Logs for specific run
-
-# Configuration
-GET  /api/config                # Current agent config
-PUT  /api/config                # Update agent config
-GET  /api/config/models         # Available model options
-
-# System
-GET  /api/system/status         # systemd service/timer status
-GET  /api/system/health         # CPU, memory, disk
-POST /api/system/service/{action}  # start/stop/restart timer
-GET  /api/system/auth           # Claude auth status
-```
-
-**Database schema** (SQLite):
-
-```sql
--- Projects (replaces manager-config.json projects array)
-CREATE TABLE projects (
-    id          INTEGER PRIMARY KEY,
-    repo        TEXT NOT NULL UNIQUE,   -- "owner/repo"
-    priority    TEXT DEFAULT 'medium',  -- high/medium/low
-    mode        TEXT DEFAULT 'full',    -- full/analyze
-    enabled     BOOLEAN DEFAULT 1,
-    branch      TEXT DEFAULT 'main',
-    created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-
--- Runs (parsed from log files + stream data)
-CREATE TABLE runs (
-    id          INTEGER PRIMARY KEY,
-    run_id      TEXT NOT NULL UNIQUE,   -- "20260308T150314Z"
-    project_id  INTEGER REFERENCES projects(id),
-    mode        TEXT,                   -- full/analyze
-    model       TEXT,                   -- model used
-    status      TEXT,                   -- running/success/failed/rejected
-    verdict     TEXT,                   -- APPROVE/PR/REJECT/null
-    issue_number INTEGER,
-    branch      TEXT,
-    cost_usd    REAL,
-    turns       INTEGER,
-    started_at  DATETIME,
-    finished_at DATETIME,
-    employee_report JSON,              -- full report JSON
-    verdict_detail JSON,               -- verdict JSON
-    log_file    TEXT                    -- path to .stream.jsonl
-);
-
--- Config (key-value, replaces parts of manager-config.json)
-CREATE TABLE config (
-    key         TEXT PRIMARY KEY,
-    value       TEXT,                   -- JSON-encoded value
-    updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-
--- Notifications
-CREATE TABLE notifications (
-    id          INTEGER PRIMARY KEY,
-    run_id      TEXT REFERENCES runs(run_id),
-    type        TEXT,                   -- approve/reject/pr/error/info
-    message     TEXT,
-    read        BOOLEAN DEFAULT 0,
-    created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-```
-
-### 3. Dashboard Frontend (`dashboard/frontend/`)
-
-**Tech**: Svelte 5 + Vite + TailwindCSS
-
-**Why Svelte**:
-- Compiles to vanilla JS (tiny bundle, fast on VM)
-- No runtime framework overhead
-- Simple, readable components
-- Great for small-to-medium dashboards
-
-**Pages**:
-
-| Page | Purpose |
-|------|---------|
-| **Dashboard** | Overview: active projects, recent runs, cost summary, system health |
-| **Projects** | Add/remove/configure repos. Toggle mode (full/analyze), priority, enabled |
-| **Run Detail** | View a specific run: employee report, git diff, manager verdict, full logs |
-| **Logs** | Live WebSocket log stream + historical search |
-| **Config** | Edit global settings: models, limits, schedule, notifications |
-| **System** | VM health (CPU/mem/disk), systemd status, auth status, circuit breaker |
-
-**Key UX features**:
-- Real-time run status via WebSocket
-- Syntax-highlighted git diffs
-- Collapsible log sections (thinking vs tool calls vs results)
-- Cost tracking charts (daily/weekly)
-- One-click "trigger run now" button
-- Mobile-responsive (check from phone)
-
-### 4. Installation (`install.sh`)
-
-One-command setup for Rocky Linux 9 (or similar RHEL-based):
+## Development
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/kenhaesler/claude-agent-station/main/install.sh | sudo bash
+# Backend
+cd dashboard/backend
+pip install -r requirements-dev.txt
+uvicorn app.main:app --reload --port 8420
+
+# Frontend
+cd dashboard/frontend
+npm install
+npm run dev
+
+# Run tests
+cd dashboard/backend && python -m pytest tests/ -v
+
+# Lint
+ruff check dashboard/backend/
+
+# Test coverage
+python -m pytest tests/ --cov=app --cov-report=term-missing
 ```
 
-**What it does**:
-1. Install system dependencies (python3, pip, git, jq, bubblewrap, socat)
-2. Install Claude Code CLI
-3. Create `claude-agent` system user
-4. Copy agent prompts, scripts, configs
-5. Set up Python venv + install FastAPI dependencies
-6. Initialize SQLite database
-7. Install systemd units (agent timer + dashboard service)
-8. Configure SELinux policy
-9. Configure firewall (allow dashboard port, HTTPS egress)
-10. Print access URL and first-run instructions
+### Environment Variables
 
-**Dashboard systemd unit** (new):
-```ini
-[Unit]
-Description=Claude Agent Station Dashboard
-After=network.target
-
-[Service]
-Type=simple
-User=claude-agent
-WorkingDirectory=/opt/claude-agent-station/dashboard/backend
-ExecStart=/opt/claude-agent-station/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8420
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-```
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `STATION_DB_PATH` | `/opt/git/.../station.db` | SQLite database path |
+| `STATION_LOG_DIR` | `/var/log/claude-agent` | Agent log directory |
+| `STATION_CONFIG_PATH` | `~/.claude/.../manager-config.json` | Agent config JSON |
+| `STATION_WORKSPACES_DIR` | `/home/claude-agent/workspaces` | Git workspace root |
+| `STATION_API_KEY` | (none) | API authentication key |
+| `STATION_WEBHOOK_SECRET` | (none) | Webhook authentication token |
+| `STATION_CREDENTIALS_PATH` | `~/.claude/.credentials.json` | Claude CLI credentials |
+| `STATION_ALLOWED_ORIGINS` | localhost:5173,4173 | CORS allowed origins |
 
 ---
 
-## Data Flow
-
-### Scheduled Run (existing flow, enhanced)
-
-```
-systemd timer fires (hourly)
-    │
-    ▼
-run-manager.sh
-    │
-    ├─→ POST /api/webhook/run-event {status: "started", project: "..."}
-    │   (dashboard records run start)
-    │
-    ├─→ Spawn employee agent → works on issues
-    │   └─→ Writes .stream.jsonl (dashboard tails via inotify)
-    │
-    ├─→ Collect report, spawn manager review
-    │   └─→ Manager writes verdicts.json
-    │
-    ├─→ Execute verdicts (push/merge/PR/reject)
-    │
-    └─→ POST /api/webhook/run-event {status: "completed", verdict: "...", cost: ...}
-        (dashboard records run completion)
-```
-
-### Manual Trigger (new)
-
-```
-User clicks "Run Now" in dashboard
-    │
-    ▼
-POST /api/runs/trigger {project_id: 1}
-    │
-    ▼
-Backend: systemctl start claude-agent.service
-    │
-    ▼
-(same flow as scheduled run)
-```
-
-### Live Log Viewing (new)
-
-```
-User opens Logs page
-    │
-    ▼
-WebSocket: /api/logs/stream?run_id=latest
-    │
-    ▼
-Backend: tail -f /var/log/claude-agent/*.stream.jsonl
-    │
-    ▼
-Parse JSONL → send structured events to frontend
-    │
-    ▼
-Frontend renders: thinking blocks, tool calls, results
-```
-
----
-
-## Migration Plan (from claude-user-memory)
-
-### Phase 1: Extract & Restructure
-- Copy autonomous files to new repo structure
-- Refactor `run-manager.sh` to use new paths
-- Add webhook calls for dashboard integration
-- Keep JSON config as fallback (dashboard optional)
-
-### Phase 2: Dashboard Backend
-- FastAPI app with SQLite
-- REST API for projects, runs, config
-- WebSocket log streaming
-- systemd control endpoints
-- Import existing log files into database
-
-### Phase 3: Dashboard Frontend
-- Svelte SPA with TailwindCSS
-- Dashboard overview page
-- Project management
-- Run detail viewer
-- Live log streaming
-
-### Phase 4: Installer & Docs
-- One-command install script
-- Migration guide from claude-user-memory
-- README with screenshots
-
----
-
-## Security Considerations
-
-- **Dashboard auth**: HTTP Basic Auth or token-based (configurable). No auth by default on localhost-only binding.
-- **Bind address**: Default `127.0.0.1:8420` (localhost only). Reverse proxy (nginx/caddy) for external access with TLS.
-- **systemd control**: Only start/stop/restart of the agent timer. No arbitrary command execution.
-- **Config validation**: All config changes validated before writing. No path traversal, no arbitrary file access.
-- **Log access**: Only reads from `/var/log/claude-agent/`. No access to other system logs.
-- **GH_TOKEN**: Never exposed via API. Dashboard shows auth status only (valid/expired/missing).
-
----
-
-## Tech Stack Summary
+## Tech Stack
 
 | Component | Technology | Reason |
 |-----------|-----------|--------|
 | Agent orchestration | Bash + Claude CLI | Existing, proven, works |
-| Backend API | Python/FastAPI | Already on VM, async, lightweight |
-| Database | SQLite | Zero config, single file, sufficient for this scale |
-| Frontend | Svelte 5 + Vite | Tiny bundle, no runtime, fast |
-| Styling | TailwindCSS | Utility-first, no custom CSS files |
-| Process management | systemd | Already in use, native to Rocky Linux |
-| Auth (optional) | HTTP Basic / Token | Simple, sufficient for single-user VM |
-
----
-
-## Deployment Model: Bare Metal + systemd
-
-Everything runs directly on the VM. No Docker.
-
-**Why not Docker**:
-- The Claude CLI agent needs real filesystem access (git workspaces, SSH keys, OAuth credentials, bubblewrap sandbox). Containerizing it would require `--privileged` and 10+ volume mounts, defeating the purpose.
-- The dashboard is a simple FastAPI app — a Python venv provides the same isolation without the overhead.
-- SELinux + Docker on Rocky Linux adds unnecessary friction.
-- Single-VM, single-user system doesn't benefit from container orchestration.
-- `git pull && systemctl restart` is simpler than `docker compose pull && docker compose up`.
-
-**What manages processes**: systemd (two units)
-- `claude-agent.timer` + `claude-agent.service` — hourly agent runs
-- `claude-station-dashboard.service` — persistent dashboard (uvicorn)
-
-**What isolates dependencies**: Python venv at `/opt/claude-agent-station/venv/`
-
-**What handles updates**: `git pull origin main && systemctl restart claude-station-dashboard`
-
-**Docker becomes worthwhile if**: distributing to many users on different distros, running multiple instances, or adding heavy dependencies (Postgres, Redis, workers). Add it later if needed — the architecture doesn't preclude it.
-
----
-
-## Future Ideas (not in v1)
-
-- **Multi-VM support**: Central dashboard managing agents on multiple VMs
-- **Slack/Discord notifications**: Beyond file-based notifications
-- **Cost budgeting**: Set monthly limits with automatic pause
-- **Run scheduling UI**: Cron expression editor in the dashboard
-- **Issue queue view**: See what the agent will work on next
-- **Diff review in UI**: Approve/reject verdicts from the dashboard
-- **Agent log replay**: Step-through visualization of agent thinking
+| Multi-employee coordinator | Python asyncio | Concurrent task scheduling |
+| Backend API | Python 3.11+ / FastAPI | Async, auto-docs, lightweight |
+| Database | SQLite (WAL mode) | Zero config, sufficient for scale |
+| Frontend | Svelte 5 + Vite + TailwindCSS | Tiny bundle, no runtime |
+| Real-time updates | SSE (event bus) + WebSocket (logs) | Browser-native, no deps |
+| Process management | systemd | Native to target platform |
+| CI/CD | GitHub Actions | pytest + ruff + frontend build |
+| Linting | ruff | Fast Python linter/formatter |
+| Testing | pytest + pytest-asyncio | 325+ tests, async support |
