@@ -185,8 +185,13 @@ function handleWsMessage(data: string) {
   if (!parsed) return;
 
   const events = Array.isArray(parsed) ? parsed : [parsed];
-  // Determine current agent name from active agents
-  const activeAgent = agentPresence.agents.find(a => a.status === 'active' && a.role !== 'manager');
+  // Determine current agent name from active agents.
+  // During manager phases the WS log stream is the manager's CLI output.
+  const isManagerPhase = agentPresence.phase === 'manager_review' || agentPresence.phase === 'executing_verdict';
+  const activeAgent = isManagerPhase
+    ? agentPresence.agents.find(a => a.role === 'manager')
+    : (agentPresence.agents.find(a => a.status === 'active' && a.role !== 'manager')
+       ?? agentPresence.agents.find(a => a.status === 'active'));
   const agentName = activeAgent?.name ?? 'Dev-0';
   const agentColor = activeAgent?.color ?? ROLE_COLORS['dev-0'];
 
