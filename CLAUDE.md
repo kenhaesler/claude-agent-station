@@ -25,10 +25,9 @@ See `ARCHITECTURE.md` for full system design.
 
 ## Git Workflow
 - **`main` is protected.** Direct pushes are blocked — even for admins.
-- All changes go through pull requests with at least 1 approval.
+- All changes go through pull requests (no approval required — solo project).
 - Force pushes and branch deletion on `main` are blocked.
-- Stale reviews are dismissed when new commits are pushed.
-- **Workflow**: Create a feature branch → commit changes → open PR via `gh pr create` → merge after approval.
+- **Workflow**: Create a feature branch → commit changes → open PR via `gh pr create` → merge.
 - Branch naming: `feature/<description>`, `fix/<description>`, or `autonomous/issue-<number>`.
 - Never commit `.env`, credentials, or binary files.
 
