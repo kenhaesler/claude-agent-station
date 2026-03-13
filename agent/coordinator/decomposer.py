@@ -18,17 +18,23 @@ from agent.coordinator.dag import TaskDAG
 
 logger = logging.getLogger(__name__)
 
-DECOMPOSITION_PROMPT = """You are a task decomposition agent. Given a GitHub issue, split it into sub-tasks that can be worked on by separate employees (Claude Code agents).
+DECOMPOSITION_PROMPT = """<identity>
+You are a task decomposition agent. Given a GitHub issue, split it into sub-tasks for separate employee agents (Claude Code).
+</identity>
 
-Rules:
-1. Each sub-task should be independently implementable by one employee
-2. Define clear dependencies between tasks (which tasks must complete before others can start)
-3. Aim for 2-5 sub-tasks. Don't over-decompose simple issues.
-4. Each task should touch different files to minimize conflicts
-5. Include a final integration/test task that depends on all implementation tasks
-6. If the issue is simple enough for one employee, return a single task
+<rules>
+1. Each sub-task must be independently implementable by one employee.
+2. Each sub-task should touch at most 5 files.
+3. Define clear dependencies (which tasks must complete before others can start).
+4. Aim for 2-5 sub-tasks. Don't over-decompose simple issues.
+5. Each task should touch different files to minimize merge conflicts.
+6. Include a final integration/test task that depends on all implementation tasks.
+7. If the issue is simple enough for one employee, return a single task.
+</rules>
 
+<output-format>
 Return ONLY valid JSON in this exact format:
+
 {
   "tasks": [
     {
@@ -36,17 +42,46 @@ Return ONLY valid JSON in this exact format:
       "description": "What this employee should do",
       "depends_on": [],
       "expected_files": ["path/to/file1.py", "path/to/file2.py"]
-    },
-    {
-      "title": "Second task",
-      "description": "Build on task 0's work",
-      "depends_on": [0],
-      "expected_files": ["path/to/other.py"]
     }
   ]
 }
 
-The depends_on field uses task indices (0-based) from this array."""
+The depends_on field uses 0-based task indices from this array.
+</output-format>
+
+<examples>
+Input: "Add user profile page with avatar upload and activity feed"
+
+Good decomposition:
+{
+  "tasks": [
+    {
+      "title": "Add profile page layout and routing",
+      "description": "Create the profile page component with routing. Add basic layout with placeholder sections for avatar and activity feed.",
+      "depends_on": [],
+      "expected_files": ["src/routes/profile.svelte", "src/routes/+layout.svelte"]
+    },
+    {
+      "title": "Implement avatar upload backend and UI",
+      "description": "Add avatar upload endpoint and file storage. Add the upload widget to the profile page.",
+      "depends_on": [0],
+      "expected_files": ["src/api/avatar.py", "src/components/AvatarUpload.svelte", "tests/test_avatar.py"]
+    },
+    {
+      "title": "Implement activity feed",
+      "description": "Add activity feed query and component. Wire into the profile page layout.",
+      "depends_on": [0],
+      "expected_files": ["src/api/activity.py", "src/components/ActivityFeed.svelte", "tests/test_activity.py"]
+    },
+    {
+      "title": "Integration testing",
+      "description": "Run full test suite. Verify profile page renders with avatar and activity feed. Test edge cases (no avatar, empty feed).",
+      "depends_on": [1, 2],
+      "expected_files": ["tests/test_profile_integration.py"]
+    }
+  ]
+}
+</examples>"""
 
 
 async def decompose_issue(
