@@ -7,12 +7,13 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
+from app.dependencies import verify_api_key
 from app.database import init_db, async_session
 from app.services.config_sync import sync_config_to_db
 from app.services.log_importer import import_historical_runs
@@ -140,21 +141,25 @@ app.add_middleware(
 )
 
 # Mount routers
+# Exempt: health (monitoring must always be reachable) and webhook (has own auth)
 app.include_router(health.router)
-app.include_router(analytics.router)
-app.include_router(projects.router)
-app.include_router(runs.router)
-app.include_router(logs.router)
-app.include_router(config_router.router)
-app.include_router(system.router)
 app.include_router(webhook.router)
-app.include_router(oauth.router)
-app.include_router(plans.router)
-app.include_router(events.router)
-app.include_router(coordinator.router)
-app.include_router(plan_usage.router)
-app.include_router(prompts.router)
-app.include_router(queue.router)
+
+# Protected routers: require API key when STATION_API_KEY is configured
+_auth = [Depends(verify_api_key)]
+app.include_router(analytics.router, dependencies=_auth)
+app.include_router(projects.router, dependencies=_auth)
+app.include_router(runs.router, dependencies=_auth)
+app.include_router(logs.router, dependencies=_auth)
+app.include_router(config_router.router, dependencies=_auth)
+app.include_router(system.router, dependencies=_auth)
+app.include_router(oauth.router, dependencies=_auth)
+app.include_router(plans.router, dependencies=_auth)
+app.include_router(events.router, dependencies=_auth)
+app.include_router(coordinator.router, dependencies=_auth)
+app.include_router(plan_usage.router, dependencies=_auth)
+app.include_router(prompts.router, dependencies=_auth)
+app.include_router(queue.router, dependencies=_auth)
 
 # Serve frontend static files (must be last, catches all non-API routes)
 _frontend_dist = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"

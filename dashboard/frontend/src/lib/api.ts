@@ -2,12 +2,40 @@ import type { Project, ProjectCreate, ProjectUpdate, Run, RunList, RunFullContex
 
 const BASE = import.meta.env.VITE_API_URL || '';
 
+// --- API Key helpers (stored in localStorage) ---
+
+const API_KEY_STORAGE_KEY = 'station-api-key';
+
+export function getStoredApiKey(): string | null {
+  return localStorage.getItem(API_KEY_STORAGE_KEY);
+}
+
+export function setStoredApiKey(key: string): void {
+  localStorage.setItem(API_KEY_STORAGE_KEY, key);
+}
+
+export function clearStoredApiKey(): void {
+  localStorage.removeItem(API_KEY_STORAGE_KEY);
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const apiKey = getStoredApiKey();
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(init?.headers as Record<string, string> ?? {}),
+  };
+  if (apiKey) {
+    headers['Authorization'] = `Bearer ${apiKey}`;
+  }
+
   const res = await fetch(`${BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
     ...init,
+    headers,
   });
   if (!res.ok) {
+    if (res.status === 401) {
+      window.dispatchEvent(new CustomEvent('station-auth-required'));
+    }
     const body = await res.text();
     throw new Error(`${res.status}: ${body}`);
   }

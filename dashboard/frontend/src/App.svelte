@@ -6,6 +6,7 @@
   import NavRail from './components/NavRail.svelte';
   import HeaderBar from './components/HeaderBar.svelte';
   import AgentPanel from './components/AgentPanel.svelte';
+  import ApiKeyModal from './components/ApiKeyModal.svelte';
   import Toast from './components/Toast.svelte';
   import CommandCenterPage from './pages/CommandCenterPage.svelte';
   import WorkStreamPage from './pages/WorkStreamPage.svelte';
@@ -18,6 +19,7 @@
   let sessionsUsed = $state(0);
   let sessionLimit = $state(50);
   let triggering = $state(false);
+  let showApiKeyModal = $state(false);
 
   async function loadStatus() {
     try {
@@ -60,6 +62,13 @@
     loadStatus();
     const interval = setInterval(loadStatus, 15000);
     return () => clearInterval(interval);
+  });
+
+  // Listen for auth-required events from API layer
+  $effect(() => {
+    const handler = () => { showApiKeyModal = true; };
+    window.addEventListener('station-auth-required', handler);
+    return () => window.removeEventListener('station-auth-required', handler);
   });
 
   // Agent presence lifecycle
@@ -108,6 +117,7 @@
       onTrigger={handleTrigger}
       {triggering}
       onPanelToggle={() => togglePanel()}
+      onAuthClick={() => showApiKeyModal = true}
     />
     <div class="flex flex-1 overflow-hidden">
       <!-- Page content -->
@@ -135,5 +145,6 @@
     <NavRail />
   </div>
 
+  <ApiKeyModal show={showApiKeyModal} onClose={() => showApiKeyModal = false} />
   <Toast />
 </div>
