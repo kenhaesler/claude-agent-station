@@ -23,6 +23,9 @@ See `ARCHITECTURE.md` for full system design.
 - SQLite database at `/var/lib/claude-agent-station/station.db`
 - Dashboard port: 8420
 
+## Issue Rules
+- **NEVER work on issues or features labeled `backlog`.** Under no circumstances should the agent pick up, implement, plan, or research any issue/feature that carries the `backlog` label. Skip them entirely — no exceptions.
+
 ## Git Workflow
 - **`main` is protected.** Direct pushes are blocked — even for admins.
 - All changes go through pull requests (no approval required — solo project).
