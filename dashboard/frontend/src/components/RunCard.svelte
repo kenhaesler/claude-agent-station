@@ -7,8 +7,10 @@
   import GlassCard from './GlassCard.svelte';
   import TaskDAGMini from './TaskDAGMini.svelte';
   import PhaseTimeline from './PhaseTimeline.svelte';
-  import MarkdownRenderer from './MarkdownRenderer.svelte';
+  import EmployeeReport from './EmployeeReport.svelte';
+  import VerdictDetail from './VerdictDetail.svelte';
   import DiffViewer from './DiffViewer.svelte';
+  import type { RunPhase } from '../lib/workspace-renderer';
   import { formatDuration, formatTokens, timeAgo } from '../lib/format';
   import { agentPresence, getAgentName, getAgentColor } from '../lib/agent-presence.svelte';
 
@@ -71,6 +73,16 @@
     run.verdict === 'PR' ? 'text-pr' :
     run.verdict === 'SKIP' ? 'text-text-dim' : ''
   );
+
+  let phase = $derived<RunPhase>((() => {
+    if (run.status === 'finished' || run.status === 'error') {
+      return run.verdict ? 'executing_verdict' : 'idle';
+    }
+    if (run.status === 'reviewing') return 'manager_review';
+    if (run.status === 'running') return 'employee';
+    if (run.status === 'coordinating') return 'coordinating';
+    return 'idle';
+  })());
 </script>
 
 <!-- Level 0: Collapsed row (48px) -->
@@ -121,7 +133,7 @@
             <div>
               <p class="text-[10px] text-text-muted uppercase tracking-wider mb-1">Report</p>
               <div class="text-xs text-text-dim leading-relaxed max-h-[200px] overflow-auto">
-                <MarkdownRenderer content={run.employee_report} />
+                <EmployeeReport report={run.employee_report} />
               </div>
             </div>
           {/if}
@@ -137,10 +149,8 @@
           <!-- Phase timeline -->
           {#if run.started_at}
             <PhaseTimeline
+              {phase}
               startedAt={run.started_at}
-              finishedAt={run.finished_at}
-              status={run.status}
-              verdict={run.verdict}
             />
           {/if}
 
@@ -174,7 +184,7 @@
         <div class="mt-3">
           <p class="text-[10px] text-text-muted uppercase tracking-wider mb-1">Verdict Detail</p>
           <div class="text-xs text-text-dim leading-relaxed">
-            <MarkdownRenderer content={run.verdict_detail} />
+            <VerdictDetail detail={run.verdict_detail} />
           </div>
         </div>
       {/if}
