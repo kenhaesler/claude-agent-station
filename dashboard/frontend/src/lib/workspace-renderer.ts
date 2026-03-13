@@ -565,6 +565,14 @@ export class WorkspaceRenderer {
     const phase = this.phase;
     const r = this.orbitRadius;
 
+    // Minimum radius to prevent node overlap.
+    // For n nodes on a circle of radius R, closest pair distance = 2R·sin(π/n).
+    // Require this >= MIN_NODE_SPACING (outer tech ring × 2).
+    const MIN_NODE_SPACING = 80;
+    const minR = count >= 2
+      ? MIN_NODE_SPACING / (2 * Math.sin(Math.PI / count))
+      : MIN_NODE_SPACING * 0.5;
+
     for (let i = 0; i < count; i++) {
       const node = this.nodes[i];
       const angle = (i / count) * Math.PI * 2 - Math.PI / 2;
@@ -575,31 +583,34 @@ export class WorkspaceRenderer {
         node.opacity = Math.max(node.opacity, 0.5);
       } else if (phase === 'manager_review') {
         if (node.role === 'manager') {
-          targetR = r * 0.15;
+          targetR = r * 0.3;
         } else if (node.isActive) {
-          targetR = r * 0.25;
+          targetR = r * 0.5;
         } else {
-          targetR = r * 0.45;
+          targetR = r * 0.65;
         }
       } else if (phase === 'employee') {
         if (node.isActive) {
-          targetR = r * 0.28;
+          targetR = r * 0.45;
         } else if (node.role === 'manager') {
           targetR = r;
         } else {
-          targetR = r * 0.4;
+          targetR = r * 0.6;
         }
       } else if (phase === 'coordinating') {
         if (node.role === 'coordinator') {
-          targetR = r * 0.15;
+          targetR = r * 0.3;
         } else if (node.role === 'manager') {
           targetR = r;
         } else {
-          targetR = r * 0.4;
+          targetR = r * 0.6;
         }
       } else if (phase === 'executing_verdict') {
-        targetR = r * 0.15;
+        targetR = r * 0.35;
       }
+
+      // Enforce minimum radius to prevent overlapping nodes
+      targetR = Math.max(targetR, minR);
 
       node.targetX = this.hubX + Math.cos(angle) * targetR;
       node.targetY = this.hubY + Math.sin(angle) * targetR;
