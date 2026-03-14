@@ -2280,9 +2280,6 @@ for item in data.get('items', []):
         mode_check=$(get_project_field "$i" "mode" 2>/dev/null || echo "full")
 
         local employees_for_assign=$max_per_project
-        if [ "$mode_check" = "analyze" ] || [ "$mode_check" = "plan" ]; then
-            employees_for_assign=1
-        fi
 
         # Only pre-assign if multiple employees on same project in full mode
         if [ "$employees_for_assign" -gt 1 ] && [ "$mode_check" = "full" ]; then
