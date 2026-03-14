@@ -219,7 +219,7 @@ async def _send_notification_detailed(
     summary: str | None = None,
     run_id: str | None = None,
     _bypass_filter: bool = False,
-) -> tuple[bool, Optional[str]]:
+) -> tuple[bool, str | None]:
     """Send a webhook notification, returning (success, error_detail).
 
     Returns (True, None) on success, (False, error_message) on failure.
@@ -290,11 +290,11 @@ async def _send_notification_detailed(
 async def send_notification(
     event_type: str,
     project: str,
-    issue_number: Optional[int] = None,
-    issue_title: Optional[str] = None,
-    tokens_total: Optional[int] = None,
-    summary: Optional[str] = None,
-    run_id: Optional[str] = None,
+    issue_number: int | None = None,
+    issue_title: str | None = None,
+    tokens_total: int | None = None,
+    summary: str | None = None,
+    run_id: str | None = None,
     _bypass_filter: bool = False,
 ) -> bool:
     """Send a webhook notification for a run event.

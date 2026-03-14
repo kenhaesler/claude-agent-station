@@ -2,7 +2,6 @@
 
 import secrets
 from collections.abc import AsyncGenerator
-from typing import Optional
 
 from fastapi import HTTPException, Query, Security
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -20,8 +19,8 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 
 
 async def verify_api_key(
-    credentials: Optional[HTTPAuthorizationCredentials] = Security(_bearer_scheme),
-    token: Optional[str] = Query(default=None, alias="token"),
+    credentials: HTTPAuthorizationCredentials | None = Security(_bearer_scheme),
+    token: str | None = Query(default=None, alias="token"),
 ) -> None:
     """Validate API key from Bearer header or ?token= query parameter.
 
@@ -38,7 +37,7 @@ async def verify_api_key(
         return  # No key configured — open access
 
     # Prefer Bearer token, fall back to query param
-    provided_key: Optional[str] = None
+    provided_key: str | None = None
     if credentials and credentials.credentials:
         provided_key = credentials.credentials
     elif token:

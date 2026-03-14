@@ -487,17 +487,34 @@ def detect_rate_limit_errors(
                     except json.JSONDecodeError:
                         continue
 
-                    event_str = str(event).lower()
+                    # Only inspect actual error events, not all events.
+                    # Avoid converting the entire event dict to string
+                    # which causes false positives from tool output content.
+                    event_type = event.get("type", "")
 
-                    # Check for rate-limit events
-                    if event.get("type") == "error" or "error" in event_str:
-                        if any(kw in event_str for kw in RATE_LIMIT_KEYWORDS):
+                    # Skip rate_limit_event with status:"allowed" (not an error)
+                    if event_type == "rate_limit_event":
+                        if event.get("status") == "allowed":
+                            continue
+
+                    # Only check events that are genuine errors
+                    is_error_event = event_type in ("error", "system") or event.get("is_error")
+                    if not is_error_event:
+                        continue
+
+                    # Extract the error message text, not the entire event
+                    error_text = str(
+                        event.get("error", event.get("message", event.get("content", "")))
+                    ).lower()
+
+                    for kw in RATE_LIMIT_KEYWORDS:
+                        if kw in error_text:
                             rate_limit_count += 1
                             latest_error_time = now
+                            break
 
-                    # Check for overuse indicators
                     for kw in OVERUSE_KEYWORDS:
-                        if kw in event_str:
+                        if kw in error_text:
                             overuse_signals.append(kw)
 
         except OSError:
@@ -798,25 +815,47 @@ def _merge_snapshots(
 ) -> PlanUsageSnapshot:
     """Merge two snapshots, preferring primary for detection signals
     but filling in numerical data from secondary where primary lacks it.
+
+    If the primary snapshot has an error (e.g. error_detection failed to
+    find real signals), prefer secondary's numerical data instead of
+    taking the artificially inflated "worst case" values from the primary.
     """
+    # If primary errored or has no real token data, prefer secondary's numbers
+    primary_has_real_data = (
+        primary.weekly_tokens_used > 0 or primary.session_tokens_used > 0
+    )
+    primary_has_error = bool(primary.error)
+
+    # For percentage fields: only take primary's inflated values if it has
+    # genuine data, not heuristic error guesses
+    if primary_has_real_data and not primary_has_error:
+        session_pct = max(primary.session_usage_percent, secondary.session_usage_percent)
+        weekly_pct = max(primary.weekly_usage_percent, secondary.weekly_usage_percent)
+        is_exhausted = primary.session_is_exhausted or secondary.session_is_exhausted
+    else:
+        # Primary was error-based (95%/100% guesses) — use secondary's real data
+        session_pct = secondary.session_usage_percent
+        weekly_pct = secondary.weekly_usage_percent
+        is_exhausted = secondary.session_is_exhausted
+
     merged = PlanUsageSnapshot(
         timestamp=primary.timestamp or secondary.timestamp,
         detection_method=f"{primary.detection_method}+{secondary.detection_method}",
         plan_tier=primary.plan_tier if primary.plan_tier != "unknown" else secondary.plan_tier,
-        # Use the higher/worse values for safety
+        # Use real token counts from whichever source has them
         session_tokens_used=max(primary.session_tokens_used, secondary.session_tokens_used),
         session_tokens_limit=secondary.session_tokens_limit or primary.session_tokens_limit,
-        session_usage_percent=max(primary.session_usage_percent, secondary.session_usage_percent),
+        session_usage_percent=session_pct,
         session_reset_at=primary.session_reset_at or secondary.session_reset_at,
         seconds_until_session_reset=(
             primary.seconds_until_session_reset
             if primary.seconds_until_session_reset > 0
             else secondary.seconds_until_session_reset
         ),
-        session_is_exhausted=primary.session_is_exhausted or secondary.session_is_exhausted,
+        session_is_exhausted=is_exhausted,
         weekly_tokens_used=max(primary.weekly_tokens_used, secondary.weekly_tokens_used),
         weekly_tokens_limit=secondary.weekly_tokens_limit or primary.weekly_tokens_limit,
-        weekly_usage_percent=max(primary.weekly_usage_percent, secondary.weekly_usage_percent),
+        weekly_usage_percent=weekly_pct,
         weekly_reset_at=primary.weekly_reset_at or secondary.weekly_reset_at,
         seconds_until_weekly_reset=(
             primary.seconds_until_weekly_reset

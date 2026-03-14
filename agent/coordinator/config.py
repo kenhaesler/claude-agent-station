@@ -39,6 +39,7 @@ class CoordinatorConfig:
     # Plan usage enforcement
     plan_tier: str = "max_5x"
     max_usage_percent: float = 85.0
+    plan_usage_detection_enabled: bool = True
 
     # Planning phase configuration (plan-before-implement)
     planning_enabled: bool = True
@@ -97,6 +98,9 @@ class CoordinatorConfig:
             cfg.db_path = coordinator.get("db_path", cfg.db_path)
             cfg.plan_tier = coordinator.get("plan_tier", cfg.plan_tier)
             cfg.max_usage_percent = coordinator.get("max_usage_percent", cfg.max_usage_percent)
+            cfg.plan_usage_detection_enabled = coordinator.get(
+                "plan_usage_detection_enabled", cfg.plan_usage_detection_enabled
+            )
 
             planning = data.get("planning", {})
             cfg.planning_enabled = planning.get("enabled", cfg.planning_enabled)

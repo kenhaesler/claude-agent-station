@@ -101,6 +101,21 @@ async def decompose_issue(
     """
     effective_run_id = run_id or config.run_id
 
+    # For analyze mode, create a single read-only analysis task
+    if config.project_mode == "analyze":
+        logger.info("Analyze mode — creating read-only analysis task")
+        title = (
+            f"Analyze codebase for issue #{issue_number}"
+            if issue_number
+            else "Analyze codebase"
+        )
+        return await TaskDAG.single_task(
+            effective_run_id, repo, session_factory,
+            title=title,
+            description=issue_body[:2000],
+            issue_number=issue_number,
+        )
+
     # For single employee, skip decomposition
     if employee_count <= 1:
         logger.info("Single employee — skipping decomposition")

@@ -1,3 +1,5 @@
+import { getStoredApiKey } from './api';
+
 type MessageHandler = (data: string) => void;
 
 export class LogWebSocket {
@@ -31,7 +33,18 @@ export class LogWebSocket {
     const host = import.meta.env.VITE_API_URL
       ? new URL(import.meta.env.VITE_API_URL).host
       : window.location.host;
-    this.ws = new WebSocket(`${protocol}//${host}${this.url}`);
+
+    // Build WebSocket URL with auth token (WebSocket can't use Bearer headers)
+    const wsUrl = new URL(`${protocol}//${host}${this.url}`);
+    // Preserve any existing query params from this.url
+    const existingParams = new URL(this.url, window.location.href).searchParams;
+    existingParams.forEach((value, key) => wsUrl.searchParams.set(key, value));
+    // Add API key for authentication
+    const apiKey = getStoredApiKey();
+    if (apiKey) {
+      wsUrl.searchParams.set('token', apiKey);
+    }
+    this.ws = new WebSocket(wsUrl.toString());
 
     this.ws.onopen = () => {
       this.reconnectDelay = 1000;

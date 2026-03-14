@@ -12,8 +12,8 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
-from app.dependencies import verify_api_key
 from app.database import async_session, init_db
+from app.dependencies import verify_api_key
 from app.routers import (
     analytics,
     config_router,

@@ -9,18 +9,17 @@ Covers:
 - Stale run reaper notification integration
 """
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from app.services.notifier import (
-    _should_notify,
-    _format_slack,
     _format_discord,
-    _format_telegram,
     _format_generic,
+    _format_slack,
+    _format_telegram,
     _send_notification_detailed,
+    _should_notify,
     send_notification,
     send_test_notification,
 )

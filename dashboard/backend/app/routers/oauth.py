@@ -13,7 +13,6 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlencode, urlparse
 
 import httpx
-
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 

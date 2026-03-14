@@ -186,21 +186,21 @@ async def send_guidance_api(
 
     try:
         send_guidance(workspace, payload.employee_index, payload.guidance_type, payload.content)
-    except FileNotFoundError:
+    except FileNotFoundError as e:
         raise HTTPException(
             status_code=422,
             detail="Employee workspace disappeared — the agent may have finished.",
-        )
-    except PermissionError:
+        ) from e
+    except PermissionError as e:
         raise HTTPException(
             status_code=403,
             detail="Permission denied writing to employee workspace.",
-        )
+        ) from e
     except OSError as e:
         raise HTTPException(
             status_code=500,
             detail=f"OS error writing guidance file: {e}",
-        )
+        ) from e
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to send guidance: {e}") from e
 
