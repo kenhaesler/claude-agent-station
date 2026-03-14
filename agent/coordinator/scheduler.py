@@ -438,7 +438,7 @@ async def _run_and_monitor(
     try:
         # --- Plan review gate ---
         approved_plan: dict | None = None
-        if not _should_skip_planning(task, config):
+        if config.project_mode != "analyze" and not _should_skip_planning(task, config):
             logger.info(
                 "Starting plan phase for employee %d, task '%s'",
                 employee_index,
@@ -453,6 +453,17 @@ async def _run_and_monitor(
                 await dag.mark_failed(task.id, "Plan phase failed or was rejected")
                 post_task_event(config, "task_failed", task)
                 return task.id
+
+        # --- Mode gate: analyze/plan modes must NOT proceed to implementation ---
+        if config.project_mode in ("analyze", "plan"):
+            logger.info(
+                "MODE GATE: Skipping implementation for employee %d, task '%s' "
+                "(mode=%s — implementation not permitted)",
+                employee_index, task.title, config.project_mode,
+            )
+            await dag.mark_completed(task.id, exit_code=0)
+            post_task_event(config, "task_completed", task)
+            return task.id
 
         # Start employee subprocess (with approved plan if available)
         employee_task = asyncio.create_task(
