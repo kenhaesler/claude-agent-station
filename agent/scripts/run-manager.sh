@@ -714,12 +714,31 @@ run_employee() {
     local custom_instructions
     custom_instructions=$(get_project_field "$project_index" "custom_instructions" 2>/dev/null || echo "")
 
+    # Each employee gets a unique run_id so the dashboard can track them individually.
+    # Employee 0 uses the master run_id for backward compatibility; others get a suffix.
+    local employee_run_id="run-$RUN_ID"
+    if [ "$employee_index" -gt 0 ]; then
+        employee_run_id="run-${RUN_ID}-e${employee_index}"
+    fi
+
     log_info "=========================================="
-    log_info "EMPLOYEE: $repo (mode: $mode, index: $employee_index)"
+    log_info "EMPLOYEE: $repo (mode: $mode, index: $employee_index, run_id: $employee_run_id)"
     log_info "Workspace: $workspace"
     log_info "=========================================="
 
-    webhook_event "employee_start" "\"project\":\"$repo\",\"mode\":\"$mode\",\"employee_index\":$employee_index,\"concurrent_group_id\":\"$CONCURRENT_GROUP_ID\""
+    # Use employee-specific webhook to create a distinct Run record per employee
+    local _ewh_url
+    _ewh_url=$(json_get "$CONFIG_FILE" "dashboard.webhook_url" 2>/dev/null || echo "")
+    [ -z "$_ewh_url" ] && _ewh_url="http://127.0.0.1:8420/api/webhook/run-event"
+    local _ewh_secret
+    _ewh_secret="${STATION_WEBHOOK_SECRET:-$(json_get "$CONFIG_FILE" "dashboard.webhook_secret" 2>/dev/null || echo "")}"
+    local -a _ewh_auth=()
+    [ -n "$_ewh_secret" ] && _ewh_auth=(-H "X-Webhook-Token: $_ewh_secret")
+    curl -s --max-time 3 -X POST "$_ewh_url" \
+        -H "Content-Type: application/json" \
+        "${_ewh_auth[@]}" \
+        -d "{\"event\":\"employee_start\",\"run_id\":\"$employee_run_id\",\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"project\":\"$repo\",\"mode\":\"$mode\",\"employee_index\":$employee_index,\"concurrent_group_id\":\"${CONCURRENT_GROUP_ID:-run-$RUN_ID}\"}" \
+        2>/dev/null || true
 
     # Transition queue item to in_progress
     local _qid
@@ -1151,7 +1170,12 @@ print(f'{t:,}')
         log_warn "Employee exited with code $exit_code: $repo"
     fi
 
-    webhook_event "employee_complete" "\"project\":\"$repo\",\"exit_code\":$exit_code,\"employee_index\":$employee_index"
+    # Use employee-specific run_id to complete the correct Run record
+    curl -s --max-time 3 -X POST "$_ewh_url" \
+        -H "Content-Type: application/json" \
+        "${_ewh_auth[@]}" \
+        -d "{\"event\":\"employee_complete\",\"run_id\":\"$employee_run_id\",\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"project\":\"$repo\",\"exit_code\":$exit_code,\"employee_index\":$employee_index,\"concurrent_group_id\":\"${CONCURRENT_GROUP_ID:-run-$RUN_ID}\"}" \
+        2>/dev/null || true
 
     # Transition queue item to review
     local _qid2
