@@ -210,7 +210,7 @@ def _format_generic(
     }
 
 
-async def send_notification(
+async def _send_notification_detailed(
     event_type: str,
     project: str,
     issue_number: Optional[int] = None,
@@ -219,21 +219,17 @@ async def send_notification(
     summary: Optional[str] = None,
     run_id: Optional[str] = None,
     _bypass_filter: bool = False,
-) -> bool:
-    """Send a webhook notification for a run event.
+) -> tuple[bool, Optional[str]]:
+    """Send a webhook notification, returning (success, error_detail).
 
-    Returns True if notification was sent successfully, False otherwise.
+    Returns (True, None) on success, (False, error_message) on failure.
     Never raises — failures are logged.
-
-    Args:
-        _bypass_filter: If True, skip the _should_notify check. Used by
-            send_test_notification which validates config independently.
     """
     try:
         config = _get_notification_config()
 
         if not _bypass_filter and not _should_notify(event_type, config):
-            return False
+            return (False, None)
 
         webhook_url = config["webhook_url"]
         webhook_type = config.get("webhook_type", "generic").lower()
@@ -274,21 +270,53 @@ async def send_notification(
             "Notification sent: %s for %s (type=%s, status=%d)",
             event_type, project, webhook_type, response.status_code,
         )
-        return True
+        return (True, None)
 
     except httpx.HTTPStatusError as e:
-        logger.warning(
-            "Notification webhook returned error: %s %s (body: %s)",
-            e.response.status_code, e.response.reason_phrase,
-            e.response.text[:200] if e.response.text else "",
-        )
-        return False
+        body = e.response.text[:200] if e.response.text else ""
+        detail = f"Webhook returned HTTP {e.response.status_code} {e.response.reason_phrase}: {body}"
+        logger.warning("Notification webhook returned error: %s", detail)
+        return (False, detail)
     except httpx.RequestError as e:
+        detail = f"Webhook request failed: {e}"
         logger.warning("Notification webhook request failed: %s", e)
-        return False
-    except Exception:
+        return (False, detail)
+    except Exception as e:
+        detail = f"Unexpected error: {type(e).__name__}: {e}"
         logger.exception("Unexpected error sending notification")
-        return False
+        return (False, detail)
+
+
+async def send_notification(
+    event_type: str,
+    project: str,
+    issue_number: Optional[int] = None,
+    issue_title: Optional[str] = None,
+    tokens_total: Optional[int] = None,
+    summary: Optional[str] = None,
+    run_id: Optional[str] = None,
+    _bypass_filter: bool = False,
+) -> bool:
+    """Send a webhook notification for a run event.
+
+    Returns True if notification was sent successfully, False otherwise.
+    Never raises — failures are logged.
+
+    Args:
+        _bypass_filter: If True, skip the _should_notify check. Used by
+            send_test_notification which validates config independently.
+    """
+    success, _ = await _send_notification_detailed(
+        event_type=event_type,
+        project=project,
+        issue_number=issue_number,
+        issue_title=issue_title,
+        tokens_total=tokens_total,
+        summary=summary,
+        run_id=run_id,
+        _bypass_filter=_bypass_filter,
+    )
+    return success
 
 
 async def send_test_notification() -> Dict[str, Any]:
@@ -305,7 +333,7 @@ async def send_test_notification() -> Dict[str, Any]:
     if not config.get("webhook_url"):
         return {"success": False, "error": "Webhook URL is not configured"}
 
-    result = await send_notification(
+    success, error_detail = await _send_notification_detailed(
         event_type="TEST",
         project="test/notification-check",
         issue_number=0,
@@ -316,7 +344,7 @@ async def send_test_notification() -> Dict[str, Any]:
         _bypass_filter=True,
     )
 
-    if result:
+    if success:
         return {"success": True, "message": "Test notification sent successfully"}
     else:
-        return {"success": False, "error": "Failed to send notification. Check logs for details."}
+        return {"success": False, "error": error_detail or "Failed to send notification"}

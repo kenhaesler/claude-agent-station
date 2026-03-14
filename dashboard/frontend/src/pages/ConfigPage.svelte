@@ -461,8 +461,23 @@
                   <label for="webhook-url" class="block text-xs text-text-dim mb-1">Webhook URL</label>
                   <input id="webhook-url" type="url" bind:value={webhookUrl} class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-1.5 text-sm text-text focus:outline-none transition-colors" />
                 </div>
+                <div>
+                  <label for="webhook-type" class="block text-xs text-text-dim mb-1">Webhook Type</label>
+                  <select id="webhook-type" bind:value={webhookType} class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-1.5 text-sm text-text focus:outline-none transition-colors">
+                    <option value="slack">Slack</option>
+                    <option value="discord">Discord</option>
+                    <option value="telegram">Telegram</option>
+                    <option value="generic">Generic</option>
+                  </select>
+                </div>
               {/if}
             </div>
+            {#if notificationsMethod === 'webhook' && webhookType === 'telegram'}
+              <div>
+                <label for="telegram-chat-id" class="block text-xs text-text-dim mb-1">Telegram Chat ID</label>
+                <input id="telegram-chat-id" type="text" bind:value={telegramChatId} placeholder="-1001234567890" class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-1.5 text-sm text-text focus:outline-none transition-colors" />
+              </div>
+            {/if}
             {#if notificationsMethod === 'webhook'}
               <button onclick={sendTestNotification} disabled={testingSending || !webhookUrl}
                 class="px-3 py-1.5 text-xs font-medium bg-warning/20 text-warning rounded cursor-pointer disabled:opacity-40">
