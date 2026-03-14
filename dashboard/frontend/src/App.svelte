@@ -9,7 +9,8 @@
   import NavRail from './components/NavRail.svelte';
   import HeaderBar from './components/HeaderBar.svelte';
   import AgentPanel from './components/AgentPanel.svelte';
-  import AgentWorkspace from './components/AgentWorkspace.svelte';
+  import SpaceBackground from './components/SpaceBackground.svelte';
+  import AmbientParticles from './components/AmbientParticles.svelte';
   import ApiKeyModal from './components/ApiKeyModal.svelte';
   import CommandPalette from './components/CommandPalette.svelte';
   import Toast from './components/Toast.svelte';
@@ -28,10 +29,25 @@
   let sessionLimit = $state(50);
   let triggering = $state(false);
   let showApiKeyModal = $state(false);
-  let cortexFocused = $state(false);
   let paletteOpen = $state(false);
 
-  // System status and usage for Cortex backdrop
+  // Background mode (persisted to localStorage)
+  type BackgroundMode = '3d' | '2d' | 'off';
+  let backgroundMode = $state<BackgroundMode>(
+    (localStorage.getItem('station-bg-mode') as BackgroundMode) ?? '3d'
+  );
+
+  // Reduced motion detection
+  let reduceMotion = $state(false);
+  $effect(() => {
+    const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+    reduceMotion = mq.matches;
+    const handler = (e: MediaQueryListEvent) => { reduceMotion = e.matches; };
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  });
+
+  // System status and usage for Cortex
   let systemStatus = $state<SystemStatus | null>(null);
   let usageData = $state<UsageData | null>(null);
 
@@ -72,12 +88,6 @@
       triggering = false;
     }
   }
-
-  // Route-aware Cortex settings
-  let isCommandPage = $derived(route.page === 'command');
-  let cortexQuality = $derived<'full' | 'ambient'>(isCommandPage || cortexFocused ? 'full' : 'ambient');
-  let cortexInteractive = $derived(isCommandPage || cortexFocused);
-  let cortexOpacity = $derived(cortexFocused ? 1 : isCommandPage ? 0.9 : 0.3);
 
   // Status polling
   $effect(() => {
@@ -122,7 +132,6 @@
 
     if (e.key === 'Escape') {
       if (paletteOpen) { paletteOpen = false; return; }
-      if (cortexFocused) { cortexFocused = false; return; }
       if (agentPresence.panelOpen) { agentPresence.panelOpen = false; return; }
       return;
     }
@@ -136,12 +145,6 @@
     if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'a') {
       e.preventDefault();
       togglePanel();
-      return;
-    }
-    // Cortex Focus: Space (when not in input and not on command page)
-    if (e.key === ' ' && !isCommandPage) {
-      e.preventDefault();
-      cortexFocused = !cortexFocused;
       return;
     }
     if (e.key === '1') { navigate('/command'); return; }
@@ -158,15 +161,13 @@
 <!-- Skip to content (accessibility) -->
 <a href="#main-content" class="skip-to-content">Skip to content</a>
 
-<!-- Cortex backdrop — persistent ambient canvas behind all content -->
+<!-- Ambient background — configurable 3D space / 2D particles / off -->
 <div class="fixed inset-0 z-cortex" aria-hidden="true">
-  <AgentWorkspace
-    {systemStatus}
-    usage={usageData}
-    renderQuality={cortexQuality}
-    interactive={cortexInteractive}
-    opacity={cortexOpacity}
-  />
+  {#if backgroundMode === '3d' && !reduceMotion}
+    <SpaceBackground phase={agentPresence.phase} />
+  {:else if backgroundMode === '2d' && !reduceMotion}
+    <AmbientParticles phase={agentPresence.phase} />
+  {/if}
 </div>
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -189,18 +190,21 @@
       {triggering}
       onPanelToggle={() => togglePanel()}
       onAuthClick={() => showApiKeyModal = true}
+      {backgroundMode}
+      onBackgroundModeChange={(mode) => {
+        backgroundMode = mode;
+        localStorage.setItem('station-bg-mode', mode);
+      }}
     />
     <div class="flex flex-1 overflow-hidden">
       <!-- Page content with semi-transparent overlay -->
       <main
         id="main-content"
-        class="flex-1 p-3 md:p-6 overflow-auto pb-20 md:pb-6 transition-all duration-400
-          {isCommandPage ? 'cortex-overlay-transparent' : 'cortex-overlay'}
-          {cortexFocused ? '!opacity-10 pointer-events-none' : ''}"
+        class="flex-1 p-3 md:p-6 overflow-auto pb-20 md:pb-6 transition-all duration-400 cortex-overlay"
         aria-label="Page content"
       >
         {#if route.page === 'command'}
-          <PulsePage />
+          <PulsePage {systemStatus} usage={usageData} />
         {:else if route.page === 'stream-detail' && route.param}
           <RunDetailPage runId={route.param} />
         {:else if route.page === 'stream'}
