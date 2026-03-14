@@ -37,7 +37,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       window.dispatchEvent(new CustomEvent('station-auth-required'));
     }
     const body = await res.text();
-    throw new Error(`${res.status}: ${body}`);
+    let message: string;
+    try {
+      const parsed = JSON.parse(body);
+      message = parsed.detail || body;
+    } catch { message = body; }
+    throw new Error(`${res.status}: ${message}`);
   }
   if (res.status === 204) return undefined as T;
   return res.json();

@@ -20,6 +20,7 @@ from app.services.notifier import (
     _format_discord,
     _format_telegram,
     _format_generic,
+    _send_notification_detailed,
     send_notification,
     send_test_notification,
 )
@@ -366,6 +367,144 @@ class TestSendTestNotification:
             result = await send_test_notification()
             assert result["success"] is False
             assert "not 'webhook'" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_returns_specific_http_error(self):
+        """Test notification should return specific HTTP error details."""
+        import httpx
+
+        mock_config = {
+            "enabled": True,
+            "method": "webhook",
+            "webhook_url": "https://hooks.example.com/test",
+            "webhook_type": "generic",
+        }
+
+        mock_response = MagicMock()
+        mock_response.status_code = 403
+        mock_response.reason_phrase = "Forbidden"
+        mock_response.text = "Access denied"
+        mock_response.raise_for_status = MagicMock(
+            side_effect=httpx.HTTPStatusError(
+                "403", request=MagicMock(), response=mock_response
+            )
+        )
+
+        with patch(
+            "app.services.notifier._get_notification_config", return_value=mock_config
+        ), patch("app.services.notifier.httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client.post = AsyncMock(return_value=mock_response)
+            mock_client_cls.return_value = mock_client
+
+            result = await send_test_notification()
+            assert result["success"] is False
+            assert "403" in result["error"]
+            assert "Forbidden" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_returns_specific_connection_error(self):
+        """Test notification should return specific connection error details."""
+        import httpx
+
+        mock_config = {
+            "enabled": True,
+            "method": "webhook",
+            "webhook_url": "https://hooks.example.com/test",
+            "webhook_type": "generic",
+        }
+
+        with patch(
+            "app.services.notifier._get_notification_config", return_value=mock_config
+        ), patch("app.services.notifier.httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client.post = AsyncMock(
+                side_effect=httpx.ConnectError("Connection refused")
+            )
+            mock_client_cls.return_value = mock_client
+
+            result = await send_test_notification()
+            assert result["success"] is False
+            assert "Connection refused" in result["error"]
+
+
+class TestSendNotificationDetailed:
+    """Tests for _send_notification_detailed return values."""
+
+    @pytest.mark.asyncio
+    async def test_detailed_returns_tuple_on_failure(self):
+        """Verify (False, error_string) on HTTP error."""
+        import httpx
+
+        mock_config = {
+            "enabled": True,
+            "method": "webhook",
+            "webhook_url": "https://hooks.example.com/test",
+            "webhook_type": "generic",
+            "notify_on": ["approve"],
+        }
+
+        mock_response = MagicMock()
+        mock_response.status_code = 502
+        mock_response.reason_phrase = "Bad Gateway"
+        mock_response.text = "upstream error"
+        mock_response.raise_for_status = MagicMock(
+            side_effect=httpx.HTTPStatusError(
+                "502", request=MagicMock(), response=mock_response
+            )
+        )
+
+        with patch(
+            "app.services.notifier._get_notification_config", return_value=mock_config
+        ), patch("app.services.notifier.httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client.post = AsyncMock(return_value=mock_response)
+            mock_client_cls.return_value = mock_client
+
+            success, detail = await _send_notification_detailed(
+                event_type="APPROVE",
+                project="test/repo",
+            )
+            assert success is False
+            assert "502" in detail
+            assert "Bad Gateway" in detail
+
+    @pytest.mark.asyncio
+    async def test_detailed_returns_tuple_on_success(self):
+        """Verify (True, None) on success."""
+        mock_config = {
+            "enabled": True,
+            "method": "webhook",
+            "webhook_url": "https://hooks.example.com/test",
+            "webhook_type": "generic",
+            "notify_on": ["approve"],
+        }
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = MagicMock()
+
+        with patch(
+            "app.services.notifier._get_notification_config", return_value=mock_config
+        ), patch("app.services.notifier.httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client.post = AsyncMock(return_value=mock_response)
+            mock_client_cls.return_value = mock_client
+
+            success, detail = await _send_notification_detailed(
+                event_type="APPROVE",
+                project="test/repo",
+            )
+            assert success is True
+            assert detail is None
 
 
 class TestSendNotification:
