@@ -727,30 +727,10 @@ def detect_usage_heuristic(
             ))
 
         # ------- Check for overuse signals in recent runs -------
-        cursor.execute(
-            """
-            SELECT error_message
-            FROM runs
-            WHERE started_at >= ?
-              AND error_message IS NOT NULL
-              AND error_message != ''
-            ORDER BY started_at DESC
-            LIMIT 20
-            """,
-            (session_start.isoformat(),),
-        )
-        overuse_signals = []
-        for err_row in cursor.fetchall():
-            err_msg = (err_row["error_message"] or "").lower()
-            for kw in OVERUSE_KEYWORDS:
-                if kw in err_msg:
-                    overuse_signals.append(kw)
-            for kw in RATE_LIMIT_KEYWORDS:
-                if kw in err_msg:
-                    snapshot.is_throttled = True
-        if overuse_signals:
-            snapshot.overuse_active = True
-            snapshot.overuse_signals = list(set(overuse_signals))
+        # Note: the runs table does NOT have an error_message column.
+        # Overuse signal detection is handled by detect_rate_limit_errors()
+        # which scans stream JSONL files directly. This section intentionally
+        # left empty to avoid sqlite3.OperationalError on missing column.
 
         conn.close()
 
