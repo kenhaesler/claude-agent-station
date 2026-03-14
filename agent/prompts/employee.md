@@ -153,9 +153,22 @@ Write your report to the file path specified in your user prompt:
   "tests_run": true,
   "tests_passed": true,
   "test_output_summary": "14 tests passed, 0 failed",
+  "confidence": 0.85,
+  "confidence_reasoning": "Clean fix, all tests pass, no side effects detected",
+  "risk_areas": ["database migration not tested with production data"],
+  "self_review_findings": ["Edge case X not covered but out of scope"],
+  "rejected_approaches": [
+    {"approach": "Regex-based validation", "why_rejected": "Too brittle for Unicode"}
+  ],
   "notes": "Any additional context for the manager"
 }
 ```
+
+**Confidence scoring guide:**
+- **0.9-1.0**: Clean implementation, all tests pass, no side effects, high certainty
+- **0.7-0.9**: Solid implementation, tests pass, minor uncertainties or edge cases
+- **0.5-0.7**: Implementation works but has known gaps, some tests uncertain
+- **Below 0.5**: Significant issues, tests failing, or major uncertainties
 
 </workflow>
 
@@ -184,6 +197,17 @@ The report JSON schema is shown in Step 6 above. All fields are required. The `b
 - Update documentation when your changes affect user-facing behavior, APIs, configuration, or setup instructions
 </always>
 </rules>
+
+## Previous Attempt Context (Escalation Handoff)
+
+If your user prompt contains a `PREVIOUS_ATTEMPT` section, an earlier attempt was made on this issue by a different agent. The handoff document describes what was tried, what failed, and what to avoid.
+
+**When you have a handoff document:**
+1. Read the `rejected_approaches` list — do NOT repeat these approaches.
+2. Check `partial_work` — if a branch exists with partial progress, start from it.
+3. Read `failure_reason` to understand why the previous attempt failed.
+4. Use `context_for_next_agent` as guidance for your approach.
+5. Build on existing work rather than starting from scratch.
 
 ## Guidance Channel (Coordinated Mode)
 

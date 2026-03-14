@@ -17,10 +17,12 @@ from app.config import settings
 from app.database import async_session, init_db
 from app.dependencies import verify_api_key
 from app.routers import (
+    agent_events,
     analytics,
     config_router,
     coordinator,
     events,
+    github_webhook,
     health,
     logs,
     oauth,
@@ -160,6 +162,10 @@ app.include_router(coordinator.router, dependencies=_auth)
 app.include_router(plan_usage.router, dependencies=_auth)
 app.include_router(prompts.router, dependencies=_auth)
 app.include_router(queue.router, dependencies=_auth)
+app.include_router(agent_events.router, dependencies=_auth)
+
+# GitHub webhook: has own auth via HMAC signature verification
+app.include_router(github_webhook.router)
 
 # Serve frontend static files (must be last, catches all non-API routes)
 _frontend_dist = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"

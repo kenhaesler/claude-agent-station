@@ -742,10 +742,22 @@ run_employee() {
         log_info "  Budget-adjusted turns: $max_turns"
     fi
 
-    # Analyze/plan modes use Sonnet (cheaper — no code changes, just analysis/planning)
-    if [ "$mode" = "analyze" ] || [ "$mode" = "plan" ]; then
-        model="claude-sonnet-4-6"
-        max_turns=50
+    # Mode-specific model and turn overrides from config (with sensible defaults)
+    if [ "$mode" = "analyze" ]; then
+        model=$(json_get "$CONFIG_FILE" "models.analyst" 2>/dev/null || echo "claude-sonnet-4-6")
+        max_turns=$(json_get "$CONFIG_FILE" "limits.max_analyst_turns" 2>/dev/null || echo "50")
+    elif [ "$mode" = "plan" ]; then
+        model=$(json_get "$CONFIG_FILE" "models.planner" 2>/dev/null || echo "claude-sonnet-4-6")
+        max_turns=$(json_get "$CONFIG_FILE" "limits.max_planner_turns" 2>/dev/null || echo "50")
+    elif [ "$mode" = "fix" ]; then
+        model=$(json_get "$CONFIG_FILE" "models.employee" 2>/dev/null || echo "claude-sonnet-4-6")
+        max_turns=$(json_get "$CONFIG_FILE" "limits.max_fix_turns" 2>/dev/null || echo "75")
+    elif [ "$mode" = "triage" ]; then
+        model=$(json_get "$CONFIG_FILE" "models.analyst" 2>/dev/null || echo "claude-sonnet-4-6")
+        max_turns=$(json_get "$CONFIG_FILE" "limits.max_triage_turns" 2>/dev/null || echo "30")
+    elif [ "$mode" = "review" ]; then
+        model=$(json_get "$CONFIG_FILE" "models.analyst" 2>/dev/null || echo "claude-sonnet-4-6")
+        max_turns=$(json_get "$CONFIG_FILE" "limits.max_review_turns" 2>/dev/null || echo "30")
     fi
 
     # Determine fallback model (must differ from primary)
@@ -794,6 +806,36 @@ Analyze the codebase for bugs, technical debt, security issues, and improvement 
 Write your report to $workspace/.claude-employee-report${report_suffix}.json
 
 Remember: You are in ANALYZE mode. Read and analyze only — do NOT modify any source files."
+    elif [ "$mode" = "triage" ]; then
+        system_prompt="$(resolve_prompt triager)"
+        employee_prompt="Triage issues for the repository: $repo
+
+Environment variables available:
+- GITHUB_REPO=$repo
+- GH_TOKEN is set
+
+Your workspace is: $workspace
+
+Review open issues and classify them (bug/feature/chore). Assign priority labels, estimate scope, check for duplicates, and link related issues.
+
+Write your report to $workspace/.claude-employee-report${report_suffix}.json
+
+Remember: You are in TRIAGE mode. Read and analyze only — do NOT modify any source files."
+    elif [ "$mode" = "review" ]; then
+        system_prompt="$(resolve_prompt reviewer)"
+        employee_prompt="Review open pull requests for the repository: $repo
+
+Environment variables available:
+- GITHUB_REPO=$repo
+- GH_TOKEN is set
+
+Your workspace is: $workspace
+
+Review open PRs. For each PR, read the diff and test results ONLY. Post structured review feedback via gh pr review. Never approve or merge — only comment.
+
+Write your report to $workspace/.claude-employee-report${report_suffix}.json
+
+Remember: You are in REVIEW mode. Read and analyze only — do NOT modify any source files."
     else
         system_prompt="$(resolve_prompt employee)"
 
@@ -992,8 +1034,8 @@ $custom_instructions"
     cmd+=(--fallback-model "$fallback_model")
     cmd+=(--max-turns "$max_turns")
     cmd+=(--system-prompt-file "$system_prompt")
-    # Analyze/plan modes: block file-mutation tools at CLI level (defense in depth)
-    if [ "$mode" = "analyze" ] || [ "$mode" = "plan" ]; then
+    # Read-only modes: block file-mutation tools at CLI level (defense in depth)
+    if [ "$mode" = "analyze" ] || [ "$mode" = "plan" ] || [ "$mode" = "triage" ] || [ "$mode" = "review" ]; then
         cmd+=(--disallowedTools "Edit" "Write" "NotebookEdit")
     fi
     # Full mode: unrestricted tools (dedicated VM, prompt-enforced guardrails)

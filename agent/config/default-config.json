@@ -3,7 +3,7 @@
   "_project_fields": {
     "repo": "owner/repo (required)",
     "priority": "high | medium | low",
-    "mode": "full | analyze",
+    "mode": "full | analyze | plan | fix | triage | review",
     "enabled": true,
     "branch": "main",
     "setup_script": "Commands to run before the agent starts, e.g. 'npm install' or 'pip install -r requirements.txt'",
@@ -13,18 +13,32 @@
   "models": {
     "employee": "claude-opus-4-6",
     "manager": "claude-sonnet-4-6",
-    "analyst": "claude-sonnet-4-6"
+    "analyst": "claude-sonnet-4-6",
+    "planner": "claude-sonnet-4-6",
+    "router": "claude-haiku-4-5-20251001"
   },
   "limits": {
     "max_usage_percent": 80,
     "reserve_percent": 20,
     "max_employee_turns": 200,
     "max_analyst_turns": 50,
+    "max_planner_turns": 50,
     "max_manager_turns": 30,
+    "max_fix_turns": 75,
+    "max_triage_turns": 30,
+    "max_review_turns": 30,
     "max_rejection_retries": 1,
     "max_concurrent_employees": 1,
     "max_employees_per_project": 1,
     "token_budget_strategy": "equal_split"
+  },
+  "intelligence": {
+    "auto_mode_selection": false,
+    "progressive_deepening": false,
+    "confidence_gating": false,
+    "independent_verification": false,
+    "adaptive_scheduling": false,
+    "work_stealing": false
   },
   "dashboard": {
     "port": 8420,

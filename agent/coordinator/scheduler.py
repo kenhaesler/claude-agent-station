@@ -45,8 +45,8 @@ def _should_skip_planning(task: Task, config: CoordinatorConfig) -> bool:
     if not config.planning_enabled:
         return True
 
-    # Analyze/plan modes don't need a plan-before-implement phase
-    if config.project_mode in ("analyze", "plan"):
+    # Read-only and lightweight modes don't need a plan-before-implement phase
+    if config.project_mode in ("analyze", "plan", "triage", "review", "fix"):
         return True
 
     # Check for skip-planning label in assignment file

@@ -45,8 +45,26 @@ class CoordinatorConfig:
     planning_enabled: bool = True
     planning_max_revisions: int = 2
 
+    # Mode-specific model/turn overrides
+    analyst_model: str = "claude-sonnet-4-6"
+    planner_model: str = "claude-sonnet-4-6"
+    router_model: str = "claude-haiku-4-5-20251001"
+    max_analyst_turns: int = 50
+    max_planner_turns: int = 50
+    max_fix_turns: int = 75
+    max_triage_turns: int = 30
+    max_review_turns: int = 30
+
+    # Intelligence features (all default off for backward compatibility)
+    auto_mode_selection: bool = False
+    progressive_deepening: bool = False
+    confidence_gating: bool = False
+    independent_verification: bool = False
+    adaptive_scheduling: bool = False
+    work_stealing: bool = False
+
     # Project mode (set per-assignment in __main__.py, not from config file)
-    project_mode: str = "full"  # "full", "plan", or "analyze"
+    project_mode: str = "full"  # "full", "plan", "analyze", "fix", "triage", "review"
 
     @classmethod
     def from_args(
@@ -81,6 +99,25 @@ class CoordinatorConfig:
 
             models = data.get("models", {})
             cfg.employee_model = models.get("employee", cfg.employee_model)
+            cfg.analyst_model = models.get("analyst", cfg.analyst_model)
+            cfg.planner_model = models.get("planner", cfg.planner_model)
+            cfg.router_model = models.get("router", cfg.router_model)
+
+            # Mode-specific turn limits
+            cfg.max_analyst_turns = limits.get("max_analyst_turns", cfg.max_analyst_turns)
+            cfg.max_planner_turns = limits.get("max_planner_turns", cfg.max_planner_turns)
+            cfg.max_fix_turns = limits.get("max_fix_turns", cfg.max_fix_turns)
+            cfg.max_triage_turns = limits.get("max_triage_turns", cfg.max_triage_turns)
+            cfg.max_review_turns = limits.get("max_review_turns", cfg.max_review_turns)
+
+            # Intelligence features
+            intelligence = data.get("intelligence", {})
+            cfg.auto_mode_selection = intelligence.get("auto_mode_selection", cfg.auto_mode_selection)
+            cfg.progressive_deepening = intelligence.get("progressive_deepening", cfg.progressive_deepening)
+            cfg.confidence_gating = intelligence.get("confidence_gating", cfg.confidence_gating)
+            cfg.independent_verification = intelligence.get("independent_verification", cfg.independent_verification)
+            cfg.adaptive_scheduling = intelligence.get("adaptive_scheduling", cfg.adaptive_scheduling)
+            cfg.work_stealing = intelligence.get("work_stealing", cfg.work_stealing)
 
             dashboard = data.get("dashboard", {})
             cfg.webhook_url = dashboard.get(

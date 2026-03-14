@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.dependencies import get_db
-from app.models import Plan, Project
+from app.models import Plan, Project, QueueItem
 from app.schemas import PlanCreate, PlanList, PlanOut, PlanUpdate
 from app.services.systemd import systemctl
 
@@ -114,6 +114,37 @@ async def approve_plan(plan_id: int, db: AsyncSession = Depends(get_db)) -> Plan
         raise HTTPException(status_code=400, detail=f"Cannot approve plan with status '{plan.status}'")
 
     plan.status = "approved"
+
+    # Auto-create queue item for implementation (plan-to-implementation pipeline)
+    proj_result = await db.execute(select(Project).where(Project.id == plan.project_id))
+    project = proj_result.scalar_one_or_none()
+    if project:
+        # Check for existing active queue item on this issue
+        existing = None
+        if plan.issue_number is not None:
+            active_states = {"pending", "claimed", "assigned", "planning", "in_progress", "review", "verifying"}
+            dup_result = await db.execute(
+                select(QueueItem).where(
+                    QueueItem.project_repo == project.repo,
+                    QueueItem.issue_number == plan.issue_number,
+                    QueueItem.state.in_(active_states),
+                )
+            )
+            existing = dup_result.scalar_one_or_none()
+
+        if not existing:
+            queue_item = QueueItem(
+                project_repo=project.repo,
+                issue_number=plan.issue_number,
+                issue_title=f"Implement: {plan.title}",
+                state="pending",
+                priority=5,
+                mode="full",
+                context=json.dumps({"plan_id": plan.id}),
+            )
+            db.add(queue_item)
+            logger.info("Auto-created queue item for approved plan %d", plan.id)
+
     await db.commit()
     await db.refresh(plan)
     return plan
