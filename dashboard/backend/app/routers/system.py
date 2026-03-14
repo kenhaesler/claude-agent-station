@@ -73,7 +73,7 @@ async def auth_status():
         return {
             "logged_in": True,
             "expired": expired,
-            "expires_at": expires_dt.isoformat() + "Z",
+            "expires_at": expires_dt.isoformat(),
         }
     except Exception as e:
         return {"logged_in": False, "expired": True, "error": str(e)}
