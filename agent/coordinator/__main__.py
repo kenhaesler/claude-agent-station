@@ -87,6 +87,14 @@ async def coordinate(config: CoordinatorConfig) -> int:
         issue_number = assignment.get("issue_number")
         issue_body = assignment.get("issue_body", "")
 
+        # Extract and validate project mode from assignment
+        project_mode = assignment.get("mode", "full")
+        if project_mode not in ("full", "plan", "analyze"):
+            logger.warning("Unknown mode '%s' for %s, defaulting to 'full'", project_mode, repo)
+            project_mode = "full"
+        config.project_mode = project_mode
+        logger.info("Project %s mode: %s", repo, project_mode)
+
         # Fetch issue body if we have an issue number but no body
         if issue_number and not issue_body:
             issue_body = _fetch_issue_body(repo, issue_number, workspace)

@@ -44,6 +44,9 @@ class CoordinatorConfig:
     planning_enabled: bool = True
     planning_max_revisions: int = 2
 
+    # Project mode (set per-assignment in __main__.py, not from config file)
+    project_mode: str = "full"  # "full", "plan", or "analyze"
+
     @classmethod
     def from_args(
         cls,
