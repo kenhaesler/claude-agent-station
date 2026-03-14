@@ -352,6 +352,9 @@ async def run_scheduler(dag: TaskDAG, config: CoordinatorConfig) -> None:
             task.employee_index = employee_index
             task_workspaces[task.id] = workspace
             post_task_event(config, "task_started", task)
+            # Also send employee_start to create a Run record for the dashboard
+            from agent.coordinator.reporter import post_employee_start
+            post_employee_start(config, task)
 
             # Create activity tracker and stop event
             activity = EmployeeActivity(
@@ -530,6 +533,10 @@ async def _run_and_monitor(
 
     finally:
         semaphore.release()
+        # Send employee_complete to update the Run record in the dashboard
+        from agent.coordinator.reporter import post_employee_complete
+        exit_code_final = result.exit_code if result else 1
+        post_employee_complete(config, task, exit_code_final)
 
     return task.id
 

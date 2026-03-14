@@ -2311,7 +2311,9 @@ for item in data.get('items', []):
 
         # Build assignments JSON for the coordinator
         local assignments_json="$LOG_DIR/run-${RUN_ID}-assignments.json"
-        python3 -c "
+        local agent_dir_for_py
+        agent_dir_for_py="$(cd "$SCRIPT_DIR/.." && pwd)"
+        PYTHONPATH="$agent_dir_for_py/.." python3 -c "
 import json, sys
 config = json.load(open('$CONFIG_FILE'))
 projects = config.get('projects', [])
@@ -2319,12 +2321,19 @@ assignments = []
 max_per = int('$max_per_project')
 workspaces_dir = '$WORKSPACES_DIR'
 
+# Load multi_employee flag from ModeSpec registry
+try:
+    from agent.coordinator.modes import MODE_REGISTRY
+    multi_employee_modes = {name for name, spec in MODE_REGISTRY.items() if spec.multi_employee}
+except Exception:
+    multi_employee_modes = {'full'}  # Fallback if modes.py not importable
+
 for i, proj in enumerate(projects):
     if not proj.get('enabled', True):
         continue
     repo = proj['repo']
     mode = proj.get('mode', 'full')
-    employees = max_per if mode == 'full' else 1
+    employees = max_per if mode in multi_employee_modes else 1
     repo_name = repo.split('/')[-1] if '/' in repo else repo
     workspace = f'{workspaces_dir}/{repo_name}'
 
