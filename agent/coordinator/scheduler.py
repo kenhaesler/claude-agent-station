@@ -105,11 +105,15 @@ Write your plan verdict to: {verdict_file}
 
     # Run manager for plan review
     manager_model = "claude-sonnet-4-6"
+    # Inline review content directly to avoid wasting turns re-reading the file
     manager_prompt = (
-        f"Review the employee's implementation plan in: {review_file}\n\n"
+        f"Review the employee's implementation plan below.\n\n"
         f"Write your plan verdict to: {verdict_file}\n\n"
         "Use APPROVE_PLAN if the plan is solid, REVISE_PLAN with specific feedback "
-        "if it needs changes, or REJECT_PLAN if the plan is fundamentally flawed."
+        "if it needs changes, or REJECT_PLAN if the plan is fundamentally flawed.\n\n"
+        "--- BEGIN PLAN REVIEW PACKAGE ---\n"
+        f"{review_content}\n"
+        "--- END PLAN REVIEW PACKAGE ---"
     )
 
     stream_file = str(
