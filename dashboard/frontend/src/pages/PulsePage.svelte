@@ -1,8 +1,9 @@
 <script lang="ts">
   import { agentPresence } from '../lib/agent-presence.svelte';
-  import { getSystemStatus, getUsage, listProjects } from '../lib/api';
+  import { listProjects } from '../lib/api';
   import type { SystemStatus, UsageData, Project } from '../lib/types';
   import { navigate } from '../lib/router.svelte';
+  import AgentWorkspace from '../components/AgentWorkspace.svelte';
   import Timeline from '../components/Timeline.svelte';
   import ActiveWorkStrip from '../components/ActiveWorkStrip.svelte';
   import GlassCard from '../components/GlassCard.svelte';
@@ -11,31 +12,37 @@
   import IntelligencePanel from '../components/IntelligencePanel.svelte';
   import { formatTokens } from '../lib/format';
 
-  let systemStatus = $state<SystemStatus | null>(null);
-  let usage = $state<UsageData | null>(null);
+  interface Props {
+    systemStatus?: SystemStatus | null;
+    usage?: UsageData | null;
+  }
+
+  let { systemStatus = null, usage = null }: Props = $props();
+
   let projects = $state<Project[]>([]);
 
-  async function loadData() {
+  async function loadProjects() {
     try {
-      const [sysRes, usageRes, projRes] = await Promise.allSettled([
-        getSystemStatus(),
-        getUsage(),
-        listProjects(),
-      ]);
-      if (sysRes.status === 'fulfilled') systemStatus = sysRes.value;
-      if (usageRes.status === 'fulfilled') usage = usageRes.value;
-      if (projRes.status === 'fulfilled') projects = projRes.value;
+      const res = await listProjects();
+      projects = res;
     } catch { /* silent */ }
   }
 
   $effect(() => {
-    loadData();
-    const interval = setInterval(loadData, 15000);
+    loadProjects();
+    const interval = setInterval(loadProjects, 15000);
     return () => clearInterval(interval);
   });
 </script>
 
 <div class="space-y-4 animate-fade-in-up">
+  <!-- Cortex Hero — inline interactive visualization -->
+  <GlassCard class="overflow-hidden">
+    <div class="h-[320px] md:h-[400px]">
+      <AgentWorkspace {systemStatus} {usage} renderQuality="full" interactive={true} />
+    </div>
+  </GlassCard>
+
   <!-- Active Work Strip (visible only when agents working) -->
   <ActiveWorkStrip />
 

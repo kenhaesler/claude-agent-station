@@ -27,6 +27,8 @@
     }
   }
 
+  type BackgroundMode = '3d' | '2d' | 'off';
+
   interface Props {
     serviceActive: boolean;
     authOk: boolean;
@@ -37,6 +39,8 @@
     triggering: boolean;
     onPanelToggle?: () => void;
     onAuthClick?: () => void;
+    backgroundMode?: BackgroundMode;
+    onBackgroundModeChange?: (mode: BackgroundMode) => void;
   }
 
   let {
@@ -49,7 +53,20 @@
     triggering,
     onPanelToggle,
     onAuthClick,
+    backgroundMode = '3d',
+    onBackgroundModeChange,
   }: Props = $props();
+
+  function cycleBackgroundMode() {
+    const modes: BackgroundMode[] = ['3d', '2d', 'off'];
+    const next = modes[(modes.indexOf(backgroundMode) + 1) % modes.length];
+    onBackgroundModeChange?.(next);
+  }
+
+  let bgModeLabel = $derived(
+    backgroundMode === '3d' ? '3D Space' :
+    backgroundMode === '2d' ? '2D Particles' : 'Off'
+  );
 
   let hasApiKey = $derived(getStoredApiKey() !== null);
 
@@ -137,6 +154,37 @@
         {triggering ? 'opacity-50 cursor-not-allowed' : 'active:scale-95'}"
     >
       {triggering ? '...' : 'Run'}
+    </button>
+
+    <!-- Background mode toggle -->
+    <button
+      onclick={cycleBackgroundMode}
+      class="p-1.5 rounded-md text-text-dim hover:text-text hover:bg-white/5 cursor-pointer transition-colors"
+      title="Background: {bgModeLabel}"
+    >
+      <svg class="w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        {#if backgroundMode === '3d'}
+          <!-- Globe/stars icon -->
+          <circle cx="8" cy="8" r="6" />
+          <ellipse cx="8" cy="8" rx="2.5" ry="6" />
+          <line x1="2" y1="8" x2="14" y2="8" />
+          <circle cx="12" cy="3" r="0.8" fill="currentColor" stroke="none" />
+          <circle cx="4" cy="4" r="0.5" fill="currentColor" stroke="none" />
+        {:else if backgroundMode === '2d'}
+          <!-- Sparkle/dots icon -->
+          <circle cx="8" cy="4" r="1" fill="currentColor" stroke="none" />
+          <circle cx="4" cy="8" r="0.8" fill="currentColor" stroke="none" />
+          <circle cx="12" cy="7" r="0.6" fill="currentColor" stroke="none" />
+          <circle cx="6" cy="12" r="0.7" fill="currentColor" stroke="none" />
+          <circle cx="11" cy="11" r="0.9" fill="currentColor" stroke="none" />
+          <circle cx="8" cy="8" r="1.2" fill="currentColor" stroke="none" />
+          <path d="M8 1v2M8 13v2M1 8h2M13 8h2" />
+        {:else}
+          <!-- Off icon (empty circle with line) -->
+          <circle cx="8" cy="8" r="6" />
+          <line x1="4" y1="12" x2="12" y2="4" />
+        {/if}
+      </svg>
     </button>
 
     <!-- Volume control -->
