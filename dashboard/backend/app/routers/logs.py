@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import re
+import secrets
 from typing import Optional, List
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
@@ -12,14 +13,29 @@ from app.services.log_streamer import tail_log_file
 
 router = APIRouter(prefix="/api/logs", tags=["logs"])
 
+# Separate router for the WebSocket endpoint — HTTPBearer auth dependencies
+# cannot resolve on WebSocket connections (no Request object), so this router
+# is registered WITHOUT the global _auth dependency in main.py.
+ws_router = APIRouter(prefix="/api/logs", tags=["logs"])
 
-@router.websocket("/stream")
+
+@ws_router.websocket("/stream")
 async def stream_logs(
     websocket: WebSocket,
     file: Optional[str] = None,
     from_beginning: bool = False,
+    token: Optional[str] = Query(default=None),
 ):
-    """WebSocket endpoint for live log streaming."""
+    """WebSocket endpoint for live log streaming.
+
+    Auth: when STATION_API_KEY is set, the client must pass ?token=<key>.
+    """
+    # Inline auth — WebSocket can't use HTTPBearer
+    if settings.api_key:
+        if not token or not secrets.compare_digest(token, settings.api_key):
+            await websocket.close(code=1008, reason="Unauthorized")
+            return
+
     await websocket.accept()
 
     # Validate file path if provided (must be within log_dir)

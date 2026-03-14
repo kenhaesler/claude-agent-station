@@ -445,9 +445,13 @@ function sampleIntensity() {
 export function connect() {
   if (ws) return;
 
-  // WebSocket for log stream
+  // WebSocket for log stream — pass API key as query param when configured
+  const apiKey = getStoredApiKey();
+  const wsUrl = apiKey
+    ? `/api/logs/stream?token=${encodeURIComponent(apiKey)}`
+    : '/api/logs/stream';
   ws = new LogWebSocket(
-    '/api/logs/stream',
+    wsUrl,
     handleWsMessage,
     (status) => { agentPresence.wsConnected = status; }
   );

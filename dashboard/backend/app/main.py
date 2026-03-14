@@ -141,9 +141,10 @@ app.add_middleware(
 )
 
 # Mount routers
-# Exempt: health (monitoring must always be reachable) and webhook (has own auth)
+# Exempt: health (monitoring), webhook (has own auth), logs.ws_router (WebSocket — has inline auth)
 app.include_router(health.router)
 app.include_router(webhook.router)
+app.include_router(logs.ws_router)
 
 # Protected routers: require API key when STATION_API_KEY is configured
 _auth = [Depends(verify_api_key)]
