@@ -64,6 +64,54 @@ async def predict_effort(
     )
 
 
+def predict_effort_sync(
+    issue_type: str,
+    complexity: int,
+    db_path: str = "/var/lib/claude-agent-station/station.db",
+) -> EffortPrediction | None:
+    """Synchronous version of predict_effort for CLI use (no async).
+
+    Uses plain sqlite3 instead of SQLAlchemy async session.
+    """
+    import sqlite3
+    try:
+        conn = sqlite3.connect(db_path, timeout=5)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.execute(
+            """
+            SELECT mode_used, model_used,
+                   AVG(CASE WHEN success THEN 1.0 ELSE 0.0 END) as success_rate,
+                   AVG(tokens_consumed) as avg_tokens,
+                   AVG(duration_seconds) as avg_duration,
+                   COUNT(*) as sample_count
+            FROM task_outcomes
+            WHERE issue_type = ? AND complexity_score = ?
+            GROUP BY mode_used, model_used
+            HAVING COUNT(*) >= ?
+            ORDER BY success_rate DESC, avg_tokens ASC
+            LIMIT 1
+            """,
+            (issue_type, complexity, MIN_SAMPLES),
+        )
+        row = cursor.fetchone()
+        conn.close()
+
+        if not row or row["success_rate"] < 0.7:
+            return None
+
+        return EffortPrediction(
+            mode=row["mode_used"],
+            model=row["model_used"],
+            predicted_tokens=row["avg_tokens"],
+            predicted_duration=row["avg_duration"],
+            confidence=row["success_rate"],
+            sample_count=row["sample_count"],
+        )
+    except Exception as e:
+        logger.warning("predict_effort_sync failed: %s", e)
+        return None
+
+
 async def get_project_success_rates(
     project_repo: str,
     db: AsyncSession,

@@ -698,10 +698,19 @@ run_employee() {
     local repo="$1" workspace="$2" project_index="$3"
     local employee_index="${4:-0}"
     local max_turns_override="${5:-}"
+    local mode_override="${6:-}"
+    local model_override="${7:-}"
+    local turns_override="${8:-}"
+    local escalation_context_file="${9:-}"
     local name
     name=$(repo_name "$repo")
     local mode
     mode=$(get_project_field "$project_index" "mode" 2>/dev/null || echo "full")
+    # Intelligence: apply mode override from decide.py
+    if [ -n "$mode_override" ]; then
+        log_info "  Intelligence override: mode=$mode_override (was $mode)"
+        mode="$mode_override"
+    fi
     local custom_instructions
     custom_instructions=$(get_project_field "$project_index" "custom_instructions" 2>/dev/null || echo "")
 
@@ -740,6 +749,16 @@ run_employee() {
     if [ -n "$max_turns_override" ]; then
         max_turns="$max_turns_override"
         log_info "  Budget-adjusted turns: $max_turns"
+    fi
+
+    # Intelligence: apply model/turns overrides from decide.py
+    if [ -n "$model_override" ]; then
+        log_info "  Intelligence override: model=$model_override (was $model)"
+        model="$model_override"
+    fi
+    if [ -n "$turns_override" ]; then
+        log_info "  Intelligence override: turns=$turns_override (was $max_turns)"
+        max_turns="$turns_override"
     fi
 
     # Mode-specific model and turn overrides from config (with sensible defaults)
@@ -1018,6 +1037,28 @@ Remember: commit locally but NEVER push. The manager will review and push if app
             fi
         fi
         fi  # end plan_file check
+    fi
+
+    # Intelligence: append escalation context if this is an escalated run
+    if [ -n "$escalation_context_file" ] && [ -f "$escalation_context_file" ]; then
+        local esc_ctx
+        esc_ctx=$(cat "$escalation_context_file")
+        log_info "  Injecting escalation context from $escalation_context_file"
+        employee_prompt="$employee_prompt
+
+## ESCALATION_CONTEXT: Previous Attempt Failed — Building On Prior Work
+
+A previous employee attempted this task at a lower capability level and did not succeed.
+Use the context below to understand what was tried and what went wrong. Build on the
+previous work rather than starting from scratch.
+
+\`\`\`json
+$esc_ctx
+\`\`\`
+
+Focus on the areas that the previous attempt struggled with. The branch from the prior
+attempt may still exist — check if you can continue from it."
+        rm -f "$escalation_context_file"
     fi
 
     # Append custom instructions if configured for this project
@@ -1411,6 +1452,13 @@ collect_employee_reports() {
             continue
         fi
 
+        # Skip projects that passed the confidence gate (auto-PR'd)
+        if [ -f "/tmp/claude-agent-auto-pr-${RUN_ID}.list" ]; then
+            if grep -qF "$repo" "/tmp/claude-agent-auto-pr-${RUN_ID}.list" 2>/dev/null; then
+                continue
+            fi
+        fi
+
         local name
         name=$(repo_name "$repo")
         local workspace="$WORKSPACES_DIR/$name"
@@ -1716,6 +1764,31 @@ print(json.dumps(v))
         local escaped_reasoning
         escaped_reasoning=$(echo "$reasoning" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read().strip())[1:-1])" 2>/dev/null || echo "$reasoning")
         webhook_event "verdict_execute" "\"project\":\"$project\",\"verdict\":\"$verdict\",\"issue_number\":\"$issue_number\",\"branch\":\"$branch\",\"reasoning\":\"$escaped_reasoning\""
+
+        # Intelligence: record outcome for the learning loop
+        local _report_confidence="" _report_tokens="" _report_duration="" _report_complexity="" _report_mode_used="" _report_model_used="" _report_esc_rung="0"
+        if [ -f "$workspace/.claude-employee-report.json" ]; then
+            _report_confidence=$(python3 -c "import json; print(json.load(open('$workspace/.claude-employee-report.json')).get('confidence',''))" 2>/dev/null || echo "")
+            _report_tokens=$(python3 -c "import json; print(json.load(open('$workspace/.claude-employee-report.json')).get('tokens_total',''))" 2>/dev/null || echo "")
+            _report_duration=$(python3 -c "import json; print(json.load(open('$workspace/.claude-employee-report.json')).get('duration_seconds',''))" 2>/dev/null || echo "")
+            _report_complexity=$(python3 -c "import json; print(json.load(open('$workspace/.claude-employee-report.json')).get('complexity_score',''))" 2>/dev/null || echo "")
+            _report_mode_used=$(python3 -c "import json; print(json.load(open('$workspace/.claude-employee-report.json')).get('mode',''))" 2>/dev/null || echo "")
+            _report_model_used=$(python3 -c "import json; print(json.load(open('$workspace/.claude-employee-report.json')).get('model',''))" 2>/dev/null || echo "")
+            _report_esc_rung=$(python3 -c "import json; print(json.load(open('$workspace/.claude-employee-report.json')).get('escalation_rung',0))" 2>/dev/null || echo "0")
+        fi
+        python3 -m agent.coordinator.decide --run-id "$RUN_ID" \
+            record-outcome \
+            --project-repo "$project" \
+            --issue-number "${issue_number:-}" \
+            --mode "${_report_mode_used:-${verdict_mode:-full}}" \
+            --model "${_report_model_used:-}" \
+            --verdict "$verdict" \
+            --confidence "${_report_confidence:-}" \
+            --tokens "${_report_tokens:-}" \
+            --duration "${_report_duration:-}" \
+            --complexity "${_report_complexity:-}" \
+            --escalation-rung "${_report_esc_rung:-0}" \
+            >/dev/null 2>&1 &
 
         if [ ! -d "$workspace/.git" ]; then
             log_error "Workspace not found: $workspace"
@@ -2394,18 +2467,50 @@ print(f'Wrote {len(assignments)} assignments')
             local employee_turns
             employee_turns=$(calculate_employee_budget "$total_employees" "$priority")
 
+            # Intelligence: per-issue mode selection via decide.py
+            local intel_mode="" intel_model="" intel_turns="" intel_esc_file=""
+            local auto_mode_enabled
+            auto_mode_enabled=$(json_get "$CONFIG_FILE" "intelligence.auto_mode_selection" 2>/dev/null || echo "false")
+            if [ "$auto_mode_enabled" = "true" ]; then
+                # Find issue JSON for this employee (from assignment or workspace)
+                local issue_json_file="$workspace/.claude-assignment-${ei}.json"
+                if [ ! -f "$issue_json_file" ]; then
+                    issue_json_file="$workspace/.claude-issue.json"
+                fi
+                if [ -f "$issue_json_file" ]; then
+                    local decide_result
+                    decide_result=$(python3 -m agent.coordinator.decide --run-id "$RUN_ID" \
+                        select-mode --issue-json "$issue_json_file" \
+                        --config "$CONFIG_FILE" --project-mode "$mode_for_project" 2>/dev/null || echo "")
+                    if [ -n "$decide_result" ]; then
+                        intel_mode=$(echo "$decide_result" | python3 -c "import json,sys; print(json.load(sys.stdin).get('mode',''))" 2>/dev/null || echo "")
+                        intel_model=$(echo "$decide_result" | python3 -c "import json,sys; print(json.load(sys.stdin).get('model',''))" 2>/dev/null || echo "")
+                        intel_turns=$(echo "$decide_result" | python3 -c "import json,sys; print(json.load(sys.stdin).get('max_turns',''))" 2>/dev/null || echo "")
+                        local intel_score
+                        intel_score=$(echo "$decide_result" | python3 -c "import json,sys; print(json.load(sys.stdin).get('complexity_score',''))" 2>/dev/null || echo "")
+                        log_info "  Intelligence decision: mode=$intel_mode model=$intel_model turns=$intel_turns complexity=$intel_score"
+                        # Update queue item with complexity score and mode
+                        local _iqid
+                        _iqid=$(queue_find_item "$repo" "$ei")
+                        if [ -n "$_iqid" ] && [ -n "$intel_score" ]; then
+                            queue_api PUT "/api/queue/$_iqid" "{\"mode\":\"$intel_mode\",\"complexity_score\":$intel_score}" >/dev/null 2>&1 &
+                        fi
+                    fi
+                fi
+            fi
+
             if [ "$is_parallel" = true ]; then
                 # Parallel mode: wait for a slot, then spawn in background
                 wait_for_slot "$max_concurrent"
 
                 log_info "  Spawning employee $ei for $repo in background (budget: $employee_turns turns)"
-                run_employee "$repo" "$workspace" "$i" "$ei" "$employee_turns" &
+                run_employee "$repo" "$workspace" "$i" "$ei" "$employee_turns" "$intel_mode" "$intel_model" "$intel_turns" "$intel_esc_file" &
                 CHILD_PIDS+=($!)
                 has_work=true
             else
                 # Sequential mode (backward compatible): run blocking
                 log_info "  Running employee $ei for $repo sequentially (budget: $employee_turns turns)"
-                run_employee "$repo" "$workspace" "$i" "$ei" "$employee_turns"
+                run_employee "$repo" "$workspace" "$i" "$ei" "$employee_turns" "$intel_mode" "$intel_model" "$intel_turns" "$intel_esc_file"
                 has_work=true
 
                 # Pause between employees in sequential mode
@@ -2463,6 +2568,171 @@ print(f'Wrote {len(assignments)} assignments')
         rm -f "$main_ws_wt"/.claude-plan-feedback-*.json 2>/dev/null || true
         # Note: .claude-approved-plan-*.json is cleaned up AFTER manager review (needed for cross-reference)
     done
+
+    # ---- PHASE 1.7: Intelligence — Confidence Gate + Escalation ----
+    # For each employee report, check if it passes the confidence gate (auto-PR)
+    # or needs escalation (progressive deepening). Reports that pass the gate
+    # are excluded from manager review.
+    local -a auto_pr_projects=()  # Projects that passed confidence gate
+
+    for ((i = 0; i < project_count; i++)); do
+        local repo_cg enabled_cg
+        repo_cg=$(get_project_field "$i" "repo")
+        enabled_cg=$(get_project_field "$i" "enabled" 2>/dev/null || echo "true")
+        [ "$enabled_cg" = "false" ] && continue
+
+        local name_cg
+        name_cg=$(repo_name "$repo_cg")
+        local ws_cg="$WORKSPACES_DIR/$name_cg"
+
+        # Check main report and indexed reports
+        for report_cg in "$ws_cg"/.claude-employee-report*.json; do
+            [ -f "$report_cg" ] || continue
+
+            # --- Confidence gate: auto-PR for high-confidence work ---
+            local conf_result
+            conf_result=$(python3 -m agent.coordinator.decide --run-id "$RUN_ID" \
+                check-confidence --report-file "$report_cg" --config "$CONFIG_FILE" 2>/dev/null || echo "")
+            if [ -n "$conf_result" ]; then
+                local gate_passed
+                gate_passed=$(echo "$conf_result" | python3 -c "import json,sys; print(json.load(sys.stdin).get('gate_passed',False))" 2>/dev/null || echo "False")
+                if [ "$gate_passed" = "True" ]; then
+                    local conf_branch conf_issue conf_confidence
+                    conf_branch=$(python3 -c "import json; print(json.load(open('$report_cg')).get('branch',''))" 2>/dev/null || echo "")
+                    conf_issue=$(python3 -c "import json; print(json.load(open('$report_cg')).get('issue_number',''))" 2>/dev/null || echo "")
+                    conf_confidence=$(echo "$conf_result" | python3 -c "import json,sys; print(json.load(sys.stdin).get('confidence',0))" 2>/dev/null || echo "0")
+
+                    if [ -n "$conf_branch" ] && [ "$conf_branch" != "main" ]; then
+                        log_info "  Confidence gate PASSED for $repo_cg (confidence=$conf_confidence)"
+                        cd "$ws_cg"
+
+                        # Push and create PR with [auto-pr] tag
+                        if git push origin "$conf_branch" 2>/dev/null; then
+                            local pr_url
+                            pr_url=$(gh pr create --repo "$repo_cg" --head "$conf_branch" \
+                                --title "[auto-pr] Issue #${conf_issue}" \
+                                --body "## Auto-PR (Confidence Gate)
+
+Confidence: **${conf_confidence}** (above threshold)
+Tests: Passed
+Mode: $(python3 -c "import json; print(json.load(open('$report_cg')).get('mode',''))" 2>/dev/null || echo "unknown")
+
+This PR was auto-created because the employee's work passed the confidence gate.
+Human review is still required for merge.
+
+---
+Run: $RUN_ID | \`[auto-pr]\`" 2>/dev/null || echo "")
+                            if [ -n "$pr_url" ]; then
+                                log_ok "  Auto-PR created: $pr_url"
+                                webhook_event "intelligence.confidence_gate_passed" "\"project\":\"$repo_cg\",\"confidence\":$conf_confidence,\"branch\":\"$conf_branch\",\"pr_url\":\"$pr_url\""
+                                auto_pr_projects+=("$repo_cg")
+                            fi
+                        else
+                            log_warn "  Failed to push $conf_branch for auto-PR"
+                        fi
+                    fi
+                fi
+            fi
+
+            # --- Escalation: progressive deepening for low-confidence work ---
+            local esc_result
+            esc_result=$(python3 -m agent.coordinator.decide --run-id "$RUN_ID" \
+                check-escalation --report-file "$report_cg" --config "$CONFIG_FILE" 2>/dev/null || echo "")
+            if [ -n "$esc_result" ]; then
+                local should_escalate
+                should_escalate=$(echo "$esc_result" | python3 -c "import json,sys; print(json.load(sys.stdin).get('should_escalate',False))" 2>/dev/null || echo "False")
+                if [ "$should_escalate" = "True" ]; then
+                    local esc_mode esc_model esc_turns esc_rung
+                    esc_mode=$(echo "$esc_result" | python3 -c "import json,sys; print(json.load(sys.stdin).get('next_mode',''))" 2>/dev/null || echo "")
+                    esc_model=$(echo "$esc_result" | python3 -c "import json,sys; print(json.load(sys.stdin).get('next_model',''))" 2>/dev/null || echo "")
+                    esc_turns=$(echo "$esc_result" | python3 -c "import json,sys; print(json.load(sys.stdin).get('next_max_turns',''))" 2>/dev/null || echo "")
+                    esc_rung=$(echo "$esc_result" | python3 -c "import json,sys; print(json.load(sys.stdin).get('next_rung',''))" 2>/dev/null || echo "")
+
+                    log_info "  ESCALATION triggered for $repo_cg: rung $esc_rung, mode=$esc_mode, model=$esc_model"
+
+                    # Write handoff context file for the escalated employee
+                    local esc_ctx_file="$ws_cg/.claude-escalation-context.json"
+                    echo "$esc_result" | python3 -c "import json,sys; json.dump(json.load(sys.stdin).get('handoff_context',{}), open('$esc_ctx_file','w'), indent=2)" 2>/dev/null
+
+                    # Re-run employee immediately with escalated config
+                    log_info "  Re-running employee with escalated config (rung $esc_rung)"
+                    run_employee "$repo_cg" "$ws_cg" "$i" "0" "$esc_turns" "$esc_mode" "$esc_model" "$esc_turns" "$esc_ctx_file"
+                    has_work=true
+
+                    # Skip this project from manager review — the escalated run will be reviewed
+                    auto_pr_projects+=("$repo_cg")
+                fi
+            fi
+        done
+    done
+
+    # ---- PHASE 1.8: Intelligence — Independent Verification ----
+    # For auto-PR candidates and high-risk changes, run an independent reviewer.
+    # If the reviewer flags critical issues, revoke the auto-PR and send to manager.
+    local verification_enabled
+    verification_enabled=$(json_get "$CONFIG_FILE" "intelligence.independent_verification" 2>/dev/null || echo "false")
+    if [ "$verification_enabled" = "true" ]; then
+        local -a verified_revokes=()
+        for ((i = 0; i < project_count; i++)); do
+            local repo_vf
+            repo_vf=$(get_project_field "$i" "repo")
+            local name_vf
+            name_vf=$(repo_name "$repo_vf")
+            local ws_vf="$WORKSPACES_DIR/$name_vf"
+
+            for report_vf in "$ws_vf"/.claude-employee-report*.json; do
+                [ -f "$report_vf" ] || continue
+
+                local verify_result
+                verify_result=$(python3 -m agent.coordinator.decide --run-id "$RUN_ID" \
+                    should-verify --report-file "$report_vf" --config "$CONFIG_FILE" 2>/dev/null || echo "")
+                if [ -n "$verify_result" ]; then
+                    local should_verify
+                    should_verify=$(echo "$verify_result" | python3 -c "import json,sys; print(json.load(sys.stdin).get('should_verify',False))" 2>/dev/null || echo "False")
+                    if [ "$should_verify" = "True" ]; then
+                        local vf_branch
+                        vf_branch=$(python3 -c "import json; print(json.load(open('$report_vf')).get('branch',''))" 2>/dev/null || echo "")
+                        log_info "  Running independent verification for $repo_vf ($vf_branch)"
+
+                        # Run the verifier
+                        local vf_result
+                        vf_result=$(python3 -c "
+import json
+from agent.coordinator.verifier import run_verification
+result = run_verification('$ws_vf', '$vf_branch', 'main', '$repo_vf')
+print(json.dumps(result))
+" 2>/dev/null || echo "")
+
+                        if [ -n "$vf_result" ]; then
+                            local vf_recommendation
+                            vf_recommendation=$(echo "$vf_result" | python3 -c "import json,sys; print(json.load(sys.stdin).get('recommendation','needs_review'))" 2>/dev/null || echo "needs_review")
+                            if [ "$vf_recommendation" = "revoke_auto_pr" ]; then
+                                log_warn "  Verification REVOKED auto-PR for $repo_vf"
+                                verified_revokes+=("$repo_vf")
+                            else
+                                log_info "  Verification result: $vf_recommendation"
+                            fi
+                        fi
+                    fi
+                fi
+            done
+        done
+
+        # Remove revoked projects from auto-PR list
+        for revoked in "${verified_revokes[@]}"; do
+            local -a new_auto_pr=()
+            for ap in "${auto_pr_projects[@]}"; do
+                [ "$ap" != "$revoked" ] && new_auto_pr+=("$ap")
+            done
+            auto_pr_projects=("${new_auto_pr[@]}")
+        done
+    fi
+
+    # Write auto-PR project list for collect_employee_reports to skip
+    if [ ${#auto_pr_projects[@]} -gt 0 ]; then
+        printf '%s\n' "${auto_pr_projects[@]}" > "/tmp/claude-agent-auto-pr-${RUN_ID}.list"
+        log_info "Auto-PR/escalated projects (skipping manager review): ${auto_pr_projects[*]}"
+    fi
 
     # ---- PHASE 2: Manager review ----
 

@@ -7,6 +7,7 @@
   import MetricPanel from '../components/MetricPanel.svelte';
   import GlassCard from '../components/GlassCard.svelte';
   import StatusOrb from '../components/StatusOrb.svelte';
+  import IntelligencePanel from '../components/IntelligencePanel.svelte';
   import { formatTokens, formatDuration } from '../lib/format';
 
   let systemStatus = $state<SystemStatus | null>(null);
@@ -169,6 +170,9 @@
       </div>
     </GlassCard>
   </div>
+
+  <!-- Intelligence (collapsible) -->
+  <IntelligencePanel />
 
   <!-- Analytics (collapsible) -->
   <button

@@ -427,7 +427,7 @@ class AnalyticsResponse(BaseModel):
 # --- Unified Run Context ---
 
 class RunFullContext(BaseModel):
-    """Unified run context: run + coordinator tasks + queue item + plan.
+    """Unified run context: run + coordinator tasks + queue item + plan + intelligence.
 
     Powers the unified Run Detail view (AC2) by returning all related
     data in a single response instead of requiring 4+ separate API calls.
@@ -438,6 +438,7 @@ class RunFullContext(BaseModel):
     queue_item: QueueItemOut | None = None
     plan: PlanOut | None = None
     project_repo: str | None = None
+    intelligence_decisions: list[AgentEventOut] = []
 
 
 # --- Agent Events ---
