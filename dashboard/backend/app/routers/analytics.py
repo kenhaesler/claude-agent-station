@@ -1,6 +1,8 @@
 """Analytics endpoints for run statistics and token usage charts."""
 
-from datetime import UTC, datetime, timedelta
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import and_, case, func, select
@@ -30,7 +32,7 @@ async def get_analytics(
     Returns daily token usage, verdict distribution, per-project token totals,
     and daily run frequency for the specified time window.
     """
-    cutoff = datetime.now(UTC) - timedelta(days=days)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
 
     # Base filter conditions
     base_conditions = [Run.started_at >= cutoff]

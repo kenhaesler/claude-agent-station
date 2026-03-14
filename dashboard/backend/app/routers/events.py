@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """SSE endpoint for streaming real-time agent events to the dashboard."""
 
 import json

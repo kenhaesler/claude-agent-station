@@ -1,5 +1,7 @@
 """FastAPI dependencies."""
 
+from __future__ import annotations
+
 import secrets
 from collections.abc import AsyncGenerator
 

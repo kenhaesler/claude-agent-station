@@ -1,6 +1,6 @@
 """Tests for queue orphan recovery, purge, and state transitions."""
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -40,7 +40,7 @@ async def db(session_factory):
 # ---------------------------------------------------------------------------
 
 def _utcnow():
-    return datetime.now(UTC)
+    return datetime.now(timezone.utc)
 
 
 def _make_queue_item(db, **kwargs):

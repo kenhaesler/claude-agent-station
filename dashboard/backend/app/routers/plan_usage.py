@@ -1,8 +1,10 @@
 """Plan usage detection and history API endpoints."""
 
+from __future__ import annotations
+
 import json
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, ConfigDict
@@ -89,7 +91,7 @@ DEFAULT_WEEKLY_LIMIT = 180_000_000
 
 def _get_week_boundaries() -> tuple[datetime, datetime]:
     """Get current week start (Monday 00:00 UTC) and next reset time."""
-    now = datetime.now(UTC)
+    now = datetime.now(timezone.utc)
     days_since_monday = now.weekday()
     week_start = (now - timedelta(days=days_since_monday)).replace(
         hour=0, minute=0, second=0, microsecond=0
@@ -109,7 +111,7 @@ async def get_plan_usage(
     Returns session-level, weekly, and per-model usage percentages,
     plus throttle recommendation.
     """
-    now = datetime.now(UTC)
+    now = datetime.now(timezone.utc)
     week_start, next_reset = _get_week_boundaries()
 
     tier_limits = PLAN_LIMITS.get(plan_tier, PLAN_LIMITS.get("pro", {}))
@@ -222,7 +224,7 @@ async def record_usage_snapshot(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Record a usage snapshot to history (called periodically or on-demand)."""
-    now = datetime.now(UTC)
+    now = datetime.now(timezone.utc)
     week_start, next_reset = _get_week_boundaries()
 
     tier_limits = PLAN_LIMITS.get(plan_tier, PLAN_LIMITS.get("pro", {}))

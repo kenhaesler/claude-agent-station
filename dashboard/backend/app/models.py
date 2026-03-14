@@ -1,6 +1,8 @@
+from __future__ import annotations
+
 """SQLAlchemy ORM models."""
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, Text
 
@@ -9,7 +11,7 @@ from app.database import Base
 
 def _utcnow() -> datetime:
     """Return current UTC time as a timezone-aware datetime."""
-    return datetime.now(UTC)
+    return datetime.now(timezone.utc)
 
 
 class Project(Base):

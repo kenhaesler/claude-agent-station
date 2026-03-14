@@ -1,5 +1,7 @@
 """Coordinator API: task DAG status, messages, and guidance."""
 
+from __future__ import annotations
+
 import json
 import logging
 from pathlib import Path

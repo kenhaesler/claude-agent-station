@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """CRUD endpoints for projects. Mutations sync back to config JSON."""
 
 

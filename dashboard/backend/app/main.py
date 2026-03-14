@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """FastAPI application with lifespan: init DB, sync config, import logs."""
 
 import asyncio

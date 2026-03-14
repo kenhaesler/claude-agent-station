@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Webhook notification service for Slack, Discord, Telegram, and generic webhooks.
 
 Sends notifications when runs complete, verdicts are issued, or errors occur.

@@ -1,10 +1,12 @@
 """Webhook endpoint for receiving live run events from run-manager.sh."""
 
+from __future__ import annotations
+
 import json
 import logging
 import secrets
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy import select
@@ -90,7 +92,7 @@ async def receive_run_event(
                 mode=event.mode,
                 model=event.model,
                 status="running",
-                started_at=datetime.now(UTC),
+                started_at=datetime.now(timezone.utc),
                 employee_index=event.employee_index,
                 concurrent_group_id=event.concurrent_group_id,
                 trace_id=event.trace_id,
@@ -131,7 +133,7 @@ async def receive_run_event(
         run.tokens_total = event.tokens_total
         run.turns = event.turns
         run.duration_ms = event.duration_ms
-        run.finished_at = datetime.now(UTC)
+        run.finished_at = datetime.now(timezone.utc)
         run.model = event.model or run.model
 
         # Read employee report from disk if not already populated
@@ -150,7 +152,7 @@ async def receive_run_event(
                 run_id=event.run_id,
                 project_id=project_id,
                 status="running",
-                started_at=datetime.now(UTC),
+                started_at=datetime.now(timezone.utc),
                 trace_id=event.trace_id,
             )
             db.add(run)
@@ -170,7 +172,7 @@ async def receive_run_event(
                 run_id=event.run_id,
                 project_id=project_id,
                 status="reviewing",
-                started_at=datetime.now(UTC),
+                started_at=datetime.now(timezone.utc),
                 trace_id=event.trace_id,
             )
             db.add(run)
@@ -243,10 +245,10 @@ async def receive_run_event(
             }
             ctask.status = status_map.get(event_name, ctask.status)
             if event_name == "task_started":
-                ctask.started_at = datetime.now(UTC)
+                ctask.started_at = datetime.now(timezone.utc)
                 ctask.employee_index = event.employee_index
             elif event_name in ("task_completed", "task_failed"):
-                ctask.finished_at = datetime.now(UTC)
+                ctask.finished_at = datetime.now(timezone.utc)
 
     elif event_name in ("conflict_detected", "guidance_sent"):
         # Coordinator messages — log them
@@ -279,7 +281,7 @@ async def receive_run_event(
                 run_id=event.run_id,
                 project_id=project_id,
                 status=event.status or "running",
-                started_at=datetime.now(UTC),
+                started_at=datetime.now(timezone.utc),
                 trace_id=event.trace_id,
             )
             db.add(run)
