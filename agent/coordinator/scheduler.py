@@ -458,18 +458,9 @@ async def _run_and_monitor(
                 post_task_event(config, "task_failed", task)
                 return task.id
 
-        # --- Mode gate: analyze/plan modes must NOT proceed to implementation ---
-        if config.project_mode in ("analyze", "plan"):
-            logger.info(
-                "MODE GATE: Skipping implementation for employee %d, task '%s' "
-                "(mode=%s — implementation not permitted)",
-                employee_index, task.title, config.project_mode,
-            )
-            await dag.mark_completed(task.id, exit_code=0)
-            post_task_event(config, "task_completed", task)
-            return task.id
-
         # Start employee subprocess (with approved plan if available)
+        # Note: analyze/plan mode enforcement is handled by employee_runner.py
+        # which selects analyst.md prompt and disallows write tools.
         employee_task = asyncio.create_task(
             run_employee(task, config, employee_index, approved_plan=approved_plan)
         )
