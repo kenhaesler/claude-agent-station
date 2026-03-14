@@ -17,7 +17,7 @@
       const activeRun = agentPresence.activeRuns[0];
       await sendGuidance({
         run_id: activeRun.run_id,
-        employee_index: 0,
+        employee_index: activeRun.employee_index ?? 0,
         guidance_type: guidanceType,
         content: message.trim(),
       });

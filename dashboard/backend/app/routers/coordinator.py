@@ -2,6 +2,7 @@
 
 import json
 import logging
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -154,25 +155,50 @@ async def send_guidance_api(
     # Determine workspace: either from payload or from the task's workspace
     workspace = payload.workspace
     if not workspace:
-        # Try to find workspace from running tasks
+        # Try to find workspace from active tasks (running, planning, or ready)
         result = await db.execute(
-            select(CoordinatorTask).where(
+            select(CoordinatorTask)
+            .where(
                 CoordinatorTask.run_id == payload.run_id,
                 CoordinatorTask.employee_index == payload.employee_index,
-                CoordinatorTask.status == "running",
+                CoordinatorTask.status.in_(["running", "planning", "ready"]),
             )
+            .order_by(desc(CoordinatorTask.created_at))
         )
-        task = result.scalar_one_or_none()
+        task = result.scalars().first()
         if task and task.workspace:
             workspace = task.workspace
         else:
             raise HTTPException(
-                status_code=400,
+                status_code=422,
                 detail="Cannot determine workspace. Provide workspace or ensure employee is running.",
             )
 
+    # Validate workspace path exists and is a directory
+    workspace_path = Path(workspace)
+    if not workspace_path.is_dir():
+        raise HTTPException(
+            status_code=422,
+            detail="Employee workspace not ready yet — try again in a few seconds.",
+        )
+
     try:
         send_guidance(workspace, payload.employee_index, payload.guidance_type, payload.content)
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=422,
+            detail="Employee workspace disappeared — the agent may have finished.",
+        )
+    except PermissionError:
+        raise HTTPException(
+            status_code=403,
+            detail="Permission denied writing to employee workspace.",
+        )
+    except OSError as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"OS error writing guidance file: {e}",
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to send guidance: {e}")
 
