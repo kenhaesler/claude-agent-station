@@ -162,14 +162,14 @@ function deriveAgents(runs: ActiveEmployeeData[]): AgentIdentity[] {
   });
 
   for (const run of runs) {
-    const name = getAgentName(run.issue_number !== null ? runs.indexOf(run) : 0, run.mode);
-    if (name === 'Manager') continue; // Already added
-    const agentName = run.mode === 'analyst' ? 'Analyst' : `Dev-${runs.indexOf(run)}`;
+    if (run.mode === 'manager') continue; // Already added above
+    const idx = run.employee_index ?? runs.indexOf(run);
+    const agentName = run.mode === 'analyst' ? 'Analyst' : `Dev-${idx}`;
     agents.push({
       role: run.mode === 'analyst' ? 'analyst' : 'employee',
       name: agentName,
       color: getAgentColor(agentName),
-      employeeIndex: runs.indexOf(run),
+      employeeIndex: idx,
       status: run.status === 'running' ? 'active' : 'idle',
       currentAction: null,
     });
