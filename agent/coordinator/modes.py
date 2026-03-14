@@ -181,3 +181,21 @@ def starting_rung(complexity_score: int) -> int:
         return 1
     else:
         return 2
+
+
+def next_rung(current_rung: int) -> dict[str, str | int] | None:
+    """Return the next escalation rung config, or None if at max.
+
+    Returns dict with keys: rung, mode, model, thinking, max_turns.
+    """
+    next_idx = current_rung + 1
+    if next_idx >= len(ESCALATION_LADDER):
+        return None
+    step = ESCALATION_LADDER[next_idx]
+    return {
+        "rung": next_idx,
+        "mode": step["mode"],
+        "model": step["model"],
+        "thinking": step["thinking"],
+        "max_turns": step["max_turns"],
+    }

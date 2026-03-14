@@ -429,6 +429,57 @@ export interface RunFullContext {
   queue_item: QueueItem | null;
   plan: Plan | null;
   project_repo: string | null;
+  intelligence_decisions: AgentEvent[];
+}
+
+// --- Intelligence ---
+
+export interface IntelligenceInsights {
+  success_rates: ModeSuccessRate[];
+  calibration: ConfidenceBucket[];
+  token_efficiency: TokenEfficiency[];
+  escalation_stats: EscalationStat[];
+  total_samples: number;
+  intelligence_event_count: number;
+}
+
+export interface ModeSuccessRate {
+  mode: string;
+  model: string;
+  total: number;
+  successes: number;
+  success_rate: number;
+  avg_tokens: number | null;
+  avg_duration: number | null;
+}
+
+export interface ConfidenceBucket {
+  bucket: string;
+  total: number;
+  actual_success_rate: number;
+  avg_reported_confidence: number;
+}
+
+export interface TokenEfficiency {
+  mode: string;
+  avg_tokens_success: number | null;
+  avg_tokens_failure: number | null;
+  total: number;
+}
+
+export interface EscalationStat {
+  rung: number;
+  total: number;
+  success_rate: number;
+}
+
+export interface IntelligenceDecision {
+  event_id: number;
+  workflow_id: string;
+  run_id: string | null;
+  event_type: string;
+  event_data: string;
+  created_at: string | null;
 }
 
 export interface AnalyticsData {

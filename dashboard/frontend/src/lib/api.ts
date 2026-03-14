@@ -1,4 +1,4 @@
-import type { Project, ProjectCreate, ProjectUpdate, Run, RunList, RunFullContext, ActiveEmployeeData, Plan, PlanList, SystemStatus, AuthStatus, LogSearchResult, RunLogs, UsageData, TokenUsageData, OAuthStartResponse, OAuthCallbackResponse, CoordinatorTask, CoordinatorTaskDetail, CoordinatorDAG, CoordinatorMessage, AnalyticsData, DiffResult, QueueItem, QueueItemList, QueueStats } from './types';
+import type { Project, ProjectCreate, ProjectUpdate, Run, RunList, RunFullContext, ActiveEmployeeData, Plan, PlanList, SystemStatus, AuthStatus, LogSearchResult, RunLogs, UsageData, TokenUsageData, OAuthStartResponse, OAuthCallbackResponse, CoordinatorTask, CoordinatorTaskDetail, CoordinatorDAG, CoordinatorMessage, AnalyticsData, DiffResult, QueueItem, QueueItemList, QueueStats, IntelligenceInsights, IntelligenceDecision, BackpressureStatus } from './types';
 
 const BASE = import.meta.env.VITE_API_URL || '';
 
@@ -210,3 +210,13 @@ export const sendGuidance = (data: { run_id: string; employee_index: number; gui
     method: 'POST',
     body: JSON.stringify(data),
   });
+
+// Intelligence
+export const getIntelligenceInsights = () => request<IntelligenceInsights>('/api/intelligence/insights');
+export const getIntelligenceDecisions = (params?: { run_id?: string; limit?: number }) => {
+  const q = new URLSearchParams();
+  if (params?.run_id) q.set('run_id', params.run_id);
+  if (params?.limit) q.set('limit', String(params.limit));
+  return request<IntelligenceDecision[]>(`/api/intelligence/decisions?${q}`);
+};
+export const getBackpressure = () => request<BackpressureStatus>('/api/queue/pressure');

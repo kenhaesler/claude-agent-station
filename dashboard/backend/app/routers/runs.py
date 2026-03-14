@@ -13,9 +13,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.dependencies import get_db
-from app.models import CoordinatorMessage, CoordinatorTask, Plan, Project, QueueItem, Run
+from app.models import AgentEvent, CoordinatorMessage, CoordinatorTask, Plan, Project, QueueItem, Run
 from app.schemas import (
     ActiveEmployeeOut,
+    AgentEventOut,
     CoordinatorMessageOut,
     CoordinatorTaskOut,
     PlanOut,
@@ -164,6 +165,15 @@ async def get_run_full_context(run_id: str, db: AsyncSession = Depends(get_db)):
         if project:
             project_repo = project.repo
 
+    # 7. Fetch intelligence decisions (agent events with intelligence.* type)
+    intel_result = await db.execute(
+        select(AgentEvent)
+        .where(AgentEvent.run_id == run_id)
+        .where(AgentEvent.event_type.like("intelligence.%"))
+        .order_by(AgentEvent.created_at.asc())
+    )
+    intel_events = intel_result.scalars().all()
+
     return RunFullContext(
         run=RunOut.model_validate(run),
         coordinator_tasks=[CoordinatorTaskOut.model_validate(t) for t in tasks],
@@ -171,6 +181,7 @@ async def get_run_full_context(run_id: str, db: AsyncSession = Depends(get_db)):
         queue_item=QueueItemOut.model_validate(queue_item) if queue_item else None,
         plan=PlanOut.model_validate(plan) if plan else None,
         project_repo=project_repo,
+        intelligence_decisions=[AgentEventOut.model_validate(e) for e in intel_events],
     )
 
 

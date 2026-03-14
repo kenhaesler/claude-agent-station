@@ -103,6 +103,12 @@
   let logDir = $state('');
   let digestDir = $state('');
   let snapshot = $state<StationConfig>({});
+  // Intelligence feature flags
+  let intelAutoMode = $state(false);
+  let intelProgressiveDeepening = $state(false);
+  let intelConfidenceGating = $state(false);
+  let intelIndependentVerification = $state(false);
+  let intelAdaptiveScheduling = $state(false);
 
   function applyConfig(cfg: StationConfig) {
     employeeModel = cfg.models?.employee ?? '';
@@ -130,6 +136,11 @@
     telegramChatId = cfg.notifications?.telegram_chat_id ?? '';
     logDir = cfg.logging?.log_dir ?? '';
     digestDir = cfg.logging?.digest_dir ?? '';
+    intelAutoMode = cfg.intelligence?.auto_mode_selection ?? false;
+    intelProgressiveDeepening = cfg.intelligence?.progressive_deepening ?? false;
+    intelConfidenceGating = cfg.intelligence?.confidence_gating ?? false;
+    intelIndependentVerification = cfg.intelligence?.independent_verification ?? false;
+    intelAdaptiveScheduling = cfg.intelligence?.adaptive_scheduling ?? false;
   }
 
   async function loadConfig() {
@@ -159,6 +170,13 @@
         max_manager_turns: maxManagerTurns, max_concurrent_employees: maxConcurrentEmployees,
         max_employees_per_project: maxEmployeesPerProject,
         token_budget_strategy: tokenBudgetStrategy || undefined,
+      },
+      intelligence: {
+        auto_mode_selection: intelAutoMode,
+        progressive_deepening: intelProgressiveDeepening,
+        confidence_gating: intelConfidenceGating,
+        independent_verification: intelIndependentVerification,
+        adaptive_scheduling: intelAdaptiveScheduling,
       },
       schedule: schedule || undefined,
       notifications: {
@@ -433,6 +451,48 @@
               <option value="priority_weighted">Priority Weighted</option>
             </select>
           </div>
+        </div>
+      </GlassCard>
+
+      <GlassCard glow="purple" class="p-4">
+        <h3 class="text-sm font-semibold mb-1">Intelligence Features</h3>
+        <p class="text-xs text-text-dim mb-3">Adaptive intelligence that improves with every run. All features default to off.</p>
+        <div class="space-y-2">
+          <label class="flex items-center justify-between text-sm text-text cursor-pointer">
+            <div>
+              <span class="text-xs">Auto Mode Selection</span>
+              <p class="text-[10px] text-text-muted">Route issues to optimal mode/model via labels + Haiku scoring</p>
+            </div>
+            <input type="checkbox" bind:checked={intelAutoMode} class="w-4 h-4 accent-info cursor-pointer" />
+          </label>
+          <label class="flex items-center justify-between text-sm text-text cursor-pointer">
+            <div>
+              <span class="text-xs">Progressive Deepening</span>
+              <p class="text-[10px] text-text-muted">Escalate to stronger models when initial attempt fails</p>
+            </div>
+            <input type="checkbox" bind:checked={intelProgressiveDeepening} class="w-4 h-4 accent-info cursor-pointer" />
+          </label>
+          <label class="flex items-center justify-between text-sm text-text cursor-pointer">
+            <div>
+              <span class="text-xs">Confidence Gating</span>
+              <p class="text-[10px] text-text-muted">Auto-create PRs for high-confidence, test-passing work (skip manager review)</p>
+            </div>
+            <input type="checkbox" bind:checked={intelConfidenceGating} class="w-4 h-4 accent-info cursor-pointer" />
+          </label>
+          <label class="flex items-center justify-between text-sm text-text cursor-pointer">
+            <div>
+              <span class="text-xs">Adaptive Scheduling</span>
+              <p class="text-[10px] text-text-muted">Learn from outcomes to optimize future mode/model selection</p>
+            </div>
+            <input type="checkbox" bind:checked={intelAdaptiveScheduling} class="w-4 h-4 accent-info cursor-pointer" />
+          </label>
+          <label class="flex items-center justify-between text-sm text-text cursor-pointer">
+            <div>
+              <span class="text-xs">Independent Verification</span>
+              <p class="text-[10px] text-text-muted">Automated code review for high-risk changes (cost-intensive)</p>
+            </div>
+            <input type="checkbox" bind:checked={intelIndependentVerification} class="w-4 h-4 accent-info cursor-pointer" />
+          </label>
         </div>
       </GlassCard>
 
