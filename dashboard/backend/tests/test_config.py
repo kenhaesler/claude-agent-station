@@ -11,7 +11,7 @@ Covers:
 
 import json
 import time
-from datetime import UTC
+from datetime import timezone
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -266,7 +266,7 @@ async def test_get_token_usage_with_runs(client):
             tokens_input=10000,
             tokens_output=5000,
             tokens_total=15000,
-            started_at=datetime.now(UTC),
+            started_at=datetime.now(timezone.utc),
         )
         session.add(run)
         await session.commit()

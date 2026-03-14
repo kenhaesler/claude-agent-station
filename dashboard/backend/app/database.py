@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Async SQLAlchemy engine, session factory, and DB initialization."""
 
 import logging

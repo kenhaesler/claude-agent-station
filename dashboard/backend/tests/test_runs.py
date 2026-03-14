@@ -8,7 +8,7 @@ Covers:
 - 404 for missing run
 """
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 import pytest_asyncio
@@ -51,7 +51,7 @@ async def sample_runs(setup_db):
         session.add(project)
         await session.flush()
 
-        now = datetime.now(UTC)
+        now = datetime.now(timezone.utc)
         runs = [
             Run(
                 run_id="run-001",

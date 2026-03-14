@@ -1,7 +1,9 @@
 """Task queue CRUD with state machine validation."""
 
+from __future__ import annotations
+
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -39,7 +41,7 @@ ALL_STATES = set(TRANSITIONS.keys()) | {"completed"}
 
 
 def _utcnow() -> datetime:
-    return datetime.now(UTC)
+    return datetime.now(timezone.utc)
 
 
 @router.get("", response_model=QueueItemList)

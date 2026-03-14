@@ -1,10 +1,12 @@
+from __future__ import annotations
+
 """Config management endpoints."""
 
 import asyncio
 import json
 import logging
 import time
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -243,7 +245,7 @@ async def get_token_usage(db: AsyncSession = Depends(get_db)):
         limits.get("token_reserve_percent", _NEW_LIMIT_DEFAULTS["reserve_percent"]),
     )
 
-    now = datetime.now(UTC)
+    now = datetime.now(timezone.utc)
 
     # Daily tokens consumed (last 24h)
     day_ago = now - timedelta(hours=24)

@@ -6,7 +6,7 @@ Covers:
 - POST /api/plan-usage/snapshot — records a snapshot
 """
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 import pytest_asyncio
@@ -49,7 +49,7 @@ async def sample_runs(setup_db):
         session.add(project)
         await session.flush()
 
-        now = datetime.now(UTC)
+        now = datetime.now(timezone.utc)
         runs = [
             Run(
                 run_id="usage-run-001",
@@ -160,7 +160,7 @@ async def test_get_plan_usage_history_with_snapshots(client):
     async with async_session() as session:
         for i in range(3):
             snapshot = PlanUsageHistory(
-                timestamp=datetime.now(UTC).isoformat(),
+                timestamp=datetime.now(timezone.utc).isoformat(),
                 detection_method="heuristic",
                 plan_tier="max_5x",
                 weekly_tokens_used=i * 10000,
@@ -182,7 +182,7 @@ async def test_get_plan_usage_history_limit(client):
     async with async_session() as session:
         for _i in range(5):
             snapshot = PlanUsageHistory(
-                timestamp=datetime.now(UTC).isoformat(),
+                timestamp=datetime.now(timezone.utc).isoformat(),
                 detection_method="heuristic",
                 plan_tier="max_5x",
                 weekly_tokens_used=0,

@@ -1,5 +1,7 @@
 """Parse agent log files: stream JSONL, verdict JSON, employee reports."""
 
+from __future__ import annotations
+
 import json
 import logging
 import os

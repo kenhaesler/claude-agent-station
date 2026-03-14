@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Import existing log files into the database on startup."""
 
 import json

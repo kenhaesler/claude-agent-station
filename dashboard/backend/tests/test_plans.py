@@ -12,7 +12,7 @@ Covers:
 - Status transition validation
 """
 
-from datetime import UTC
+from datetime import timezone
 
 import pytest
 import pytest_asyncio
@@ -74,7 +74,7 @@ def test_utcnow_returns_timezone_aware():
     """_utcnow() helper should return a timezone-aware datetime with UTC tzinfo."""
     dt = _utcnow()
     assert dt.tzinfo is not None, "_utcnow should return timezone-aware datetime"
-    assert dt.tzinfo == UTC
+    assert dt.tzinfo == timezone.utc
 
 
 def test_plan_created_at_default_is_utcnow():

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Systemd service control via subprocess with action whitelist."""
 
 import asyncio

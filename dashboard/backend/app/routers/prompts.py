@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """System prompt management endpoints.
 
 Allows reading default prompts and storing custom overrides.

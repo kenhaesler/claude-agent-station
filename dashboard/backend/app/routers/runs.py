@@ -1,6 +1,9 @@
 """Run history endpoints."""
 
+from __future__ import annotations
+
 import asyncio
+from typing import Optional
 import logging
 from pathlib import Path
 
@@ -90,7 +93,7 @@ async def get_active_employees(db: AsyncSession = Depends(get_db)):
     ]
 
 
-@router.get("/latest", response_model=RunOut | None)
+@router.get("/latest", response_model=Optional[RunOut])
 async def get_latest_run(db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(Run).order_by(desc(Run.started_at)).limit(1)

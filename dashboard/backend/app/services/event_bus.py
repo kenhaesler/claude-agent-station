@@ -1,9 +1,11 @@
+from __future__ import annotations
+
 """In-memory pub/sub event bus for broadcasting SSE events to connected clients."""
 
 import asyncio
 import logging
 from collections.abc import AsyncGenerator
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -22,7 +24,7 @@ async def publish(event: dict[str, Any]) -> None:
 
     A server-side timestamp is injected automatically.
     """
-    event.setdefault("timestamp", datetime.now(UTC).isoformat())
+    event.setdefault("timestamp", datetime.now(timezone.utc).isoformat())
 
     dead: list[asyncio.Queue[dict[str, Any]]] = []
     async with _lock:

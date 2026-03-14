@@ -11,7 +11,7 @@ Covers:
 import json
 import os
 import tempfile
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 import pytest
 import pytest_asyncio
@@ -92,9 +92,9 @@ async def sample_data(setup_db):
             exit_code=0,
             result_summary="Fixed login validation, 5 tests passing",
             branch="autonomous/issue-42",
-            created_at=datetime(2026, 3, 12, 12, 0, 0, tzinfo=UTC),
-            started_at=datetime(2026, 3, 12, 12, 0, 0, tzinfo=UTC),
-            finished_at=datetime(2026, 3, 12, 12, 5, 0, tzinfo=UTC),
+            created_at=datetime(2026, 3, 12, 12, 0, 0, tzinfo=timezone.utc),
+            started_at=datetime(2026, 3, 12, 12, 0, 0, tzinfo=timezone.utc),
+            finished_at=datetime(2026, 3, 12, 12, 5, 0, tzinfo=timezone.utc),
             touched_files=json.dumps(["src/login.tsx", "src/login.test.tsx"]),
         )
         task2 = CoordinatorTask(
@@ -106,8 +106,8 @@ async def sample_data(setup_db):
             status="running",
             employee_index=1,
             depends_on=json.dumps(["task-run-20260312T120000Z-0"]),
-            created_at=datetime(2026, 3, 12, 12, 0, 0, tzinfo=UTC),
-            started_at=datetime(2026, 3, 12, 12, 5, 0, tzinfo=UTC),
+            created_at=datetime(2026, 3, 12, 12, 0, 0, tzinfo=timezone.utc),
+            started_at=datetime(2026, 3, 12, 12, 5, 0, tzinfo=timezone.utc),
         )
         session.add_all([task1, task2])
 

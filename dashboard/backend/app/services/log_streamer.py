@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Async file tail for WebSocket live log streaming.
 
 Uses asyncio.to_thread with standard open(), polling at configurable interval.

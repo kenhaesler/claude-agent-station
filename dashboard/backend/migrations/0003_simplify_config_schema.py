@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Migration 0003: Simplify config schema.
 
 Removes old overlapping limit fields from station-config.json and replaces

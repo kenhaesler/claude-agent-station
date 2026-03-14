@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Health check endpoint."""
 
 from fastapi import APIRouter

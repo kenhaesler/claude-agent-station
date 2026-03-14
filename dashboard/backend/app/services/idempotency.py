@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Simple in-memory idempotency check for webhook events."""
 
 import logging

@@ -1,6 +1,8 @@
 """Parse unified git diff output into structured JSON data."""
 
 
+from __future__ import annotations
+
 from pydantic import BaseModel
 
 

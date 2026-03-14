@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Bidirectional sync between station-config.json and DB projects table.
 
 JSON is the source of truth for the agent. The DB mirrors it for the API.

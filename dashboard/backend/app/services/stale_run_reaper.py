@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Detect and reap runs stuck in 'running' after the agent process dies.
 
 When the agent is killed (hard stop, OOM, etc.) the run_complete webhook
@@ -7,7 +9,7 @@ runs as 'interrupted' so the UI reflects reality.
 """
 
 import logging
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -39,7 +41,7 @@ async def reap_stale_runs(db: AsyncSession) -> int:
     if not stale_runs:
         return 0
 
-    now = datetime.now(UTC)
+    now = datetime.now(timezone.utc)
     for run in stale_runs:
         old_status = run.status
         run.status = "interrupted"
