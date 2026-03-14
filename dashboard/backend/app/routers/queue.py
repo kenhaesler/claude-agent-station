@@ -6,6 +6,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from typing import Optional
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -209,7 +210,7 @@ async def create_queue_item(
     return QueueItemOut.model_validate(item)
 
 
-@router.post("/claim", response_model=QueueItemOut | None)
+@router.post("/claim", response_model=Optional[QueueItemOut])
 async def claim_work(
     employee_index: int = Query(...),
     run_id: str = Query(...),
