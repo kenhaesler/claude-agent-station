@@ -57,8 +57,14 @@ export class LogWebSocket {
       }
     };
 
-    this.ws.onclose = () => {
+    this.ws.onclose = (event) => {
       this.onStatusChange(false);
+      if (event.code === 1008) {
+        // Auth failure — stop retrying and prompt for API key
+        this.shouldReconnect = false;
+        window.dispatchEvent(new CustomEvent('station-auth-required'));
+        return;
+      }
       if (this.shouldReconnect) {
         this.reconnectTimer = setTimeout(() => this.doConnect(), this.reconnectDelay);
         this.reconnectDelay = Math.min(this.reconnectDelay * 2, LogWebSocket.MAX_RECONNECT_DELAY);

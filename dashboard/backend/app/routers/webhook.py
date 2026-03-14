@@ -2,6 +2,7 @@
 
 import json
 import logging
+import secrets
 import uuid
 from datetime import UTC, datetime
 
@@ -38,7 +39,10 @@ async def receive_run_event(
       started, finished, verdict
     """
     # Authenticate if a shared secret is configured
-    if settings.webhook_secret and x_webhook_token != settings.webhook_secret:
+    if settings.webhook_secret and (
+        not x_webhook_token
+        or not secrets.compare_digest(x_webhook_token, settings.webhook_secret)
+    ):
         raise HTTPException(status_code=401, detail="Invalid or missing webhook token")
 
     # Auto-generate trace and event IDs if not provided
