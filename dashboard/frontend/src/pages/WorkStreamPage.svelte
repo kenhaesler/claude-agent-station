@@ -4,6 +4,7 @@
   import RunCard from '../components/RunCard.svelte';
   import GlassCard from '../components/GlassCard.svelte';
   import StatusBadge from '../components/StatusBadge.svelte';
+  import IntelligenceChip from '../components/IntelligenceChip.svelte';
   import RunFilters from '../components/RunFilters.svelte';
   import { timeAgo } from '../lib/format';
 
@@ -104,6 +105,9 @@
                 <span class="text-text-muted font-data">#{item.issue_number}</span>
               {/if}
             </div>
+            {#if item.mode}
+              <IntelligenceChip type="success-rate" mode={item.mode} />
+            {/if}
             <span class="text-text-muted text-[10px]">{timeAgo(item.created_at)}</span>
           </div>
         {/each}

@@ -1,17 +1,25 @@
 <script lang="ts">
-  import { route } from './lib/router.svelte';
+  import { route, navigate, handleLinkClick } from './lib/router.svelte';
   import { getSystemStatus, getAuthStatus, getUsage, triggerRun } from './lib/api';
   import { toastSuccess, toastError } from './lib/toast.svelte';
   import { agentPresence, connect as connectPresence, disconnect as disconnectPresence, togglePanel } from './lib/agent-presence.svelte';
+  import { startIntelligenceRefresh, stopIntelligenceRefresh } from './lib/intelligence-cache.svelte';
+  import { audioEngine } from './lib/audio-engine';
+  import type { SystemStatus, UsageData } from './lib/types';
   import NavRail from './components/NavRail.svelte';
   import HeaderBar from './components/HeaderBar.svelte';
   import AgentPanel from './components/AgentPanel.svelte';
+  import AgentWorkspace from './components/AgentWorkspace.svelte';
   import ApiKeyModal from './components/ApiKeyModal.svelte';
+  import CommandPalette from './components/CommandPalette.svelte';
   import Toast from './components/Toast.svelte';
-  import CommandCenterPage from './pages/CommandCenterPage.svelte';
+  import PulsePage from './pages/PulsePage.svelte';
   import WorkStreamPage from './pages/WorkStreamPage.svelte';
   import DecisionsPage from './pages/DecisionsPage.svelte';
   import ConfigPage from './pages/ConfigPage.svelte';
+  import AgentObservatoryPage from './pages/AgentObservatoryPage.svelte';
+  import RunDetailPage from './pages/RunDetailPage.svelte';
+  import AnalyticsPage from './pages/AnalyticsPage.svelte';
 
   let serviceActive = $state(false);
   let authOk = $state(false);
@@ -20,6 +28,12 @@
   let sessionLimit = $state(50);
   let triggering = $state(false);
   let showApiKeyModal = $state(false);
+  let cortexFocused = $state(false);
+  let paletteOpen = $state(false);
+
+  // System status and usage for Cortex backdrop
+  let systemStatus = $state<SystemStatus | null>(null);
+  let usageData = $state<UsageData | null>(null);
 
   async function loadStatus() {
     try {
@@ -30,6 +44,7 @@
       ]);
       if (sysRes.status === 'fulfilled') {
         serviceActive = sysRes.value.service.active;
+        systemStatus = sysRes.value;
       }
       if (authRes.status === 'fulfilled') {
         authOk = authRes.value.logged_in && !authRes.value.expired;
@@ -38,6 +53,7 @@
         usagePercent = usageRes.value.usage_percent;
         sessionsUsed = usageRes.value.sessions_used;
         sessionLimit = usageRes.value.plan_limit || usageRes.value.max_usage_percent;
+        usageData = usageRes.value;
       }
     } catch {
       // silently fail
@@ -56,6 +72,12 @@
       triggering = false;
     }
   }
+
+  // Route-aware Cortex settings
+  let isCommandPage = $derived(route.page === 'command');
+  let cortexQuality = $derived<'full' | 'ambient'>(isCommandPage || cortexFocused ? 'full' : 'ambient');
+  let cortexInteractive = $derived(isCommandPage || cortexFocused);
+  let cortexOpacity = $derived(cortexFocused ? 1 : isCommandPage ? 0.9 : 0.3);
 
   // Status polling
   $effect(() => {
@@ -77,34 +99,83 @@
     return () => disconnectPresence();
   });
 
+  // Intelligence cache lifecycle
+  $effect(() => {
+    startIntelligenceRefresh();
+    return () => stopIntelligenceRefresh();
+  });
+
+  // Audio engine — listen for workspace-sound events and play through AudioEngine
+  $effect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      audioEngine.play(detail);
+    };
+    document.body.addEventListener('workspace-sound', handler);
+    return () => document.body.removeEventListener('workspace-sound', handler);
+  });
+
   // Keyboard shortcuts
   function handleKeydown(e: KeyboardEvent) {
     // Ignore when typing in inputs
     if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) return;
 
-    if (e.key === 'Escape' && agentPresence.panelOpen) {
-      agentPresence.panelOpen = false;
+    if (e.key === 'Escape') {
+      if (paletteOpen) { paletteOpen = false; return; }
+      if (cortexFocused) { cortexFocused = false; return; }
+      if (agentPresence.panelOpen) { agentPresence.panelOpen = false; return; }
       return;
     }
+    // Cmd+K: Command Palette
     if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+      e.preventDefault();
+      paletteOpen = !paletteOpen;
+      return;
+    }
+    // Cmd+Shift+A: Agent Panel
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'a') {
       e.preventDefault();
       togglePanel();
       return;
     }
-    if (e.key === '1') { window.location.hash = '/command'; return; }
-    if (e.key === '2') { window.location.hash = '/stream'; return; }
-    if (e.key === '3') { window.location.hash = '/decide'; return; }
-    if (e.key === '4') { window.location.hash = '/config'; return; }
+    // Cortex Focus: Space (when not in input and not on command page)
+    if (e.key === ' ' && !isCommandPage) {
+      e.preventDefault();
+      cortexFocused = !cortexFocused;
+      return;
+    }
+    if (e.key === '1') { navigate('/command'); return; }
+    if (e.key === '2') { navigate('/stream'); return; }
+    if (e.key === '3') { navigate('/decide'); return; }
+    if (e.key === '4') { navigate('/config'); return; }
+    if (e.key === '5') { navigate('/agents'); return; }
+    if (e.key === '6') { navigate('/analytics'); return; }
   }
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
 
-<div class="flex flex-col md:flex-row h-screen bg-bg">
+<!-- Skip to content (accessibility) -->
+<a href="#main-content" class="skip-to-content">Skip to content</a>
+
+<!-- Cortex backdrop — persistent ambient canvas behind all content -->
+<div class="fixed inset-0 z-cortex" aria-hidden="true">
+  <AgentWorkspace
+    {systemStatus}
+    usage={usageData}
+    renderQuality={cortexQuality}
+    interactive={cortexInteractive}
+    opacity={cortexOpacity}
+  />
+</div>
+
+<!-- svelte-ignore a11y_click_events_have_key_events -->
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div class="relative z-content flex flex-col md:flex-row h-screen" onclick={handleLinkClick}>
   <!-- NavRail (bottom on mobile, left on desktop) -->
-  <div class="hidden md:block">
+  <nav class="hidden md:block" aria-label="Main navigation">
     <NavRail />
-  </div>
+  </nav>
 
   <!-- Main area -->
   <div class="flex-1 flex flex-col overflow-hidden min-w-0">
@@ -120,31 +191,46 @@
       onAuthClick={() => showApiKeyModal = true}
     />
     <div class="flex flex-1 overflow-hidden">
-      <!-- Page content -->
-      <main class="flex-1 p-3 md:p-6 overflow-auto pb-20 md:pb-6">
+      <!-- Page content with semi-transparent overlay -->
+      <main
+        id="main-content"
+        class="flex-1 p-3 md:p-6 overflow-auto pb-20 md:pb-6 transition-all duration-400
+          {isCommandPage ? 'cortex-overlay-transparent' : 'cortex-overlay'}
+          {cortexFocused ? '!opacity-10 pointer-events-none' : ''}"
+        aria-label="Page content"
+      >
         {#if route.page === 'command'}
-          <CommandCenterPage />
-        {:else if route.page === 'stream' || route.page === 'stream-detail'}
-          <WorkStreamPage runId={route.page === 'stream-detail' ? route.param : null} />
+          <PulsePage />
+        {:else if route.page === 'stream-detail' && route.param}
+          <RunDetailPage runId={route.param} />
+        {:else if route.page === 'stream'}
+          <WorkStreamPage />
         {:else if route.page === 'decide' || route.page === 'decide-detail'}
           <DecisionsPage planId={route.page === 'decide-detail' ? route.param : null} />
         {:else if route.page === 'config'}
           <ConfigPage tab={route.param} />
+        {:else if route.page === 'agents'}
+          <AgentObservatoryPage />
+        {:else if route.page === 'analytics'}
+          <AnalyticsPage />
         {/if}
       </main>
 
       <!-- Agent Panel (slide-out right) -->
       {#if agentPresence.panelOpen}
-        <AgentPanel onClose={() => agentPresence.panelOpen = false} />
+        <aside aria-label="Agent panel">
+          <AgentPanel onClose={() => agentPresence.panelOpen = false} />
+        </aside>
       {/if}
     </div>
   </div>
 
   <!-- Mobile NavRail (bottom) -->
-  <div class="md:hidden">
+  <nav class="md:hidden" aria-label="Main navigation">
     <NavRail />
-  </div>
+  </nav>
 
   <ApiKeyModal show={showApiKeyModal} onClose={() => showApiKeyModal = false} />
+  <CommandPalette open={paletteOpen} onclose={() => paletteOpen = false} />
   <Toast />
 </div>
