@@ -147,6 +147,7 @@ _auth = [Depends(verify_api_key)]
 app.include_router(analytics.router, dependencies=_auth)
 app.include_router(projects.router, dependencies=_auth)
 app.include_router(runs.router, dependencies=_auth)
+app.include_router(logs.ws_router)  # WS route: handles auth internally (HTTPBearer incompatible with WS)
 app.include_router(logs.router, dependencies=_auth)
 app.include_router(config_router.router, dependencies=_auth)
 app.include_router(system.router, dependencies=_auth)

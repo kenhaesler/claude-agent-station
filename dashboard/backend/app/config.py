@@ -48,7 +48,7 @@ class Settings(BaseSettings):
         "http://127.0.0.1:4173",
     ]
 
-    model_config = SettingsConfigDict(env_prefix="STATION_")
+    model_config = SettingsConfigDict(env_prefix="STATION_", env_file=".env", env_file_encoding="utf-8")
 
 
 settings = Settings()
