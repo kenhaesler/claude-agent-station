@@ -62,7 +62,7 @@ export interface RunList {
 
 export interface ActiveEmployeeData {
   run_id: string;
-  project_id: number;
+  project_id: number | null;
   mode: string;
   status: string;
   issue_number: number | null;

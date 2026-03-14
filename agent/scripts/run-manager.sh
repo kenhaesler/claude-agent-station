@@ -2321,19 +2321,12 @@ assignments = []
 max_per = int('$max_per_project')
 workspaces_dir = '$WORKSPACES_DIR'
 
-# Load multi_employee flag from ModeSpec registry
-try:
-    from agent.coordinator.modes import MODE_REGISTRY
-    multi_employee_modes = {name for name, spec in MODE_REGISTRY.items() if spec.multi_employee}
-except Exception:
-    multi_employee_modes = {'full'}  # Fallback if modes.py not importable
-
 for i, proj in enumerate(projects):
     if not proj.get('enabled', True):
         continue
     repo = proj['repo']
     mode = proj.get('mode', 'full')
-    employees = max_per if mode in multi_employee_modes else 1
+    employees = max_per
     repo_name = repo.split('/')[-1] if '/' in repo else repo
     workspace = f'{workspaces_dir}/{repo_name}'
 
@@ -2396,10 +2389,6 @@ print(f'Wrote {len(assignments)} assignments')
         local mode_for_project
         mode_for_project=$(get_project_field "$i" "mode" 2>/dev/null || echo "full")
         local employees_this_project=$max_per_project
-        # Analyze/plan modes only use 1 employee
-        if [ "$mode_for_project" = "analyze" ] || [ "$mode_for_project" = "plan" ]; then
-            employees_this_project=1
-        fi
 
         for ((ei = 0; ei < employees_this_project; ei++)); do
             log_info "Project $((i+1))/$project_count: $repo (priority: $priority, employee: $ei)"

@@ -81,7 +81,7 @@ class RunList(BaseModel):
 class ActiveEmployeeOut(BaseModel):
     """A currently-running agent/employee for the workspace visualization."""
     run_id: str
-    project_id: int
+    project_id: int | None = None
     mode: str
     status: str
     issue_number: int | None = None
