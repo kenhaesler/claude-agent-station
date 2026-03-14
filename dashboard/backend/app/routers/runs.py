@@ -72,12 +72,17 @@ async def list_runs(
 
 @router.get("/active-employees", response_model=list[ActiveEmployeeOut])
 async def get_active_employees(db: AsyncSession = Depends(get_db)):
-    """Return all currently running employee/agent runs for workspace visualization."""
+    """Return all currently running employee/agent runs for workspace visualization.
+
+    Queries Run records first. If only 1 Run is found but there are multiple
+    running CoordinatorTasks, synthesize additional ActiveEmployeeOut entries
+    from the coordinator tasks (handles the coordinated multi-employee path).
+    """
     result = await db.execute(
         select(Run).where(Run.status == "running").where(Run.project_id.isnot(None))
     )
     runs = result.scalars().all()
-    return [
+    employees = [
         ActiveEmployeeOut(
             run_id=r.run_id,
             project_id=r.project_id,
@@ -92,6 +97,46 @@ async def get_active_employees(db: AsyncSession = Depends(get_db)):
         )
         for r in runs
     ]
+
+    # Fallback: check for running coordinator tasks that don't have Run records.
+    # This covers the coordinated path where the Python coordinator spawns
+    # employees via task_started events instead of employee_start events.
+    if len(employees) <= 1:
+        coord_result = await db.execute(
+            select(CoordinatorTask).where(CoordinatorTask.status == "running")
+        )
+        coord_tasks = coord_result.scalars().all()
+
+        # Only synthesize if we have coordinator tasks beyond what's already shown
+        seen_indices = {e.employee_index for e in employees}
+        for ct in coord_tasks:
+            if ct.employee_index in seen_indices:
+                continue
+            seen_indices.add(ct.employee_index)
+
+            # Find the project_id from the first run (they share the same project)
+            project_id = employees[0].project_id if employees else None
+            if not project_id:
+                proj_result = await db.execute(
+                    select(Project).where(Project.repo == ct.project_repo)
+                )
+                proj = proj_result.scalar_one_or_none()
+                project_id = proj.id if proj else 0
+
+            employees.append(ActiveEmployeeOut(
+                run_id=ct.run_id,
+                project_id=project_id,
+                mode="employee",
+                status="running",
+                issue_number=ct.issue_number,
+                turns=None,
+                employee_index=ct.employee_index,
+                concurrent_group_id=ct.run_id,
+                model=None,
+                branch=ct.branch,
+            ))
+
+    return employees
 
 
 @router.get("/latest", response_model=Optional[RunOut])

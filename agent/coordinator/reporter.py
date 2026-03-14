@@ -62,6 +62,42 @@ def post_task_event(config: CoordinatorConfig, event: str, task: Task) -> None:
     })
 
 
+def post_employee_start(config: CoordinatorConfig, task: Task) -> None:
+    """Send employee_start event to create a Run record for this employee.
+
+    Each employee gets a unique run_id so the dashboard can track them
+    individually. Employee 0 uses the master run_id; others get a suffix.
+    """
+    run_id = f"run-{config.run_id}"
+    ei = task.employee_index or 0
+    if ei > 0:
+        run_id = f"run-{config.run_id}-e{ei}"
+
+    post_event(config, "employee_start", {
+        "run_id": run_id,  # Override the default run_id
+        "project": task.project_repo,
+        "mode": getattr(config, "project_mode", "full"),
+        "employee_index": ei,
+        "concurrent_group_id": config.concurrent_group_id or f"run-{config.run_id}",
+    })
+
+
+def post_employee_complete(config: CoordinatorConfig, task: Task, exit_code: int = 0) -> None:
+    """Send employee_complete event to update the Run record for this employee."""
+    run_id = f"run-{config.run_id}"
+    ei = task.employee_index or 0
+    if ei > 0:
+        run_id = f"run-{config.run_id}-e{ei}"
+
+    post_event(config, "employee_complete", {
+        "run_id": run_id,  # Override the default run_id
+        "project": task.project_repo,
+        "exit_code": exit_code,
+        "employee_index": ei,
+        "concurrent_group_id": config.concurrent_group_id or f"run-{config.run_id}",
+    })
+
+
 def post_conflict(config: CoordinatorConfig, file_path: str, employee_a: int, employee_b: int, project: str) -> None:
     """POST a conflict detection event."""
     post_event(config, "conflict_detected", {
