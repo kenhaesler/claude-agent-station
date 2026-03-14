@@ -7,8 +7,9 @@
 import { LogWebSocket } from './ws';
 import { parseLogLine, formatToolInput, truncate } from './log-parser';
 import type { ParsedLogEvent } from './log-parser';
-import { getActiveEmployees, getLatestRun, listPlans, getStoredApiKey } from './api';
+import { getActiveEmployees, getLatestRun, listPlans, listRuns, getStoredApiKey } from './api';
 import type { ActiveEmployeeData, Run } from './types';
+import { AgentEventStream } from './event-stream';
 
 // --- Agent Identity ---
 
@@ -121,7 +122,7 @@ export const agentPresence = $state<AgentPresenceState>({
 // --- Internal ---
 
 let ws: LogWebSocket | null = null;
-let sse: EventSource | null = null;
+let sse: AgentEventStream | null = null;
 let currentToolTimer: ReturnType<typeof setTimeout> | null = null;
 let sampleTimer: ReturnType<typeof setInterval> | null = null;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -275,29 +276,11 @@ function handleWsMessage(data: string) {
 // --- SSE handler ---
 
 function connectSSE() {
-  const base = import.meta.env.VITE_API_URL || '';
-  const apiKey = getStoredApiKey();
-  const sseUrl = apiKey
-    ? `${base}/api/events/stream?token=${encodeURIComponent(apiKey)}`
-    : `${base}/api/events/stream`;
-  sse = new EventSource(sseUrl);
-
-  sse.onopen = () => {
-    agentPresence.sseConnected = true;
-  };
-
-  sse.onerror = () => {
-    agentPresence.sseConnected = false;
-  };
-
-  sse.onmessage = (event) => {
-    try {
-      const data = JSON.parse(event.data);
-      handleSSEEvent(data);
-    } catch {
-      // ignore parse errors
-    }
-  };
+  sse = new AgentEventStream({
+    onEvent: (event) => handleSSEEvent(event),
+    onStatusChange: (connected) => { agentPresence.sseConnected = connected; },
+  });
+  sse.connect();
 }
 
 function handleSSEEvent(data: any) {
@@ -321,6 +304,7 @@ function handleSSEEvent(data: any) {
         type: 'phase',
         content: `Started working${data.issue ? ` on #${data.issue}` : ''}`,
       });
+      refreshActiveRuns();
       break;
     case 'employee_complete':
       addConversationEntry({
@@ -329,6 +313,7 @@ function handleSSEEvent(data: any) {
         type: 'phase',
         content: `Finished — ${data.turns ?? '?'} turns`,
       });
+      refreshActiveRuns();
       break;
     case 'manager_review':
       agentPresence.phase = 'manager_review';
@@ -401,19 +386,39 @@ async function refreshActiveRuns() {
       agentPresence.latestRunId = latestRun.run_id;
     }
 
-    // Fallback: if active-employees returns empty but latest run is still active,
-    // synthesize agent data from the latest run. This happens when project_id
-    // hasn't been assigned yet (run just started) or during manager phase.
-    if (activeEmployees.length === 0 && latestRun && !latestRun.finished_at &&
-        (latestRun.status === 'running' || latestRun.status === 'reviewing')) {
-      activeEmployees = [{
-        run_id: latestRun.run_id,
-        project_id: latestRun.project_id ?? 0,
-        mode: latestRun.mode ?? 'employee',
-        status: latestRun.status ?? 'running',
-        issue_number: latestRun.issue_number,
-        turns: latestRun.turns,
-      }];
+    // Fallback: if active-employees returns empty but runs are still active,
+    // try listing all running runs first (covers multi-employee cases where
+    // project_id is NULL on newly created runs), then fall back to latestRun.
+    if (activeEmployees.length === 0) {
+      try {
+        const runningRuns = await listRuns({ status: 'running', limit: 10 });
+        if (runningRuns.runs && runningRuns.runs.length > 0) {
+          activeEmployees = runningRuns.runs.map((r: Run, idx: number) => ({
+            run_id: r.run_id,
+            project_id: r.project_id ?? 0,
+            mode: r.mode ?? 'employee',
+            status: r.status ?? 'running',
+            issue_number: r.issue_number,
+            turns: r.turns,
+            employee_index: r.employee_index ?? idx,
+          }));
+        }
+      } catch {
+        // Fall through to latestRun synthesis
+      }
+
+      // Final fallback: synthesize from latestRun if still nothing
+      if (activeEmployees.length === 0 && latestRun && !latestRun.finished_at &&
+          (latestRun.status === 'running' || latestRun.status === 'reviewing')) {
+        activeEmployees = [{
+          run_id: latestRun.run_id,
+          project_id: latestRun.project_id ?? 0,
+          mode: latestRun.mode ?? 'employee',
+          status: latestRun.status ?? 'running',
+          issue_number: latestRun.issue_number,
+          turns: latestRun.turns,
+        }];
+      }
     }
 
     agentPresence.activeRuns = activeEmployees;
@@ -474,7 +479,7 @@ export function connect() {
 
 export function disconnect() {
   if (ws) { ws.disconnect(); ws = null; }
-  if (sse) { sse.close(); sse = null; }
+  if (sse) { sse.disconnect(); sse = null; }
   if (currentToolTimer) { clearTimeout(currentToolTimer); currentToolTimer = null; }
   if (sampleTimer) { clearInterval(sampleTimer); sampleTimer = null; }
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }

@@ -101,20 +101,36 @@ async def decompose_issue(
     """
     effective_run_id = run_id or config.run_id
 
-    # For analyze mode, create a single read-only analysis task
+    # For analyze mode, create parallel analysis tasks (one per employee)
     if config.project_mode == "analyze":
-        logger.info("Analyze mode — creating read-only analysis task")
-        title = (
-            f"Analyze codebase for issue #{issue_number}"
-            if issue_number
-            else "Analyze codebase"
-        )
-        return await TaskDAG.single_task(
-            effective_run_id, repo, session_factory,
-            title=title,
-            description=issue_body[:2000],
-            issue_number=issue_number,
-        )
+        if employee_count <= 1:
+            logger.info("Analyze mode (single employee) — creating read-only analysis task")
+            title = (
+                f"Analyze codebase for issue #{issue_number}"
+                if issue_number
+                else "Analyze codebase"
+            )
+            return await TaskDAG.single_task(
+                effective_run_id, repo, session_factory,
+                title=title,
+                description=issue_body[:2000],
+                issue_number=issue_number,
+            )
+        # Multi-employee analyze: create N independent parallel tasks
+        logger.info("Analyze mode (%d employees) — creating parallel analysis tasks", employee_count)
+        dag = TaskDAG(effective_run_id, repo, session_factory)
+        for i in range(employee_count):
+            title = (
+                f"Analyze codebase (employee {i}) for issue #{issue_number}"
+                if issue_number
+                else f"Analyze codebase (employee {i})"
+            )
+            await dag.add_task(
+                title=title,
+                description=issue_body[:2000],
+                issue_number=issue_number,
+            )
+        return dag
 
     # For single employee, skip decomposition
     if employee_count <= 1:
