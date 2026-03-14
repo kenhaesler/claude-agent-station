@@ -2345,11 +2345,8 @@ print(f'Wrote {len(assignments)} assignments')
             fi
             # ---- End plan review gate ----
 
-            # ---- Mode gate: analyze/plan modes must NOT proceed to implementation ----
-            if [ "$mode_for_project" = "analyze" ] || [ "$mode_for_project" = "plan" ]; then
-                log_info "Skipping implementation for $repo employee $ei (mode=$mode_for_project — implementation not permitted)"
-                continue
-            fi
+            # Note: analyze/plan mode enforcement is handled by prompt selection
+            # above (analyst.md / plan prompt) and disallowed tools in the CLI call.
 
             # Calculate per-employee turn budget
             local employee_turns
