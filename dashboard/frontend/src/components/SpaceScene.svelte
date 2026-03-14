@@ -38,16 +38,17 @@
   starGeometry.setAttribute('position', new THREE.BufferAttribute(starPositions, 3));
   starGeometry.setAttribute('size', new THREE.BufferAttribute(starSizes, 1));
 
-  // Create nebula textures (procedural radial gradients)
+  // Create nebula textures — radial gradients with smooth falloff to fully transparent edges
   function createNebulaTexture(color1: string, color2: string): THREE.Texture {
-    const size = 256;
+    const size = 512;
     const canvas = document.createElement('canvas');
     canvas.width = size;
     canvas.height = size;
     const ctx = canvas.getContext('2d')!;
     const grad = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
     grad.addColorStop(0, color1);
-    grad.addColorStop(0.5, color2);
+    grad.addColorStop(0.3, color2);
+    grad.addColorStop(0.7, 'rgba(0,0,0,0)');
     grad.addColorStop(1, 'rgba(0,0,0,0)');
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, size, size);
@@ -59,6 +60,27 @@
   const nebulaTex1 = createNebulaTexture('rgba(60,80,180,0.12)', 'rgba(40,20,100,0.04)');
   const nebulaTex2 = createNebulaTexture('rgba(120,40,160,0.08)', 'rgba(60,10,80,0.03)');
   const nebulaTex3 = createNebulaTexture('rgba(30,100,140,0.10)', 'rgba(10,50,80,0.03)');
+
+  // Star point texture — soft circular glow so points aren't squares
+  function createStarTexture(): THREE.Texture {
+    const size = 64;
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d')!;
+    const grad = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+    grad.addColorStop(0, 'rgba(255,255,255,1)');
+    grad.addColorStop(0.15, 'rgba(255,255,255,0.8)');
+    grad.addColorStop(0.4, 'rgba(200,210,255,0.3)');
+    grad.addColorStop(1, 'rgba(200,210,255,0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, size, size);
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.needsUpdate = true;
+    return tex;
+  }
+
+  const starTexture = createStarTexture();
 
   // Camera auto-drift
   let cameraRef: THREE.PerspectiveCamera | null = null;
@@ -127,10 +149,12 @@
 <T.Points geometry={starGeometry}>
   <T.PointsMaterial
     color={starColor}
-    size={1.2}
+    size={1.5}
+    map={starTexture}
     sizeAttenuation={true}
     transparent={true}
-    opacity={0.8}
+    opacity={0.9}
+    alphaTest={0.01}
     blending={THREE.AdditiveBlending}
     depthWrite={false}
   />
