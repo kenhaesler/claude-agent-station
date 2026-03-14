@@ -55,6 +55,14 @@ async def _migrate_add_columns(conn) -> None:
         ("plan_usage_history", "seconds_until_weekly_reset", "ALTER TABLE plan_usage_history ADD COLUMN seconds_until_weekly_reset INTEGER DEFAULT 0"),
         ("plan_usage_history", "overuse_active", "ALTER TABLE plan_usage_history ADD COLUMN overuse_active INTEGER DEFAULT 0"),
         ("plan_usage_history", "overuse_signals_json", "ALTER TABLE plan_usage_history ADD COLUMN overuse_signals_json TEXT"),
+        # Queue orchestration columns (agent orchestration overhaul)
+        ("task_queue", "mode", "ALTER TABLE task_queue ADD COLUMN mode TEXT"),
+        ("task_queue", "complexity_score", "ALTER TABLE task_queue ADD COLUMN complexity_score INTEGER"),
+        ("task_queue", "escalation_rung", "ALTER TABLE task_queue ADD COLUMN escalation_rung INTEGER DEFAULT 0"),
+        ("task_queue", "escalated_from", "ALTER TABLE task_queue ADD COLUMN escalated_from INTEGER"),
+        ("task_queue", "parent_task_id", "ALTER TABLE task_queue ADD COLUMN parent_task_id TEXT"),
+        ("task_queue", "confidence", "ALTER TABLE task_queue ADD COLUMN confidence REAL"),
+        ("task_queue", "handoff_context", "ALTER TABLE task_queue ADD COLUMN handoff_context TEXT"),
     ]
     for table, column, sql in migrations:
         try:
@@ -71,15 +79,18 @@ async def init_db():
     """Create all tables and run migrations."""
     async with engine.begin() as conn:
         from app.models import (  # noqa: F401
+            AgentEvent,
             ConfigEntry,
             CoordinatorMessage,
             CoordinatorTask,
             Notification,
             Plan,
             PlanUsageHistory,
+            PromptVersion,
             Project,
             QueueItem,
             Run,
+            TaskOutcome,
         )
         await conn.run_sync(Base.metadata.create_all)
         await _migrate_add_columns(conn)

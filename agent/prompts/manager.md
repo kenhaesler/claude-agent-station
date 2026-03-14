@@ -151,6 +151,21 @@ Evaluate:
 
 Use **SKIP** instead of REJECT when the employee did nothing wrong — there was simply nothing to do.
 
+### Confidence-Based Verdict Modifiers
+
+When the employee report includes a `confidence` score, use it as an additional signal:
+
+| Confidence | Tests Pass? | Guidance |
+|-----------|------------|---------|
+| >= 0.9 | Yes | Strong candidate for APPROVE |
+| 0.7-0.9 | Yes | Consider PR for human review |
+| 0.5-0.7 | Any | Lean toward REJECT or PR |
+| < 0.5 | Any | Lean toward REJECT |
+
+**Important**: Confidence is an input, not a decision override. A high-confidence report with failing tests should still be REJECTED. A low-confidence report with passing tests and complete requirements might still be APPROVED. Use your judgment.
+
+Also review the `risk_areas` and `rejected_approaches` fields if present — they provide useful context about the employee's self-assessment.
+
 ### APPROVE_PLAN
 - Plan is complete, approach is sound, scope is appropriate.
 - Action: Approve the plan. Employee proceeds to implementation.

@@ -553,23 +553,50 @@ async def run_employee(
 
     stream_file = _get_stream_file(config, task.project_repo, employee_index)
 
-    # Calculate per-employee turn budget
-    max_turns = config.max_employee_turns
+    # Mode-aware model and turn resolution
+    from agent.coordinator.modes import MODE_REGISTRY, get_mode
+
+    mode_spec = MODE_REGISTRY.get(config.project_mode)
+
+    if config.project_mode == "analyze":
+        model = config.analyst_model
+        max_turns = min(config.max_analyst_turns, config.max_employee_turns)
+    elif config.project_mode == "plan":
+        model = config.planner_model
+        max_turns = min(config.max_planner_turns, config.max_employee_turns)
+    elif config.project_mode == "fix":
+        model = config.employee_model
+        max_turns = min(config.max_fix_turns, config.max_employee_turns)
+    elif config.project_mode == "triage":
+        model = config.analyst_model
+        max_turns = min(config.max_triage_turns, config.max_employee_turns)
+    elif config.project_mode == "review":
+        model = config.analyst_model
+        max_turns = min(config.max_review_turns, config.max_employee_turns)
+    else:
+        model = config.employee_model
+        max_turns = config.max_employee_turns
+
+    # Apply per-employee budget scaling for concurrent mode
     running_count = max(1, config.max_concurrent)
     if running_count > 1:
         max_turns = max(50, max_turns // running_count)
 
-    model = config.employee_model
     fallback_model = "claude-sonnet-4-6" if model != "claude-sonnet-4-6" else "claude-haiku-4-5-20251001"
 
     env = os.environ.copy()
     env["GITHUB_REPO"] = task.project_repo
 
     # Select prompt file and tool restrictions based on mode
-    is_readonly = config.project_mode in ("analyze", "plan")
-    system_prompt_file = str(
-        PROMPTS_DIR / ("analyst.md" if config.project_mode == "analyze" else "employee.md")
-    )
+    is_readonly = mode_spec.readonly if mode_spec else config.project_mode in ("analyze", "plan", "triage", "review")
+    prompt_map = {
+        "analyze": "analyst.md",
+        "plan": "planner.md",
+        "triage": "triager.md",
+        "review": "reviewer.md",
+    }
+    prompt_file = prompt_map.get(config.project_mode, "employee.md")
+    system_prompt_file = str(PROMPTS_DIR / prompt_file)
     disallowed_tools = ["Edit", "Write", "NotebookEdit"] if is_readonly else None
 
     return await _run_claude_subprocess(

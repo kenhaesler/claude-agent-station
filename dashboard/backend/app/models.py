@@ -151,6 +151,14 @@ class QueueItem(Base):
     max_retries = Column(Integer, default=1)
     context = Column(Text, nullable=True)  # JSON
     error_message = Column(Text, nullable=True)
+    # Orchestration fields
+    mode = Column(Text, nullable=True)  # Mode for this item
+    complexity_score = Column(Integer, nullable=True)  # 1-5 from router
+    escalation_rung = Column(Integer, default=0)  # Current position on escalation ladder
+    escalated_from = Column(Integer, nullable=True)  # Parent item ID
+    parent_task_id = Column(Text, nullable=True)  # Link to coordinator_tasks
+    confidence = Column(Float, nullable=True)  # Employee's reported confidence score
+    handoff_context = Column(Text, nullable=True)  # JSON handoff document
     created_at = Column(DateTime, default=_utcnow)
     updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
     assigned_at = Column(DateTime, nullable=True)
@@ -181,4 +189,57 @@ class PlanUsageHistory(Base):
     overuse_active = Column(Integer, default=0)
     overuse_signals_json = Column(Text, nullable=True)
     error = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=_utcnow)
+
+
+class AgentEvent(Base):
+    """Append-only event log for structured audit trail (ESAA pattern)."""
+    __tablename__ = "agent_events"
+
+    event_id = Column(Integer, primary_key=True)
+    workflow_id = Column(Text, nullable=False, index=True)  # Groups events for one task
+    run_id = Column(Text, nullable=True, index=True)
+    agent_id = Column(Text, nullable=False)  # "employee-0", "manager", "reviewer"
+    event_type = Column(Text, nullable=False, index=True)  # "task.claimed", "analysis.complete", etc.
+    event_data = Column(Text, nullable=False)  # JSON payload
+    parent_event_id = Column(Integer, nullable=True)  # Causal chain
+    created_at = Column(DateTime, default=_utcnow)
+
+
+class TaskOutcome(Base):
+    """Tracks outcomes for adaptive scheduling and learning."""
+    __tablename__ = "task_outcomes"
+
+    id = Column(Integer, primary_key=True)
+    queue_item_id = Column(Integer, nullable=True)
+    project_repo = Column(Text, nullable=False, index=True)
+    issue_number = Column(Integer, nullable=True)
+    issue_type = Column(Text, nullable=True)  # bug, feature, chore (from triage/labels)
+    complexity_score = Column(Integer, nullable=True)  # 1-5 from router
+    mode_used = Column(Text, nullable=False)
+    model_used = Column(Text, nullable=False)
+    escalation_rung = Column(Integer, default=0)
+    prompt_version = Column(Integer, default=1)
+    confidence_reported = Column(Float, nullable=True)
+    success = Column(Boolean, nullable=False)
+    tests_passed = Column(Boolean, nullable=True)
+    verdict = Column(Text, nullable=True)  # approve, pr, reject
+    failure_category = Column(Text, nullable=True)  # test_failure, wrong_approach, incomplete, quality
+    tokens_consumed = Column(Integer, nullable=True)
+    duration_seconds = Column(Integer, nullable=True)
+    created_at = Column(DateTime, default=_utcnow)
+
+
+class PromptVersion(Base):
+    """Tracks prompt versions for A/B testing and evolution."""
+    __tablename__ = "prompt_versions"
+
+    id = Column(Integer, primary_key=True)
+    prompt_name = Column(Text, nullable=False, index=True)  # "employee", "analyst", etc.
+    version = Column(Integer, nullable=False)
+    content_hash = Column(Text, nullable=False)  # SHA256 of prompt content
+    change_description = Column(Text, nullable=True)
+    active = Column(Boolean, default=True)
+    success_rate = Column(Float, nullable=True)  # Calculated from task_outcomes
+    sample_count = Column(Integer, default=0)
     created_at = Column(DateTime, default=_utcnow)

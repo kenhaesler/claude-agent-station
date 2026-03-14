@@ -308,6 +308,12 @@ class QueueItemCreate(BaseModel):
     run_id: str | None = None
     max_retries: int = 1
     context: str | None = None  # JSON
+    mode: str | None = None
+    complexity_score: int | None = None
+    escalation_rung: int = 0
+    escalated_from: int | None = None
+    parent_task_id: str | None = None
+    handoff_context: str | None = None  # JSON
 
 
 class QueueItemUpdate(BaseModel):
@@ -320,6 +326,11 @@ class QueueItemUpdate(BaseModel):
     retry_count: int | None = None
     error_message: str | None = None
     context: str | None = None
+    mode: str | None = None
+    complexity_score: int | None = None
+    escalation_rung: int | None = None
+    confidence: float | None = None
+    handoff_context: str | None = None
 
 
 class QueueItemOut(BaseModel):
@@ -337,6 +348,13 @@ class QueueItemOut(BaseModel):
     max_retries: int
     context: str | None = None
     error_message: str | None = None
+    mode: str | None = None
+    complexity_score: int | None = None
+    escalation_rung: int = 0
+    escalated_from: int | None = None
+    parent_task_id: str | None = None
+    confidence: float | None = None
+    handoff_context: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
     assigned_at: datetime | None = None
@@ -420,3 +438,108 @@ class RunFullContext(BaseModel):
     queue_item: QueueItemOut | None = None
     plan: PlanOut | None = None
     project_repo: str | None = None
+
+
+# --- Agent Events ---
+
+class AgentEventCreate(BaseModel):
+    workflow_id: str
+    run_id: str | None = None
+    agent_id: str
+    event_type: str
+    event_data: str  # JSON
+    parent_event_id: int | None = None
+
+
+class AgentEventOut(BaseModel):
+    event_id: int
+    workflow_id: str
+    run_id: str | None = None
+    agent_id: str
+    event_type: str
+    event_data: str
+    parent_event_id: int | None = None
+    created_at: datetime | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# --- Task Outcomes ---
+
+class TaskOutcomeCreate(BaseModel):
+    queue_item_id: int | None = None
+    project_repo: str
+    issue_number: int | None = None
+    issue_type: str | None = None
+    complexity_score: int | None = None
+    mode_used: str
+    model_used: str
+    escalation_rung: int = 0
+    prompt_version: int = 1
+    confidence_reported: float | None = None
+    success: bool
+    tests_passed: bool | None = None
+    verdict: str | None = None
+    failure_category: str | None = None
+    tokens_consumed: int | None = None
+    duration_seconds: int | None = None
+
+
+class TaskOutcomeOut(BaseModel):
+    id: int
+    queue_item_id: int | None = None
+    project_repo: str
+    issue_number: int | None = None
+    issue_type: str | None = None
+    complexity_score: int | None = None
+    mode_used: str
+    model_used: str
+    escalation_rung: int
+    prompt_version: int
+    confidence_reported: float | None = None
+    success: bool
+    tests_passed: bool | None = None
+    verdict: str | None = None
+    failure_category: str | None = None
+    tokens_consumed: int | None = None
+    duration_seconds: int | None = None
+    created_at: datetime | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# --- Prompt Versions ---
+
+class PromptVersionOut(BaseModel):
+    id: int
+    prompt_name: str
+    version: int
+    content_hash: str
+    change_description: str | None = None
+    active: bool
+    success_rate: float | None = None
+    sample_count: int
+    created_at: datetime | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# --- Backpressure ---
+
+class BackpressureStatus(BaseModel):
+    level: str  # GREEN, YELLOW, RED, BLACK
+    usage_percent: float
+    max_concurrent: int
+    effective_concurrent: int
+    model_restriction: str | None = None
+    turn_cap: int | None = None
+
+
+# --- Adaptive Scheduling ---
+
+class EffortPrediction(BaseModel):
+    mode: str
+    model: str
+    predicted_tokens: float | None = None
+    confidence: float | None = None
+    sample_count: int = 0

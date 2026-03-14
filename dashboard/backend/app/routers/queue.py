@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.dependencies import get_db
 from app.models import QueueItem
 from app.schemas import (
+    BackpressureStatus,
     QueueItemCreate,
     QueueItemList,
     QueueItemOut,
@@ -25,19 +26,27 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/queue", tags=["queue"])
 
-# Valid state transitions
+# Valid state transitions (expanded for orchestration overhaul)
 TRANSITIONS: dict[str, set[str]] = {
-    "pending": {"assigned", "paused", "failed"},
-    "assigned": {"in_progress", "pending", "paused"},
-    "in_progress": {"review", "paused", "failed", "pending"},
-    "review": {"approved", "rejected", "pending"},
-    "approved": {"completed"},
-    "rejected": {"pending", "failed"},
-    "paused": {"pending"},
-    "failed": {"pending"},
+    "pending":     {"assigned", "claimed", "planning", "paused", "failed", "cancelled"},
+    "claimed":     {"in_progress", "pending", "paused"},
+    "assigned":    {"in_progress", "pending", "paused"},
+    "planning":    {"in_progress", "paused", "failed", "pending"},
+    "in_progress": {"review", "verifying", "paused", "failed", "pending"},
+    "verifying":   {"approved", "rejected", "pending"},
+    "review":      {"approved", "rejected", "pending"},
+    "approved":    {"completed"},
+    "rejected":    {"pending", "failed", "escalated"},
+    "escalated":   {"pending"},
+    "paused":      {"pending"},
+    "failed":      {"pending"},
+    "cancelled":   set(),
 }
 
 ALL_STATES = set(TRANSITIONS.keys()) | {"completed"}
+
+# Active states for deduplication checks
+ACTIVE_STATES = {"pending", "claimed", "assigned", "planning", "in_progress", "review", "verifying"}
 
 
 def _utcnow() -> datetime:
@@ -49,6 +58,7 @@ async def list_queue(
     state: str | None = Query(None),
     project_repo: str | None = Query(None),
     run_id: str | None = Query(None),
+    mode: str | None = Query(None),
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
@@ -65,6 +75,9 @@ async def list_queue(
     if run_id:
         q = q.where(QueueItem.run_id == run_id)
         count_q = count_q.where(QueueItem.run_id == run_id)
+    if mode:
+        q = q.where(QueueItem.mode == mode)
+        count_q = count_q.where(QueueItem.mode == mode)
 
     q = q.order_by(QueueItem.priority.desc(), QueueItem.created_at.desc())
     q = q.offset(offset).limit(limit)
@@ -102,6 +115,37 @@ async def queue_stats(db: AsyncSession = Depends(get_db)):
     return QueueStats(by_state=by_state, total=total, avg_time_to_complete_ms=avg_ms)
 
 
+@router.get("/pressure", response_model=BackpressureStatus)
+async def queue_pressure(db: AsyncSession = Depends(get_db)):
+    """Get current backpressure status.
+
+    Calculates load based on active queue items vs capacity.
+    """
+    from app.services.backpressure import calculate_backpressure
+
+    # Count active items
+    result = await db.execute(
+        select(func.count(QueueItem.id)).where(
+            QueueItem.state.in_(["claimed", "assigned", "in_progress", "planning", "verifying"])
+        )
+    )
+    active_count = result.scalar() or 0
+
+    # Simple heuristic: treat active items / 5 as utilization percentage
+    # In production, this would use actual plan/token usage data
+    usage = min(100, active_count * 20)
+
+    state = calculate_backpressure(usage, base_max_concurrent=3)
+    return BackpressureStatus(
+        level=state.level,
+        usage_percent=state.usage_percent,
+        max_concurrent=state.max_concurrent,
+        effective_concurrent=state.effective_concurrent,
+        model_restriction=state.model_restriction,
+        turn_cap=state.turn_cap,
+    )
+
+
 @router.get("/{item_id}", response_model=QueueItemOut)
 async def get_queue_item(item_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(QueueItem).where(QueueItem.id == item_id))
@@ -116,6 +160,23 @@ async def create_queue_item(
     data: QueueItemCreate,
     db: AsyncSession = Depends(get_db),
 ):
+    # Deduplication: check for active item on same issue
+    if data.issue_number is not None:
+        existing = await db.execute(
+            select(QueueItem).where(
+                QueueItem.project_repo == data.project_repo,
+                QueueItem.issue_number == data.issue_number,
+                QueueItem.state.in_(ACTIVE_STATES),
+            )
+        )
+        dup = existing.scalar_one_or_none()
+        if dup:
+            logger.info(
+                "Deduplicated queue item: %s #%d already has active item %d",
+                data.project_repo, data.issue_number, dup.id,
+            )
+            return QueueItemOut.model_validate(dup)
+
     item = QueueItem(
         project_repo=data.project_repo,
         issue_number=data.issue_number,
@@ -126,6 +187,12 @@ async def create_queue_item(
         run_id=data.run_id,
         max_retries=data.max_retries,
         context=data.context,
+        mode=data.mode,
+        complexity_score=data.complexity_score,
+        escalation_rung=data.escalation_rung,
+        escalated_from=data.escalated_from,
+        parent_task_id=data.parent_task_id,
+        handoff_context=data.handoff_context,
     )
     if data.state == "assigned":
         item.assigned_at = _utcnow()
@@ -138,7 +205,53 @@ async def create_queue_item(
         "data": {"queue_item_id": item.id, "project_repo": item.project_repo, "state": item.state},
     })
 
-    logger.info("Queue item %d created: %s state=%s", item.id, item.project_repo, item.state)
+    logger.info("Queue item %d created: %s state=%s mode=%s", item.id, item.project_repo, item.state, item.mode)
+    return QueueItemOut.model_validate(item)
+
+
+@router.post("/claim", response_model=QueueItemOut | None)
+async def claim_work(
+    employee_index: int = Query(...),
+    run_id: str = Query(...),
+    project_repo: str | None = Query(None),
+    mode: str | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """Atomically claim the highest-priority pending item (work-stealing pattern).
+
+    Returns the claimed item, or 204 No Content if nothing is available.
+    """
+    q = (
+        select(QueueItem)
+        .where(QueueItem.state == "pending")
+        .order_by(QueueItem.priority.desc(), QueueItem.created_at.asc())
+        .limit(1)
+    )
+    if project_repo:
+        q = q.where(QueueItem.project_repo == project_repo)
+    if mode:
+        q = q.where(QueueItem.mode == mode)
+
+    result = await db.execute(q)
+    item = result.scalar_one_or_none()
+    if not item:
+        return Response(status_code=204)
+
+    now = _utcnow()
+    item.state = "claimed"
+    item.assigned_to = employee_index
+    item.run_id = run_id
+    item.assigned_at = now
+    item.updated_at = now
+    await db.commit()
+    await db.refresh(item)
+
+    await event_bus_publish({
+        "type": "queue_claimed",
+        "data": {"queue_item_id": item.id, "project_repo": item.project_repo, "employee_index": employee_index},
+    })
+
+    logger.info("Queue item %d claimed by employee %d (run %s)", item.id, employee_index, run_id)
     return QueueItemOut.model_validate(item)
 
 
@@ -167,7 +280,7 @@ async def update_queue_item(
 
         # Set lifecycle timestamps
         now = _utcnow()
-        if data.state == "assigned":
+        if data.state in ("assigned", "claimed"):
             item.assigned_at = now
         elif data.state == "in_progress":
             item.started_at = now
@@ -177,7 +290,9 @@ async def update_queue_item(
     # Apply other fields (use model_fields_set to detect explicitly provided values,
     # including explicit nulls like {"run_id": null} for clearing fields)
     for field in ("priority", "assigned_to", "run_id", "employee_report",
-                  "manager_feedback", "retry_count", "error_message", "context"):
+                  "manager_feedback", "retry_count", "error_message", "context",
+                  "mode", "complexity_score", "escalation_rung", "confidence",
+                  "handoff_context"):
         if field in data.model_fields_set:
             setattr(item, field, getattr(data, field))
 
@@ -202,8 +317,8 @@ async def delete_queue_item(item_id: int, db: AsyncSession = Depends(get_db)):
     item = result.scalar_one_or_none()
     if not item:
         raise HTTPException(404, "Queue item not found")
-    if item.state not in ("pending", "paused", "failed", "completed"):
-        raise HTTPException(400, f"Can only delete pending/paused/failed/completed items (current: {item.state})")
+    if item.state not in ("pending", "paused", "failed", "completed", "cancelled"):
+        raise HTTPException(400, f"Can only delete terminal/idle items (current: {item.state})")
     await db.delete(item)
     await db.commit()
 
@@ -220,7 +335,7 @@ async def batch_pause(
     result = await db.execute(
         select(QueueItem).where(
             QueueItem.run_id == body.run_id,
-            QueueItem.state.in_(["assigned", "in_progress"]),
+            QueueItem.state.in_(["assigned", "claimed", "in_progress"]),
         )
     )
     items = result.scalars().all()
@@ -250,7 +365,7 @@ async def purge_completed(
     cutoff = _utcnow() - timedelta(days=max_age_days)
     result = await db.execute(
         select(QueueItem).where(
-            QueueItem.state.in_(["completed", "failed"]),
+            QueueItem.state.in_(["completed", "failed", "cancelled"]),
             QueueItem.updated_at < cutoff,
         )
     )

@@ -159,16 +159,31 @@ export interface StationConfig {
   models?: {
     employee?: string;
     manager?: string;
+    analyst?: string;
+    planner?: string;
+    router?: string;
   };
   limits?: {
     max_usage_percent?: number;
     reserve_percent?: number;
     max_employee_turns?: number;
     max_analyst_turns?: number;
+    max_planner_turns?: number;
     max_manager_turns?: number;
+    max_fix_turns?: number;
+    max_triage_turns?: number;
+    max_review_turns?: number;
     max_concurrent_employees?: number;
     max_employees_per_project?: number;
     token_budget_strategy?: string;
+  };
+  intelligence?: {
+    auto_mode_selection?: boolean;
+    progressive_deepening?: boolean;
+    confidence_gating?: boolean;
+    independent_verification?: boolean;
+    adaptive_scheduling?: boolean;
+    work_stealing?: boolean;
   };
   notifications?: {
     enabled?: boolean;
@@ -184,6 +199,53 @@ export interface StationConfig {
     log_dir?: string;
     digest_dir?: string;
   };
+}
+
+// --- Agent Events ---
+
+export interface AgentEvent {
+  event_id: number;
+  workflow_id: string;
+  run_id: string | null;
+  agent_id: string;
+  event_type: string;
+  event_data: string;
+  parent_event_id: number | null;
+  created_at: string | null;
+}
+
+// --- Task Outcomes ---
+
+export interface TaskOutcome {
+  id: number;
+  queue_item_id: number | null;
+  project_repo: string;
+  issue_number: number | null;
+  issue_type: string | null;
+  complexity_score: number | null;
+  mode_used: string;
+  model_used: string;
+  escalation_rung: number;
+  prompt_version: number;
+  confidence_reported: number | null;
+  success: boolean;
+  tests_passed: boolean | null;
+  verdict: string | null;
+  failure_category: string | null;
+  tokens_consumed: number | null;
+  duration_seconds: number | null;
+  created_at: string | null;
+}
+
+// --- Backpressure ---
+
+export interface BackpressureStatus {
+  level: string;
+  usage_percent: number;
+  max_concurrent: number;
+  effective_concurrent: number;
+  model_restriction: string | null;
+  turn_cap: number | null;
 }
 
 export interface OAuthStartResponse {
@@ -255,6 +317,13 @@ export interface QueueItem {
   max_retries: number;
   context: string | null;
   error_message: string | null;
+  mode: string | null;
+  complexity_score: number | null;
+  escalation_rung: number;
+  escalated_from: number | null;
+  parent_task_id: string | null;
+  confidence: number | null;
+  handoff_context: string | null;
   created_at: string | null;
   updated_at: string | null;
   assigned_at: string | null;
