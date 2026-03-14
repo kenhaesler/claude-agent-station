@@ -312,7 +312,7 @@ class TestSendTestNotification:
         mock_response.raise_for_status = MagicMock()
 
         with patch(
-            "app.services.notifier._get_notification_config", return_value=mock_config
+            "app.services.notifier._get_notification_config", new_callable=AsyncMock, return_value=mock_config
         ), patch("app.services.notifier.httpx.AsyncClient") as mock_client_cls:
             mock_client = AsyncMock()
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -332,7 +332,7 @@ class TestSendTestNotification:
         mock_config = {"enabled": False}
 
         with patch(
-            "app.services.notifier._get_notification_config", return_value=mock_config
+            "app.services.notifier._get_notification_config", new_callable=AsyncMock, return_value=mock_config
         ):
             result = await send_test_notification()
             assert result["success"] is False
@@ -347,7 +347,7 @@ class TestSendTestNotification:
         }
 
         with patch(
-            "app.services.notifier._get_notification_config", return_value=mock_config
+            "app.services.notifier._get_notification_config", new_callable=AsyncMock, return_value=mock_config
         ):
             result = await send_test_notification()
             assert result["success"] is False
@@ -362,7 +362,7 @@ class TestSendTestNotification:
         }
 
         with patch(
-            "app.services.notifier._get_notification_config", return_value=mock_config
+            "app.services.notifier._get_notification_config", new_callable=AsyncMock, return_value=mock_config
         ):
             result = await send_test_notification()
             assert result["success"] is False
@@ -391,7 +391,7 @@ class TestSendTestNotification:
         )
 
         with patch(
-            "app.services.notifier._get_notification_config", return_value=mock_config
+            "app.services.notifier._get_notification_config", new_callable=AsyncMock, return_value=mock_config
         ), patch("app.services.notifier.httpx.AsyncClient") as mock_client_cls:
             mock_client = AsyncMock()
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -417,7 +417,7 @@ class TestSendTestNotification:
         }
 
         with patch(
-            "app.services.notifier._get_notification_config", return_value=mock_config
+            "app.services.notifier._get_notification_config", new_callable=AsyncMock, return_value=mock_config
         ), patch("app.services.notifier.httpx.AsyncClient") as mock_client_cls:
             mock_client = AsyncMock()
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -459,7 +459,7 @@ class TestSendNotificationDetailed:
         )
 
         with patch(
-            "app.services.notifier._get_notification_config", return_value=mock_config
+            "app.services.notifier._get_notification_config", new_callable=AsyncMock, return_value=mock_config
         ), patch("app.services.notifier.httpx.AsyncClient") as mock_client_cls:
             mock_client = AsyncMock()
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -491,7 +491,7 @@ class TestSendNotificationDetailed:
         mock_response.raise_for_status = MagicMock()
 
         with patch(
-            "app.services.notifier._get_notification_config", return_value=mock_config
+            "app.services.notifier._get_notification_config", new_callable=AsyncMock, return_value=mock_config
         ), patch("app.services.notifier.httpx.AsyncClient") as mock_client_cls:
             mock_client = AsyncMock()
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -526,7 +526,7 @@ class TestSendNotification:
         mock_response.raise_for_status = MagicMock()
 
         with patch(
-            "app.services.notifier._get_notification_config", return_value=mock_config
+            "app.services.notifier._get_notification_config", new_callable=AsyncMock, return_value=mock_config
         ), patch("app.services.notifier.httpx.AsyncClient") as mock_client_cls:
             mock_client = AsyncMock()
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -552,7 +552,7 @@ class TestSendNotification:
         }
 
         with patch(
-            "app.services.notifier._get_notification_config", return_value=mock_config
+            "app.services.notifier._get_notification_config", new_callable=AsyncMock, return_value=mock_config
         ):
             result = await send_notification(
                 event_type="TEST",
@@ -576,7 +576,7 @@ class TestSendNotification:
         mock_response.raise_for_status = MagicMock()
 
         with patch(
-            "app.services.notifier._get_notification_config", return_value=mock_config
+            "app.services.notifier._get_notification_config", new_callable=AsyncMock, return_value=mock_config
         ), patch("app.services.notifier.httpx.AsyncClient") as mock_client_cls:
             mock_client = AsyncMock()
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -613,7 +613,7 @@ class TestSendNotification:
         mock_response.raise_for_status = MagicMock()
 
         with patch(
-            "app.services.notifier._get_notification_config", return_value=mock_config
+            "app.services.notifier._get_notification_config", new_callable=AsyncMock, return_value=mock_config
         ), patch("app.services.notifier.httpx.AsyncClient") as mock_client_cls:
             mock_client = AsyncMock()
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -647,7 +647,7 @@ class TestSendNotification:
         mock_response.raise_for_status = MagicMock()
 
         with patch(
-            "app.services.notifier._get_notification_config", return_value=mock_config
+            "app.services.notifier._get_notification_config", new_callable=AsyncMock, return_value=mock_config
         ), patch("app.services.notifier.httpx.AsyncClient") as mock_client_cls:
             mock_client = AsyncMock()
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -679,7 +679,7 @@ class TestSendNotification:
         }
 
         with patch(
-            "app.services.notifier._get_notification_config", return_value=mock_config
+            "app.services.notifier._get_notification_config", new_callable=AsyncMock, return_value=mock_config
         ), patch("app.services.notifier.httpx.AsyncClient") as mock_client_cls:
             mock_client = AsyncMock()
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -720,7 +720,7 @@ class TestSendNotification:
         )
 
         with patch(
-            "app.services.notifier._get_notification_config", return_value=mock_config
+            "app.services.notifier._get_notification_config", new_callable=AsyncMock, return_value=mock_config
         ), patch("app.services.notifier.httpx.AsyncClient") as mock_client_cls:
             mock_client = AsyncMock()
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -746,7 +746,7 @@ class TestSendNotification:
         }
 
         with patch(
-            "app.services.notifier._get_notification_config", return_value=mock_config
+            "app.services.notifier._get_notification_config", new_callable=AsyncMock, return_value=mock_config
         ), patch("app.services.notifier.httpx.AsyncClient") as mock_client_cls:
             mock_client_cls.side_effect = RuntimeError("Unexpected!")
 

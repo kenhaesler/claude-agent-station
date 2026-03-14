@@ -4,6 +4,7 @@ Sends notifications when runs complete, verdicts are issued, or errors occur.
 Failures are logged but never raise — notifications must not crash the backend.
 """
 
+import asyncio
 import logging
 from typing import Any
 
@@ -32,9 +33,9 @@ _DISCORD_COLORS = {
 }
 
 
-def _get_notification_config() -> dict[str, Any]:
+async def _get_notification_config() -> dict[str, Any]:
     """Read notification config from manager-config.json."""
-    config = _read_config_json()
+    config = await asyncio.to_thread(_read_config_json)
     return config.get("notifications", {})
 
 
@@ -225,7 +226,7 @@ async def _send_notification_detailed(
     Never raises — failures are logged.
     """
     try:
-        config = _get_notification_config()
+        config = await _get_notification_config()
 
         if not _bypass_filter and not _should_notify(event_type, config):
             return (False, None)
@@ -323,7 +324,7 @@ async def send_test_notification() -> dict[str, Any]:
 
     Returns a dict with status and details.
     """
-    config = _get_notification_config()
+    config = await _get_notification_config()
 
     if not config.get("enabled"):
         return {"success": False, "error": "Notifications are not enabled"}

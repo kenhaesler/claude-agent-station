@@ -186,8 +186,11 @@ async def get_usage():
             "usage_percent": 0.0,
         }
 
-    with open(usage_path) as f:
-        data = json.load(f)
+    def _read_usage():
+        with open(usage_path) as f:
+            return json.load(f)
+
+    data = await asyncio.to_thread(_read_usage)
 
     sessions_used = data.get("sessions_used", 0)
     window_start = data.get("window_start", time.time())
