@@ -3,20 +3,25 @@
 import asyncio
 import logging
 from pathlib import Path
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, func, desc
+from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.dependencies import get_db
-from app.models import Run, Project, CoordinatorTask, CoordinatorMessage, QueueItem, Plan
+from app.models import CoordinatorMessage, CoordinatorTask, Plan, Project, QueueItem, Run
 from app.schemas import (
-    RunOut, RunList, ActiveEmployeeOut, RunFullContext,
-    CoordinatorTaskOut, CoordinatorMessageOut, QueueItemOut, PlanOut,
+    ActiveEmployeeOut,
+    CoordinatorMessageOut,
+    CoordinatorTaskOut,
+    PlanOut,
+    QueueItemOut,
+    RunFullContext,
+    RunList,
+    RunOut,
 )
-from app.services.diff_parser import parse_unified_diff, DiffResult
+from app.services.diff_parser import DiffResult, parse_unified_diff
 from app.services.log_importer import import_historical_runs
 from app.services.systemd import systemctl
 
@@ -29,10 +34,10 @@ router = APIRouter(prefix="/api/runs", tags=["runs"])
 async def list_runs(
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
-    project_id: Optional[int] = None,
-    status: Optional[str] = None,
-    verdict: Optional[str] = None,
-    concurrent_group_id: Optional[str] = None,
+    project_id: int | None = None,
+    status: str | None = None,
+    verdict: str | None = None,
+    concurrent_group_id: str | None = None,
     db: AsyncSession = Depends(get_db),
 ):
     query = select(Run)
@@ -85,7 +90,7 @@ async def get_active_employees(db: AsyncSession = Depends(get_db)):
     ]
 
 
-@router.get("/latest", response_model=Optional[RunOut])
+@router.get("/latest", response_model=RunOut | None)
 async def get_latest_run(db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(Run).order_by(desc(Run.started_at)).limit(1)
@@ -147,7 +152,7 @@ async def get_run_full_context(run_id: str, db: AsyncSession = Depends(get_db)):
     plan = plan_result.scalar_one_or_none()
 
     # 6. Get project repo name
-    project_repo: Optional[str] = None
+    project_repo: str | None = None
     if run.project_id:
         proj_result = await db.execute(
             select(Project).where(Project.id == run.project_id)
@@ -186,7 +191,7 @@ async def get_run_diff(run_id: str, db: AsyncSession = Depends(get_db)):
 
     # 2. Look up the project to get workspace path and base branch
     base_branch = "main"
-    repo_name: Optional[str] = None
+    repo_name: str | None = None
 
     if run.project_id:
         proj_result = await db.execute(
@@ -213,7 +218,13 @@ async def get_run_diff(run_id: str, db: AsyncSession = Depends(get_db)):
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        await check_branch.communicate()
+        try:
+            await asyncio.wait_for(check_branch.communicate(), timeout=30.0)
+        except TimeoutError:
+            check_branch.kill()
+            await check_branch.wait()
+            logger.warning("git rev-parse timed out for run %s", run_id)
+            return DiffResult()
         if check_branch.returncode != 0:
             return DiffResult()
     except Exception:
@@ -227,7 +238,13 @@ async def get_run_diff(run_id: str, db: AsyncSession = Depends(get_db)):
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, stderr = await proc.communicate()
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30.0)
+        except TimeoutError:
+            proc.kill()
+            await proc.wait()
+            logger.warning("git diff timed out for run %s", run_id)
+            return DiffResult()
 
         if proc.returncode != 0:
             logger.warning("git diff failed for run %s: %s", run_id, stderr.decode())

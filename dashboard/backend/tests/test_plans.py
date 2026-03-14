@@ -12,16 +12,15 @@ Covers:
 - Status transition validation
 """
 
+from datetime import UTC
+
 import pytest
 import pytest_asyncio
-from datetime import timezone
-from unittest.mock import patch, AsyncMock
-
 from httpx import ASGITransport, AsyncClient
 
+from app.database import Base, async_session, engine
 from app.main import app
-from app.database import engine, Base, async_session
-from app.models import Project, Plan, _utcnow
+from app.models import Plan, Project, _utcnow
 
 
 @pytest_asyncio.fixture
@@ -75,7 +74,7 @@ def test_utcnow_returns_timezone_aware():
     """_utcnow() helper should return a timezone-aware datetime with UTC tzinfo."""
     dt = _utcnow()
     assert dt.tzinfo is not None, "_utcnow should return timezone-aware datetime"
-    assert dt.tzinfo == timezone.utc
+    assert dt.tzinfo == UTC
 
 
 def test_plan_created_at_default_is_utcnow():

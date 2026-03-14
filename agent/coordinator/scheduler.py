@@ -45,6 +45,10 @@ def _should_skip_planning(task: Task, config: CoordinatorConfig) -> bool:
     if not config.planning_enabled:
         return True
 
+    # Analyze/plan modes don't need a plan-before-implement phase
+    if config.project_mode in ("analyze", "plan"):
+        return True
+
     # Check for skip-planning label in assignment file
     assignment_file = Path(task.workspace) / f".claude-assignment-{task.employee_index}.json"
     if assignment_file.exists():

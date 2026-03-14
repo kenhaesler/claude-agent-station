@@ -1,21 +1,20 @@
 """Task queue CRUD with state machine validation."""
 
 import logging
-from datetime import datetime, timedelta, timezone
-from typing import Optional
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import select, func
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db
 from app.models import QueueItem
 from app.schemas import (
     QueueItemCreate,
-    QueueItemUpdate,
-    QueueItemOut,
     QueueItemList,
+    QueueItemOut,
+    QueueItemUpdate,
     QueueStats,
 )
 from app.services.event_bus import publish as event_bus_publish
@@ -40,14 +39,14 @@ ALL_STATES = set(TRANSITIONS.keys()) | {"completed"}
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 @router.get("", response_model=QueueItemList)
 async def list_queue(
-    state: Optional[str] = Query(None),
-    project_repo: Optional[str] = Query(None),
-    run_id: Optional[str] = Query(None),
+    state: str | None = Query(None),
+    project_repo: str | None = Query(None),
+    run_id: str | None = Query(None),
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),

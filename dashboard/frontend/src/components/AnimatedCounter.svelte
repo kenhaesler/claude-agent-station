@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
+
   interface Props {
     value: number;
     format?: (n: number) => string;
@@ -12,7 +14,7 @@
 
   $effect(() => {
     const target = value;
-    const start = displayed;
+    const start = untrack(() => displayed);
     const diff = target - start;
     if (Math.abs(diff) < 0.001) {
       displayed = target;

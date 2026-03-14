@@ -2,8 +2,6 @@
 
 import json
 import logging
-from datetime import datetime
-from typing import Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,13 +10,12 @@ from app.config import settings
 from app.models import Project, Run
 from app.services.log_parser import (
     discover_run_files,
-    parse_run_id_from_filename,
+    parse_employee_report,
     parse_repo_from_filename,
-    parse_run_timestamp,
     parse_result_json,
+    parse_run_timestamp,
     parse_stream_result,
     parse_verdicts_file,
-    parse_employee_report,
 )
 
 logger = logging.getLogger(__name__)
@@ -71,9 +68,8 @@ def _update_run_from_logs(run: "Run", data: dict) -> None:
     # IMPORTANT: Never overwrite "running" status — the run may still be active
     # with other employees working. Only the webhook handler should transition
     # a running run to a terminal state.
-    if not run.status or run.status == "unknown":
-        if data.get("status") and data["status"] not in ("unknown",):
-            run.status = data["status"]
+    if (not run.status or run.status == "unknown") and data.get("status") and data["status"] not in ("unknown",):
+        run.status = data["status"]
     if not run.model and data.get("model"):
         run.model = data["model"]
     if not run.cost_usd and data.get("cost_usd"):
@@ -118,7 +114,7 @@ def _build_run_data(
     run_id: str,
     files: dict,
     projects_by_short: dict,
-) -> Optional[dict]:
+) -> dict | None:
     """Build a Run record dict from log files."""
     started_at = parse_run_timestamp(run_id)
 

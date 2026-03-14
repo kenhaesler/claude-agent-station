@@ -124,7 +124,7 @@
         {#if systemStatus?.timer.next_trigger}
           <div class="flex items-center justify-between">
             <span class="text-xs text-text-dim">Next run</span>
-            <span class="text-xs text-text font-data">{new Date(systemStatus.timer.next_trigger).toLocaleTimeString()}</span>
+            <span class="text-xs text-text font-data">{systemStatus.timer.next_trigger}</span>
           </div>
         {/if}
         <div class="flex items-center justify-between">
@@ -133,7 +133,7 @@
         </div>
         <div class="flex items-center justify-between">
           <span class="text-xs text-text-dim">Sessions</span>
-          <span class="text-xs text-text font-data">{usage ? `${usage.sessions_used}/${usage.plan_limit}` : '-'}</span>
+          <span class="text-xs text-text font-data">{usage ? `${usage.sessions_used}/${usage.plan_limit ?? '-'}` : '-'}</span>
         </div>
         {#if systemStatus?.resources}
           <div class="flex items-center justify-between">

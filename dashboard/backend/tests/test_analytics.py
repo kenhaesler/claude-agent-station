@@ -8,14 +8,14 @@ Covers:
 - Daily token usage, verdict distribution, project token usage, daily run counts
 """
 
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
+from app.database import Base, async_session, engine
 from app.main import app
-from app.database import engine, Base, async_session
 from app.models import Project, Run
 
 
@@ -46,7 +46,7 @@ async def sample_analytics_data(setup_db):
         session.add_all([project_a, project_b])
         await session.flush()
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         runs = [
             # Project A: 2 successful runs today

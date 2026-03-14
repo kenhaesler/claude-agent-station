@@ -2,9 +2,9 @@
 
 import logging
 
-from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession, create_async_engine
-from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy import event, text
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import DeclarativeBase
 
 from app.config import settings
 
@@ -41,10 +41,18 @@ async def _migrate_add_columns(conn) -> None:
         ("runs", "tokens_total", "ALTER TABLE runs ADD COLUMN tokens_total INTEGER"),
         ("runs", "employee_index", "ALTER TABLE runs ADD COLUMN employee_index INTEGER DEFAULT 0"),
         ("runs", "concurrent_group_id", "ALTER TABLE runs ADD COLUMN concurrent_group_id TEXT"),
+        ("runs", "trace_id", "ALTER TABLE runs ADD COLUMN trace_id TEXT"),
         ("coordinator_tasks", "result_summary", "ALTER TABLE coordinator_tasks ADD COLUMN result_summary TEXT"),
         ("coordinator_tasks", "log_path", "ALTER TABLE coordinator_tasks ADD COLUMN log_path TEXT"),
         ("coordinator_tasks", "branch", "ALTER TABLE coordinator_tasks ADD COLUMN branch TEXT"),
         ("coordinator_tasks", "dag_json", "ALTER TABLE coordinator_tasks ADD COLUMN dag_json TEXT"),
+        # plan_usage_history columns added in Phase 0 stabilization
+        ("plan_usage_history", "session_reset_at", "ALTER TABLE plan_usage_history ADD COLUMN session_reset_at TEXT"),
+        ("plan_usage_history", "seconds_until_session_reset", "ALTER TABLE plan_usage_history ADD COLUMN seconds_until_session_reset INTEGER DEFAULT 0"),
+        ("plan_usage_history", "session_is_exhausted", "ALTER TABLE plan_usage_history ADD COLUMN session_is_exhausted INTEGER DEFAULT 0"),
+        ("plan_usage_history", "seconds_until_weekly_reset", "ALTER TABLE plan_usage_history ADD COLUMN seconds_until_weekly_reset INTEGER DEFAULT 0"),
+        ("plan_usage_history", "overuse_active", "ALTER TABLE plan_usage_history ADD COLUMN overuse_active INTEGER DEFAULT 0"),
+        ("plan_usage_history", "overuse_signals_json", "ALTER TABLE plan_usage_history ADD COLUMN overuse_signals_json TEXT"),
     ]
     for table, column, sql in migrations:
         try:
@@ -60,7 +68,17 @@ async def _migrate_add_columns(conn) -> None:
 async def init_db():
     """Create all tables and run migrations."""
     async with engine.begin() as conn:
-        from app.models import Project, Run, ConfigEntry, Notification, Plan, CoordinatorTask, CoordinatorMessage, PlanUsageHistory, QueueItem  # noqa: F401
+        from app.models import (  # noqa: F401
+            ConfigEntry,
+            CoordinatorMessage,
+            CoordinatorTask,
+            Notification,
+            Plan,
+            PlanUsageHistory,
+            Project,
+            QueueItem,
+            Run,
+        )
         await conn.run_sync(Base.metadata.create_all)
         await _migrate_add_columns(conn)
 

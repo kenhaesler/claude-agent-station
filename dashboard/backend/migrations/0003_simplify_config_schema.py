@@ -20,12 +20,13 @@ Kept fields (unchanged):
 This migration is safe to run multiple times (idempotent).
 """
 
+import contextlib
 import json
 import logging
 import os
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +52,7 @@ _NEW_DEFAULTS = {
 }
 
 
-def migrate_limits(limits: Dict[str, Any]) -> Dict[str, Any]:
+def migrate_limits(limits: dict[str, Any]) -> dict[str, Any]:
     """Migrate a limits dict from old schema to new schema.
 
     Args:
@@ -100,7 +101,7 @@ def migrate_config_file(config_path: str) -> bool:
         logger.info("Config file %s does not exist, nothing to migrate", config_path)
         return False
 
-    with open(path, "r") as f:
+    with open(path) as f:
         config = json.load(f)
 
     limits = config.get("limits")
@@ -130,14 +131,12 @@ def migrate_config_file(config_path: str) -> bool:
         logger.info("Migration 0003 applied to %s", config_path)
         return True
     except Exception:
-        try:
+        with contextlib.suppress(OSError):
             os.unlink(tmp_path)
-        except OSError:
-            pass
         raise
 
 
-def run(config_path: Optional[str] = None) -> bool:
+def run(config_path: str | None = None) -> bool:
     """Entry point for the migration.
 
     Args:

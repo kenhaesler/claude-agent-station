@@ -1,10 +1,9 @@
 """Pydantic request/response schemas."""
 
 from datetime import datetime
-from typing import Optional, List, Any
+from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
-
+from pydantic import BaseModel, ConfigDict
 
 # --- Projects ---
 
@@ -14,17 +13,17 @@ class ProjectCreate(BaseModel):
     mode: str = "full"
     enabled: bool = True
     branch: str = "main"
-    custom_instructions: Optional[str] = None
-    setup_script: Optional[str] = None
+    custom_instructions: str | None = None
+    setup_script: str | None = None
 
 
 class ProjectUpdate(BaseModel):
-    priority: Optional[str] = None
-    mode: Optional[str] = None
-    enabled: Optional[bool] = None
-    branch: Optional[str] = None
-    custom_instructions: Optional[str] = None
-    setup_script: Optional[str] = None
+    priority: str | None = None
+    mode: str | None = None
+    enabled: bool | None = None
+    branch: str | None = None
+    custom_instructions: str | None = None
+    setup_script: str | None = None
 
 
 class ProjectOut(BaseModel):
@@ -34,10 +33,10 @@ class ProjectOut(BaseModel):
     mode: str
     enabled: bool
     branch: str
-    custom_instructions: Optional[str] = None
-    setup_script: Optional[str] = None
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
+    custom_instructions: str | None = None
+    setup_script: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -47,32 +46,33 @@ class ProjectOut(BaseModel):
 class RunOut(BaseModel):
     id: int
     run_id: str
-    project_id: Optional[int] = None
-    mode: Optional[str] = None
-    model: Optional[str] = None
-    status: Optional[str] = None
-    verdict: Optional[str] = None
-    issue_number: Optional[int] = None
-    branch: Optional[str] = None
-    cost_usd: Optional[float] = None  # Deprecated: kept for historical data
-    tokens_input: Optional[int] = None
-    tokens_output: Optional[int] = None
-    tokens_total: Optional[int] = None
-    turns: Optional[int] = None
-    duration_ms: Optional[int] = None
-    started_at: Optional[datetime] = None
-    finished_at: Optional[datetime] = None
-    employee_report: Optional[str] = None
-    verdict_detail: Optional[str] = None
-    log_file: Optional[str] = None
-    employee_index: Optional[int] = None
-    concurrent_group_id: Optional[str] = None
+    project_id: int | None = None
+    mode: str | None = None
+    model: str | None = None
+    status: str | None = None
+    verdict: str | None = None
+    issue_number: int | None = None
+    branch: str | None = None
+    cost_usd: float | None = None  # Deprecated: kept for historical data
+    tokens_input: int | None = None
+    tokens_output: int | None = None
+    tokens_total: int | None = None
+    turns: int | None = None
+    duration_ms: int | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    employee_report: str | None = None
+    verdict_detail: str | None = None
+    log_file: str | None = None
+    employee_index: int | None = None
+    trace_id: str | None = None
+    concurrent_group_id: str | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
 
 class RunList(BaseModel):
-    runs: List[RunOut]
+    runs: list[RunOut]
     total: int
 
 
@@ -82,12 +82,12 @@ class ActiveEmployeeOut(BaseModel):
     project_id: int
     mode: str
     status: str
-    issue_number: Optional[int] = None
-    turns: Optional[int] = None
-    employee_index: Optional[int] = None
-    concurrent_group_id: Optional[str] = None
-    model: Optional[str] = None
-    branch: Optional[str] = None
+    issue_number: int | None = None
+    turns: int | None = None
+    employee_index: int | None = None
+    concurrent_group_id: str | None = None
+    model: str | None = None
+    branch: str | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -96,8 +96,8 @@ class ActiveEmployeeOut(BaseModel):
 
 class ConfigOut(BaseModel):
     key: str
-    value: Optional[str] = None
-    updated_at: Optional[datetime] = None
+    value: str | None = None
+    updated_at: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -110,11 +110,11 @@ class ConfigUpdate(BaseModel):
 
 class NotificationOut(BaseModel):
     id: int
-    run_id: Optional[str] = None
-    type: Optional[str] = None
-    message: Optional[str] = None
+    run_id: str | None = None
+    type: str | None = None
+    message: str | None = None
     read: bool
-    created_at: Optional[datetime] = None
+    created_at: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -123,48 +123,48 @@ class NotificationOut(BaseModel):
 
 class PlanCreate(BaseModel):
     project_id: int
-    issue_number: Optional[int] = None
-    issue_title: Optional[str] = None
+    issue_number: int | None = None
+    issue_title: str | None = None
     title: str
-    description: Optional[str] = None
-    steps: Optional[str] = None  # JSON array
-    estimated_scope: Optional[str] = None
-    files_affected: Optional[str] = None  # JSON array
+    description: str | None = None
+    steps: str | None = None  # JSON array
+    estimated_scope: str | None = None
+    files_affected: str | None = None  # JSON array
     status: str = "draft"
-    run_id: Optional[str] = None
+    run_id: str | None = None
 
 
 class PlanUpdate(BaseModel):
-    title: Optional[str] = None
-    description: Optional[str] = None
-    steps: Optional[str] = None
-    estimated_scope: Optional[str] = None
-    files_affected: Optional[str] = None
-    status: Optional[str] = None
-    implementation_run_id: Optional[str] = None
+    title: str | None = None
+    description: str | None = None
+    steps: str | None = None
+    estimated_scope: str | None = None
+    files_affected: str | None = None
+    status: str | None = None
+    implementation_run_id: str | None = None
 
 
 class PlanOut(BaseModel):
     id: int
     project_id: int
-    issue_number: Optional[int] = None
-    issue_title: Optional[str] = None
+    issue_number: int | None = None
+    issue_title: str | None = None
     title: str
-    description: Optional[str] = None
-    steps: Optional[str] = None
-    estimated_scope: Optional[str] = None
-    files_affected: Optional[str] = None
+    description: str | None = None
+    steps: str | None = None
+    estimated_scope: str | None = None
+    files_affected: str | None = None
     status: str
-    run_id: Optional[str] = None
-    implementation_run_id: Optional[str] = None
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
+    run_id: str | None = None
+    implementation_run_id: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
 
 class PlanList(BaseModel):
-    plans: List[PlanOut]
+    plans: list[PlanOut]
     total: int
 
 
@@ -177,16 +177,16 @@ class HealthResponse(BaseModel):
 class SystemStatus(BaseModel):
     service_active: bool
     timer_active: bool
-    timer_next: Optional[str] = None
-    memory_mb: Optional[float] = None
-    load_avg: Optional[List[float]] = None
-    disk_free_gb: Optional[float] = None
-    uptime_seconds: Optional[float] = None
+    timer_next: str | None = None
+    memory_mb: float | None = None
+    load_avg: list[float] | None = None
+    disk_free_gb: float | None = None
+    uptime_seconds: float | None = None
 
 
 class AuthStatus(BaseModel):
     logged_in: bool
-    expires_at: Optional[str] = None
+    expires_at: str | None = None
     expired: bool = False
 
 
@@ -195,37 +195,42 @@ class AuthStatus(BaseModel):
 class WebhookRunEvent(BaseModel):
     run_id: str
     event: str  # started/finished/verdict + coordinator events
-    project: Optional[str] = None
-    mode: Optional[str] = None
-    model: Optional[str] = None
-    status: Optional[str] = None
-    verdict: Optional[str] = None
-    issue_number: Optional[int] = None
-    branch: Optional[str] = None
-    cost_usd: Optional[float] = None  # Deprecated: kept for backward compat
-    tokens_input: Optional[int] = None
-    tokens_output: Optional[int] = None
-    tokens_total: Optional[int] = None
-    turns: Optional[int] = None
-    duration_ms: Optional[int] = None
-    reasoning: Optional[str] = None
-    timestamp: Optional[str] = None
-    employee_index: Optional[int] = None
-    concurrent_group_id: Optional[str] = None
+    # Trace and idempotency fields
+    event_id: str | None = None  # Unique ID per event (for idempotency)
+    trace_id: str | None = None  # Correlates all events in a pipeline run
+    parent_event_id: str | None = None  # Links to parent event (e.g., task to run)
+    sequence: int | None = None  # Ordering within a trace
+    project: str | None = None
+    mode: str | None = None
+    model: str | None = None
+    status: str | None = None
+    verdict: str | None = None
+    issue_number: int | None = None
+    branch: str | None = None
+    cost_usd: float | None = None  # Deprecated: kept for backward compat
+    tokens_input: int | None = None
+    tokens_output: int | None = None
+    tokens_total: int | None = None
+    turns: int | None = None
+    duration_ms: int | None = None
+    reasoning: str | None = None
+    timestamp: str | None = None
+    employee_index: int | None = None
+    concurrent_group_id: str | None = None
     # Coordinator task fields
-    task_id: Optional[str] = None
-    task_title: Optional[str] = None
-    task_count: Optional[int] = None
-    depends_on: Optional[str] = None  # JSON array
-    dag_file: Optional[str] = None
-    summary: Optional[dict] = None
+    task_id: str | None = None
+    task_title: str | None = None
+    task_count: int | None = None
+    depends_on: str | None = None  # JSON array
+    dag_file: str | None = None
+    summary: dict | None = None
     # Conflict detection fields
-    file_path: Optional[str] = None
-    employee_a: Optional[int] = None
-    employee_b: Optional[int] = None
+    file_path: str | None = None
+    employee_a: int | None = None
+    employee_b: int | None = None
     # Guidance fields
-    guidance_type: Optional[str] = None
-    guidance_content: Optional[str] = None
+    guidance_type: str | None = None
+    guidance_content: str | None = None
 
 
 # --- Coordinator ---
@@ -234,49 +239,49 @@ class CoordinatorTaskOut(BaseModel):
     id: str
     run_id: str
     project_repo: str
-    issue_number: Optional[int] = None
+    issue_number: int | None = None
     title: str
-    description: Optional[str] = None
+    description: str | None = None
     status: str
-    employee_index: Optional[int] = None
-    depends_on: Optional[str] = None  # JSON array of task IDs
-    workspace: Optional[str] = None
-    expected_files: Optional[str] = None
-    touched_files: Optional[str] = None
-    exit_code: Optional[int] = None
-    error_message: Optional[str] = None
-    result_summary: Optional[str] = None
-    log_path: Optional[str] = None
-    branch: Optional[str] = None
-    created_at: Optional[datetime] = None
-    started_at: Optional[datetime] = None
-    finished_at: Optional[datetime] = None
+    employee_index: int | None = None
+    depends_on: str | None = None  # JSON array of task IDs
+    workspace: str | None = None
+    expected_files: str | None = None
+    touched_files: str | None = None
+    exit_code: int | None = None
+    error_message: str | None = None
+    result_summary: str | None = None
+    log_path: str | None = None
+    branch: str | None = None
+    created_at: datetime | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
 
 class CoordinatorTaskDetailOut(CoordinatorTaskOut):
     """Extended task details with employee report and log excerpt."""
-    employee_report: Optional[dict] = None
-    log_excerpt: Optional[str] = None
+    employee_report: dict | None = None
+    log_excerpt: str | None = None
 
 
 class CoordinatorDAGOut(BaseModel):
     run_id: str
     project_repo: str
-    tasks: List[CoordinatorTaskOut]
+    tasks: list[CoordinatorTaskOut]
     summary: dict
 
 
 class CoordinatorMessageOut(BaseModel):
     id: int
     run_id: str
-    task_id: Optional[str] = None
+    task_id: str | None = None
     direction: str
     message_type: str
     content: str
-    employee_index: Optional[int] = None
-    created_at: Optional[datetime] = None
+    employee_index: int | None = None
+    created_at: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -286,68 +291,68 @@ class GuidanceSend(BaseModel):
     employee_index: int
     guidance_type: str = "info"  # warning/redirect/stop/info
     content: str
-    workspace: Optional[str] = None
+    workspace: str | None = None
 
 
 # --- Queue ---
 
 class QueueItemCreate(BaseModel):
     project_repo: str
-    issue_number: Optional[int] = None
-    issue_title: Optional[str] = None
+    issue_number: int | None = None
+    issue_title: str | None = None
     state: str = "pending"
     priority: int = 0
-    assigned_to: Optional[int] = None
-    run_id: Optional[str] = None
+    assigned_to: int | None = None
+    run_id: str | None = None
     max_retries: int = 1
-    context: Optional[str] = None  # JSON
+    context: str | None = None  # JSON
 
 
 class QueueItemUpdate(BaseModel):
-    state: Optional[str] = None
-    priority: Optional[int] = None
-    assigned_to: Optional[int] = None
-    run_id: Optional[str] = None
-    employee_report: Optional[str] = None
-    manager_feedback: Optional[str] = None
-    retry_count: Optional[int] = None
-    error_message: Optional[str] = None
-    context: Optional[str] = None
+    state: str | None = None
+    priority: int | None = None
+    assigned_to: int | None = None
+    run_id: str | None = None
+    employee_report: str | None = None
+    manager_feedback: str | None = None
+    retry_count: int | None = None
+    error_message: str | None = None
+    context: str | None = None
 
 
 class QueueItemOut(BaseModel):
     id: int
     project_repo: str
-    issue_number: Optional[int] = None
-    issue_title: Optional[str] = None
+    issue_number: int | None = None
+    issue_title: str | None = None
     state: str
     priority: int
-    assigned_to: Optional[int] = None
-    run_id: Optional[str] = None
-    employee_report: Optional[str] = None
-    manager_feedback: Optional[str] = None
+    assigned_to: int | None = None
+    run_id: str | None = None
+    employee_report: str | None = None
+    manager_feedback: str | None = None
     retry_count: int
     max_retries: int
-    context: Optional[str] = None
-    error_message: Optional[str] = None
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
-    assigned_at: Optional[datetime] = None
-    started_at: Optional[datetime] = None
-    completed_at: Optional[datetime] = None
+    context: str | None = None
+    error_message: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    assigned_at: datetime | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
 
 class QueueItemList(BaseModel):
-    items: List[QueueItemOut]
+    items: list[QueueItemOut]
     total: int
 
 
 class QueueStats(BaseModel):
     by_state: dict
     total: int
-    avg_time_to_complete_ms: Optional[float] = None
+    avg_time_to_complete_ms: float | None = None
 
 
 # --- Analytics ---
@@ -393,10 +398,10 @@ class AnalyticsResponse(BaseModel):
     total_tokens_output: int = 0
     total_runs: int = 0
     failed_runs: int = 0
-    daily_token_usage: List[DailyTokenUsage] = []
-    verdict_distribution: List[VerdictDistribution] = []
-    project_token_usage: List[ProjectTokenUsage] = []
-    daily_run_counts: List[DailyRunCount] = []
+    daily_token_usage: list[DailyTokenUsage] = []
+    verdict_distribution: list[VerdictDistribution] = []
+    project_token_usage: list[ProjectTokenUsage] = []
+    daily_run_counts: list[DailyRunCount] = []
 
 
 # --- Unified Run Context ---
@@ -408,8 +413,8 @@ class RunFullContext(BaseModel):
     data in a single response instead of requiring 4+ separate API calls.
     """
     run: RunOut
-    coordinator_tasks: List[CoordinatorTaskOut] = []
-    coordinator_messages: List[CoordinatorMessageOut] = []
-    queue_item: Optional[QueueItemOut] = None
-    plan: Optional[PlanOut] = None
-    project_repo: Optional[str] = None
+    coordinator_tasks: list[CoordinatorTaskOut] = []
+    coordinator_messages: list[CoordinatorMessageOut] = []
+    queue_item: QueueItemOut | None = None
+    plan: PlanOut | None = None
+    project_repo: str | None = None

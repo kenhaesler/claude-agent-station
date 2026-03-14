@@ -55,6 +55,11 @@ def check_plan_usage_before_spawn(
             - reason: Human-readable explanation if denied
             - snapshot: The usage snapshot for further inspection
     """
+    # If plan usage detection is disabled, always allow spawning
+    if not getattr(config, "plan_usage_detection_enabled", True):
+        logger.info("Plan usage detection disabled — allowing spawn")
+        return True, "", PlanUsageSnapshot()
+
     snapshot = detect_plan_usage(
         db_path=config.db_path,
         plan_tier=_get_plan_tier(config),
@@ -66,8 +71,18 @@ def check_plan_usage_before_spawn(
     except Exception as e:
         logger.warning("Failed to save usage snapshot: %s", e)
 
-    # Hard stop — never spawn above this
-    if snapshot.weekly_usage_percent >= HARD_STOP_USAGE_PERCENT or snapshot.is_throttled:
+    # Only hard-stop on genuine usage data, not heuristic error guesses.
+    # If the snapshot came from error_detection with no real token data,
+    # the 95%/100% figures are conservative guesses, not measured values.
+    has_genuine_data = (
+        snapshot.weekly_tokens_used > 0
+        or "cli_scrape" in (snapshot.detection_method or "")
+    )
+
+    # Hard stop — never spawn above this, but only if data is genuine
+    if has_genuine_data and (
+        snapshot.weekly_usage_percent >= HARD_STOP_USAGE_PERCENT or snapshot.is_throttled
+    ):
         reason = (
             f"Plan usage at {snapshot.weekly_usage_percent:.1f}% "
             f"(hard stop at {HARD_STOP_USAGE_PERCENT:.1f}%). "
@@ -78,13 +93,14 @@ def check_plan_usage_before_spawn(
 
     # Throttle check
     throttle, throttle_reason = should_throttle_spawning(snapshot, max_usage_percent)
-    if throttle:
+    if throttle and has_genuine_data:
         logger.warning("THROTTLE: %s", throttle_reason)
         return False, throttle_reason, snapshot
 
     logger.info(
-        "Plan usage OK: %.1f%% weekly (threshold: %.1f%%)",
+        "Plan usage OK: %.1f%% weekly (threshold: %.1f%%, method=%s)",
         snapshot.weekly_usage_percent, max_usage_percent,
+        snapshot.detection_method or "unknown",
     )
     return True, "", snapshot
 
@@ -287,7 +303,8 @@ class RateLimitTracker:
                 reason=rate_limit_reason,
                 exit_code=exit_code,
             )
-            self.events.append(event)
+            if len(self.events) < 200:
+                self.events.append(event)
             self.consecutive_rate_limits += 1
 
             logger.warning(

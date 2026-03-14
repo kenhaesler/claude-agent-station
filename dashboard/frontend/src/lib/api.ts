@@ -19,6 +19,9 @@ export function clearStoredApiKey(): void {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30000);
+
   const apiKey = getStoredApiKey();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -28,24 +31,29 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     headers['Authorization'] = `Bearer ${apiKey}`;
   }
 
-  const res = await fetch(`${BASE}${path}`, {
-    ...init,
-    headers,
-  });
-  if (!res.ok) {
-    if (res.status === 401) {
-      window.dispatchEvent(new CustomEvent('station-auth-required'));
+  try {
+    const res = await fetch(`${BASE}${path}`, {
+      ...init,
+      headers,
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      if (res.status === 401) {
+        window.dispatchEvent(new CustomEvent('station-auth-required'));
+      }
+      const body = await res.text();
+      let message: string;
+      try {
+        const parsed = JSON.parse(body);
+        message = parsed.detail || body;
+      } catch { message = body; }
+      throw new Error(`${res.status}: ${message}`);
     }
-    const body = await res.text();
-    let message: string;
-    try {
-      const parsed = JSON.parse(body);
-      message = parsed.detail || body;
-    } catch { message = body; }
-    throw new Error(`${res.status}: ${message}`);
+    if (res.status === 204) return undefined as T;
+    return res.json();
+  } finally {
+    clearTimeout(timeout);
   }
-  if (res.status === 204) return undefined as T;
-  return res.json();
 }
 
 // Health

@@ -7,15 +7,15 @@ runs as 'interrupted' so the UI reflects reality.
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import QueueItem, Run
-from app.services.systemd import get_service_status
 from app.services.event_bus import publish as event_bus_publish
 from app.services.notifier import send_notification
+from app.services.systemd import get_service_status
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,7 @@ async def reap_stale_runs(db: AsyncSession) -> int:
     if not stale_runs:
         return 0
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     for run in stale_runs:
         old_status = run.status
         run.status = "interrupted"
@@ -99,7 +99,7 @@ async def reap_stale_runs(db: AsyncSession) -> int:
             event_type="error",
             project=project_name,
             run_id=run.run_id,
-            summary=f"Stale run reaped: agent process died while run was in progress.",
+            summary="Stale run reaped: agent process died while run was in progress.",
             _bypass_filter=True,
         )
 

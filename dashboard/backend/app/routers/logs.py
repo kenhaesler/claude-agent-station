@@ -1,13 +1,14 @@
 """Log streaming (WebSocket) and search endpoints."""
 
 import asyncio
+import contextlib
 import json
 import os
-import re
 import secrets
-from typing import Optional, List
+from typing import Optional
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
+from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
+
 from app.config import settings
 from app.services.log_streamer import tail_log_file
 
@@ -22,7 +23,7 @@ ws_router = APIRouter(prefix="/api/logs", tags=["logs"])
 @ws_router.websocket("/stream")
 async def stream_logs(
     websocket: WebSocket,
-    file: Optional[str] = None,
+    file: str | None = None,
     from_beginning: bool = False,
     token: Optional[str] = Query(default=None),
 ):
@@ -54,17 +55,15 @@ async def stream_logs(
     except WebSocketDisconnect:
         pass
     except Exception as e:
-        try:
+        with contextlib.suppress(Exception):
             await websocket.send_json({"error": str(e)})
-        except Exception:
-            pass
 
 
 def _search_files(
-    log_dir: str, filenames: List[str], q: str, limit: int, run_id: Optional[str]
-) -> List[dict]:
+    log_dir: str, filenames: list[str], q: str, limit: int, run_id: str | None
+) -> list[dict]:
     """Sync helper for file searching — called via asyncio.to_thread."""
-    results: List[dict] = []
+    results: list[dict] = []
     q_lower = q.lower()
     for fname in filenames:
         if not fname.endswith(".stream.jsonl"):
@@ -74,7 +73,7 @@ def _search_files(
 
         filepath = os.path.join(log_dir, fname)
         try:
-            with open(filepath, "r") as f:
+            with open(filepath) as f:
                 for line_num, line in enumerate(f, 1):
                     if q_lower in line.lower():
                         results.append({
@@ -92,7 +91,7 @@ def _search_files(
 @router.get("/search")
 async def search_logs(
     q: str = Query(..., min_length=1),
-    run_id: Optional[str] = None,
+    run_id: str | None = None,
     limit: int = Query(50, ge=1, le=200),
 ):
     """Search across log files for a string."""
@@ -108,14 +107,14 @@ async def search_logs(
 
 
 def _read_run_log_files(
-    log_dir: str, filenames: List[str], offset: int, limit: int
-) -> List[dict]:
+    log_dir: str, filenames: list[str], offset: int, limit: int
+) -> list[dict]:
     """Sync helper for reading run log files — called via asyncio.to_thread."""
-    lines: List[dict] = []
+    lines: list[dict] = []
     for fname in sorted(filenames):
         filepath = os.path.join(log_dir, fname)
         try:
-            with open(filepath, "r") as f:
+            with open(filepath) as f:
                 for i, line in enumerate(f):
                     if i < offset:
                         continue

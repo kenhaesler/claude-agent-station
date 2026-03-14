@@ -8,15 +8,14 @@ Covers:
 - 404 for missing run
 """
 
-import json
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
+from app.database import Base, async_session, engine
 from app.main import app
-from app.database import engine, Base, async_session
 from app.models import Project, Run
 
 
@@ -52,7 +51,7 @@ async def sample_runs(setup_db):
         session.add(project)
         await session.flush()
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         runs = [
             Run(
                 run_id="run-001",

@@ -10,17 +10,16 @@ Covers:
 """
 
 import json
-from unittest.mock import patch, AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 
+from app.database import Base, async_session, engine
 from app.main import app
-from app.database import engine, Base, async_session
-from app.models import Run, Project, CoordinatorTask, CoordinatorMessage, Notification
-
+from app.models import CoordinatorMessage, CoordinatorTask, Notification, Project, Run
 
 VALID_EVENT = {
     "event": "run_start",

@@ -1,20 +1,19 @@
 """Analytics endpoints for run statistics and token usage charts."""
 
-from datetime import datetime, timedelta, timezone
-from typing import Optional
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select, func, case, and_, cast, Date
+from sqlalchemy import and_, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db
-from app.models import Run, Project
+from app.models import Project, Run
 from app.schemas import (
     AnalyticsResponse,
-    DailyTokenUsage,
-    VerdictDistribution,
-    ProjectTokenUsage,
     DailyRunCount,
+    DailyTokenUsage,
+    ProjectTokenUsage,
+    VerdictDistribution,
 )
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
@@ -23,7 +22,7 @@ router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 @router.get("", response_model=AnalyticsResponse)
 async def get_analytics(
     days: int = Query(30, ge=1, le=365, description="Number of days to look back"),
-    project_id: Optional[int] = Query(None, description="Filter by project ID"),
+    project_id: int | None = Query(None, description="Filter by project ID"),
     db: AsyncSession = Depends(get_db),
 ) -> AnalyticsResponse:
     """Aggregate run statistics for charts.
@@ -31,7 +30,7 @@ async def get_analytics(
     Returns daily token usage, verdict distribution, per-project token totals,
     and daily run frequency for the specified time window.
     """
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    cutoff = datetime.now(UTC) - timedelta(days=days)
 
     # Base filter conditions
     base_conditions = [Run.started_at >= cutoff]

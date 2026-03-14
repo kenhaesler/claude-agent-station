@@ -62,6 +62,8 @@ export class AgentEventStream {
   private options: AgentEventStreamOptions;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private shouldReconnect = false;
+  private reconnectDelay = 1000;
+  private static readonly MAX_RECONNECT_DELAY = 30000;
 
   constructor(options: AgentEventStreamOptions) {
     this.options = options;
@@ -85,6 +87,7 @@ export class AgentEventStream {
     this.source = new EventSource(sseUrl);
 
     this.source.onopen = () => {
+      this.reconnectDelay = 1000;
       this.options.onStatusChange?.(true);
     };
 
@@ -94,7 +97,8 @@ export class AgentEventStream {
       this.source = null;
 
       if (this.shouldReconnect) {
-        this.reconnectTimer = setTimeout(() => this.doConnect(), 3000);
+        this.reconnectTimer = setTimeout(() => this.doConnect(), this.reconnectDelay);
+        this.reconnectDelay = Math.min(this.reconnectDelay * 2, AgentEventStream.MAX_RECONNECT_DELAY);
       }
     };
 

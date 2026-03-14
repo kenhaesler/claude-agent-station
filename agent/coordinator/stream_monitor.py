@@ -29,6 +29,7 @@ class EmployeeActivity:
     last_tool: str = ""
     last_file: str = ""
     errors: list[str] = field(default_factory=list)
+    MAX_ERRORS: int = field(default=100, repr=False)
 
 
 def _extract_file_path(tool_name: str, tool_input: dict) -> str | None:
@@ -115,7 +116,7 @@ def _process_stream_event(event: dict, activity: EmployeeActivity, task: Task) -
         if file_path:
             activity.files_touched.add(file_path)
             activity.last_file = file_path
-            if file_path not in task.touched_files:
+            if file_path not in task.touched_files and len(task.touched_files) < 500:
                 task.touched_files.append(file_path)
 
         # Track test runs
@@ -131,7 +132,8 @@ def _process_stream_event(event: dict, activity: EmployeeActivity, task: Task) -
 
         if event.get("is_error"):
             error_content = str(event.get("content", ""))[:200]
-            activity.errors.append(error_content)
+            if len(activity.errors) < activity.MAX_ERRORS:
+                activity.errors.append(error_content)
 
     elif event_type == "result":
         # Employee finished

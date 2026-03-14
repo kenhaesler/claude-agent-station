@@ -1,0 +1,49 @@
+[project]
+name = "claude-agent-station"
+version = "0.1.0"
+description = "Self-hosted autonomous Claude Code agent with web dashboard"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["dashboard/backend/tests"]
+asyncio_mode = "auto"
+pythonpath = ["."]
+filterwarnings = [
+    "ignore::pytest.PytestUnknownMarkWarning",
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["dashboard/backend"]
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes
+    "I",      # isort
+    "UP",     # pyupgrade
+    "B",      # flake8-bugbear
+    "SIM",    # flake8-simplify
+    "RUF",    # ruff-specific
+]
+ignore = [
+    "E501",   # line too long (handled by formatter)
+    "B008",   # do not perform function calls in argument defaults (FastAPI Depends)
+    "SIM108", # use ternary operator (readability preference)
+    "UP007",  # use X | Y for union types (keep Optional for clarity)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"dashboard/backend/tests/*" = ["E501", "B011", "SIM117", "E741", "E402", "RUF003"]
+"dashboard/backend/app/routers/*" = ["B008"]
+
+[tool.coverage.run]
+source = ["dashboard/backend/app"]
+omit = ["dashboard/backend/tests/*"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+fail_under = 50

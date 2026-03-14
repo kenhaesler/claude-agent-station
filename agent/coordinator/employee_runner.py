@@ -361,34 +361,46 @@ async def _run_claude_subprocess(
     cwd: str,
     env: dict[str, str],
     label: str = "employee",
+    disallowed_tools: list[str] | None = None,
 ) -> EmployeeResult:
     """Spawn a Claude CLI subprocess with stream capture and rate limit detection.
 
     This is the single shared implementation for all Claude subprocess spawning:
     employee work, plan phase, and manager plan review.
+
+    Args:
+        disallowed_tools: List of tool names to block (e.g. ["Edit", "Write",
+            "NotebookEdit"] for analyze/plan modes).
     """
     stderr_file = stream_file.replace(".stream.jsonl", ".stderr.log")
 
     Path(stream_file).parent.mkdir(parents=True, exist_ok=True)
 
     logger.info(
-        "Spawning %s subprocess (model=%s, turns=%d)",
-        label, model, max_turns,
+        "Spawning %s subprocess (model=%s, turns=%d, disallowed=%s)",
+        label, model, max_turns, disallowed_tools or "none",
     )
+
+    # Build CLI args
+    cli_args = [
+        "claude", "-p",
+        "--verbose",
+        "--output-format", "stream-json",
+        "--no-session-persistence",
+        "--dangerously-skip-permissions",
+        "--model", model,
+        "--fallback-model", fallback_model,
+        "--max-turns", str(max_turns),
+        "--system-prompt-file", system_prompt_file,
+    ]
+    if disallowed_tools:
+        cli_args.extend(["--disallowedTools", *disallowed_tools])
+    cli_args.extend(["--", prompt])
 
     stderr_fh = open(stderr_file, "w")
     try:
         proc = await asyncio.create_subprocess_exec(
-            "claude", "-p",
-            "--verbose",
-            "--output-format", "stream-json",
-            "--no-session-persistence",
-            "--dangerously-skip-permissions",
-            "--model", model,
-            "--fallback-model", fallback_model,
-            "--max-turns", str(max_turns),
-            "--system-prompt-file", system_prompt_file,
-            "--", prompt,
+            *cli_args,
             stdout=asyncio.subprocess.PIPE,
             stderr=stderr_fh,
             cwd=cwd,
@@ -553,9 +565,16 @@ async def run_employee(
     env = os.environ.copy()
     env["GITHUB_REPO"] = task.project_repo
 
+    # Select prompt file and tool restrictions based on mode
+    is_readonly = config.project_mode in ("analyze", "plan")
+    system_prompt_file = str(
+        PROMPTS_DIR / ("analyst.md" if config.project_mode == "analyze" else "employee.md")
+    )
+    disallowed_tools = ["Edit", "Write", "NotebookEdit"] if is_readonly else None
+
     return await _run_claude_subprocess(
         prompt=prompt,
-        system_prompt_file=str(PROMPTS_DIR / "employee.md"),
+        system_prompt_file=system_prompt_file,
         model=model,
         fallback_model=fallback_model,
         max_turns=max_turns,
@@ -563,4 +582,5 @@ async def run_employee(
         cwd=task.workspace,
         env=env,
         label=f"employee-{employee_index}",
+        disallowed_tools=disallowed_tools,
     )
