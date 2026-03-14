@@ -1127,6 +1127,13 @@ should_skip_planning() {
     planning_enabled=$(json_get "$CONFIG_FILE" "planning.enabled" 2>/dev/null || echo "true")
     [ "$planning_enabled" = "false" ] && return 0
 
+    # Analyze mode: skip planning entirely (analyst prompt only — no implementation plans)
+    local project_mode
+    project_mode=$(get_project_field "$project_index" "mode" 2>/dev/null || echo "full")
+    if [ "$project_mode" = "analyze" ]; then
+        return 0
+    fi
+
     # Check for skip-planning label on the assigned issue
     local name workspace
     name=$(repo_name "$repo")
@@ -1240,9 +1247,12 @@ Remember: Plan only. Do NOT create branches, modify source files, or commit anyt
 }
 
 run_manager_plan_review() {
-    local repo="$1" workspace="$2" employee_index="${3:-0}"
+    local repo="$1" workspace="$2" employee_index="${3:-0}" project_index="${4:-0}"
     local name
     name=$(repo_name "$repo")
+
+    local project_mode
+    project_mode=$(get_project_field "$project_index" "mode" 2>/dev/null || echo "full")
 
     local plan_file="$workspace/.claude-employee-plan-${employee_index}.json"
     local verdict_file="$LOG_DIR/run-${RUN_ID}-plan-verdict-${name}.json"
@@ -1259,6 +1269,12 @@ run_manager_plan_review() {
         echo ""
         echo "## MODE: PLAN_REVIEW"
         echo ""
+        echo "## PROJECT_MODE: $project_mode"
+        echo ""
+        if [ "$project_mode" = "plan" ]; then
+            echo "**NOTE: This project is in PLAN mode. Review the plan for quality but be aware implementation will NOT proceed. Focus on plan quality for future reference.**"
+            echo ""
+        fi
         echo "## Project: $repo"
         echo ""
         echo "## Employee's Implementation Plan:"
@@ -2298,7 +2314,7 @@ print(f'Wrote {len(assignments)} assignments')
                     fi
 
                     local plan_verdict
-                    plan_verdict=$(run_manager_plan_review "$repo" "$workspace" "$ei")
+                    plan_verdict=$(run_manager_plan_review "$repo" "$workspace" "$ei" "$i")
 
                     if [ "$plan_verdict" = "APPROVE_PLAN" ]; then
                         # Copy plan as approved plan for implementation
@@ -2328,6 +2344,12 @@ print(f'Wrote {len(assignments)} assignments')
                 fi
             fi
             # ---- End plan review gate ----
+
+            # ---- Mode gate: analyze/plan modes must NOT proceed to implementation ----
+            if [ "$mode_for_project" = "analyze" ] || [ "$mode_for_project" = "plan" ]; then
+                log_info "Skipping implementation for $repo employee $ei (mode=$mode_for_project — implementation not permitted)"
+                continue
+            fi
 
             # Calculate per-employee turn budget
             local employee_turns
