@@ -10,7 +10,7 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
@@ -171,8 +171,25 @@ app.include_router(github_webhook.router)
 
 # Serve frontend static files (must be last, catches all non-API routes)
 _frontend_dist = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
+_index_html = _frontend_dist / "index.html"
 if _frontend_dist.is_dir():
-    app.mount("/", StaticFiles(directory=str(_frontend_dist), html=True), name="frontend")
+    # Static assets mount (checked before catch-all route)
+    _assets_dir = _frontend_dist / "assets"
+    if _assets_dir.is_dir():
+        app.mount("/assets", StaticFiles(directory=str(_assets_dir)), name="assets")
+
+    # SPA catch-all: serve index.html for any non-API, non-static path (History API routing)
+    @app.get("/{full_path:path}")
+    async def spa_catchall(full_path: str):
+        # If the path matches an actual static file, serve it
+        static_file = _frontend_dist / full_path
+        if static_file.is_file() and full_path:
+            return FileResponse(static_file)
+        # Otherwise serve index.html for SPA client-side routing
+        if _index_html.is_file():
+            return FileResponse(_index_html)
+        return JSONResponse({"error": "Frontend not built"}, status_code=404)
+
     logger.info("Serving frontend from %s", _frontend_dist)
 else:
     @app.get("/")

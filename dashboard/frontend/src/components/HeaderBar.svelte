@@ -2,8 +2,30 @@
   import StatusOrb from './StatusOrb.svelte';
   import ArcGauge from './ArcGauge.svelte';
   import AgentAvatar from './AgentAvatar.svelte';
+  import IntelligenceChip from './IntelligenceChip.svelte';
   import { agentPresence } from '../lib/agent-presence.svelte';
+  import { isBackpressureElevated } from '../lib/intelligence-cache.svelte';
+  import { audioEngine } from '../lib/audio-engine';
   import { getStoredApiKey } from '../lib/api';
+
+  let showVolumeSlider = $state(false);
+  let audioMuted = $state(audioEngine.isMuted());
+  let audioVolume = $state(audioEngine.getVolume());
+
+  function toggleAudioMute() {
+    audioEngine.toggleMute();
+    audioMuted = audioEngine.isMuted();
+  }
+
+  function handleVolumeChange(e: Event) {
+    const val = parseFloat((e.target as HTMLInputElement).value);
+    audioVolume = val;
+    audioEngine.setVolume(val);
+    if (val > 0 && audioMuted) {
+      audioEngine.setMuted(false);
+      audioMuted = false;
+    }
+  }
 
   interface Props {
     serviceActive: boolean;
@@ -103,16 +125,60 @@
       <ArcGauge value={usagePercent} size={28} color={usageColor} />
     </div>
 
+    <!-- Backpressure indicator -->
+    <IntelligenceChip type="backpressure" class="hidden md:inline-flex" />
+
     <!-- Trigger Run -->
     <button
       onclick={onTrigger}
       disabled={triggering}
       class="px-2.5 py-1 text-xs font-medium rounded-md text-white transition-all cursor-pointer
-        bg-accent-blue hover:opacity-90
+        {isBackpressureElevated() ? 'bg-warning hover:bg-warning/80' : 'bg-accent-blue hover:opacity-90'}
         {triggering ? 'opacity-50 cursor-not-allowed' : 'active:scale-95'}"
     >
       {triggering ? '...' : 'Run'}
     </button>
+
+    <!-- Volume control -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="relative"
+      role="group"
+      aria-label="Volume control"
+      onmouseenter={() => showVolumeSlider = true}
+      onmouseleave={() => showVolumeSlider = false}
+    >
+      <button
+        onclick={toggleAudioMute}
+        class="p-1.5 rounded-md text-text-dim hover:text-text hover:bg-white/5 cursor-pointer transition-colors"
+        title={audioMuted ? 'Unmute sounds' : 'Mute sounds'}
+      >
+        <svg class="w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          {#if audioMuted}
+            <path d="M2 5.5h2.5L8 2.5v11l-3.5-3H2z" />
+            <line x1="11" y1="5" x2="15" y2="11" />
+            <line x1="15" y1="5" x2="11" y2="11" />
+          {:else}
+            <path d="M2 5.5h2.5L8 2.5v11l-3.5-3H2z" />
+            <path d="M11 4.5a4 4 0 0 1 0 7" />
+            <path d="M12.5 2.5a7 7 0 0 1 0 11" />
+          {/if}
+        </svg>
+      </button>
+      {#if showVolumeSlider}
+        <div class="absolute right-0 top-full mt-1 p-2 glass rounded-lg border border-border/50 shadow-lg z-50 w-32">
+          <input
+            type="range"
+            min="0"
+            max="1"
+            step="0.05"
+            value={audioVolume}
+            oninput={handleVolumeChange}
+            class="w-full h-1 accent-info cursor-pointer"
+          />
+          <div class="text-[10px] text-text-muted text-center mt-1">{Math.round(audioVolume * 100)}%</div>
+        </div>
+      {/if}
+    </div>
 
     <!-- API Key lock icon -->
     <button

@@ -287,6 +287,9 @@ export class WorkspaceRenderer {
   // Sound event callbacks
   private soundListeners: ((event: SoundEvent) => void)[] = [];
 
+  // Render quality (full = all layers, ambient = skip expensive layers)
+  private renderQuality: 'full' | 'ambient' = 'full';
+
   constructor(private canvas: HTMLCanvasElement, dpr?: number) {
     this.ctx = canvas.getContext('2d')!;
     this.dpr = dpr ?? (window.devicePixelRatio || 1);
@@ -388,6 +391,15 @@ export class WorkspaceRenderer {
   setMousePosition(x: number, y: number) {
     this.mouseX = x;
     this.mouseY = y;
+  }
+
+  /** Set render quality. 'ambient' skips bloom, diamonds, and data-stream text for performance. */
+  setRenderQuality(quality: 'full' | 'ambient') {
+    this.renderQuality = quality;
+  }
+
+  getRenderQuality(): 'full' | 'ambient' {
+    return this.renderQuality;
   }
 
   triggerEvent(type: EventType, data: EventData = {}) {
@@ -1075,6 +1087,7 @@ export class WorkspaceRenderer {
 
   private draw() {
     const { ctx, w, h } = this;
+    const isAmbient = this.renderQuality === 'ambient';
     ctx.clearRect(0, 0, w, h);
 
     this.drawBackground();
@@ -1083,17 +1096,17 @@ export class WorkspaceRenderer {
     this.drawRadarSweep();
     this.drawParticles();
     this.drawConnections();
-    this.drawDataStreamText();
-    this.drawDiamonds();
+    if (!isAmbient) this.drawDataStreamText();
+    if (!isAmbient) this.drawDiamonds();
     this.drawHub();
     this.drawNodes();
     this.drawEmployeeOrbitals();
     this.drawShieldRings();
     this.drawRipples();
-    this.drawReaperSweep();
+    if (!isAmbient) this.drawReaperSweep();
     this.drawThinkingDots();
-    this.drawLabels();
-    this.drawBloom();
+    if (!isAmbient) this.drawLabels();
+    if (!isAmbient) this.drawBloom();
   }
 
   // ── Layer 1: Background ──────────────────────────────────
