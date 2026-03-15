@@ -46,6 +46,12 @@
       {:else if role === 'analyst'}
         <!-- Search -->
         <circle cx="7" cy="7" r="4" /><line x1="10" y1="10" x2="14" y2="14" stroke-width="2" />
+      {:else if role === 'planner'}
+        <!-- Compass / Map -->
+        <circle cx="8" cy="8" r="6" /><polygon points="8,3 9.5,7 8,6 6.5,7" fill={color} /><polygon points="8,13 6.5,9 8,10 9.5,9" fill={color} opacity="0.5" />
+      {:else if role === 'assigner'}
+        <!-- Clipboard / Assign -->
+        <rect x="4" y="3" width="8" height="11" rx="1" /><path d="M6 2h4v2H6z" fill={color} /><line x1="6" y1="7" x2="10" y2="7" /><line x1="6" y1="9.5" x2="10" y2="9.5" /><line x1="6" y1="12" x2="9" y2="12" />
       {:else}
         <!-- Wrench -->
         <path d="M11.5 2.5L9 5 11 7l2.5-2.5a4 4 0 01-5.5 5.5L4 14l-2-2 4-4A4 4 0 0111.5 2.5z" />

@@ -10,6 +10,7 @@
   import EmployeeReport from './EmployeeReport.svelte';
   import VerdictDetail from './VerdictDetail.svelte';
   import DiffViewer from './DiffViewer.svelte';
+  import IntelligenceChip from './IntelligenceChip.svelte';
   import type { RunPhase } from '../lib/workspace-renderer';
   import { formatDuration, formatTokens, timeAgo } from '../lib/format';
   import { agentPresence, getAgentName, getAgentColor } from '../lib/agent-presence.svelte';
@@ -32,7 +33,7 @@
   let loadingContext = $state(false);
   let loadingDiff = $state(false);
 
-  let isActive = $derived(run.status === 'running' || run.status === 'reviewing');
+  let isActive = $derived(run.status === 'running' || run.status === 'reviewing' || run.status === 'plan_reviewing');
 
   async function expand() {
     if (level === 0) {
@@ -78,6 +79,7 @@
     if (run.status === 'finished' || run.status === 'error') {
       return run.verdict ? 'executing_verdict' : 'idle';
     }
+    if (run.status === 'plan_reviewing') return 'plan_review';
     if (run.status === 'reviewing') return 'manager_review';
     if (run.status === 'running') return 'employee';
     if (run.status === 'coordinating') return 'coordinating';
@@ -127,6 +129,11 @@
             <span class="text-text-dim">Duration: <span class="text-text font-data">{formatDuration(run.duration_ms)}</span></span>
             <span class="text-text-dim">Started: <span class="text-text">{timeAgo(run.started_at)}</span></span>
           </div>
+
+          <!-- Intelligence: escalation info -->
+          {#if fullContext?.queue_item && fullContext.queue_item.escalation_rung > 0}
+            <IntelligenceChip type="escalation" rung={fullContext.queue_item.escalation_rung} />
+          {/if}
 
           <!-- Employee report -->
           {#if run.employee_report}

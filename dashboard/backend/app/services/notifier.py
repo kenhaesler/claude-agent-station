@@ -1,9 +1,21 @@
 from __future__ import annotations
 
-"""Webhook notification service for Slack, Discord, Telegram, and generic webhooks.
+"""Webhook notification service.
 
 Sends notifications when runs complete, verdicts are issued, or errors occur.
-Failures are logged but never raise — notifications must not crash the backend.
+Failures are logged but never raise -- notifications must not crash the backend.
+
+Message formatting is delegated to pluggable adapters in
+:mod:`app.services.adapters`.  The public API (``send_notification`` and
+``send_test_notification``) is unchanged.
+
+Supports multi-target delivery: the ``notifications`` config section may
+contain a ``targets`` list where each entry specifies its own
+``webhook_url``, ``webhook_type``, and optional ``notify_on`` filter.
+A single ``webhook_url`` at the top level is still supported for backward
+compatibility and is treated as one implicit target.
+
+Transient HTTP errors (5xx) are retried once after a 1-second delay.
 """
 
 import asyncio
@@ -12,28 +24,19 @@ from typing import Any
 
 import httpx
 
+from app.services.adapters import get_adapter
 from app.services.config_sync import _read_config_json
 
 logger = logging.getLogger(__name__)
 
-# Status emoji mapping
-_STATUS_EMOJI = {
-    "APPROVE": "\u2705",    # ✅
-    "PR": "\U0001F4E4",     # 📤
-    "REJECT": "\u274C",     # ❌
-    "error": "\U0001F6A8",  # 🚨
-    "interrupted": "\U0001F480",  # 💀
-}
+# Retry settings for transient (5xx) failures
+_MAX_RETRIES = 1
+_RETRY_DELAY_SECONDS = 1.0
 
-# Discord color mapping (decimal)
-_DISCORD_COLORS = {
-    "APPROVE": 5763719,    # green
-    "PR": 3447003,         # blue
-    "REJECT": 15548997,    # red
-    "error": 16776960,     # yellow
-    "interrupted": 10038562,  # dark red
-}
 
+# ---------------------------------------------------------------------------
+# Config helpers
+# ---------------------------------------------------------------------------
 
 async def _get_notification_config() -> dict[str, Any]:
     """Read notification config from manager-config.json."""
@@ -41,20 +44,116 @@ async def _get_notification_config() -> dict[str, Any]:
     return config.get("notifications", {})
 
 
+def _resolve_targets(config: dict[str, Any]) -> list[dict[str, Any]]:
+    """Build a list of notification targets from config.
+
+    If ``config`` contains a ``targets`` list, each entry is used as-is
+    (inheriting top-level defaults where keys are missing).  Otherwise the
+    top-level ``webhook_url`` / ``webhook_type`` are wrapped into a single
+    implicit target for backward compatibility.
+    """
+    explicit_targets = config.get("targets")
+    if explicit_targets:
+        resolved: list[dict[str, Any]] = []
+        for t in explicit_targets:
+            # Merge top-level keys as defaults for any missing target keys
+            merged: dict[str, Any] = {
+                "webhook_url": t.get("webhook_url", config.get("webhook_url", "")),
+                "webhook_type": t.get("webhook_type", config.get("webhook_type", "generic")),
+                "notify_on": t.get("notify_on"),  # None means "use default"
+                "dashboard_url": t.get("dashboard_url", config.get("dashboard_url", "")),
+            }
+            # Carry through any adapter-specific keys (e.g. telegram_chat_id)
+            for key, value in t.items():
+                if key not in merged:
+                    merged[key] = value
+            resolved.append(merged)
+        return resolved
+
+    # Backward-compatible: single target from top-level keys
+    url = config.get("webhook_url", "")
+    if not url:
+        return []
+    return [{
+        "webhook_url": url,
+        "webhook_type": config.get("webhook_type", "generic"),
+        "notify_on": config.get("notify_on"),
+        "dashboard_url": config.get("dashboard_url", ""),
+    }]
+
+
 def _should_notify(event_type: str, config: dict[str, Any]) -> bool:
-    """Check if we should send a notification for this event type."""
+    """Check if notifications are globally enabled for this event type.
+
+    This validates top-level switches (``enabled``, ``method``).  It does
+    **not** filter by ``webhook_url`` or per-target ``notify_on`` -- that
+    happens inside ``_send_to_target``.
+    """
     if not config.get("enabled", False):
         return False
     if config.get("method") != "webhook":
         return False
-    if not config.get("webhook_url"):
+    # Must have at least one target URL (top-level or in targets list)
+    targets = _resolve_targets(config)
+    if not targets:
         return False
 
-    notify_on = config.get("notify_on", ["approve", "reject", "pr", "error"])
+    # Global notify_on acts as a pre-filter when no targets list is used
+    default_notify_on = config.get("notify_on", ["approve", "reject", "pr", "error"])
+    has_targets_list = bool(config.get("targets"))
+    if has_targets_list:
+        # With explicit targets, at least one target must accept this event
+        for t in targets:
+            target_notify_on = t.get("notify_on") or default_notify_on
+            if event_type.lower() in [n.lower() for n in target_notify_on]:
+                return True
+        return False
+    else:
+        return event_type.lower() in [n.lower() for n in default_notify_on]
+
+
+def _target_accepts_event(
+    event_type: str,
+    target: dict[str, Any],
+    default_notify_on: list[str],
+) -> bool:
+    """Return True if *target* should receive *event_type*."""
+    notify_on = target.get("notify_on") or default_notify_on
     return event_type.lower() in [n.lower() for n in notify_on]
 
 
-def _format_slack(
+# ---------------------------------------------------------------------------
+# Core send logic
+# ---------------------------------------------------------------------------
+
+async def _post_with_retry(
+    client: httpx.AsyncClient,
+    url: str,
+    payload: dict[str, Any],
+) -> httpx.Response:
+    """POST *payload* to *url*, retrying once on 5xx errors."""
+    response = await client.post(
+        url,
+        json=payload,
+        headers={"Content-Type": "application/json"},
+    )
+    if response.status_code >= 500 and _MAX_RETRIES > 0:
+        logger.info(
+            "Webhook returned %d, retrying in %.1fs ...",
+            response.status_code, _RETRY_DELAY_SECONDS,
+        )
+        await asyncio.sleep(_RETRY_DELAY_SECONDS)
+        response = await client.post(
+            url,
+            json=payload,
+            headers={"Content-Type": "application/json"},
+        )
+    response.raise_for_status()
+    return response
+
+
+async def _send_to_target(
+    target: dict[str, Any],
     event_type: str,
     project: str,
     issue_number: int | None,
@@ -62,183 +161,26 @@ def _format_slack(
     tokens_total: int | None,
     summary: str | None,
     run_id: str | None,
-    dashboard_url: str | None,
-) -> dict[str, Any]:
-    """Format a Slack Block Kit message."""
-    emoji = _STATUS_EMOJI.get(event_type, "\u2139\uFE0F")
-    header = f"{emoji} {event_type} \u2014 {project}"
-
-    fields = []
-    if issue_number is not None:
-        issue_text = f"#{issue_number}"
-        if issue_title:
-            issue_text += f" {issue_title}"
-        fields.append({"type": "mrkdwn", "text": f"*Issue*: {issue_text}"})
-
-    if tokens_total is not None:
-        fields.append({"type": "mrkdwn", "text": f"*Tokens*: {tokens_total:,}"})
-
-    blocks: list[dict[str, Any]] = [
-        {"type": "header", "text": {"type": "plain_text", "text": header[:150]}},
-    ]
-
-    if fields:
-        blocks.append({"type": "section", "fields": fields})
-
-    if summary:
-        blocks.append({
-            "type": "section",
-            "text": {"type": "mrkdwn", "text": summary[:2000]},
-        })
-
-    if dashboard_url and run_id:
-        blocks.append({
-            "type": "context",
-            "elements": [
-                {"type": "mrkdwn", "text": f"<{dashboard_url}/runs/{run_id}|View in Dashboard>"},
-            ],
-        })
-
-    return {"blocks": blocks}
-
-
-def _format_discord(
-    event_type: str,
-    project: str,
-    issue_number: int | None,
-    issue_title: str | None,
-    tokens_total: int | None,
-    summary: str | None,
-    run_id: str | None,
-    dashboard_url: str | None,
-) -> dict[str, Any]:
-    """Format a Discord embed message."""
-    emoji = _STATUS_EMOJI.get(event_type, "\u2139\uFE0F")
-    color = _DISCORD_COLORS.get(event_type, 8421504)  # grey default
-
-    fields = []
-    if issue_number is not None:
-        issue_text = f"#{issue_number}"
-        if issue_title:
-            issue_text += f" {issue_title}"
-        fields.append({"name": "Issue", "value": issue_text, "inline": True})
-
-    if tokens_total is not None:
-        fields.append({"name": "Tokens", "value": f"{tokens_total:,}", "inline": True})
-
-    embed: dict[str, Any] = {
-        "title": f"{emoji} {event_type} \u2014 {project}",
-        "color": color,
-        "fields": fields,
-    }
-
-    if summary:
-        embed["description"] = summary[:2048]
-
-    if dashboard_url and run_id:
-        embed["url"] = f"{dashboard_url}/runs/{run_id}"
-
-    return {"embeds": [embed]}
-
-
-def _format_telegram(
-    event_type: str,
-    project: str,
-    issue_number: int | None,
-    issue_title: str | None,
-    tokens_total: int | None,
-    summary: str | None,
-    run_id: str | None,
-    dashboard_url: str | None,
-    chat_id: str | None = None,
-) -> dict[str, Any]:
-    """Format a Telegram Bot API message.
-
-    Expects webhook_url to be: https://api.telegram.org/bot<TOKEN>/sendMessage
-    The chat_id must be configured in notifications.telegram_chat_id.
-    """
-    emoji = _STATUS_EMOJI.get(event_type, "\u2139\uFE0F")
-
-    lines = [f"<b>{emoji} {event_type} \u2014 {project}</b>"]
-
-    if issue_number is not None:
-        issue_text = f"#{issue_number}"
-        if issue_title:
-            issue_text += f" {issue_title}"
-        lines.append(f"<b>Issue:</b> {issue_text}")
-
-    if tokens_total is not None:
-        lines.append(f"<b>Tokens:</b> {tokens_total:,}")
-
-    if summary:
-        lines.append(f"\n{summary[:1000]}")
-
-    if dashboard_url and run_id:
-        lines.append(f'\n<a href="{dashboard_url}/runs/{run_id}">View in Dashboard</a>')
-
-    text = "\n".join(lines)
-
-    payload: dict[str, Any] = {
-        "text": text,
-        "parse_mode": "HTML",
-        "disable_web_page_preview": True,
-    }
-    if chat_id:
-        payload["chat_id"] = chat_id
-
-    return payload
-
-
-def _format_generic(
-    event_type: str,
-    project: str,
-    issue_number: int | None,
-    issue_title: str | None,
-    tokens_total: int | None,
-    summary: str | None,
-    run_id: str | None,
-    dashboard_url: str | None,
-) -> dict[str, Any]:
-    """Format a simple JSON payload for generic webhooks."""
-    return {
-        "event_type": event_type,
-        "project": project,
-        "issue_number": issue_number,
-        "issue_title": issue_title,
-        "tokens_total": tokens_total,
-        "summary": summary,
-        "run_id": run_id,
-        "dashboard_url": f"{dashboard_url}/runs/{run_id}" if dashboard_url and run_id else None,
-    }
-
-
-async def _send_notification_detailed(
-    event_type: str,
-    project: str,
-    issue_number: int | None = None,
-    issue_title: str | None = None,
-    tokens_total: int | None = None,
-    summary: str | None = None,
-    run_id: str | None = None,
-    _bypass_filter: bool = False,
+    config: dict[str, Any],
 ) -> tuple[bool, str | None]:
-    """Send a webhook notification, returning (success, error_detail).
+    """Send one notification to a single target.
 
     Returns (True, None) on success, (False, error_message) on failure.
-    Never raises — failures are logged.
+    Never raises.
     """
     try:
-        config = await _get_notification_config()
+        webhook_url = target["webhook_url"]
+        webhook_type = target.get("webhook_type", "generic").lower()
+        dashboard_url = target.get("dashboard_url", "").rstrip("/") or None
 
-        if not _bypass_filter and not _should_notify(event_type, config):
-            return (False, None)
+        adapter = get_adapter(webhook_type)
 
-        webhook_url = config["webhook_url"]
-        webhook_type = config.get("webhook_type", "generic").lower()
-        dashboard_url = config.get("dashboard_url", "").rstrip("/") or None
+        # Build adapter config by merging target-level keys into the
+        # top-level config so adapters can read provider-specific keys
+        # (e.g. telegram_chat_id) from either level.
+        adapter_config = {**config, **target}
 
-        # Build payload based on webhook type
-        kwargs = dict(
+        payload = adapter.format_message(
             event_type=event_type,
             project=project,
             issue_number=issue_number,
@@ -247,30 +189,15 @@ async def _send_notification_detailed(
             summary=summary,
             run_id=run_id,
             dashboard_url=dashboard_url,
+            config=adapter_config,
         )
 
-        if webhook_type == "slack":
-            payload = _format_slack(**kwargs)
-        elif webhook_type == "discord":
-            payload = _format_discord(**kwargs)
-        elif webhook_type == "telegram":
-            chat_id = config.get("telegram_chat_id")
-            payload = _format_telegram(**kwargs, chat_id=chat_id)
-        else:
-            payload = _format_generic(**kwargs)
-
-        # Send the webhook
         async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.post(
-                webhook_url,
-                json=payload,
-                headers={"Content-Type": "application/json"},
-            )
-            response.raise_for_status()
+            response = await _post_with_retry(client, webhook_url, payload)
 
         logger.info(
-            "Notification sent: %s for %s (type=%s, status=%d)",
-            event_type, project, webhook_type, response.status_code,
+            "Notification sent: %s for %s (adapter=%s, url=%s, status=%d)",
+            event_type, project, adapter.name, webhook_url, response.status_code,
         )
         return (True, None)
 
@@ -283,6 +210,70 @@ async def _send_notification_detailed(
         detail = f"Webhook request failed: {e}"
         logger.warning("Notification webhook request failed: %s", e)
         return (False, detail)
+    except Exception as e:
+        detail = f"Unexpected error: {type(e).__name__}: {e}"
+        logger.exception("Unexpected error sending notification")
+        return (False, detail)
+
+
+async def _send_notification_detailed(
+    event_type: str,
+    project: str,
+    issue_number: int | None = None,
+    issue_title: str | None = None,
+    tokens_total: int | None = None,
+    summary: str | None = None,
+    run_id: str | None = None,
+    _bypass_filter: bool = False,
+) -> tuple[bool, str | None]:
+    """Send a webhook notification to all matching targets.
+
+    Returns (True, None) if **at least one** target succeeded,
+    (False, error_message) if all failed or none matched.
+    Never raises -- failures are logged.
+    """
+    try:
+        config = await _get_notification_config()
+
+        if not _bypass_filter and not _should_notify(event_type, config):
+            return (False, None)
+
+        targets = _resolve_targets(config)
+        if not targets:
+            return (False, None)
+
+        default_notify_on = config.get("notify_on", ["approve", "reject", "pr", "error"])
+
+        any_success = False
+        last_error: str | None = None
+
+        for target in targets:
+            # Per-target event filtering (skip if _bypass_filter is set)
+            if not _bypass_filter and not _target_accepts_event(
+                event_type, target, default_notify_on
+            ):
+                continue
+
+            success, error = await _send_to_target(
+                target=target,
+                event_type=event_type,
+                project=project,
+                issue_number=issue_number,
+                issue_title=issue_title,
+                tokens_total=tokens_total,
+                summary=summary,
+                run_id=run_id,
+                config=config,
+            )
+            if success:
+                any_success = True
+            else:
+                last_error = error
+
+        if any_success:
+            return (True, None)
+        return (False, last_error)
+
     except Exception as e:
         detail = f"Unexpected error: {type(e).__name__}: {e}"
         logger.exception("Unexpected error sending notification")
@@ -302,7 +293,7 @@ async def send_notification(
     """Send a webhook notification for a run event.
 
     Returns True if notification was sent successfully, False otherwise.
-    Never raises — failures are logged.
+    Never raises -- failures are logged.
 
     Args:
         _bypass_filter: If True, skip the _should_notify check. Used by
@@ -332,7 +323,9 @@ async def send_test_notification() -> dict[str, Any]:
         return {"success": False, "error": "Notifications are not enabled"}
     if config.get("method") != "webhook":
         return {"success": False, "error": "Method is not 'webhook'"}
-    if not config.get("webhook_url"):
+
+    targets = _resolve_targets(config)
+    if not targets:
         return {"success": False, "error": "Webhook URL is not configured"}
 
     success, error_detail = await _send_notification_detailed(

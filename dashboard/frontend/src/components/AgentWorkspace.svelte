@@ -1,14 +1,21 @@
 <script lang="ts">
   import { WorkspaceRenderer } from '../lib/workspace-renderer';
   import { agentPresence, togglePanel } from '../lib/agent-presence.svelte';
+  import { navigate } from '../lib/router.svelte';
   import type { SystemStatus, UsageData } from '../lib/types';
 
   interface Props {
-    systemStatus: SystemStatus | null;
-    usage: UsageData | null;
+    systemStatus?: SystemStatus | null;
+    usage?: UsageData | null;
+    /** Render quality: 'full' for all layers, 'ambient' for lightweight backdrop */
+    renderQuality?: 'full' | 'ambient';
+    /** Whether canvas handles pointer events (click/hover) */
+    interactive?: boolean;
+    /** Canvas opacity (0-1) */
+    opacity?: number;
   }
 
-  let { systemStatus, usage }: Props = $props();
+  let { systemStatus = null, usage = null, renderQuality = 'full', interactive = true, opacity = 1 }: Props = $props();
 
   let canvas: HTMLCanvasElement;
   let container: HTMLDivElement;
@@ -59,6 +66,11 @@
       ro.disconnect();
       if (hudToolCycleTimer) { clearInterval(hudToolCycleTimer); hudToolCycleTimer = null; }
     };
+  });
+
+  // Sync render quality
+  $effect(() => {
+    renderer?.setRenderQuality(renderQuality);
   });
 
   // Feed agent-presence data to renderer (with employee data)
@@ -178,7 +190,7 @@
     const emp = renderer.getEmployeeAt(e.clientX, e.clientY);
     if (emp) {
       // Navigate to run detail page
-      window.location.hash = `#/runs/${emp.runId}`;
+      navigate(`/stream/${emp.runId}`);
       return;
     }
 
@@ -249,15 +261,16 @@
 <div
   bind:this={container}
   class="relative w-full h-full"
+  style="opacity: {opacity}"
   role="img"
   aria-label="Agent network visualization -- Mission Cortex"
 >
   <canvas
     bind:this={canvas}
-    class="w-full h-full cursor-pointer"
-    onmousemove={handleMouseMove}
-    onmouseleave={handleMouseLeave}
-    onclick={handleClick}
+    class="w-full h-full {interactive ? 'cursor-pointer' : 'pointer-events-none'}"
+    onmousemove={interactive ? handleMouseMove : undefined}
+    onmouseleave={interactive ? handleMouseLeave : undefined}
+    onclick={interactive ? handleClick : undefined}
   ></canvas>
 
   {#if tooltip}

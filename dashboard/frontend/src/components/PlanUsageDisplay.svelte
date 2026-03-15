@@ -1,22 +1,22 @@
 <script lang="ts">
-  import { getUsage, getTokenUsage } from '../lib/api';
-  import type { UsageData, TokenUsageData } from '../lib/types';
+  import { getTokenUsage, getPlanUsage } from '../lib/api';
+  import type { TokenUsageData, PlanUsageData } from '../lib/types';
   import ArcGauge from './ArcGauge.svelte';
   import { themeStore } from '../lib/theme.svelte';
 
   let loading = $state(true);
   let error = $state('');
-  let usage = $state<UsageData | null>(null);
   let tokenUsage = $state<TokenUsageData | null>(null);
+  let planUsage = $state<PlanUsageData | null>(null);
 
   async function loadUsage() {
     try {
-      const [usageRes, tokenRes] = await Promise.allSettled([
-        getUsage(),
+      const [tokenRes, planRes] = await Promise.allSettled([
         getTokenUsage(),
+        getPlanUsage(),
       ]);
-      if (usageRes.status === 'fulfilled') usage = usageRes.value;
       if (tokenRes.status === 'fulfilled') tokenUsage = tokenRes.value;
+      if (planRes.status === 'fulfilled') planUsage = planRes.value;
       error = '';
     } catch (e: any) {
       error = e.message;
@@ -31,14 +31,6 @@
     return () => clearInterval(interval);
   });
 
-  function formatHours(h: number): string {
-    const hrs = Math.floor(h);
-    const mins = Math.round((h - hrs) * 60);
-    if (hrs === 0) return `${mins}m`;
-    if (mins === 0) return `${hrs}h`;
-    return `${hrs}h ${mins}m`;
-  }
-
   function formatTokens(n: number): string {
     if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
     if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
@@ -46,10 +38,18 @@
   }
 
   let sessionColor = $derived(
-    !usage ? themeStore.getStatusColor('idle') :
-    usage.usage_percent >= 80 ? themeStore.getStatusColor('inactive') :
-    usage.usage_percent >= 60 ? themeStore.getStatusColor('thinking') :
-    usage.usage_percent >= 30 ? themeStore.theme.colors['--color-accent-blue'] :
+    !planUsage ? themeStore.getStatusColor('idle') :
+    planUsage.session_usage_percent >= 80 ? themeStore.getStatusColor('inactive') :
+    planUsage.session_usage_percent >= 60 ? themeStore.getStatusColor('thinking') :
+    planUsage.session_usage_percent >= 30 ? themeStore.theme.colors['--color-accent-blue'] :
+    themeStore.theme.colors['--color-accent-emerald']
+  );
+
+  let tokenColor = $derived(
+    !planUsage ? themeStore.getStatusColor('idle') :
+    planUsage.weekly_usage_percent >= 80 ? themeStore.getStatusColor('inactive') :
+    planUsage.weekly_usage_percent >= 60 ? themeStore.getStatusColor('thinking') :
+    planUsage.weekly_usage_percent >= 30 ? themeStore.theme.colors['--color-accent-blue'] :
     themeStore.theme.colors['--color-accent-emerald']
   );
 
@@ -74,36 +74,37 @@
     <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
       <!-- Session Usage -->
       <div class="flex items-center gap-3 bg-white/[0.02] rounded-lg px-3 py-3 border border-border/20">
-        <ArcGauge value={usage?.usage_percent ?? 0} size={56} color={sessionColor} label="SESSION" />
+        <ArcGauge value={planUsage?.session_usage_percent ?? 0} size={56} color={sessionColor} label="SESSION" />
         <div class="min-w-0">
           <div class="text-sm font-medium text-text">Session</div>
           <div class="text-xs text-text-dim font-data">
-            {usage?.sessions_used ?? 0} used
+            {formatTokens(planUsage?.session_tokens_used ?? 0)} / {formatTokens(planUsage?.session_tokens_limit ?? 0)}
           </div>
-          {#if usage && usage.window_remaining_hours > 0}
-            <div class="text-[10px] text-text-dim font-data mt-0.5">
-              Resets in {formatHours(usage.window_remaining_hours)}
-            </div>
-          {/if}
         </div>
       </div>
 
-      <!-- Token Usage (Daily) -->
+      <!-- Token Usage (Weekly Plan) -->
       <div class="flex items-center gap-3 bg-white/[0.02] rounded-lg px-3 py-3 border border-border/20">
         <ArcGauge
-          value={0}
+          value={planUsage?.weekly_usage_percent ?? 0}
           size={56}
-          color={themeStore.theme.colors['--color-accent-blue']}
+          color={tokenColor}
           label="TOKENS"
         />
         <div class="min-w-0">
-          <div class="text-sm font-medium text-text">Tokens (24h)</div>
+          <div class="text-sm font-medium text-text">Tokens (Week)</div>
           <div class="text-xs text-text-dim font-data">
-            {formatTokens(tokenUsage?.daily.tokens_total ?? 0)} consumed
+            {formatTokens(planUsage?.weekly_tokens_used ?? 0)} / {formatTokens(planUsage?.weekly_tokens_limit ?? 0)}
           </div>
-          <div class="text-[10px] text-text-dim font-data mt-0.5">
-            In: {formatTokens(tokenUsage?.daily.tokens_input ?? 0)} / Out: {formatTokens(tokenUsage?.daily.tokens_output ?? 0)}
-          </div>
+          {#if planUsage?.should_throttle}
+            <div class="text-[10px] text-reject font-data mt-0.5">
+              Throttled
+            </div>
+          {:else}
+            <div class="text-[10px] text-text-dim font-data mt-0.5">
+              {planUsage?.plan_tier ?? 'unknown'} plan
+            </div>
+          {/if}
         </div>
       </div>
 
