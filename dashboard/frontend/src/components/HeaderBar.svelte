@@ -2,11 +2,13 @@
   import StatusOrb from './StatusOrb.svelte';
   import ArcGauge from './ArcGauge.svelte';
   import AgentAvatar from './AgentAvatar.svelte';
+  import ThemeSwitcher from './ThemeSwitcher.svelte';
   import IntelligenceChip from './IntelligenceChip.svelte';
   import { agentPresence } from '../lib/agent-presence.svelte';
   import { isBackpressureElevated } from '../lib/intelligence-cache.svelte';
   import { audioEngine } from '../lib/audio-engine';
   import { getStoredApiKey } from '../lib/api';
+  import { themeStore } from '../lib/theme.svelte';
 
   let showVolumeSlider = $state(false);
   let audioMuted = $state(audioEngine.isMuted());
@@ -71,8 +73,9 @@
   let hasApiKey = $derived(getStoredApiKey() !== null);
 
   let usageColor = $derived(
-    usagePercent > 80 ? '#ef4444' :
-    usagePercent > 60 ? '#f59e0b' : '#6366f1'
+    usagePercent > 80 ? themeStore.getStatusColor('inactive') :
+    usagePercent > 60 ? themeStore.getStatusColor('thinking') :
+    themeStore.theme.colors['--color-accent-blue']
   );
 
   let phaseLabel = $derived(
@@ -141,6 +144,9 @@
       <span class="text-[10px] text-text-dim font-data hidden lg:inline">{sessionsUsed}/{sessionLimit}</span>
       <ArcGauge value={usagePercent} size={28} color={usageColor} />
     </div>
+
+    <!-- Theme Switcher -->
+    <ThemeSwitcher />
 
     <!-- Backpressure indicator -->
     <IntelligenceChip type="backpressure" class="hidden md:inline-flex" />

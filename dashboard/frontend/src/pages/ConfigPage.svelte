@@ -680,7 +680,7 @@
           <div class="flex items-center justify-between">
             <h3 class="text-sm font-semibold">Timer</h3>
             <div class="flex items-center gap-1.5">
-              <StatusOrb active={system?.timer.active ?? false} color="#10b981" />
+              <StatusOrb active={system?.timer.active ?? false} />
               <span class="text-xs">{system?.timer.active ? 'Active' : 'Off'}</span>
             </div>
           </div>

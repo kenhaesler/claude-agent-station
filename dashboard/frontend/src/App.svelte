@@ -3,6 +3,8 @@
   import { getSystemStatus, getAuthStatus, getUsage, triggerRun } from './lib/api';
   import { toastSuccess, toastError } from './lib/toast.svelte';
   import { agentPresence, connect as connectPresence, disconnect as disconnectPresence, togglePanel } from './lib/agent-presence.svelte';
+  // Import theme store to trigger initialization (applies saved theme on load)
+  import './lib/theme.svelte';
   import { startIntelligenceRefresh, stopIntelligenceRefresh } from './lib/intelligence-cache.svelte';
   import { audioEngine } from './lib/audio-engine';
   import type { SystemStatus, UsageData } from './lib/types';

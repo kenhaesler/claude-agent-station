@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { themeStore } from '../lib/theme.svelte';
+
   interface BarData {
     label: string;
     value: number;
@@ -20,8 +22,10 @@
     title = '',
     valueFormatter = (v: number) => v.toLocaleString(),
     height = 200,
-    barColor = '#6366f1',
+    barColor,
   }: Props = $props();
+
+  let resolvedBarColor = $derived(barColor ?? themeStore.theme.colors['--color-accent-blue']);
 
   // Layout constants
   const PAD_LEFT = 50;
@@ -74,8 +78,8 @@
       <defs>
         <!-- Bar gradient -->
         <linearGradient id="{uid}-grad" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stop-color={barColor} stop-opacity="0.9" />
-          <stop offset="100%" stop-color={barColor} stop-opacity="0.3" />
+          <stop offset="0%" stop-color={resolvedBarColor} stop-opacity="0.9" />
+          <stop offset="100%" stop-color={resolvedBarColor} stop-opacity="0.3" />
         </linearGradient>
       </defs>
 

@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { themeStore } from '../lib/theme.svelte';
+
   interface Props {
     value: number;
     size?: number;
@@ -6,7 +8,9 @@
     label?: string;
   }
 
-  let { value, size = 48, color = '#6366f1', label }: Props = $props();
+  let { value, size = 48, color, label }: Props = $props();
+
+  let resolvedColor = $derived(color ?? themeStore.theme.colors['--color-accent-blue']);
 
   const strokeWidth = 3;
   let radius = $derived((size - strokeWidth) / 2);
@@ -39,7 +43,7 @@
   <path
     d={arcPath}
     fill="none"
-    stroke={color}
+    stroke={resolvedColor}
     stroke-width={strokeWidth}
     stroke-linecap="round"
     stroke-dasharray={circumference}
@@ -52,7 +56,7 @@
     y={center}
     text-anchor="middle"
     dominant-baseline="central"
-    fill={color}
+    fill={resolvedColor}
     font-size={size * 0.22}
     font-family="'SF Mono', 'Cascadia Code', ui-monospace, monospace"
     font-weight="600"

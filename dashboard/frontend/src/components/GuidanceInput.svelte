@@ -2,6 +2,7 @@
   import { agentPresence } from '../lib/agent-presence.svelte';
   import { sendGuidance } from '../lib/api';
   import { toastError } from '../lib/toast.svelte';
+  import { themeStore } from '../lib/theme.svelte';
 
   let message = $state('');
   let guidanceType = $state<'info' | 'warning' | 'redirect' | 'stop'>('info');
@@ -26,7 +27,7 @@
         id: Date.now(),
         timestamp: Date.now(),
         agentName: 'You',
-        agentColor: '#9ca3af',
+        agentColor: themeStore.getStatusColor('idle'),
         type: 'guidance',
         content: message.trim(),
       });
@@ -46,12 +47,12 @@
     }
   }
 
-  const typeLabels: Record<string, { label: string; color: string }> = {
-    info: { label: 'Info', color: '#3b82f6' },
-    warning: { label: 'Warn', color: '#f59e0b' },
-    redirect: { label: 'Redirect', color: '#a855f7' },
-    stop: { label: 'Stop', color: '#ef4444' },
-  };
+  let typeLabels = $derived<Record<string, { label: string; color: string }>>({
+    info: { label: 'Info', color: themeStore.theme.colors['--color-info'] },
+    warning: { label: 'Warn', color: themeStore.theme.colors['--color-warning'] },
+    redirect: { label: 'Redirect', color: themeStore.theme.colors['--color-accent-purple'] },
+    stop: { label: 'Stop', color: themeStore.theme.colors['--color-reject'] },
+  });
 </script>
 
 <div class="flex items-center gap-2 p-2 border-t border-border bg-surface">
