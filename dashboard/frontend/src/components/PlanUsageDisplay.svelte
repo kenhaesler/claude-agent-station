@@ -2,6 +2,7 @@
   import { getUsage, getTokenUsage } from '../lib/api';
   import type { UsageData, TokenUsageData } from '../lib/types';
   import ArcGauge from './ArcGauge.svelte';
+  import { themeStore } from '../lib/theme.svelte';
 
   let loading = $state(true);
   let error = $state('');
@@ -45,15 +46,17 @@
   }
 
   let sessionColor = $derived(
-    !usage ? '#94a3b8' :
-    usage.usage_percent >= 80 ? '#ef4444' :
-    usage.usage_percent >= 60 ? '#f59e0b' :
-    usage.usage_percent >= 30 ? '#6366f1' : '#10b981'
+    !usage ? themeStore.getStatusColor('idle') :
+    usage.usage_percent >= 80 ? themeStore.getStatusColor('inactive') :
+    usage.usage_percent >= 60 ? themeStore.getStatusColor('thinking') :
+    usage.usage_percent >= 30 ? themeStore.theme.colors['--color-accent-blue'] :
+    themeStore.theme.colors['--color-accent-emerald']
   );
 
   let agentCapColor = $derived(
-    !tokenUsage ? '#94a3b8' :
-    tokenUsage.max_usage_percent >= 80 ? '#f59e0b' : '#3b82f6'
+    !tokenUsage ? themeStore.getStatusColor('idle') :
+    tokenUsage.max_usage_percent >= 80 ? themeStore.getStatusColor('thinking') :
+    themeStore.theme.colors['--color-info']
   );
 </script>
 
@@ -90,7 +93,7 @@
         <ArcGauge
           value={0}
           size={56}
-          color="#6366f1"
+          color={themeStore.theme.colors['--color-accent-blue']}
           label="TOKENS"
         />
         <div class="min-w-0">

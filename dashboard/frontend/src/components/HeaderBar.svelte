@@ -5,6 +5,7 @@
   import ThemeSwitcher from './ThemeSwitcher.svelte';
   import { agentPresence } from '../lib/agent-presence.svelte';
   import { getStoredApiKey } from '../lib/api';
+  import { themeStore } from '../lib/theme.svelte';
 
   interface Props {
     serviceActive: boolean;
@@ -33,8 +34,9 @@
   let hasApiKey = $derived(getStoredApiKey() !== null);
 
   let usageColor = $derived(
-    usagePercent > 80 ? '#ef4444' :
-    usagePercent > 60 ? '#f59e0b' : '#6366f1'
+    usagePercent > 80 ? themeStore.getStatusColor('inactive') :
+    usagePercent > 60 ? themeStore.getStatusColor('thinking') :
+    themeStore.theme.colors['--color-accent-blue']
   );
 
   let phaseLabel = $derived(
