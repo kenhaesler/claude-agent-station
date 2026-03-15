@@ -1,4 +1,4 @@
-import type { Project, ProjectCreate, ProjectUpdate, Run, RunList, RunFullContext, ActiveEmployeeData, Plan, PlanList, SystemStatus, AuthStatus, LogSearchResult, RunLogs, UsageData, TokenUsageData, PlanUsageData, OAuthStartResponse, OAuthCallbackResponse, GitHubOAuthStartResponse, GitHubOAuthCallbackResponse, GitHubOAuthStatusResponse, CoordinatorTask, CoordinatorTaskDetail, CoordinatorDAG, CoordinatorMessage, AnalyticsData, DiffResult, QueueItem, QueueItemList, QueueStats, IntelligenceInsights, IntelligenceDecision, BackpressureStatus } from './types';
+import type { Project, ProjectCreate, ProjectUpdate, Run, RunList, RunFullContext, ActiveEmployeeData, Plan, PlanList, SystemStatus, AuthStatus, LogSearchResult, RunLogs, UsageData, TokenUsageData, PlanUsageData, OAuthStartResponse, OAuthCallbackResponse, GitHubOAuthStartResponse, GitHubOAuthCallbackResponse, GitHubOAuthStatusResponse, CoordinatorTask, CoordinatorTaskDetail, CoordinatorDAG, CoordinatorMessage, AnalyticsData, DiffResult, QueueItem, QueueItemList, QueueStats, IntelligenceInsights, IntelligenceDecision, BackpressureStatus, BrainstormSession, BrainstormSessionDetail } from './types';
 
 const BASE = import.meta.env.VITE_API_URL || '';
 
@@ -234,3 +234,81 @@ export const getIntelligenceDecisions = (params?: { run_id?: string; limit?: num
   return request<IntelligenceDecision[]>(`/api/intelligence/decisions?${q}`);
 };
 export const getBackpressure = () => request<BackpressureStatus>('/api/queue/pressure');
+
+// Brainstorm
+export const listBrainstormSessions = () => request<BrainstormSession[]>('/api/brainstorm/sessions');
+export const createBrainstormSession = (data: { title?: string; project_id?: number; persona?: string }) =>
+  request<BrainstormSession>('/api/brainstorm/sessions', { method: 'POST', body: JSON.stringify(data) });
+export const getBrainstormSession = (id: string) => request<BrainstormSessionDetail>(`/api/brainstorm/sessions/${id}`);
+export const deleteBrainstormSession = (id: string) =>
+  request<void>(`/api/brainstorm/sessions/${id}`, { method: 'DELETE' });
+
+/**
+ * Send a message in a brainstorm session and return an EventSource-like reader
+ * that yields SSE data events for streaming the AI response.
+ */
+export function streamBrainstormMessage(
+  sessionId: string,
+  content: string,
+  onDelta: (text: string) => void,
+  onDone: (fullContent: string, messageId: string) => void,
+  onError: (error: string) => void,
+): AbortController {
+  const controller = new AbortController();
+  const apiKey = getStoredApiKey();
+
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+
+  fetch(`${BASE}/api/brainstorm/sessions/${sessionId}/messages`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ content }),
+    signal: controller.signal,
+  })
+    .then(async (res) => {
+      if (!res.ok) {
+        const text = await res.text();
+        onError(`${res.status}: ${text}`);
+        return;
+      }
+      const reader = res.body?.getReader();
+      if (!reader) { onError('No response body'); return; }
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        // Parse SSE lines
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          try {
+            const data = JSON.parse(line.slice(6));
+            if (data.type === 'delta') {
+              onDelta(data.text);
+            } else if (data.type === 'done') {
+              onDone(data.full_content, data.message_id);
+            } else if (data.type === 'error') {
+              onError(data.message);
+            }
+          } catch {
+            // skip malformed lines
+          }
+        }
+      }
+    })
+    .catch((err) => {
+      if (err.name !== 'AbortError') {
+        onError(err.message || 'Stream failed');
+      }
+    });
+
+  return controller;
+}

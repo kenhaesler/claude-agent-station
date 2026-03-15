@@ -528,6 +528,31 @@ export interface IntelligenceDecision {
   created_at: string | null;
 }
 
+// --- Brainstorm ---
+
+export interface BrainstormSession {
+  id: string;
+  project_id: number | null;
+  title: string | null;
+  persona: string;
+  created_at: string | null;
+  updated_at: string | null;
+  message_count: number;
+  project_repo: string | null;
+}
+
+export interface BrainstormMessage {
+  id: string;
+  session_id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  created_at: string | null;
+}
+
+export interface BrainstormSessionDetail extends BrainstormSession {
+  messages: BrainstormMessage[];
+}
+
 export interface AnalyticsData {
   days: number;
   total_tokens: number;

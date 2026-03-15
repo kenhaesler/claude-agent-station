@@ -20,6 +20,7 @@
   import WorkStreamPage from './pages/WorkStreamPage.svelte';
   import DecisionsPage from './pages/DecisionsPage.svelte';
   import ConfigPage from './pages/ConfigPage.svelte';
+  import BrainstormPage from './pages/BrainstormPage.svelte';
   import AgentObservatoryPage from './pages/AgentObservatoryPage.svelte';
   import RunDetailPage from './pages/RunDetailPage.svelte';
   import AnalyticsPage from './pages/AnalyticsPage.svelte';
@@ -159,9 +160,10 @@
     if (e.key === '1') { navigate('/command'); return; }
     if (e.key === '2') { navigate('/stream'); return; }
     if (e.key === '3') { navigate('/decide'); return; }
-    if (e.key === '4') { navigate('/config'); return; }
-    if (e.key === '5') { navigate('/agents'); return; }
-    if (e.key === '6') { navigate('/analytics'); return; }
+    if (e.key === '4') { navigate('/brainstorm'); return; }
+    if (e.key === '5') { navigate('/config'); return; }
+    if (e.key === '6') { navigate('/agents'); return; }
+    if (e.key === '7') { navigate('/analytics'); return; }
   }
 </script>
 
@@ -222,6 +224,8 @@
           <WorkStreamPage />
         {:else if route.page === 'decide' || route.page === 'decide-detail'}
           <DecisionsPage planId={route.page === 'decide-detail' ? route.param : null} />
+        {:else if route.page === 'brainstorm' || route.page === 'brainstorm-session'}
+          <BrainstormPage sessionId={route.page === 'brainstorm-session' ? route.param : null} />
         {:else if route.page === 'config'}
           <ConfigPage tab={route.param} />
         {:else if route.page === 'agents'}
