@@ -1,4 +1,4 @@
-"""GitHub OAuth login flow for connecting a GitHub account to the station."""
+"""GitHub OAuth Device Authorization Flow for connecting a GitHub account."""
 
 from __future__ import annotations
 
@@ -9,51 +9,61 @@ import os
 import secrets
 import tempfile
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from app.config import settings
-
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/oauth/github", tags=["github-oauth"])
 
-AUTHORIZE_URL = "https://github.com/login/oauth/authorize"
-TOKEN_URL = "https://github.com/login/oauth/access_token"
+DEVICE_CODE_URL = "https://github.com/login/device/code"
+DEVICE_TOKEN_URL = "https://github.com/login/oauth/access_token"
 USER_API_URL = "https://api.github.com/user"
+GITHUB_CLIENT_ID = "Ov23liUWRzu5iRGDS1kE"
 SCOPES = "repo read:org read:user"
 
 # Default token storage path (alongside Claude credentials)
 GITHUB_TOKEN_PATH = Path.home() / ".claude-agent-station" / "github_token"
 
-# In-memory store for pending OAuth flows: {state: expires_at}
-_pending: dict[str, float] = {}
-STATE_TTL_SECONDS = 600  # 10 minutes
+
+@dataclass
+class _DeviceFlow:
+    device_code: str
+    user_code: str
+    verification_uri: str
+    interval: int
+    expires_at: float
+    last_poll: float = 0.0
 
 
-def _cleanup_expired_states() -> None:
-    """Remove expired state entries from the pending store (lazy eviction)."""
+_device_flows: dict[str, _DeviceFlow] = {}
+
+
+def _cleanup_expired_flows() -> None:
+    """Remove expired device flow entries (lazy eviction)."""
     now = time.time()
-    expired = [s for s, exp in _pending.items() if now > exp]
-    for s in expired:
-        del _pending[s]
+    expired = [fid for fid, flow in _device_flows.items() if now > flow.expires_at]
+    for fid in expired:
+        del _device_flows[fid]
 
 
-class GitHubOAuthStartResponse(BaseModel):
-    auth_url: str
-    state: str
+class GitHubDeviceStartResponse(BaseModel):
+    flow_id: str
+    user_code: str
+    verification_uri: str
+    expires_in: int
 
 
-class GitHubOAuthCallbackRequest(BaseModel):
-    code: str
-    state: str
+class GitHubDevicePollRequest(BaseModel):
+    flow_id: str
 
 
-class GitHubOAuthCallbackResponse(BaseModel):
-    success: bool
+class GitHubDevicePollResponse(BaseModel):
+    status: str  # "pending" | "complete" | "expired" | "error"
     username: str | None = None
     error: str | None = None
 
@@ -102,72 +112,85 @@ def _delete_token(path: Path) -> None:
         os.unlink(path)
 
 
-@router.get("/start", response_model=GitHubOAuthStartResponse)
-async def start_github_oauth():
-    """Generate state parameter and return GitHub authorization URL."""
-    client_id = settings.github_client_id
-    if not client_id:
-        raise HTTPException(
-            status_code=400,
-            detail="GitHub OAuth not configured. Set STATION_GITHUB_CLIENT_ID environment variable.",
+@router.post("/device/start", response_model=GitHubDeviceStartResponse)
+async def start_device_flow():
+    """Start a GitHub Device Authorization Flow."""
+    _cleanup_expired_flows()
+
+    async with httpx.AsyncClient(timeout=15.0) as http_client:
+        response = await http_client.post(
+            DEVICE_CODE_URL,
+            data={
+                "client_id": GITHUB_CLIENT_ID,
+                "scope": SCOPES,
+            },
+            headers={
+                "Accept": "application/json",
+                "User-Agent": "claude-agent-station/1.0",
+            },
         )
+        response.raise_for_status()
+        result = response.json()
 
-    _cleanup_expired_states()
-    state = secrets.token_urlsafe(32)
-    _pending[state] = time.time() + STATE_TTL_SECONDS
+    if "error" in result:
+        error_desc = result.get("error_description", result["error"])
+        logger.error("GitHub device code request failed: %s", error_desc)
+        raise HTTPException(status_code=502, detail=f"GitHub error: {error_desc}")
 
-    redirect_uri = settings.github_oauth_redirect_uri
-    params_dict: dict[str, str] = {
-        "client_id": client_id,
-        "scope": SCOPES,
-        "state": state,
-    }
-    if redirect_uri:
-        params_dict["redirect_uri"] = redirect_uri
+    device_code = result["device_code"]
+    user_code = result["user_code"]
+    verification_uri = result["verification_uri"]
+    expires_in = int(result.get("expires_in", 900))
+    interval = int(result.get("interval", 5))
 
-    from urllib.parse import urlencode
-    auth_url = f"{AUTHORIZE_URL}?{urlencode(params_dict)}"
+    flow_id = secrets.token_urlsafe(32)
+    _device_flows[flow_id] = _DeviceFlow(
+        device_code=device_code,
+        user_code=user_code,
+        verification_uri=verification_uri,
+        interval=interval,
+        expires_at=time.time() + expires_in,
+    )
 
-    logger.info("GitHub OAuth flow started (state=%s...)", state[:8])
-    return GitHubOAuthStartResponse(auth_url=auth_url, state=state)
+    logger.info("GitHub device flow started (flow_id=%s..., user_code=%s)", flow_id[:8], user_code)
+    return GitHubDeviceStartResponse(
+        flow_id=flow_id,
+        user_code=user_code,
+        verification_uri=verification_uri,
+        expires_in=expires_in,
+    )
 
 
-@router.post("/callback", response_model=GitHubOAuthCallbackResponse)
-async def github_oauth_callback(req: GitHubOAuthCallbackRequest):
-    """Exchange authorization code for access token, fetch user info, store token."""
-    expires_at = _pending.pop(req.state, None)
-    if expires_at is None:
-        raise HTTPException(status_code=400, detail="Invalid or expired state parameter")
-    if time.time() > expires_at:
-        raise HTTPException(
-            status_code=400,
-            detail="OAuth state has expired. Please restart the login flow.",
-        )
+@router.post("/device/poll", response_model=GitHubDevicePollResponse)
+async def poll_device_flow(req: GitHubDevicePollRequest):
+    """Poll for device flow authorization status."""
+    flow = _device_flows.get(req.flow_id)
+    if flow is None:
+        raise HTTPException(status_code=404, detail="Unknown or expired flow")
 
-    client_id = settings.github_client_id
-    client_secret = settings.github_client_secret
-    if not client_id or not client_secret:
-        raise HTTPException(
-            status_code=400,
-            detail="GitHub OAuth not configured. Set STATION_GITHUB_CLIENT_ID and STATION_GITHUB_CLIENT_SECRET.",
-        )
+    now = time.time()
 
-    # Exchange code for access token
-    token_payload = {
-        "client_id": client_id,
-        "client_secret": client_secret,
-        "code": req.code,
-        "state": req.state,
-    }
-    redirect_uri = settings.github_oauth_redirect_uri
-    if redirect_uri:
-        token_payload["redirect_uri"] = redirect_uri
+    # Check expiry
+    if now > flow.expires_at:
+        del _device_flows[req.flow_id]
+        return GitHubDevicePollResponse(status="expired", error="Authorization expired. Try again.")
 
+    # Enforce minimum poll interval
+    if now - flow.last_poll < flow.interval:
+        return GitHubDevicePollResponse(status="pending")
+
+    flow.last_poll = now
+
+    # Poll GitHub for token
     try:
-        async with httpx.AsyncClient(timeout=30.0) as http_client:
+        async with httpx.AsyncClient(timeout=15.0) as http_client:
             response = await http_client.post(
-                TOKEN_URL,
-                json=token_payload,
+                DEVICE_TOKEN_URL,
+                data={
+                    "client_id": GITHUB_CLIENT_ID,
+                    "device_code": flow.device_code,
+                    "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+                },
                 headers={
                     "Accept": "application/json",
                     "User-Agent": "claude-agent-station/1.0",
@@ -175,22 +198,32 @@ async def github_oauth_callback(req: GitHubOAuthCallbackRequest):
             )
             response.raise_for_status()
             result = response.json()
-    except httpx.HTTPStatusError as e:
-        body = e.response.text
-        logger.error("GitHub token exchange failed: HTTP %d: %s", e.response.status_code, body)
-        return GitHubOAuthCallbackResponse(success=False, error=f"Token exchange failed: {body}")
     except httpx.RequestError as e:
-        logger.error("GitHub token exchange failed: %s", e)
-        return GitHubOAuthCallbackResponse(success=False, error=f"Token exchange failed: {e}")
+        logger.warning("GitHub device poll network error: %s", e)
+        return GitHubDevicePollResponse(status="pending")
 
+    # Handle GitHub response
     if "error" in result:
-        error_desc = result.get("error_description", result["error"])
-        logger.error("GitHub OAuth error: %s", error_desc)
-        return GitHubOAuthCallbackResponse(success=False, error=error_desc)
+        error = result["error"]
+        if error == "authorization_pending":
+            return GitHubDevicePollResponse(status="pending")
+        elif error == "slow_down":
+            flow.interval += 5
+            return GitHubDevicePollResponse(status="pending")
+        elif error == "expired_token":
+            del _device_flows[req.flow_id]
+            return GitHubDevicePollResponse(status="expired", error="Authorization expired. Try again.")
+        elif error == "access_denied":
+            del _device_flows[req.flow_id]
+            return GitHubDevicePollResponse(status="error", error="Access denied by user.")
+        else:
+            error_desc = result.get("error_description", error)
+            del _device_flows[req.flow_id]
+            return GitHubDevicePollResponse(status="error", error=error_desc)
 
     access_token = result.get("access_token")
     if not access_token:
-        return GitHubOAuthCallbackResponse(success=False, error="No access token in response")
+        return GitHubDevicePollResponse(status="error", error="No access token in response")
 
     token_type = result.get("token_type", "bearer")
     scope = result.get("scope", "")
@@ -227,9 +260,13 @@ async def github_oauth_callback(req: GitHubOAuthCallbackRequest):
         logger.info("GitHub token written to %s (user=%s)", GITHUB_TOKEN_PATH, username)
     except Exception as e:
         logger.error("Failed to write GitHub token: %s", e)
-        return GitHubOAuthCallbackResponse(success=False, error=f"Failed to store token: {e}")
+        del _device_flows[req.flow_id]
+        return GitHubDevicePollResponse(status="error", error=f"Failed to store token: {e}")
 
-    return GitHubOAuthCallbackResponse(success=True, username=username)
+    # Cleanup flow
+    del _device_flows[req.flow_id]
+
+    return GitHubDevicePollResponse(status="complete", username=username)
 
 
 @router.get("/status", response_model=GitHubOAuthStatusResponse)

@@ -1,4 +1,4 @@
-import type { Project, ProjectCreate, ProjectUpdate, Run, RunList, RunFullContext, ActiveEmployeeData, Plan, PlanList, SystemStatus, AuthStatus, LogSearchResult, RunLogs, UsageData, TokenUsageData, PlanUsageData, OAuthStartResponse, OAuthCallbackResponse, GitHubOAuthStartResponse, GitHubOAuthCallbackResponse, GitHubOAuthStatusResponse, CoordinatorTask, CoordinatorTaskDetail, CoordinatorDAG, CoordinatorMessage, AnalyticsData, DiffResult, QueueItem, QueueItemList, QueueStats, IntelligenceInsights, IntelligenceDecision, BackpressureStatus, BrainstormSession, BrainstormSessionDetail } from './types';
+import type { Project, ProjectCreate, ProjectUpdate, Run, RunList, RunFullContext, ActiveEmployeeData, Plan, PlanList, SystemStatus, AuthStatus, LogSearchResult, RunLogs, UsageData, TokenUsageData, PlanUsageData, OAuthStartResponse, OAuthCallbackResponse, GitHubDeviceStartResponse, GitHubDevicePollResponse, GitHubOAuthStatusResponse, CoordinatorTask, CoordinatorTaskDetail, CoordinatorDAG, CoordinatorMessage, AnalyticsData, DiffResult, QueueItem, QueueItemList, QueueStats, IntelligenceInsights, IntelligenceDecision, BackpressureStatus, BrainstormSession, BrainstormSessionDetail } from './types';
 
 const BASE = import.meta.env.VITE_API_URL || '';
 
@@ -115,15 +115,15 @@ export const submitOAuthCode = (code: string, state: string) =>
     body: JSON.stringify({ code, state }),
   });
 
-// OAuth (GitHub)
+// OAuth (GitHub) - Device Authorization Flow
 export const getGitHubOAuthStatus = () =>
   request<GitHubOAuthStatusResponse>('/api/oauth/github/status');
-export const startGitHubOAuth = () =>
-  request<GitHubOAuthStartResponse>('/api/oauth/github/start');
-export const submitGitHubOAuthCode = (code: string, state: string) =>
-  request<GitHubOAuthCallbackResponse>('/api/oauth/github/callback', {
+export const startGitHubDeviceFlow = () =>
+  request<GitHubDeviceStartResponse>('/api/oauth/github/device/start', { method: 'POST' });
+export const pollGitHubDeviceFlow = (flowId: string) =>
+  request<GitHubDevicePollResponse>('/api/oauth/github/device/poll', {
     method: 'POST',
-    body: JSON.stringify({ code, state }),
+    body: JSON.stringify({ flow_id: flowId }),
   });
 export const disconnectGitHub = () =>
   request<{ success: boolean; message: string }>('/api/oauth/github', { method: 'DELETE' });
