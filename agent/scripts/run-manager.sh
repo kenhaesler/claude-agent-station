@@ -1398,11 +1398,19 @@ run_manager_plan_review() {
     local manager_fallback="claude-haiku-4-5-20251001"
     [ "$model" = "claude-haiku-4-5-20251001" ] && manager_fallback="claude-sonnet-4-6"
 
-    local manager_prompt="Review the employee's implementation plan in: $review_file
+    # Inline review content directly to avoid wasting turns re-reading the file
+    local review_content
+    review_content=$(cat "$review_file")
+
+    local manager_prompt="Review the employee's implementation plan below.
 
 Write your plan verdict to: $verdict_file
 
-Use APPROVE_PLAN if the plan is solid, REVISE_PLAN with specific feedback if it needs changes, or REJECT_PLAN if fundamentally flawed."
+Use APPROVE_PLAN if the plan is solid, REVISE_PLAN with specific feedback if it needs changes, or REJECT_PLAN if fundamentally flawed.
+
+--- BEGIN PLAN REVIEW PACKAGE ---
+$review_content
+--- END PLAN REVIEW PACKAGE ---"
 
     local stream_file="$LOG_DIR/run-${RUN_ID}-plan-review-${name}.stream.jsonl"
     local stderr_file="$LOG_DIR/run-${RUN_ID}-plan-review-${name}.stderr.log"
@@ -1672,11 +1680,17 @@ run_manager_review() {
     cmd+=(--system-prompt-file "$(resolve_prompt manager)")
     # No --allowedTools: full VM access, prompt-enforced guardrails
 
-    local manager_prompt="Review the employee work in this file: $review_package
+    # Inline review content directly to avoid wasting turns re-reading the file
+    local review_content
+    review_content=$(cat "$review_package")
 
-Write your verdicts to: $verdicts_file
+    local manager_prompt="Review the employee work below and write your verdicts to: $verdicts_file
 
-Read the review package file first, then evaluate each project's work against the criteria in your system prompt. Be strict on completeness — never approve partial implementations."
+Evaluate each project's work against the criteria in your system prompt. Be strict on completeness — never approve partial implementations.
+
+--- BEGIN REVIEW PACKAGE ---
+$review_content
+--- END REVIEW PACKAGE ---"
 
     log_info "Manager command: ${cmd[*]} '<prompt>'" >&2
 
