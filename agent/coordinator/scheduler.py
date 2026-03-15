@@ -489,7 +489,9 @@ async def _run_and_monitor(
                 employee_index,
                 task.title,
             )
+            post_task_event(config, "plan_review_start", task)
             approved_plan = await _run_plan_review_loop(task, config, employee_index)
+            post_task_event(config, "plan_review_complete", task)
             if approved_plan is None:
                 logger.warning(
                     "Plan phase failed for employee %d, marking task failed",

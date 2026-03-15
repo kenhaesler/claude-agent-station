@@ -26,7 +26,7 @@
 
 // ── Interfaces ──────────────────────────────────────────────
 
-export type RunPhase = 'idle' | 'coordinating' | 'employee' | 'manager_review' | 'executing_verdict';
+export type RunPhase = 'idle' | 'coordinating' | 'employee' | 'plan_review' | 'manager_review' | 'executing_verdict';
 
 export type EventType = 'tool_use' | 'thinking_start' | 'thinking_end' | 'guidance_sent'
   | 'phase_change' | 'run_start' | 'run_complete' | 'conflict' | 'verdict'
@@ -602,6 +602,11 @@ export class WorkspaceRenderer {
       if (phase === 'idle') {
         mult = 1.0;
         node.opacity = Math.max(node.opacity, 0.5);
+      } else if (phase === 'plan_review') {
+        // Plan review: manager is active reviewing, similar to manager_review
+        if (node.role === 'manager') mult = 0.45;
+        else if (node.isActive) mult = 0.6;
+        else mult = 0.75;
       } else if (phase === 'manager_review') {
         if (node.role === 'manager') mult = 0.45;
         else if (node.isActive) mult = 0.6;
@@ -917,7 +922,7 @@ export class WorkspaceRenderer {
       }
 
       // Shield ring
-      if (this.phase === 'manager_review' && node.role !== 'manager') {
+      if ((this.phase === 'plan_review' || this.phase === 'manager_review') && node.role !== 'manager') {
         node.shieldAngle += dtSec * 0.8;
         const targetShieldAlpha = 0.6;
         node.shieldAlpha += (targetShieldAlpha - node.shieldAlpha) * 0.05;
@@ -2016,6 +2021,7 @@ export class WorkspaceRenderer {
     switch (this.phase) {
       case 'coordinating': return [168, 85, 247];
       case 'employee': return [59, 130, 246];
+      case 'plan_review': return [251, 191, 36];
       case 'manager_review': return [245, 158, 11];
       case 'executing_verdict': return [16, 185, 129];
       default: return [59, 130, 246];
@@ -2059,6 +2065,7 @@ export class WorkspaceRenderer {
     switch (this.phase) {
       case 'coordinating': return 'COORD';
       case 'employee': return 'WORKING';
+      case 'plan_review': return 'PLAN REVIEW';
       case 'manager_review': return 'REVIEW';
       case 'executing_verdict': return 'VERDICT';
       default: return '';

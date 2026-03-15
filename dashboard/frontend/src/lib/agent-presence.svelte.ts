@@ -24,7 +24,7 @@ export interface AgentIdentity {
   currentAction: string | null;
 }
 
-export type RunPhase = 'idle' | 'coordinating' | 'employee' | 'manager_review' | 'executing_verdict';
+export type RunPhase = 'idle' | 'coordinating' | 'employee' | 'plan_review' | 'manager_review' | 'executing_verdict';
 
 export interface ConversationEntry {
   id: number;
@@ -56,6 +56,7 @@ export function getAgentColor(name: string): string {
 
 export function getAgentName(employeeIndex: number | null, mode?: string | null): string {
   if (mode === 'manager') return 'Manager';
+  if (mode === 'plan_review' || mode === 'plan_reviewing') return 'Manager';
   if (mode === 'analyst') return 'Analyst';
   if (mode === 'coordinator') return 'Coordinator';
   if (mode === 'planner' || mode === 'plan') return 'Planner';
@@ -146,6 +147,8 @@ function addConversationEntry(entry: Omit<ConversationEntry, 'id' | 'timestamp'>
 
 function derivePhase(runs: ActiveEmployeeData[]): RunPhase {
   if (runs.length === 0) return 'idle';
+  const hasPlanReview = runs.some(r => r.status === 'plan_reviewing');
+  if (hasPlanReview) return 'plan_review';
   const hasReviewing = runs.some(r => r.status === 'reviewing');
   const hasManager = runs.some(r => r.mode === 'manager');
   if (hasReviewing || hasManager) return 'manager_review';
@@ -162,7 +165,7 @@ function deriveAgents(runs: ActiveEmployeeData[]): AgentIdentity[] {
     name: 'Manager',
     color: ROLE_COLORS.manager,
     employeeIndex: null,
-    status: runs.some(r => r.mode === 'manager' || r.status === 'reviewing') ? 'active' : 'idle',
+    status: runs.some(r => r.mode === 'manager' || r.status === 'reviewing' || r.status === 'plan_reviewing') ? 'active' : 'idle',
     currentAction: null,
   });
 
@@ -205,7 +208,7 @@ function handleWsMessage(data: string) {
   const events = Array.isArray(parsed) ? parsed : [parsed];
   // Determine current agent name from active agents.
   // During manager phases the WS log stream is the manager's CLI output.
-  const isManagerPhase = agentPresence.phase === 'manager_review' || agentPresence.phase === 'executing_verdict';
+  const isManagerPhase = agentPresence.phase === 'plan_review' || agentPresence.phase === 'manager_review' || agentPresence.phase === 'executing_verdict';
   const activeAgent = isManagerPhase
     ? agentPresence.agents.find(a => a.role === 'manager')
     : (agentPresence.agents.find(a => a.status === 'active' && a.role !== 'manager')
@@ -329,6 +332,26 @@ function handleSSEEvent(data: any) {
         agentColor: getAgentColor(`dev-${data.employee_index ?? 0}`),
         type: 'phase',
         content: `Finished — ${data.turns ?? '?'} turns`,
+      });
+      refreshActiveRuns();
+      break;
+    case 'plan_review_start':
+      agentPresence.phase = 'plan_review';
+      addConversationEntry({
+        agentName: 'Manager',
+        agentColor,
+        type: 'phase',
+        content: `Plan review${data.project ? ` for ${data.project}` : ''} (employee ${data.employee_index ?? 0})`,
+      });
+      refreshActiveRuns();
+      break;
+    case 'plan_review_complete':
+      agentPresence.phase = 'employee';
+      addConversationEntry({
+        agentName: 'Manager',
+        agentColor,
+        type: 'phase',
+        content: `Plan verdict: ${data.verdict ?? 'UNKNOWN'}`,
       });
       refreshActiveRuns();
       break;
@@ -460,7 +483,7 @@ async function refreshActiveRuns() {
 
       // Final fallback: synthesize from latestRun if still nothing
       if (activeEmployees.length === 0 && latestRun && !latestRun.finished_at &&
-          (latestRun.status === 'running' || latestRun.status === 'reviewing')) {
+          (latestRun.status === 'running' || latestRun.status === 'reviewing' || latestRun.status === 'plan_reviewing')) {
         activeEmployees = [{
           run_id: latestRun.run_id,
           project_id: latestRun.project_id ?? 0,

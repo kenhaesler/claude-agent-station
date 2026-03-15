@@ -1374,8 +1374,8 @@ run_manager_plan_review() {
     project_mode=$(get_project_field "$project_index" "mode" 2>/dev/null || echo "full")
 
     local plan_file="$workspace/.claude-employee-plan-${employee_index}.json"
-    local verdict_file="$LOG_DIR/run-${RUN_ID}-plan-verdict-${name}.json"
-    local review_file="$LOG_DIR/run-${RUN_ID}-plan-review-${name}.md"
+    local verdict_file="$LOG_DIR/run-${RUN_ID}-plan-verdict-e${employee_index}-${name}.json"
+    local review_file="$LOG_DIR/run-${RUN_ID}-plan-review-e${employee_index}-${name}.md"
 
     if [ ! -f "$plan_file" ]; then
         log_warn "No plan file found for $repo employee $employee_index"
@@ -1424,10 +1424,13 @@ Use APPROVE_PLAN if the plan is solid, REVISE_PLAN with specific feedback if it 
 $review_content
 --- END PLAN REVIEW PACKAGE ---"
 
-    local stream_file="$LOG_DIR/run-${RUN_ID}-plan-review-${name}.stream.jsonl"
-    local stderr_file="$LOG_DIR/run-${RUN_ID}-plan-review-${name}.stderr.log"
+    local stream_file="$LOG_DIR/run-${RUN_ID}-plan-review-e${employee_index}-${name}.stream.jsonl"
+    local stderr_file="$LOG_DIR/run-${RUN_ID}-plan-review-e${employee_index}-${name}.stderr.log"
 
-    log_info "Running manager plan review for $repo"
+    log_info "Running manager plan review for $repo employee $employee_index"
+
+    # Emit plan_review_start webhook so dashboard attributes activity to Manager
+    webhook_event "plan_review_start" "\"project\":\"$repo\",\"employee_index\":$employee_index" >&2
 
     run_claude_agent "$model" "$manager_fallback" 5 "$(resolve_prompt manager)" \
         "$manager_prompt" "$stream_file" "$stderr_file" "$workspace" "$repo"
@@ -1435,8 +1438,8 @@ $review_content
     record_session
 
     # Parse verdict
+    local plan_verdict="APPROVE_PLAN"
     if [ -f "$verdict_file" ]; then
-        local plan_verdict
         plan_verdict=$(python3 -c "
 import json
 with open('$verdict_file') as f:
@@ -1447,18 +1450,22 @@ if verdicts:
 else:
     print('APPROVE_PLAN')
 " 2>/dev/null || echo "APPROVE_PLAN")
-        echo "$plan_verdict"
     else
         log_warn "No plan verdict file produced for $repo, defaulting to APPROVE_PLAN"
-        echo "APPROVE_PLAN"
     fi
+
+    # Emit plan_review_complete webhook so dashboard transitions back
+    webhook_event "plan_review_complete" "\"project\":\"$repo\",\"employee_index\":$employee_index,\"verdict\":\"$plan_verdict\"" >&2
+
+    echo "$plan_verdict"
 }
 
 get_plan_review_feedback() {
     local repo="$1"
+    local employee_index="${2:-0}"
     local name
     name=$(repo_name "$repo")
-    local verdict_file="$LOG_DIR/run-${RUN_ID}-plan-verdict-${name}.json"
+    local verdict_file="$LOG_DIR/run-${RUN_ID}-plan-verdict-e${employee_index}-${name}.json"
 
     if [ -f "$verdict_file" ]; then
         python3 -c "
@@ -2461,7 +2468,7 @@ print(f'Wrote {len(assignments)} assignments')
 
                 for ((pr = 0; pr <= max_plan_revisions; pr++)); do
                     local plan_feedback=""
-                    [ "$pr" -gt 0 ] && plan_feedback=$(get_plan_review_feedback "$repo")
+                    [ "$pr" -gt 0 ] && plan_feedback=$(get_plan_review_feedback "$repo" "$ei")
 
                     if ! run_employee_plan_only "$repo" "$workspace" "$i" "$ei" "$plan_feedback"; then
                         log_warn "Plan phase failed for $repo employee $ei"

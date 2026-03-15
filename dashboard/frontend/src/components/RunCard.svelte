@@ -33,7 +33,7 @@
   let loadingContext = $state(false);
   let loadingDiff = $state(false);
 
-  let isActive = $derived(run.status === 'running' || run.status === 'reviewing');
+  let isActive = $derived(run.status === 'running' || run.status === 'reviewing' || run.status === 'plan_reviewing');
 
   async function expand() {
     if (level === 0) {
@@ -79,6 +79,7 @@
     if (run.status === 'finished' || run.status === 'error') {
       return run.verdict ? 'executing_verdict' : 'idle';
     }
+    if (run.status === 'plan_reviewing') return 'plan_review';
     if (run.status === 'reviewing') return 'manager_review';
     if (run.status === 'running') return 'employee';
     if (run.status === 'coordinating') return 'coordinating';

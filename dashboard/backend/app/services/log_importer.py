@@ -188,9 +188,16 @@ def _build_run_data(
         log_file = files["streams"][0]
 
     # Extract employee_index from stream filename (e.g., employee-reponame-2.stream.jsonl)
+    # Also recognizes plan-review stream files (e.g., plan-review-e0-reponame.stream.jsonl)
+    # which are manager activity and should not be attributed to an employee.
     employee_index = 0
+    is_manager_activity = False
     for stream_file in files.get("streams", []):
         fname = stream_file.split("/")[-1]
+        if "plan-review-" in fname:
+            # Manager plan review stream — flag as manager activity
+            is_manager_activity = True
+            break
         if "employee-" in fname:
             import re
             idx_match = re.search(r'employee-[^.]+?-(\d+)\.stream', fname)
@@ -201,7 +208,7 @@ def _build_run_data(
     return {
         "run_id": f"run-{run_id}",
         "project_id": project_id,
-        "mode": None,  # Not in log files
+        "mode": "manager" if is_manager_activity else None,
         "model": result_data.get("model") if result_data else None,
         "status": result_data.get("status") if result_data else "unknown",
         "verdict": verdict,
