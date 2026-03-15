@@ -1,34 +1,29 @@
 <script lang="ts">
-  import { getIntelligenceInsights, getIntelligenceDecisions, getBackpressure } from '../lib/api';
-  import type { IntelligenceInsights, IntelligenceDecision, BackpressureStatus } from '../lib/types';
+  import { getIntelligenceDecisions } from '../lib/api';
+  import { intelligenceCache } from '../lib/intelligence-cache.svelte';
+  import type { IntelligenceDecision } from '../lib/types';
   import GlassCard from './GlassCard.svelte';
   import EscalationTimeline from './EscalationTimeline.svelte';
   import ConfidenceCalibration from './ConfidenceCalibration.svelte';
 
-  let insights = $state<IntelligenceInsights | null>(null);
+  let insights = $derived(intelligenceCache.insights);
+  let pressure = $derived(intelligenceCache.backpressure);
   let decisions = $state<IntelligenceDecision[]>([]);
-  let pressure = $state<BackpressureStatus | null>(null);
   let expanded = $state(false);
   let loading = $state(false);
 
-  async function loadData() {
+  async function loadDecisions() {
     loading = true;
     try {
-      const [insightsRes, decisionsRes, pressureRes] = await Promise.allSettled([
-        getIntelligenceInsights(),
-        getIntelligenceDecisions({ limit: 10 }),
-        getBackpressure(),
-      ]);
-      if (insightsRes.status === 'fulfilled') insights = insightsRes.value;
-      if (decisionsRes.status === 'fulfilled') decisions = decisionsRes.value;
-      if (pressureRes.status === 'fulfilled') pressure = pressureRes.value;
+      const res = await getIntelligenceDecisions({ limit: 10 });
+      decisions = res;
     } catch { /* silent */ }
     finally { loading = false; }
   }
 
   function toggle() {
     expanded = !expanded;
-    if (expanded && !insights) loadData();
+    if (expanded) loadDecisions();
   }
 
   function pressureColor(level: string): string {
@@ -60,8 +55,8 @@
 
   $effect(() => {
     if (expanded) {
-      loadData();
-      const interval = setInterval(loadData, 30000);
+      loadDecisions();
+      const interval = setInterval(loadDecisions, 30000);
       return () => clearInterval(interval);
     }
   });

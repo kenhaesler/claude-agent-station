@@ -860,8 +860,12 @@ export class WorkspaceRenderer {
     if (!this.running) return;
     const dt = Math.min(now - this.lastTime, 50);
     this.lastTime = now;
-    this.update(dt);
-    this.draw();
+    try {
+      this.update(dt);
+      this.draw();
+    } catch {
+      // Swallow draw/update errors to keep the animation loop alive
+    }
     this.rafId = requestAnimationFrame(this.tick);
   };
 

@@ -48,7 +48,7 @@ export async function refreshIntelligence() {
 
 export function startIntelligenceRefresh() {
   if (refreshTimer) return;
-  refreshIntelligence();
+  setTimeout(refreshIntelligence, 0);
   refreshTimer = setInterval(refreshIntelligence, REFRESH_INTERVAL);
 }
 

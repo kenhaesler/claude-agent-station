@@ -189,20 +189,26 @@ async def get_usage():
     )
 
     usage_path = Path(settings.log_dir) / "usage-tracking.json"
-    if not usage_path.exists():
-        return {
-            "sessions_used": 0,
-            "max_usage_percent": max_usage_pct,
-            "window_start": time.time(),
-            "window_remaining_hours": 24.0,
-            "usage_percent": 0.0,
-        }
+    empty_usage = {
+        "sessions_used": 0,
+        "max_usage_percent": max_usage_pct,
+        "window_start": time.time(),
+        "window_remaining_hours": 24.0,
+        "usage_percent": 0.0,
+    }
+    if not usage_path.exists() or usage_path.stat().st_size == 0:
+        return empty_usage
 
     def _read_usage():
         with open(usage_path) as f:
-            return json.load(f)
+            content = f.read().strip()
+            if not content:
+                return None
+            return json.loads(content)
 
     data = await asyncio.to_thread(_read_usage)
+    if data is None:
+        return empty_usage
 
     sessions_used = data.get("sessions_used", 0)
     window_start = data.get("window_start", time.time())
