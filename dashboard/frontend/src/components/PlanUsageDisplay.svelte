@@ -1,22 +1,19 @@
 <script lang="ts">
-  import { getUsage, getTokenUsage, getPlanUsage } from '../lib/api';
-  import type { UsageData, TokenUsageData, PlanUsageData } from '../lib/types';
+  import { getTokenUsage, getPlanUsage } from '../lib/api';
+  import type { TokenUsageData, PlanUsageData } from '../lib/types';
   import ArcGauge from './ArcGauge.svelte';
 
   let loading = $state(true);
   let error = $state('');
-  let usage = $state<UsageData | null>(null);
   let tokenUsage = $state<TokenUsageData | null>(null);
   let planUsage = $state<PlanUsageData | null>(null);
 
   async function loadUsage() {
     try {
-      const [usageRes, tokenRes, planRes] = await Promise.allSettled([
-        getUsage(),
+      const [tokenRes, planRes] = await Promise.allSettled([
         getTokenUsage(),
         getPlanUsage(),
       ]);
-      if (usageRes.status === 'fulfilled') usage = usageRes.value;
       if (tokenRes.status === 'fulfilled') tokenUsage = tokenRes.value;
       if (planRes.status === 'fulfilled') planUsage = planRes.value;
       error = '';
@@ -33,14 +30,6 @@
     return () => clearInterval(interval);
   });
 
-  function formatHours(h: number): string {
-    const hrs = Math.floor(h);
-    const mins = Math.round((h - hrs) * 60);
-    if (hrs === 0) return `${mins}m`;
-    if (mins === 0) return `${hrs}h`;
-    return `${hrs}h ${mins}m`;
-  }
-
   function formatTokens(n: number): string {
     if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
     if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
@@ -48,10 +37,10 @@
   }
 
   let sessionColor = $derived(
-    !usage ? '#94a3b8' :
-    usage.usage_percent >= 80 ? '#ef4444' :
-    usage.usage_percent >= 60 ? '#f59e0b' :
-    usage.usage_percent >= 30 ? '#6366f1' : '#10b981'
+    !planUsage ? '#94a3b8' :
+    planUsage.session_usage_percent >= 80 ? '#ef4444' :
+    planUsage.session_usage_percent >= 60 ? '#f59e0b' :
+    planUsage.session_usage_percent >= 30 ? '#6366f1' : '#10b981'
   );
 
   let tokenColor = $derived(
@@ -81,17 +70,12 @@
     <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
       <!-- Session Usage -->
       <div class="flex items-center gap-3 bg-white/[0.02] rounded-lg px-3 py-3 border border-border/20">
-        <ArcGauge value={usage?.usage_percent ?? 0} size={56} color={sessionColor} label="SESSION" />
+        <ArcGauge value={planUsage?.session_usage_percent ?? 0} size={56} color={sessionColor} label="SESSION" />
         <div class="min-w-0">
           <div class="text-sm font-medium text-text">Session</div>
           <div class="text-xs text-text-dim font-data">
-            {usage?.sessions_used ?? 0} used
+            {formatTokens(planUsage?.session_tokens_used ?? 0)} / {formatTokens(planUsage?.session_tokens_limit ?? 0)}
           </div>
-          {#if usage && usage.window_remaining_hours > 0}
-            <div class="text-[10px] text-text-dim font-data mt-0.5">
-              Resets in {formatHours(usage.window_remaining_hours)}
-            </div>
-          {/if}
         </div>
       </div>
 

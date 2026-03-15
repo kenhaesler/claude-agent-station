@@ -27,7 +27,7 @@ class CoordinatorConfig:
     employee_model: str = "claude-opus-4-6"
     webhook_url: str = "http://127.0.0.1:8420/api/webhook/run-event"
     webhook_secret: str = ""
-    db_path: str = "/opt/git/claude-agent-station/dashboard/backend/station.db"
+    db_path: str = "/var/lib/claude-agent-station/station.db"
 
     # Coordinator-specific
     stream_poll_interval: float = 0.5
