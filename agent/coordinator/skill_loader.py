@@ -25,6 +25,9 @@ def load_skills(skill_names: list[str]) -> str:
 
     sections: list[str] = []
     for name in skill_names:
+        if not name.replace("-", "").replace("_", "").isalnum():
+            logger.warning("Invalid skill name, skipping: %s", name)
+            continue
         skill_file = SKILLS_DIR / f"{name}.md"
         if not skill_file.is_file():
             logger.warning("Skill file not found, skipping: %s", skill_file)

@@ -48,6 +48,10 @@ class Settings(BaseSettings):
     # Optional redirect URI for GitHub OAuth callback
     github_oauth_redirect_uri: str = ""
 
+    # Secret for verifying GitHub webhook HMAC-SHA256 signatures.
+    # Set via STATION_GITHUB_WEBHOOK_SECRET env var.
+    github_webhook_secret: str | None = None
+
     # CORS allowed origins for cross-origin requests (e.g. frontend dev server)
     # Override with STATION_ALLOWED_ORIGINS as a JSON list or comma-separated string
     allowed_origins: list[str] = [

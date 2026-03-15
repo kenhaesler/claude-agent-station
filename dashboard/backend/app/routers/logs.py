@@ -7,6 +7,7 @@ import contextlib
 import json
 import os
 import secrets
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
@@ -46,7 +47,7 @@ async def stream_logs(
     if file:
         filepath = os.path.realpath(file)
         log_dir_real = os.path.realpath(settings.log_dir)
-        if not filepath.startswith(log_dir_real):
+        if not Path(filepath).is_relative_to(log_dir_real):
             await websocket.send_json({"error": "Path outside log directory"})
             await websocket.close()
             return

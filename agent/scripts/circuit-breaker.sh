@@ -25,31 +25,26 @@ fi
 # Function to get failure count for agent
 get_failure_count() {
     local agent="$1"
-    local count=$(grep "\"$agent\":" "$CIRCUIT_FILE" 2>/dev/null | grep -oE '[0-9]+' | tail -1)
+    local count
+    count=$(jq -r --arg a "$agent" '.[$a] // 0' "$CIRCUIT_FILE" 2>/dev/null)
     echo "${count:-0}"
 }
 
 # Function to increment failure count
 increment_failure() {
     local agent="$1"
-    local current=$(get_failure_count "$agent")
+    local current
+    current=$(get_failure_count "$agent")
     local new_count=$((current + 1))
-
-    # Update or add entry
-    if grep -q "\"$agent\":" "$CIRCUIT_FILE"; then
-        sed -i.bak "s/\"$agent\": [0-9]*/\"$agent\": $new_count/" "$CIRCUIT_FILE"
-    else
-        # Add new entry
-        sed -i.bak "s/}/  \"$agent\": $new_count\n}/" "$CIRCUIT_FILE"
-    fi
+    local tmp="${CIRCUIT_FILE}.tmp"
+    jq --arg a "$agent" --argjson n "$new_count" '.[$a] = $n' "$CIRCUIT_FILE" > "$tmp" && mv "$tmp" "$CIRCUIT_FILE"
 }
 
 # Function to reset circuit
 reset_circuit() {
     local agent="$1"
-    if grep -q "\"$agent\":" "$CIRCUIT_FILE"; then
-        sed -i.bak "s/\"$agent\": [0-9]*/\"$agent\": 0/" "$CIRCUIT_FILE"
-    fi
+    local tmp="${CIRCUIT_FILE}.tmp"
+    jq --arg a "$agent" '.[$a] = 0' "$CIRCUIT_FILE" > "$tmp" && mv "$tmp" "$CIRCUIT_FILE"
 }
 
 # Function to check if circuit is open
