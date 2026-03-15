@@ -287,13 +287,15 @@ export interface OAuthCallbackResponse {
   error?: string;
 }
 
-export interface GitHubOAuthStartResponse {
-  auth_url: string;
-  state: string;
+export interface GitHubDeviceStartResponse {
+  flow_id: string;
+  user_code: string;
+  verification_uri: string;
+  expires_in: number;
 }
 
-export interface GitHubOAuthCallbackResponse {
-  success: boolean;
+export interface GitHubDevicePollResponse {
+  status: 'pending' | 'complete' | 'expired' | 'error';
   username?: string;
   error?: string;
 }

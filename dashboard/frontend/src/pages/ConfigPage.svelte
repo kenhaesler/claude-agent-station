@@ -11,7 +11,7 @@
     getConfig, updateConfig, testNotification,
     getSystemStatus, getAuthStatus, serviceAction, triggerRun,
     startOAuthLogin, submitOAuthCode,
-    getGitHubOAuthStatus, startGitHubOAuth, submitGitHubOAuthCode, disconnectGitHub,
+    getGitHubOAuthStatus, startGitHubDeviceFlow, pollGitHubDeviceFlow, disconnectGitHub,
     listPrompts, updatePrompt, resetPrompt, type PromptData,
     searchLogs,
   } from '../lib/api';
@@ -223,13 +223,16 @@
   let oauthCode = $state('');
   let oauthError = $state('');
 
-  // GitHub OAuth state
+  // GitHub Device Flow state
+  type GitHubFlowState = 'idle' | 'device_auth' | 'done';
   let githubStatus = $state<GitHubOAuthStatusResponse | null>(null);
-  let githubOAuthFlow = $state<OAuthFlowState>('idle');
-  let githubOAuthState = $state('');
-  let githubOAuthCode = $state('');
-  let githubOAuthError = $state('');
+  let githubFlow = $state<GitHubFlowState>('idle');
+  let githubDeviceCode = $state('');
+  let githubVerificationUri = $state('');
+  let githubFlowId = $state('');
+  let githubError = $state('');
   let githubDisconnecting = $state(false);
+  let githubPollTimer = $state<ReturnType<typeof setInterval> | null>(null);
 
   async function loadSystem() {
     try {
@@ -273,37 +276,50 @@
     } catch (e: any) { oauthError = e.message; oauthFlow = 'waiting_for_code'; }
   }
 
-  async function handleGitHubOAuthStart() {
-    githubOAuthError = '';
+  async function handleGitHubConnect() {
+    githubError = '';
     try {
-      const res = await startGitHubOAuth();
-      githubOAuthState = res.state; githubOAuthFlow = 'waiting_for_code'; githubOAuthCode = '';
-      window.open(res.auth_url, '_blank');
+      const res = await startGitHubDeviceFlow();
+      githubFlowId = res.flow_id;
+      githubDeviceCode = res.user_code;
+      githubVerificationUri = res.verification_uri;
+      githubFlow = 'device_auth';
+      window.open(res.verification_uri, '_blank');
+      githubPollTimer = setInterval(pollGitHubDevice, 6000);
     } catch (e: any) {
-      const msg = e.message || '';
-      if (msg.includes('not configured') || msg.includes('STATION_GITHUB_CLIENT_ID')) {
-        githubOAuthError = 'GitHub OAuth not configured. Set STATION_GITHUB_CLIENT_ID and STATION_GITHUB_CLIENT_SECRET environment variables on the server.';
-      } else {
-        githubOAuthError = msg;
-      }
+      githubError = e.message;
     }
   }
 
-  async function handleGitHubOAuthSubmit() {
-    if (!githubOAuthCode.trim()) return;
-    githubOAuthError = ''; githubOAuthFlow = 'submitting';
+  async function pollGitHubDevice() {
     try {
-      const res = await submitGitHubOAuthCode(githubOAuthCode.trim(), githubOAuthState);
-      if (res.success) {
-        githubOAuthFlow = 'done';
+      const res = await pollGitHubDeviceFlow(githubFlowId);
+      if (res.status === 'complete') {
+        stopGitHubPoll();
+        githubFlow = 'done';
         toastSuccess(`GitHub connected as ${res.username || 'unknown'}`);
         await loadGitHubStatus();
-        setTimeout(() => { githubOAuthFlow = 'idle'; }, 2000);
-      } else {
-        githubOAuthError = res.error || 'Token exchange failed';
-        githubOAuthFlow = 'waiting_for_code';
+        setTimeout(() => { githubFlow = 'idle'; }, 2000);
+      } else if (res.status === 'expired' || res.status === 'error') {
+        stopGitHubPoll();
+        githubError = res.error || 'Authorization expired. Try again.';
+        githubFlow = 'idle';
       }
-    } catch (e: any) { githubOAuthError = e.message; githubOAuthFlow = 'waiting_for_code'; }
+    } catch (e: any) {
+      stopGitHubPoll();
+      githubError = e.message;
+      githubFlow = 'idle';
+    }
+  }
+
+  function stopGitHubPoll() {
+    if (githubPollTimer) { clearInterval(githubPollTimer); githubPollTimer = null; }
+  }
+
+  function cancelGitHubConnect() {
+    stopGitHubPoll();
+    githubFlow = 'idle';
+    githubError = '';
   }
 
   async function handleGitHubDisconnect() {
@@ -385,7 +401,10 @@
     loadGitHubStatus();
     loadPrompts();
     const sysInterval = setInterval(loadSystem, 10000);
-    return () => clearInterval(sysInterval);
+    return () => {
+      clearInterval(sysInterval);
+      if (githubPollTimer) clearInterval(githubPollTimer);
+    };
   });
 
   // Sync tab from route param
@@ -819,10 +838,10 @@
         {#if githubStatus?.error}
           <p class="text-[10px] text-warning">{githubStatus.error}</p>
         {/if}
-        {#if githubOAuthFlow === 'idle'}
+        {#if githubFlow === 'idle'}
           <div class="flex items-center gap-2">
             {#if githubStatus?.connected}
-              <button onclick={handleGitHubOAuthStart} class="px-3 py-1 text-xs bg-info text-white rounded-md cursor-pointer hover:opacity-90 transition-opacity">
+              <button onclick={handleGitHubConnect} class="px-3 py-1 text-xs bg-info text-white rounded-md cursor-pointer hover:opacity-90 transition-opacity">
                 Reconnect
               </button>
               <button onclick={handleGitHubDisconnect} disabled={githubDisconnecting}
@@ -830,29 +849,36 @@
                 {githubDisconnecting ? 'Disconnecting...' : 'Disconnect'}
               </button>
             {:else}
-              <button onclick={handleGitHubOAuthStart} class="px-3 py-1 text-xs bg-info text-white rounded-md cursor-pointer hover:opacity-90 transition-opacity">
+              <button onclick={handleGitHubConnect} class="px-3 py-1 text-xs bg-info text-white rounded-md cursor-pointer hover:opacity-90 transition-opacity">
                 Connect GitHub
               </button>
             {/if}
           </div>
-        {:else if githubOAuthFlow === 'waiting_for_code'}
-          <div class="space-y-2">
-            <p class="text-xs text-text-dim">Paste the authorization code from the new tab:</p>
-            <div class="flex gap-2">
-              <input type="text" bind:value={githubOAuthCode} placeholder="Auth code"
-                class="flex-1 px-3 py-1 text-sm bg-white/[0.04] border border-border/50 rounded-lg focus:outline-none transition-colors"
-                onkeydown={(e: KeyboardEvent) => { if (e.key === 'Enter') handleGitHubOAuthSubmit(); }} />
-              <button onclick={handleGitHubOAuthSubmit} disabled={!githubOAuthCode.trim()} class="px-3 py-1 text-xs bg-info text-white rounded-md cursor-pointer disabled:opacity-50">Submit</button>
-              <button onclick={() => { githubOAuthFlow = 'idle'; githubOAuthCode = ''; githubOAuthError = ''; }} class="px-3 py-1 text-xs glass rounded-md text-text-dim cursor-pointer">Cancel</button>
+        {:else if githubFlow === 'device_auth'}
+          <div class="space-y-3">
+            <p class="text-xs text-text-dim">Enter this code on GitHub:</p>
+            <div class="flex items-center gap-2">
+              <code class="px-4 py-2 text-lg font-mono font-bold bg-white/[0.06] border border-border/50 rounded-lg tracking-widest select-all">
+                {githubDeviceCode}
+              </code>
+              <button onclick={() => navigator.clipboard.writeText(githubDeviceCode)}
+                class="px-2 py-1 text-xs glass rounded-md text-text-dim cursor-pointer">Copy</button>
+            </div>
+            <div class="flex items-center gap-2 text-xs text-text-dim">
+              <LoadingSpinner /> Waiting for authorization...
+            </div>
+            <div class="flex items-center gap-2">
+              <button onclick={() => window.open(githubVerificationUri, '_blank')}
+                class="px-3 py-1 text-xs bg-info text-white rounded-md cursor-pointer hover:opacity-90 transition-opacity">Open GitHub</button>
+              <button onclick={cancelGitHubConnect}
+                class="px-3 py-1 text-xs glass rounded-md text-text-dim cursor-pointer">Cancel</button>
             </div>
           </div>
-        {:else if githubOAuthFlow === 'submitting'}
-          <div class="flex items-center gap-2 text-xs text-text-dim"><LoadingSpinner /> Exchanging...</div>
-        {:else if githubOAuthFlow === 'done'}
+        {:else if githubFlow === 'done'}
           <p class="text-xs text-approve">Connected!</p>
         {/if}
-        {#if githubOAuthError}
-          <p class="text-xs text-reject">{githubOAuthError}</p>
+        {#if githubError}
+          <p class="text-xs text-reject">{githubError}</p>
         {/if}
       </GlassCard>
     {/if}
