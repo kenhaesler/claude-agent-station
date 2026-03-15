@@ -244,7 +244,8 @@ async def receive_run_event(
             db.add(run)
         else:
             run.status = "running"
-            run.verdict = event.verdict or run.verdict
+            # Do NOT set run.verdict here — plan review results like
+            # APPROVE_PLAN are not final verdicts (APPROVE/REJECT/PR).
             run.trace_id = event.trace_id or run.trace_id
 
     elif event_name in ("task_started", "task_completed", "task_failed", "task_ready", "task_blocked"):
