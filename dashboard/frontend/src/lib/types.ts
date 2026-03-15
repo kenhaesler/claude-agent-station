@@ -7,6 +7,7 @@ export interface Project {
   branch: string;
   custom_instructions: string | null;
   setup_script: string | null;
+  security_review_enabled: boolean;
   created_at: string | null;
   updated_at: string | null;
 }
@@ -19,6 +20,7 @@ export interface ProjectCreate {
   branch?: string;
   custom_instructions?: string | null;
   setup_script?: string | null;
+  security_review_enabled?: boolean;
 }
 
 export interface ProjectUpdate {
@@ -28,6 +30,7 @@ export interface ProjectUpdate {
   branch?: string;
   custom_instructions?: string | null;
   setup_script?: string | null;
+  security_review_enabled?: boolean;
 }
 
 export interface Run {

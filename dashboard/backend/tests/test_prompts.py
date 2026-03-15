@@ -49,7 +49,7 @@ async def test_list_prompts(client):
     assert resp.status_code == 200
     data = resp.json()
     assert isinstance(data, list)
-    assert len(data) == 5  # manager, employee, analyst, planner, assigner
+    assert len(data) == 6  # manager, employee, analyst, planner, assigner, security-reviewer
     roles = [p["role"] for p in data]
     assert "manager" in roles
     assert "employee" in roles

@@ -116,6 +116,7 @@ async def sync_db_to_config(db: AsyncSession) -> None:
             **({"branch": p.branch} if p.branch != "main" else {}),
             **({"custom_instructions": p.custom_instructions} if p.custom_instructions else {}),
             **({"setup_script": p.setup_script} if p.setup_script else {}),
+            **({"security_review_enabled": True} if p.security_review_enabled else {}),
         }
         for p in projects
         if True  # include disabled projects so they're not lost
