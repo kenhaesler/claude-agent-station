@@ -1,5 +1,6 @@
 <script lang="ts">
   import { themeStore } from '../lib/theme.svelte';
+  import type { ThemeColors } from '../lib/themes';
 
   let expanded = $state(false);
 
@@ -16,7 +17,7 @@
   }
 
   /** 5-swatch preview of a theme's key colors */
-  function swatches(colors: Record<string, string>): string[] {
+  function swatches(colors: ThemeColors): string[] {
     return [
       colors['--color-bg'],
       colors['--color-surface'],

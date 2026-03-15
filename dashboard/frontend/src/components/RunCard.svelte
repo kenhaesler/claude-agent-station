@@ -92,7 +92,7 @@
     class="w-full flex items-center gap-3 px-3 py-2.5 text-left cursor-pointer hover:bg-white/[0.02] transition-colors"
   >
     <!-- Status orb -->
-    <StatusOrb active={isActive} color={isActive ? '#3b82f6' : run.verdict === 'APPROVE' ? '#22c55e' : run.verdict === 'REJECT' ? '#ef4444' : undefined} />
+    <StatusOrb active={isActive} color={isActive ? 'var(--color-info)' : run.verdict === 'APPROVE' ? 'var(--color-approve)' : run.verdict === 'REJECT' ? 'var(--color-reject)' : undefined} />
 
     <!-- Agent name + project -->
     <div class="flex items-center gap-2 min-w-0 flex-1">

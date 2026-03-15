@@ -27,15 +27,15 @@
   }
 
   let usageColor = $derived(
-    maxUsagePercent <= 50 ? '#10b981' :
-    maxUsagePercent <= 70 ? '#6366f1' :
-    maxUsagePercent <= 85 ? '#f59e0b' : '#ef4444'
+    maxUsagePercent <= 50 ? 'var(--color-accent-emerald)' :
+    maxUsagePercent <= 70 ? 'var(--color-accent-blue)' :
+    maxUsagePercent <= 85 ? 'var(--color-warning)' : 'var(--color-reject)'
   );
 
   let reserveColor = $derived(
-    reservePercent >= 40 ? '#10b981' :
-    reservePercent >= 20 ? '#6366f1' :
-    reservePercent >= 10 ? '#f59e0b' : '#ef4444'
+    reservePercent >= 40 ? 'var(--color-accent-emerald)' :
+    reservePercent >= 20 ? 'var(--color-accent-blue)' :
+    reservePercent >= 10 ? 'var(--color-warning)' : 'var(--color-reject)'
   );
 
   let unallocated = $derived(Math.max(0, 100 - maxUsagePercent - reservePercent));
@@ -132,8 +132,8 @@
     appearance: none;
     height: 6px;
     border-radius: 3px;
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(71, 85, 105, 0.3);
+    background: var(--color-surface);
+    border: 1px solid var(--color-border-subtle);
     outline: none;
     cursor: pointer;
   }
@@ -144,30 +144,30 @@
     width: 18px;
     height: 18px;
     border-radius: 50%;
-    background: var(--slider-color, #6366f1);
-    border: 2px solid rgba(255, 255, 255, 0.15);
-    box-shadow: 0 0 10px color-mix(in srgb, var(--slider-color, #6366f1) 40%, transparent);
+    background: var(--slider-color, var(--color-accent-blue));
+    border: 2px solid var(--color-border-subtle);
+    box-shadow: 0 0 10px color-mix(in srgb, var(--slider-color, var(--color-accent-blue)) 40%, transparent);
     cursor: pointer;
     transition: box-shadow 0.2s ease;
   }
 
   .usage-slider::-webkit-slider-thumb:hover {
-    box-shadow: 0 0 16px color-mix(in srgb, var(--slider-color, #6366f1) 60%, transparent);
+    box-shadow: 0 0 16px color-mix(in srgb, var(--slider-color, var(--color-accent-blue)) 60%, transparent);
   }
 
   .usage-slider::-moz-range-thumb {
     width: 18px;
     height: 18px;
     border-radius: 50%;
-    background: var(--slider-color, #6366f1);
-    border: 2px solid rgba(255, 255, 255, 0.15);
-    box-shadow: 0 0 10px color-mix(in srgb, var(--slider-color, #6366f1) 40%, transparent);
+    background: var(--slider-color, var(--color-accent-blue));
+    border: 2px solid var(--color-border-subtle);
+    box-shadow: 0 0 10px color-mix(in srgb, var(--slider-color, var(--color-accent-blue)) 40%, transparent);
     cursor: pointer;
   }
 
   .usage-slider::-moz-range-track {
     height: 6px;
     border-radius: 3px;
-    background: rgba(255, 255, 255, 0.04);
+    background: var(--color-surface);
   }
 </style>

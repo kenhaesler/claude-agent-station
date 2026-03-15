@@ -37,18 +37,32 @@ export interface ConversationEntry {
 }
 
 // --- Role color map ---
+// Uses CSS variables from the active theme. The themeStore.getRoleColors()
+// method returns the current theme's agent colors so they update when the
+// user switches themes. The inline fallback map is kept only for server-side
+// or pre-hydration contexts where the theme store hasn't initialised.
 
-const ROLE_COLORS: Record<string, string> = {
-  manager: '#f59e0b',
-  'dev-0': '#3b82f6',
-  'dev-1': '#6366f1',
-  'dev-2': '#06b6d4',
-  coordinator: '#a855f7',
-  analyst: '#8b5cf6',
-};
+import { themeStore } from './theme.svelte';
+
+function getRoleColors(): Record<string, string> {
+  try {
+    return themeStore.getRoleColors();
+  } catch {
+    // Fallback if theme store isn't initialised yet (SSR, tests, etc.)
+    return {
+      manager: '#f59e0b',
+      'dev-0': '#3b82f6',
+      'dev-1': '#6366f1',
+      'dev-2': '#06b6d4',
+      coordinator: '#a855f7',
+      analyst: '#8b5cf6',
+    };
+  }
+}
 
 export function getAgentColor(name: string): string {
-  return ROLE_COLORS[name.toLowerCase()] ?? ROLE_COLORS['dev-0'];
+  const colors = getRoleColors();
+  return colors[name.toLowerCase()] ?? colors['dev-0'];
 }
 
 export function getAgentName(employeeIndex: number | null, mode?: string | null): string {
@@ -155,7 +169,7 @@ function deriveAgents(runs: ActiveEmployeeData[]): AgentIdentity[] {
   agents.push({
     role: 'manager',
     name: 'Manager',
-    color: ROLE_COLORS.manager,
+    color: getRoleColors().manager,
     employeeIndex: null,
     status: runs.some(r => r.mode === 'manager' || r.status === 'reviewing') ? 'active' : 'idle',
     currentAction: null,
@@ -193,7 +207,7 @@ function handleWsMessage(data: string) {
     : (agentPresence.agents.find(a => a.status === 'active' && a.role !== 'manager')
        ?? agentPresence.agents.find(a => a.status === 'active'));
   const agentName = activeAgent?.name ?? 'Dev-0';
-  const agentColor = activeAgent?.color ?? ROLE_COLORS['dev-0'];
+  const agentColor = activeAgent?.color ?? getRoleColors()['dev-0'];
 
   for (const evt of events) {
     if (evt.type === 'assistant_tool_use') {
@@ -302,7 +316,7 @@ function connectSSE() {
 
 function handleSSEEvent(data: any) {
   const eventType = data.event ?? data.type;
-  const agentColor = ROLE_COLORS.manager;
+  const agentColor = getRoleColors().manager;
 
   switch (eventType) {
     case 'run_start':
@@ -362,7 +376,7 @@ function handleSSEEvent(data: any) {
     case 'conflict_detected':
       addConversationEntry({
         agentName: 'Coordinator',
-        agentColor: ROLE_COLORS.coordinator,
+        agentColor: getRoleColors().coordinator,
         type: 'system',
         content: `Conflict detected: ${data.message ?? 'overlapping file changes'}`,
       });
