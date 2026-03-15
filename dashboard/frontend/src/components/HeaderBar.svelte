@@ -128,10 +128,10 @@
   <!-- Right: status + trigger + panel toggle -->
   <div class="flex items-center gap-2 md:gap-3">
     <!-- Service status -->
-    <div class="flex items-center gap-1">
+    <div class="flex items-center gap-1" title={serviceActive ? 'claude-agent.service is running' : 'claude-agent.service is stopped — waiting for next scheduled run'}>
       <StatusOrb active={serviceActive} />
       <span class="text-[10px] text-text-dim hidden sm:inline">
-        {serviceActive ? 'Active' : 'Down'}
+        {serviceActive ? 'Agent' : 'Agent Off'}
       </span>
     </div>
 

@@ -1,0 +1,54 @@
+{
+  "projects": [
+    {
+      "repo": "laboef1900/scenepilot",
+      "priority": "medium",
+      "mode": "full"
+    },
+    {
+      "repo": "laboef1900/ai-kb-creator",
+      "priority": "medium",
+      "mode": "full"
+    }
+  ],
+  "models": {
+    "manager": "claude-sonnet-4-6",
+    "employee": "claude-sonnet-4-6",
+    "analyst": "claude-sonnet-4-6",
+    "planner": "claude-sonnet-4-6"
+  },
+  "limits": {
+    "max_concurrent_employees": 1,
+    "max_employees_per_project": 1,
+    "max_employee_turns": 200,
+    "max_manager_turns": 30,
+    "max_analyst_turns": 50,
+    "max_planner_turns": 50,
+    "max_usage_percent": 80,
+    "max_rejection_retries": 1,
+    "reserve_percent": 20
+  },
+  "logging": {
+    "log_dir": "/var/log/claude-agent",
+    "digest_dir": "/var/log/claude-agent/digests"
+  },
+  "notifications": {
+    "enabled": false,
+    "method": "file"
+  },
+  "dashboard": {
+    "webhook_url": "http://127.0.0.1:8420/api/webhook",
+    "webhook_secret": ""
+  },
+  "planning": {
+    "enabled": true,
+    "max_revisions": 2
+  },
+  "coordinator": {
+    "enabled": true
+  },
+  "intelligence": {
+    "auto_mode_selection": false,
+    "independent_verification": false
+  }
+}
