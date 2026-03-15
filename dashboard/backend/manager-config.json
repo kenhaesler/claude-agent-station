@@ -37,7 +37,7 @@
     "method": "file"
   },
   "dashboard": {
-    "webhook_url": "http://127.0.0.1:8420/api/webhook",
+    "webhook_url": "http://127.0.0.1:8420/api/webhook/run-event",
     "webhook_secret": ""
   },
   "planning": {
