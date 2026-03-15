@@ -209,12 +209,13 @@ async def list_sessions(db: AsyncSession = Depends(get_db)):
     )
     sessions = result.scalars().all()
 
-    # Count messages per session
-    msg_result = await db.execute(select(BrainstormMessage))
-    all_messages = msg_result.scalars().all()
-    msg_counts: dict[str, int] = {}
-    for m in all_messages:
-        msg_counts[m.session_id] = msg_counts.get(m.session_id, 0) + 1
+    # Count messages per session using SQL GROUP BY
+    from sqlalchemy import func
+    count_result = await db.execute(
+        select(BrainstormMessage.session_id, func.count(BrainstormMessage.id))
+        .group_by(BrainstormMessage.session_id)
+    )
+    msg_counts: dict[str, int] = {row[0]: row[1] for row in count_result.all()}
 
     # Get project repos
     project_ids = {s.project_id for s in sessions if s.project_id is not None}
@@ -340,17 +341,19 @@ async def send_message(
         content=body.content,
         created_at=now,
     )
-    db.add(user_msg)
-
-    # Auto-title from first user message
+    # Fetch existing messages BEFORE adding the new one (avoid autoflush duplication)
     msg_count_result = await db.execute(
-        select(BrainstormMessage).where(BrainstormMessage.session_id == session_id)
+        select(BrainstormMessage)
+        .where(BrainstormMessage.session_id == session_id)
+        .order_by(BrainstormMessage.created_at)
     )
     existing_msgs = msg_count_result.scalars().all()
+
+    # Auto-title from first user message
     if len(existing_msgs) == 0 and session.title == "New brainstorm":
-        # Use first ~60 chars of first message as title
         session.title = body.content[:60].rstrip() + ("..." if len(body.content) > 60 else "")
 
+    db.add(user_msg)
     session.updated_at = now
     await db.commit()
 
@@ -397,7 +400,7 @@ async def send_message(
 
         except Exception as e:
             logger.exception("Error streaming brainstorm response")
-            error_data = json.dumps({"type": "error", "message": str(e)})
+            error_data = json.dumps({"type": "error", "message": "An error occurred while generating the response. Check server logs for details."})
             yield f"data: {error_data}\n\n"
             return
 
