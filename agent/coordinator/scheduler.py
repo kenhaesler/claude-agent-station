@@ -245,6 +245,26 @@ async def _run_plan_review_loop(
     return None
 
 
+async def _is_issue_open(project_repo: str, issue_number: int, workspaces_dir: str) -> bool:
+    """Check if a GitHub issue is still open. Returns True if open or on error (fail-open)."""
+    repo_name = project_repo.split("/")[-1] if "/" in project_repo else project_repo
+    cwd = os.path.join(workspaces_dir, repo_name)
+    try:
+        result = await asyncio.to_thread(
+            subprocess.run,
+            ["gh", "issue", "view", str(issue_number), "--repo", project_repo, "--json", "state"],
+            capture_output=True, text=True, timeout=15, cwd=cwd,
+        )
+        if result.returncode == 0:
+            data = json.loads(result.stdout)
+            state = data.get("state", "OPEN").upper()
+            return state == "OPEN"
+    except Exception as e:
+        logger.warning("Failed to check issue #%d state (fail-open): %s", issue_number, e)
+    # Fail-open: if we can't determine state, allow work to proceed
+    return True
+
+
 async def run_scheduler(dag: TaskDAG, config: CoordinatorConfig) -> None:
     """Main scheduling loop. Spawns employees for ready tasks, monitors progress."""
     semaphore = asyncio.Semaphore(config.max_concurrent)
@@ -333,6 +353,20 @@ async def run_scheduler(dag: TaskDAG, config: CoordinatorConfig) -> None:
                     continue
             except Exception as e:
                 logger.debug("Plan usage pre-spawn check failed (non-fatal): %s", e)
+
+            # Freshness check: verify issue is still open before spawning (#139)
+            if task.issue_number:
+                if not await _is_issue_open(task.project_repo, task.issue_number, config.workspaces_dir):
+                    logger.warning(
+                        "Skipping task '%s': issue #%d is no longer open",
+                        task.title, task.issue_number,
+                    )
+                    await dag.mark_failed(
+                        task.id,
+                        f"Issue #{task.issue_number} was closed before employee could start",
+                    )
+                    post_task_event(config, "task_failed", task)
+                    continue
 
             await semaphore.acquire()
             employee_index = next_employee_index
