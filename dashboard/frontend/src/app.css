@@ -29,6 +29,8 @@
   --color-agent-dev-2: oklch(0.65 0.15 200);
   --color-agent-coordinator: oklch(0.60 0.20 300);
   --color-agent-analyst: oklch(0.58 0.18 290);
+  --color-agent-planner: oklch(0.65 0.17 160);
+  --color-agent-assigner: oklch(0.60 0.19 15);
 
   /* Elevated surfaces */
   --color-surface-raised: oklch(0.20 0.005 260);

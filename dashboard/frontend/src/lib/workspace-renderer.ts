@@ -58,7 +58,7 @@ export interface EmployeeNode {
 
 export interface AgentNode {
   id: string;
-  role: 'manager' | 'employee' | 'coordinator' | 'analyst';
+  role: 'manager' | 'employee' | 'coordinator' | 'analyst' | 'planner' | 'assigner';
   name: string;
   color: [number, number, number];
   x: number;
@@ -140,7 +140,7 @@ interface DataStreamText {
 export interface WorkspaceData {
   agents: {
     id: string;
-    role: 'manager' | 'employee' | 'coordinator' | 'analyst';
+    role: 'manager' | 'employee' | 'coordinator' | 'analyst' | 'planner' | 'assigner';
     name: string;
     color: string;
     isActive: boolean;
