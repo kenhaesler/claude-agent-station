@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
+import shutil
+import tempfile
 import uuid
 from datetime import datetime, timezone
 
@@ -127,28 +130,17 @@ def _get_system_prompt(persona: str, project_repo: str | None = None) -> str:
     return base
 
 
-def _get_anthropic_client():
-    """Lazy-import and instantiate the AsyncAnthropic client."""
-    try:
-        from anthropic import AsyncAnthropic
-    except ImportError:
-        raise HTTPException(
-            status_code=503,
-            detail="anthropic package not installed. Run: pip install anthropic",
-        )
-
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise HTTPException(
-            status_code=503,
-            detail="ANTHROPIC_API_KEY environment variable is not set",
-        )
-    return AsyncAnthropic(api_key=api_key)
-
-
 def _get_model() -> str:
     """Return the model to use for brainstorm sessions."""
-    return os.environ.get("BRAINSTORM_MODEL", "claude-sonnet-4-5-20250929")
+    return os.environ.get("BRAINSTORM_MODEL", "claude-sonnet-4-6")
+
+
+def _find_claude_cli() -> str:
+    """Find the claude CLI binary."""
+    path = shutil.which("claude")
+    if not path:
+        raise HTTPException(status_code=503, detail="claude CLI not found in PATH")
+    return path
 
 
 # ---------------------------------------------------------------------------
@@ -379,26 +371,106 @@ async def send_message(
     model = _get_model()
 
     async def generate_sse():
-        """Stream the AI response as SSE events."""
+        """Stream the AI response via Claude CLI subprocess."""
         assistant_msg_id = f"msg-{uuid.uuid4().hex[:12]}"
         full_response = ""
 
         try:
-            client = _get_anthropic_client()
-            async with client.messages.stream(
-                model=model,
-                max_tokens=4096,
-                system=system_prompt,
-                messages=history,
-            ) as stream:
-                async for text in stream.text_stream:
-                    if await request.is_disconnected():
-                        break
-                    full_response += text
-                    event_data = json.dumps({"type": "delta", "text": text})
-                    yield f"data: {event_data}\n\n"
+            claude_bin = _find_claude_cli()
 
-        except Exception as e:
+            # Build the prompt: system prompt + conversation history as a single prompt
+            # Claude CLI's -p flag takes a single user prompt; we encode history into it.
+            prompt_parts = [f"[System]\n{system_prompt}\n"]
+            for msg in history:
+                role_label = "User" if msg["role"] == "user" else "Assistant"
+                prompt_parts.append(f"[{role_label}]\n{msg['content']}\n")
+
+            full_prompt = "\n".join(prompt_parts)
+
+            # Write system prompt to a temp file for --system-prompt-file
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as sp_file:
+                sp_file.write(system_prompt)
+                sp_path = sp_file.name
+
+            # Build the user prompt from history (all prior messages + current)
+            # Claude -p with --resume doesn't support multi-turn, so we flatten
+            # prior conversation into context within the user prompt.
+            if len(history) > 1:
+                context_parts = []
+                for msg in history[:-1]:
+                    role_label = "User" if msg["role"] == "user" else "Assistant"
+                    context_parts.append(f"[{role_label}]: {msg['content']}")
+                user_prompt = (
+                    "Here is our conversation so far:\n\n"
+                    + "\n\n".join(context_parts)
+                    + "\n\n[User]: " + history[-1]["content"]
+                    + "\n\nPlease respond to the latest user message."
+                )
+            else:
+                user_prompt = history[-1]["content"]
+
+            cmd = [
+                claude_bin, "-p",
+                "--verbose",
+                "--output-format", "stream-json",
+                "--no-session-persistence",
+                "--model", model,
+                "--max-turns", "1",
+                "--system-prompt-file", sp_path,
+                user_prompt,
+            ]
+
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                limit=1024 * 1024,  # 1MB line buffer (hook output can be large)
+            )
+
+            async for line in proc.stdout:
+                if await request.is_disconnected():
+                    proc.kill()
+                    break
+
+                line_str = line.decode("utf-8", errors="replace").strip()
+                if not line_str:
+                    continue
+
+                try:
+                    event = json.loads(line_str)
+                except json.JSONDecodeError:
+                    continue
+
+                etype = event.get("type", "")
+
+                # Claude CLI stream-json emits "assistant" events with full content
+                if etype == "assistant":
+                    msg = event.get("message", {})
+                    for block in msg.get("content", []):
+                        if block.get("type") == "text":
+                            text = block.get("text", "")
+                            if text:
+                                full_response += text
+                                event_data = json.dumps({"type": "delta", "text": text})
+                                yield f"data: {event_data}\n\n"
+
+                # Also handle the final result as a fallback
+                elif etype == "result" and not full_response:
+                    text = event.get("result", "")
+                    if text:
+                        full_response = text
+                        event_data = json.dumps({"type": "delta", "text": text})
+                        yield f"data: {event_data}\n\n"
+
+            await proc.wait()
+
+            # Clean up temp file
+            try:
+                os.unlink(sp_path)
+            except OSError:
+                pass
+
+        except Exception:
             logger.exception("Error streaming brainstorm response")
             error_data = json.dumps({"type": "error", "message": "An error occurred while generating the response. Check server logs for details."})
             yield f"data: {error_data}\n\n"
@@ -417,7 +489,6 @@ async def send_message(
                 )
                 save_db.add(assistant_msg)
 
-                # Update session timestamp
                 s_result = await save_db.execute(
                     select(BrainstormSession).where(BrainstormSession.id == session_id)
                 )
