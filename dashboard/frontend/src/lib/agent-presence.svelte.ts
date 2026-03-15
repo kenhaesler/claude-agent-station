@@ -12,7 +12,7 @@ import type { ActiveEmployeeData, Run } from './types';
 
 // --- Agent Identity ---
 
-export type AgentRole = 'manager' | 'employee' | 'coordinator' | 'analyst';
+export type AgentRole = 'manager' | 'employee' | 'coordinator' | 'analyst' | 'planner' | 'assigner';
 
 export interface AgentIdentity {
   role: AgentRole;
@@ -45,6 +45,8 @@ const ROLE_COLORS: Record<string, string> = {
   'dev-2': '#06b6d4',
   coordinator: '#a855f7',
   analyst: '#8b5cf6',
+  planner: '#10b981',
+  assigner: '#f43f5e',
 };
 
 export function getAgentColor(name: string): string {
@@ -55,6 +57,8 @@ export function getAgentName(employeeIndex: number | null, mode?: string | null)
   if (mode === 'manager') return 'Manager';
   if (mode === 'analyst') return 'Analyst';
   if (mode === 'coordinator') return 'Coordinator';
+  if (mode === 'planner') return 'Planner';
+  if (mode === 'assigner') return 'Assigner';
   if (employeeIndex != null) return `Dev-${employeeIndex}`;
   return 'Dev-0';
 }
@@ -164,11 +168,24 @@ function deriveAgents(runs: ActiveEmployeeData[]): AgentIdentity[] {
   for (const run of runs) {
     if (run.mode === 'manager') continue; // Already added above
     const idx = run.employee_index ?? runs.indexOf(run);
-    const agentName = run.mode === 'analyst' ? 'Analyst' : `Dev-${idx}`;
+    const modeRoleMap: Record<string, AgentRole> = {
+      analyst: 'analyst',
+      planner: 'planner',
+      plan: 'planner',
+      assigner: 'assigner',
+    };
+    const modeNameMap: Record<string, string> = {
+      analyst: 'Analyst',
+      planner: 'Planner',
+      plan: 'Planner',
+      assigner: 'Assigner',
+    };
+    const role = modeRoleMap[run.mode ?? ''] ?? 'employee';
+    const agentName = modeNameMap[run.mode ?? ''] ?? `Dev-${idx}`;
     agents.push({
-      role: run.mode === 'analyst' ? 'analyst' : 'employee',
+      role,
       name: agentName,
-      color: getAgentColor(agentName),
+      color: getAgentColor(agentName.toLowerCase()),
       employeeIndex: idx,
       status: run.status === 'running' ? 'active' : 'idle',
       currentAction: null,
@@ -358,6 +375,40 @@ function handleSSEEvent(data: any) {
         content: 'Run completed',
       });
       refreshActiveRuns();
+      break;
+    case 'planner_start':
+      addConversationEntry({
+        agentName: 'Planner',
+        agentColor: ROLE_COLORS.planner,
+        type: 'phase',
+        content: `Started planning${data.project ? ` for ${data.project}` : ''}`,
+      });
+      refreshActiveRuns();
+      break;
+    case 'planner_complete':
+      addConversationEntry({
+        agentName: 'Planner',
+        agentColor: ROLE_COLORS.planner,
+        type: 'phase',
+        content: `Planning finished${data.project ? ` for ${data.project}` : ''}`,
+      });
+      refreshActiveRuns();
+      break;
+    case 'assigner_start':
+      addConversationEntry({
+        agentName: 'Assigner',
+        agentColor: ROLE_COLORS.assigner,
+        type: 'phase',
+        content: `Assigning work${data.project ? ` for ${data.project}` : ''}`,
+      });
+      break;
+    case 'assigner_complete':
+      addConversationEntry({
+        agentName: 'Assigner',
+        agentColor: ROLE_COLORS.assigner,
+        type: 'phase',
+        content: `Assignment complete${data.project ? ` for ${data.project}` : ''}`,
+      });
       break;
     case 'conflict_detected':
       addConversationEntry({

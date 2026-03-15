@@ -602,6 +602,7 @@ $prs_json
 Return ONLY the JSON assignment object, no other text."
 
     # Run assigner with Haiku (fast + cheap)
+    webhook_event "assigner_start" "\"project\":\"$repo\",\"employee_count\":$employee_count"
     local assigner_prompt_file="$(resolve_prompt assigner)"
     local assignment_output
     assignment_output=$(echo "$assignment_prompt" | claude -p \
@@ -611,9 +612,11 @@ Return ONLY the JSON assignment object, no other text."
         --no-session-persistence \
         --dangerously-skip-permissions \
         --output-format text 2>/dev/null) || {
+        webhook_event "assigner_complete" "\"project\":\"$repo\",\"status\":\"failed\""
         log_warn "Assignment agent failed for $repo, employees will self-select"
         return 1
     }
+    webhook_event "assigner_complete" "\"project\":\"$repo\",\"status\":\"success\",\"employee_count\":$employee_count"
 
     # Extract JSON from output (handle potential markdown wrapping)
     local clean_json
@@ -739,6 +742,10 @@ run_employee() {
         "${_ewh_auth[@]}" \
         -d "{\"event\":\"employee_start\",\"run_id\":\"$employee_run_id\",\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"project\":\"$repo\",\"mode\":\"$mode\",\"employee_index\":$employee_index,\"concurrent_group_id\":\"${CONCURRENT_GROUP_ID:-run-$RUN_ID}\"}" \
         2>/dev/null || true
+    # Emit role-specific presence event for planner mode
+    if [ "$mode" = "plan" ]; then
+        webhook_event "planner_start" "\"project\":\"$repo\",\"employee_index\":$employee_index"
+    fi
 
     # Transition queue item to in_progress
     local _qid
