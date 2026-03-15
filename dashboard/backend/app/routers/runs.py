@@ -79,7 +79,7 @@ async def get_active_employees(db: AsyncSession = Depends(get_db)):
     from the coordinator tasks (handles the coordinated multi-employee path).
     """
     result = await db.execute(
-        select(Run).where(Run.status == "running")
+        select(Run).where(Run.status.in_(["running", "plan_reviewing"]))
     )
     runs = result.scalars().all()
     employees = [
