@@ -34,6 +34,7 @@ CREDS_PATH = Path(settings.credentials_path)
 # In-memory store for pending PKCE flows: {state: (code_verifier, expires_at)}
 _pending: dict[str, tuple[str, float]] = {}
 STATE_TTL_SECONDS = 600  # 10 minutes
+MAX_PENDING = 100
 
 
 def _cleanup_expired_states() -> None:
@@ -89,6 +90,8 @@ def _write_credentials(path: Path, data: dict) -> None:
 async def start_oauth():
     """Generate PKCE challenge and return authorization URL."""
     _cleanup_expired_states()
+    if len(_pending) >= MAX_PENDING:
+        raise HTTPException(status_code=429, detail="Too many pending OAuth flows. Try again later.")
     state = secrets.token_urlsafe(32)
     code_verifier, code_challenge = _generate_pkce()
     _pending[state] = (code_verifier, time.time() + STATE_TTL_SECONDS)
@@ -135,6 +138,7 @@ def _clean_code(raw: str) -> str:
 @router.post("/callback", response_model=OAuthCallbackResponse)
 async def oauth_callback(req: OAuthCallbackRequest):
     """Exchange authorization code for tokens and write credentials."""
+    _cleanup_expired_states()
     entry = _pending.pop(req.state, None)
     if not entry:
         raise HTTPException(status_code=400, detail="Invalid or expired state parameter")

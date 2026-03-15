@@ -100,7 +100,7 @@ async def handle_github_webhook(
     body = await request.body()
 
     # Verify signature if webhook secret is configured
-    webhook_secret = getattr(settings, "github_webhook_secret", "")
+    webhook_secret = settings.github_webhook_secret or ""
     if webhook_secret and not _verify_signature(body, x_hub_signature_256, webhook_secret):
         raise HTTPException(403, "Invalid webhook signature")
 
