@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, Text
+from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text
 
 from app.database import Base
 
@@ -227,6 +227,29 @@ class TaskOutcome(Base):
     failure_category = Column(Text, nullable=True)  # test_failure, wrong_approach, incomplete, quality
     tokens_consumed = Column(Integer, nullable=True)
     duration_seconds = Column(Integer, nullable=True)
+    created_at = Column(DateTime, default=_utcnow)
+
+
+class BrainstormSession(Base):
+    """A brainstorm conversation session."""
+    __tablename__ = "brainstorm_sessions"
+
+    id = Column(Text, primary_key=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=True)
+    title = Column(Text, nullable=True)
+    persona = Column(Text, default="architect")  # architect/security/performance/devops
+    created_at = Column(DateTime, default=_utcnow)
+    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+
+class BrainstormMessage(Base):
+    """A single message in a brainstorm session."""
+    __tablename__ = "brainstorm_messages"
+
+    id = Column(Text, primary_key=True)
+    session_id = Column(Text, ForeignKey("brainstorm_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
+    role = Column(Text, nullable=False)  # 'user' or 'assistant'
+    content = Column(Text, nullable=False)
     created_at = Column(DateTime, default=_utcnow)
 
 

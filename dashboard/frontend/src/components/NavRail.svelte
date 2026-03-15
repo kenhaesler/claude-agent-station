@@ -6,6 +6,7 @@
     { page: 'command', label: 'Command', icon: 'command' },
     { page: 'stream', label: 'Work', icon: 'stream' },
     { page: 'decide', label: 'Decide', icon: 'decide' },
+    { page: 'brainstorm', label: 'Brainstorm', icon: 'brainstorm' },
     { page: 'config', label: 'Config', icon: 'config' },
   ] as const;
 
@@ -13,6 +14,7 @@
     if (linkPage === 'command') return route.page === 'command';
     if (linkPage === 'stream') return route.page === 'stream' || route.page === 'stream-detail';
     if (linkPage === 'decide') return route.page === 'decide' || route.page === 'decide-detail';
+    if (linkPage === 'brainstorm') return route.page === 'brainstorm' || route.page === 'brainstorm-session';
     if (linkPage === 'config') return route.page === 'config';
     return false;
   }
@@ -46,6 +48,11 @@
         {:else if link.icon === 'decide'}
           <path d="M4 4h12M4 8h12M4 12h8" />
           <path d="M13 12l2 2 4-4" stroke-width="2" />
+        {:else if link.icon === 'brainstorm'}
+          <circle cx="10" cy="7" r="4.5" />
+          <path d="M6.5 11c-2 1-3.5 3-3.5 5h14c0-2-1.5-4-3.5-5" />
+          <path d="M13 4.5c1.5-1 3.5-0.5 4 1s-0.5 3-2 3.5" />
+          <path d="M7 4.5c-1.5-1-3.5-0.5-4 1s0.5 3 2 3.5" />
         {:else if link.icon === 'config'}
           <circle cx="10" cy="10" r="3" />
           <path d="M10 1.5v2M10 16.5v2M1.5 10h2M16.5 10h2M3.4 3.4l1.4 1.4M15.2 15.2l1.4 1.4M3.4 16.6l1.4-1.4M15.2 4.8l1.4-1.4" />

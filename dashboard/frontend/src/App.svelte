@@ -12,6 +12,7 @@
   import WorkStreamPage from './pages/WorkStreamPage.svelte';
   import DecisionsPage from './pages/DecisionsPage.svelte';
   import ConfigPage from './pages/ConfigPage.svelte';
+  import BrainstormPage from './pages/BrainstormPage.svelte';
 
   let serviceActive = $state(false);
   let authOk = $state(false);
@@ -94,7 +95,8 @@
     if (e.key === '1') { window.location.hash = '/command'; return; }
     if (e.key === '2') { window.location.hash = '/stream'; return; }
     if (e.key === '3') { window.location.hash = '/decide'; return; }
-    if (e.key === '4') { window.location.hash = '/config'; return; }
+    if (e.key === '4') { window.location.hash = '/brainstorm'; return; }
+    if (e.key === '5') { window.location.hash = '/config'; return; }
   }
 </script>
 
@@ -128,6 +130,8 @@
           <WorkStreamPage runId={route.page === 'stream-detail' ? route.param : null} />
         {:else if route.page === 'decide' || route.page === 'decide-detail'}
           <DecisionsPage planId={route.page === 'decide-detail' ? route.param : null} />
+        {:else if route.page === 'brainstorm' || route.page === 'brainstorm-session'}
+          <BrainstormPage sessionId={route.page === 'brainstorm-session' ? route.param : null} />
         {:else if route.page === 'config'}
           <ConfigPage tab={route.param} />
         {/if}

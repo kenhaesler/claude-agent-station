@@ -1,4 +1,4 @@
-type Page = 'command' | 'stream' | 'stream-detail' | 'decide' | 'decide-detail' | 'config';
+type Page = 'command' | 'stream' | 'stream-detail' | 'decide' | 'decide-detail' | 'config' | 'brainstorm' | 'brainstorm-session';
 
 interface Route {
   page: Page;
@@ -54,6 +54,8 @@ function parseHash(): Route {
   if (raw === 'decide' && parts.length > 1) return { page: 'decide-detail', param: parts[1] };
   if (raw === 'decide') return { page: 'decide', param: null };
   if (raw === 'config') return { page: 'config', param: parts[1] ?? null };
+  if (raw === 'brainstorm' && parts.length > 1) return { page: 'brainstorm-session', param: parts[1] };
+  if (raw === 'brainstorm') return { page: 'brainstorm', param: null };
 
   // Fallback
   return { page: 'command', param: null };
