@@ -26,7 +26,7 @@
 
 // ── Interfaces ──────────────────────────────────────────────
 
-export type RunPhase = 'idle' | 'coordinating' | 'employee' | 'manager_review' | 'executing_verdict';
+export type RunPhase = 'idle' | 'coordinating' | 'employee' | 'plan_review' | 'manager_review' | 'executing_verdict';
 
 export type EventType = 'tool_use' | 'thinking_start' | 'thinking_end' | 'guidance_sent'
   | 'phase_change' | 'run_start' | 'run_complete' | 'conflict' | 'verdict'
@@ -58,7 +58,7 @@ export interface EmployeeNode {
 
 export interface AgentNode {
   id: string;
-  role: 'manager' | 'employee' | 'coordinator' | 'analyst';
+  role: 'manager' | 'employee' | 'coordinator' | 'analyst' | 'planner' | 'assigner';
   name: string;
   color: [number, number, number];
   x: number;
@@ -140,7 +140,7 @@ interface DataStreamText {
 export interface WorkspaceData {
   agents: {
     id: string;
-    role: 'manager' | 'employee' | 'coordinator' | 'analyst';
+    role: 'manager' | 'employee' | 'coordinator' | 'analyst' | 'planner' | 'assigner';
     name: string;
     color: string;
     isActive: boolean;
@@ -287,6 +287,9 @@ export class WorkspaceRenderer {
   // Sound event callbacks
   private soundListeners: ((event: SoundEvent) => void)[] = [];
 
+  // Render quality (full = all layers, ambient = skip expensive layers)
+  private renderQuality: 'full' | 'ambient' = 'full';
+
   constructor(private canvas: HTMLCanvasElement, dpr?: number) {
     this.ctx = canvas.getContext('2d')!;
     this.dpr = dpr ?? (window.devicePixelRatio || 1);
@@ -388,6 +391,15 @@ export class WorkspaceRenderer {
   setMousePosition(x: number, y: number) {
     this.mouseX = x;
     this.mouseY = y;
+  }
+
+  /** Set render quality. 'ambient' skips bloom, diamonds, and data-stream text for performance. */
+  setRenderQuality(quality: 'full' | 'ambient') {
+    this.renderQuality = quality;
+  }
+
+  getRenderQuality(): 'full' | 'ambient' {
+    return this.renderQuality;
   }
 
   triggerEvent(type: EventType, data: EventData = {}) {
@@ -590,6 +602,11 @@ export class WorkspaceRenderer {
       if (phase === 'idle') {
         mult = 1.0;
         node.opacity = Math.max(node.opacity, 0.5);
+      } else if (phase === 'plan_review') {
+        // Plan review: manager is active reviewing, similar to manager_review
+        if (node.role === 'manager') mult = 0.45;
+        else if (node.isActive) mult = 0.6;
+        else mult = 0.75;
       } else if (phase === 'manager_review') {
         if (node.role === 'manager') mult = 0.45;
         else if (node.isActive) mult = 0.6;
@@ -905,7 +922,7 @@ export class WorkspaceRenderer {
       }
 
       // Shield ring
-      if (this.phase === 'manager_review' && node.role !== 'manager') {
+      if ((this.phase === 'plan_review' || this.phase === 'manager_review') && node.role !== 'manager') {
         node.shieldAngle += dtSec * 0.8;
         const targetShieldAlpha = 0.6;
         node.shieldAlpha += (targetShieldAlpha - node.shieldAlpha) * 0.05;
@@ -1075,6 +1092,7 @@ export class WorkspaceRenderer {
 
   private draw() {
     const { ctx, w, h } = this;
+    const isAmbient = this.renderQuality === 'ambient';
     ctx.clearRect(0, 0, w, h);
 
     this.drawBackground();
@@ -1083,17 +1101,17 @@ export class WorkspaceRenderer {
     this.drawRadarSweep();
     this.drawParticles();
     this.drawConnections();
-    this.drawDataStreamText();
-    this.drawDiamonds();
+    if (!isAmbient) this.drawDataStreamText();
+    if (!isAmbient) this.drawDiamonds();
     this.drawHub();
     this.drawNodes();
     this.drawEmployeeOrbitals();
     this.drawShieldRings();
     this.drawRipples();
-    this.drawReaperSweep();
+    if (!isAmbient) this.drawReaperSweep();
     this.drawThinkingDots();
-    this.drawLabels();
-    this.drawBloom();
+    if (!isAmbient) this.drawLabels();
+    if (!isAmbient) this.drawBloom();
   }
 
   // ── Layer 1: Background ──────────────────────────────────
@@ -2003,6 +2021,7 @@ export class WorkspaceRenderer {
     switch (this.phase) {
       case 'coordinating': return [168, 85, 247];
       case 'employee': return [59, 130, 246];
+      case 'plan_review': return [251, 191, 36];
       case 'manager_review': return [245, 158, 11];
       case 'executing_verdict': return [16, 185, 129];
       default: return [59, 130, 246];
@@ -2046,6 +2065,7 @@ export class WorkspaceRenderer {
     switch (this.phase) {
       case 'coordinating': return 'COORD';
       case 'employee': return 'WORKING';
+      case 'plan_review': return 'PLAN REVIEW';
       case 'manager_review': return 'REVIEW';
       case 'executing_verdict': return 'VERDICT';
       default: return '';

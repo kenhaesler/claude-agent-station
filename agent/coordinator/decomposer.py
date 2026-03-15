@@ -101,20 +101,44 @@ async def decompose_issue(
     """
     effective_run_id = run_id or config.run_id
 
-    # For analyze mode, create a single read-only analysis task
+    # For analyze mode, create parallel analysis tasks (one per employee)
     if config.project_mode == "analyze":
-        logger.info("Analyze mode — creating read-only analysis task")
-        title = (
-            f"Analyze codebase for issue #{issue_number}"
-            if issue_number
-            else "Analyze codebase"
-        )
-        return await TaskDAG.single_task(
-            effective_run_id, repo, session_factory,
-            title=title,
-            description=issue_body[:2000],
-            issue_number=issue_number,
-        )
+        if employee_count <= 1:
+            logger.info("Analyze mode (single employee) — creating read-only analysis task")
+            title = (
+                f"Analyze codebase for issue #{issue_number}"
+                if issue_number
+                else "Analyze codebase"
+            )
+            return await TaskDAG.single_task(
+                effective_run_id, repo, session_factory,
+                title=title,
+                description=issue_body[:2000],
+                issue_number=issue_number,
+            )
+        # Multi-employee analyze: partition codebase across employees
+        logger.info("Analyze mode (%d employees) — partitioning codebase", employee_count)
+        partitions = _get_workspace_partitions(workspace, employee_count)
+        dag = TaskDAG(effective_run_id, repo, session_factory)
+        for i in range(employee_count):
+            scope = partitions[i] if i < len(partitions) else []
+            if scope:
+                scope_label = ", ".join(scope)
+                title = f"Analyze: {scope_label}"
+                desc = f"Focus your analysis on these directories: {scope_label}\nOther employees are covering the rest of the codebase."
+            else:
+                title = f"Analyze codebase (cross-cutting, employee {i})"
+                desc = "Perform cross-cutting analysis: CI/CD, dependencies, config, docs, root-level files."
+            if issue_number:
+                title += f" (issue #{issue_number})"
+                desc = f"{issue_body[:1500]}\n\n{desc}"
+            await dag.add_task(
+                title=title,
+                description=desc,
+                issue_number=issue_number,
+                expected_files=scope,
+            )
+        return dag
 
     # For single employee, skip decomposition
     if employee_count <= 1:
@@ -238,6 +262,29 @@ async def _fallback_dag(
         description=description[:2000],
         issue_number=issue_number,
     )
+
+
+def _get_workspace_partitions(workspace: str, employee_count: int) -> list[list[str]]:
+    """Partition workspace top-level directories across employees."""
+    EXCLUDED = {
+        '.git', 'node_modules', '__pycache__', '.venv', 'venv',
+        'dist', 'build', '.svelte-kit', '.next', '.cache',
+        '.mypy_cache', '.pytest_cache', '.ruff_cache', 'egg-info',
+    }
+    try:
+        dirs = sorted(
+            d.name for d in Path(workspace).iterdir()
+            if d.is_dir() and d.name not in EXCLUDED and not d.name.endswith('.egg-info')
+        )
+    except OSError:
+        return [[] for _ in range(employee_count)]
+
+    # Round-robin distribute directories
+    partitions: list[list[str]] = [[] for _ in range(employee_count)]
+    for i, d in enumerate(dirs):
+        partitions[i % employee_count].append(f"{d}/")
+
+    return partitions
 
 
 def _get_file_listing(workspace: str, max_depth: int = 3) -> str:

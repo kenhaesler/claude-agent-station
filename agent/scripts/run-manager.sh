@@ -625,6 +625,7 @@ $prs_json
 Return ONLY the JSON assignment object, no other text."
 
     # Run assigner with Haiku (fast + cheap)
+    webhook_event "assigner_start" "\"project\":\"$repo\",\"employee_count\":$employee_count"
     local assigner_prompt_file="$(resolve_prompt assigner)"
     local assignment_output
     assignment_output=$(echo "$assignment_prompt" | claude -p \
@@ -634,9 +635,11 @@ Return ONLY the JSON assignment object, no other text."
         --no-session-persistence \
         --dangerously-skip-permissions \
         --output-format text 2>/dev/null) || {
+        webhook_event "assigner_complete" "\"project\":\"$repo\",\"status\":\"failed\""
         log_warn "Assignment agent failed for $repo, employees will self-select"
         return 1
     }
+    webhook_event "assigner_complete" "\"project\":\"$repo\",\"status\":\"success\",\"employee_count\":$employee_count"
 
     # Extract JSON from output (handle potential markdown wrapping)
     local clean_json
@@ -762,6 +765,10 @@ run_employee() {
         "${_ewh_auth[@]}" \
         -d "{\"event\":\"employee_start\",\"run_id\":\"$employee_run_id\",\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"project\":\"$repo\",\"mode\":\"$mode\",\"employee_index\":$employee_index,\"concurrent_group_id\":\"${CONCURRENT_GROUP_ID:-run-$RUN_ID}\"}" \
         2>/dev/null || true
+    # Emit role-specific presence event for planner mode
+    if [ "$mode" = "plan" ]; then
+        webhook_event "planner_start" "\"project\":\"$repo\",\"employee_index\":$employee_index"
+    fi
 
     # Transition queue item to in_progress
     local _qid
@@ -1193,6 +1200,11 @@ print(f'{t:,}')
         log_warn "Employee exited with code $exit_code: $repo"
     fi
 
+    # Emit planner_complete if this was a plan-mode employee
+    if [ "$mode" = "plan" ]; then
+        webhook_event "planner_complete" "\"project\":\"$repo\",\"employee_index\":$employee_index,\"exit_code\":$exit_code"
+    fi
+
     # Use employee-specific run_id to complete the correct Run record
     curl -s --max-time 3 -X POST "$_ewh_url" \
         -H "Content-Type: application/json" \
@@ -1385,8 +1397,8 @@ run_manager_plan_review() {
     project_mode=$(get_project_field "$project_index" "mode" 2>/dev/null || echo "full")
 
     local plan_file="$workspace/.claude-employee-plan-${employee_index}.json"
-    local verdict_file="$LOG_DIR/run-${RUN_ID}-plan-verdict-${name}.json"
-    local review_file="$LOG_DIR/run-${RUN_ID}-plan-review-${name}.md"
+    local verdict_file="$LOG_DIR/run-${RUN_ID}-plan-verdict-e${employee_index}-${name}.json"
+    local review_file="$LOG_DIR/run-${RUN_ID}-plan-review-e${employee_index}-${name}.md"
 
     if [ ! -f "$plan_file" ]; then
         log_warn "No plan file found for $repo employee $employee_index"
@@ -1421,16 +1433,27 @@ run_manager_plan_review() {
     local manager_fallback="claude-haiku-4-5-20251001"
     [ "$model" = "claude-haiku-4-5-20251001" ] && manager_fallback="claude-sonnet-4-6"
 
-    local manager_prompt="Review the employee's implementation plan in: $review_file
+    # Inline review content directly to avoid wasting turns re-reading the file
+    local review_content
+    review_content=$(cat "$review_file")
+
+    local manager_prompt="Review the employee's implementation plan below.
 
 Write your plan verdict to: $verdict_file
 
-Use APPROVE_PLAN if the plan is solid, REVISE_PLAN with specific feedback if it needs changes, or REJECT_PLAN if fundamentally flawed."
+Use APPROVE_PLAN if the plan is solid, REVISE_PLAN with specific feedback if it needs changes, or REJECT_PLAN if fundamentally flawed.
 
-    local stream_file="$LOG_DIR/run-${RUN_ID}-plan-review-${name}.stream.jsonl"
-    local stderr_file="$LOG_DIR/run-${RUN_ID}-plan-review-${name}.stderr.log"
+--- BEGIN PLAN REVIEW PACKAGE ---
+$review_content
+--- END PLAN REVIEW PACKAGE ---"
 
-    log_info "Running manager plan review for $repo"
+    local stream_file="$LOG_DIR/run-${RUN_ID}-plan-review-e${employee_index}-${name}.stream.jsonl"
+    local stderr_file="$LOG_DIR/run-${RUN_ID}-plan-review-e${employee_index}-${name}.stderr.log"
+
+    log_info "Running manager plan review for $repo employee $employee_index"
+
+    # Emit plan_review_start webhook so dashboard attributes activity to Manager
+    webhook_event "plan_review_start" "\"project\":\"$repo\",\"employee_index\":$employee_index" >&2
 
     run_claude_agent "$model" "$manager_fallback" 5 "$(resolve_prompt manager)" \
         "$manager_prompt" "$stream_file" "$stderr_file" "$workspace" "$repo"
@@ -1438,8 +1461,8 @@ Use APPROVE_PLAN if the plan is solid, REVISE_PLAN with specific feedback if it 
     record_session
 
     # Parse verdict
+    local plan_verdict="APPROVE_PLAN"
     if [ -f "$verdict_file" ]; then
-        local plan_verdict
         plan_verdict=$(python3 -c "
 import json
 with open('$verdict_file') as f:
@@ -1450,18 +1473,22 @@ if verdicts:
 else:
     print('APPROVE_PLAN')
 " 2>/dev/null || echo "APPROVE_PLAN")
-        echo "$plan_verdict"
     else
         log_warn "No plan verdict file produced for $repo, defaulting to APPROVE_PLAN"
-        echo "APPROVE_PLAN"
     fi
+
+    # Emit plan_review_complete webhook so dashboard transitions back
+    webhook_event "plan_review_complete" "\"project\":\"$repo\",\"employee_index\":$employee_index,\"verdict\":\"$plan_verdict\"" >&2
+
+    echo "$plan_verdict"
 }
 
 get_plan_review_feedback() {
     local repo="$1"
+    local employee_index="${2:-0}"
     local name
     name=$(repo_name "$repo")
-    local verdict_file="$LOG_DIR/run-${RUN_ID}-plan-verdict-${name}.json"
+    local verdict_file="$LOG_DIR/run-${RUN_ID}-plan-verdict-e${employee_index}-${name}.json"
 
     if [ -f "$verdict_file" ]; then
         python3 -c "
@@ -1695,11 +1722,17 @@ run_manager_review() {
     cmd+=(--system-prompt-file "$(resolve_prompt manager)")
     # No --allowedTools: full VM access, prompt-enforced guardrails
 
-    local manager_prompt="Review the employee work in this file: $review_package
+    # Inline review content directly to avoid wasting turns re-reading the file
+    local review_content
+    review_content=$(cat "$review_package")
 
-Write your verdicts to: $verdicts_file
+    local manager_prompt="Review the employee work below and write your verdicts to: $verdicts_file
 
-Read the review package file first, then evaluate each project's work against the criteria in your system prompt. Be strict on completeness — never approve partial implementations."
+Evaluate each project's work against the criteria in your system prompt. Be strict on completeness — never approve partial implementations.
+
+--- BEGIN REVIEW PACKAGE ---
+$review_content
+--- END REVIEW PACKAGE ---"
 
     log_info "Manager command: ${cmd[*]} '<prompt>'" >&2
 
@@ -2306,9 +2339,6 @@ for item in data.get('items', []):
         mode_check=$(get_project_field "$i" "mode" 2>/dev/null || echo "full")
 
         local employees_for_assign=$max_per_project
-        if [ "$mode_check" = "analyze" ] || [ "$mode_check" = "plan" ]; then
-            employees_for_assign=1
-        fi
 
         # Only pre-assign if multiple employees on same project in full mode
         if [ "$employees_for_assign" -gt 1 ] && [ "$mode_check" = "full" ]; then
@@ -2347,19 +2377,12 @@ assignments = []
 max_per = int('$max_per_project')
 workspaces_dir = '$WORKSPACES_DIR'
 
-# Load multi_employee flag from ModeSpec registry
-try:
-    from agent.coordinator.modes import MODE_REGISTRY
-    multi_employee_modes = {name for name, spec in MODE_REGISTRY.items() if spec.multi_employee}
-except Exception:
-    multi_employee_modes = {'full'}  # Fallback if modes.py not importable
-
 for i, proj in enumerate(projects):
     if not proj.get('enabled', True):
         continue
     repo = proj['repo']
     mode = proj.get('mode', 'full')
-    employees = max_per if mode in multi_employee_modes else 1
+    employees = max_per
     repo_name = repo.split('/')[-1] if '/' in repo else repo
     workspace = f'{workspaces_dir}/{repo_name}'
 
@@ -2422,10 +2445,6 @@ print(f'Wrote {len(assignments)} assignments')
         local mode_for_project
         mode_for_project=$(get_project_field "$i" "mode" 2>/dev/null || echo "full")
         local employees_this_project=$max_per_project
-        # Analyze/plan modes only use 1 employee
-        if [ "$mode_for_project" = "analyze" ] || [ "$mode_for_project" = "plan" ]; then
-            employees_this_project=1
-        fi
 
         for ((ei = 0; ei < employees_this_project; ei++)); do
             log_info "Project $((i+1))/$project_count: $repo (priority: $priority, employee: $ei)"
@@ -2475,7 +2494,7 @@ print(f'Wrote {len(assignments)} assignments')
 
                 for ((pr = 0; pr <= max_plan_revisions; pr++)); do
                     local plan_feedback=""
-                    [ "$pr" -gt 0 ] && plan_feedback=$(get_plan_review_feedback "$repo")
+                    [ "$pr" -gt 0 ] && plan_feedback=$(get_plan_review_feedback "$repo" "$ei")
 
                     if ! run_employee_plan_only "$repo" "$workspace" "$i" "$ei" "$plan_feedback"; then
                         log_warn "Plan phase failed for $repo employee $ei"
@@ -2557,6 +2576,24 @@ print(f'Wrote {len(assignments)} assignments')
                     fi
                 fi
             fi
+
+            # ---- Issue freshness check ----
+            # Verify the assigned issue is still open before spawning an employee.
+            # Prevents wasted work on issues closed/resolved since assignment.
+            local _assign_file="$workspace/.claude-assignment-${ei}.json"
+            if [ -f "$_assign_file" ]; then
+                local _issue_num
+                _issue_num=$(python3 -c "import json; print(json.load(open('$_assign_file')).get('issue_number',''))" 2>/dev/null || echo "")
+                if [ -n "$_issue_num" ] && [ "$_issue_num" != "None" ] && [ "$_issue_num" != "null" ]; then
+                    local _issue_state
+                    _issue_state=$(gh issue view "$_issue_num" --repo "$repo" --json state -q '.state' 2>/dev/null || echo "")
+                    if [ -n "$_issue_state" ] && ! echo "$_issue_state" | grep -qi "open"; then
+                        log_warn "Issue #$_issue_num is no longer open (state: $_issue_state), skipping employee $ei for $repo"
+                        continue
+                    fi
+                fi
+            fi
+            # ---- End issue freshness check ----
 
             if [ "$is_parallel" = true ]; then
                 # Parallel mode: wait for a slot, then spawn in background
@@ -2907,6 +2944,22 @@ print(json.dumps(result))
                     rm -f "$WORKSPACES_DIR/$rn/.claude-manager-feedback.json"
                 done
                 break 2
+            fi
+
+            # Issue freshness check before retry
+            local _retry_assign="$ws_r/.claude-assignment-0.json"
+            if [ -f "$_retry_assign" ]; then
+                local _retry_issue
+                _retry_issue=$(python3 -c "import json; print(json.load(open('$_retry_assign')).get('issue_number',''))" 2>/dev/null || echo "")
+                if [ -n "$_retry_issue" ] && [ "$_retry_issue" != "None" ] && [ "$_retry_issue" != "null" ]; then
+                    local _retry_state
+                    _retry_state=$(gh issue view "$_retry_issue" --repo "$repo_r" --json state -q '.state' 2>/dev/null || echo "")
+                    if [ -n "$_retry_state" ] && ! echo "$_retry_state" | grep -qi "open"; then
+                        log_warn "Issue #$_retry_issue is no longer open (state: $_retry_state), skipping retry for $repo_r"
+                        rm -f "$ws_r/.claude-manager-feedback.json"
+                        continue
+                    fi
+                fi
             fi
 
             log_info "Retrying employee for: $repo_r"

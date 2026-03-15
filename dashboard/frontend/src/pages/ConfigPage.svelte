@@ -395,7 +395,7 @@
     <div class="flex items-center gap-1 glass rounded-lg p-0.5">
       {#each tabs as t}
         <button
-          onclick={() => { activeTab = t.key; window.location.hash = `/config/${t.key}`; }}
+          onclick={() => { activeTab = t.key; history.replaceState({}, '', `/config/${t.key}`); }}
           class="px-3 py-1.5 text-xs font-medium rounded-md transition-all cursor-pointer
             {activeTab === t.key ? 'bg-info/15 text-info' : 'text-text-dim hover:text-text hover:bg-white/[0.03]'}"
         >

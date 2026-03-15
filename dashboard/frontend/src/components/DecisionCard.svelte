@@ -3,6 +3,7 @@
   import { approvePlan, rejectPlan, implementPlan } from '../lib/api';
   import { toastSuccess, toastError } from '../lib/toast.svelte';
   import StatusBadge from './StatusBadge.svelte';
+  import IntelligenceChip from './IntelligenceChip.svelte';
   import MarkdownRenderer from './MarkdownRenderer.svelte';
 
   interface Props {
@@ -91,6 +92,12 @@
           {/if}
         </div>
       </div>
+    </div>
+
+    <!-- Intelligence: mode success rate -->
+    <div class="flex items-center gap-1 flex-wrap">
+      <IntelligenceChip type="success-rate" mode="full" />
+      <IntelligenceChip type="success-rate" mode="analyze" />
     </div>
 
     <!-- Description -->

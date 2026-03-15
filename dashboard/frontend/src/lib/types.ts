@@ -7,6 +7,7 @@ export interface Project {
   branch: string;
   custom_instructions: string | null;
   setup_script: string | null;
+  security_review_enabled: boolean;
   created_at: string | null;
   updated_at: string | null;
 }
@@ -19,6 +20,7 @@ export interface ProjectCreate {
   branch?: string;
   custom_instructions?: string | null;
   setup_script?: string | null;
+  security_review_enabled?: boolean;
 }
 
 export interface ProjectUpdate {
@@ -28,6 +30,7 @@ export interface ProjectUpdate {
   branch?: string;
   custom_instructions?: string | null;
   setup_script?: string | null;
+  security_review_enabled?: boolean;
 }
 
 export interface Run {
@@ -62,7 +65,7 @@ export interface RunList {
 
 export interface ActiveEmployeeData {
   run_id: string;
-  project_id: number;
+  project_id: number | null;
   mode: string;
   status: string;
   issue_number: number | null;
@@ -150,6 +153,31 @@ export interface TokenUsageData {
   };
   max_usage_percent: number;
   reserve_percent: number;
+}
+
+export interface PlanUsageModelData {
+  model: string;
+  tokens_used: number;
+  tokens_limit: number;
+  usage_percent: number;
+}
+
+export interface PlanUsageData {
+  timestamp: string;
+  detection_method: string;
+  plan_tier: string;
+  session_tokens_used: number;
+  session_tokens_limit: number;
+  session_usage_percent: number;
+  weekly_tokens_used: number;
+  weekly_tokens_limit: number;
+  weekly_usage_percent: number;
+  weekly_reset_at: string;
+  per_model: PlanUsageModelData[];
+  is_throttled: boolean;
+  should_throttle: boolean;
+  throttle_reason: string;
+  error: string | null;
 }
 
 export interface StationConfig {

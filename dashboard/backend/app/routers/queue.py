@@ -31,7 +31,7 @@ router = APIRouter(prefix="/api/queue", tags=["queue"])
 TRANSITIONS: dict[str, set[str]] = {
     "pending":     {"assigned", "claimed", "planning", "paused", "failed", "cancelled"},
     "claimed":     {"in_progress", "pending", "paused"},
-    "assigned":    {"in_progress", "pending", "paused"},
+    "assigned":    {"in_progress", "pending", "paused", "failed", "cancelled"},
     "planning":    {"in_progress", "paused", "failed", "pending"},
     "in_progress": {"review", "verifying", "paused", "failed", "pending"},
     "verifying":   {"approved", "rejected", "pending"},

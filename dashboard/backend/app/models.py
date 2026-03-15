@@ -25,6 +25,7 @@ class Project(Base):
     branch = Column(Text, default="main")
     custom_instructions = Column(Text, nullable=True, default=None)
     setup_script = Column(Text, nullable=True, default=None)
+    security_review_enabled = Column(Boolean, default=False)
     created_at = Column(DateTime, default=_utcnow)
     updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
 

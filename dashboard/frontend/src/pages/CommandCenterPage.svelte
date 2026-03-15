@@ -2,7 +2,7 @@
   import { agentPresence } from '../lib/agent-presence.svelte';
   import { getSystemStatus, getUsage, listRuns, listProjects, getAnalytics } from '../lib/api';
   import type { SystemStatus, UsageData, Run, Project, AnalyticsData } from '../lib/types';
-  import AgentWorkspace from '../components/AgentWorkspace.svelte';
+  // AgentWorkspace is now a persistent backdrop in App.svelte
   import NarrativeFeed from '../components/NarrativeFeed.svelte';
   import MetricPanel from '../components/MetricPanel.svelte';
   import GlassCard from '../components/GlassCard.svelte';
@@ -61,12 +61,7 @@
 </script>
 
 <div class="space-y-4 animate-fade-in-up">
-  <!-- Agent Network Canvas (hero) -->
-  <GlassCard class="overflow-hidden">
-    <div class="h-[320px] md:h-[400px]">
-      <AgentWorkspace {systemStatus} {usage} />
-    </div>
-  </GlassCard>
+  <!-- Cortex is the persistent backdrop on this page — no embedded canvas needed -->
 
   <!-- Quick metrics row -->
   <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -156,7 +151,7 @@
           <hr class="border-border-subtle" />
           <p class="text-xs text-text-dim font-medium">Recent Runs</p>
           {#each recentRuns.slice(0, 3) as run}
-            <a href="#/stream/{run.run_id}" class="flex items-center justify-between text-xs hover:bg-white/[0.02] rounded px-1 py-0.5 no-underline">
+            <a href="/stream/{run.run_id}" class="flex items-center justify-between text-xs hover:bg-white/[0.02] rounded px-1 py-0.5 no-underline">
               <span class="text-text-dim truncate max-w-[160px]">
                 {run.run_id.slice(0, 8)}
                 {#if run.issue_number}#{ run.issue_number}{/if}

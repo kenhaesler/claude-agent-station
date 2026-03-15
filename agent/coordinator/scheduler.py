@@ -106,11 +106,15 @@ Write your plan verdict to: {verdict_file}
 
     # Run manager for plan review
     manager_model = "claude-sonnet-4-6"
+    # Inline review content directly to avoid wasting turns re-reading the file
     manager_prompt = (
-        f"Review the employee's implementation plan in: {review_file}\n\n"
+        f"Review the employee's implementation plan below.\n\n"
         f"Write your plan verdict to: {verdict_file}\n\n"
         "Use APPROVE_PLAN if the plan is solid, REVISE_PLAN with specific feedback "
-        "if it needs changes, or REJECT_PLAN if the plan is fundamentally flawed."
+        "if it needs changes, or REJECT_PLAN if the plan is fundamentally flawed.\n\n"
+        "--- BEGIN PLAN REVIEW PACKAGE ---\n"
+        f"{review_content}\n"
+        "--- END PLAN REVIEW PACKAGE ---"
     )
 
     stream_file = str(
@@ -249,6 +253,24 @@ async def _run_plan_review_loop(
     return None
 
 
+async def _is_issue_open(project_repo: str, issue_number: int) -> bool:
+    """Check if a GitHub issue is still open. Returns True if open or on error (fail-open)."""
+    try:
+        result = await asyncio.to_thread(
+            subprocess.run,
+            ["gh", "issue", "view", str(issue_number), "--repo", project_repo, "--json", "state"],
+            capture_output=True, text=True, timeout=15,
+        )
+        if result.returncode == 0:
+            data = json.loads(result.stdout)
+            state = data.get("state", "OPEN").upper()
+            return state == "OPEN"
+    except Exception as e:
+        logger.warning("Failed to check issue #%d state (fail-open): %s", issue_number, e)
+    # Fail-open: if we can't determine state, allow work to proceed
+    return True
+
+
 async def run_scheduler(dag: TaskDAG, config: CoordinatorConfig) -> None:
     """Main scheduling loop. Spawns employees for ready tasks, monitors progress."""
     semaphore = asyncio.Semaphore(config.max_concurrent)
@@ -338,6 +360,20 @@ async def run_scheduler(dag: TaskDAG, config: CoordinatorConfig) -> None:
             except Exception as e:
                 logger.debug("Plan usage pre-spawn check failed (non-fatal): %s", e)
 
+            # Freshness check: verify issue is still open before spawning (#139)
+            if task.issue_number:
+                if not await _is_issue_open(task.project_repo, task.issue_number):
+                    logger.warning(
+                        "Skipping task '%s': issue #%d is no longer open",
+                        task.title, task.issue_number,
+                    )
+                    await dag.mark_failed(
+                        task.id,
+                        f"Issue #{task.issue_number} was closed before employee could start",
+                    )
+                    post_task_event(config, "task_failed", task)
+                    continue
+
             await semaphore.acquire()
             employee_index = next_employee_index
             next_employee_index += 1
@@ -375,6 +411,7 @@ async def run_scheduler(dag: TaskDAG, config: CoordinatorConfig) -> None:
                     task, config, employee_index, activity,
                     stop_event, conflict_detector, semaphore,
                     dag, rate_limit_tracker,
+                    actual_running=len(running) + 1,
                 )
             )
 
@@ -444,6 +481,7 @@ async def _run_and_monitor(
     semaphore: asyncio.Semaphore,
     dag: TaskDAG,
     rate_limit_tracker: RateLimitTracker | None = None,
+    actual_running: int = 1,
 ) -> str:
     """Run an employee and monitor their stream. Returns task_id when done."""
     try:
@@ -455,7 +493,9 @@ async def _run_and_monitor(
                 employee_index,
                 task.title,
             )
+            post_task_event(config, "plan_review_start", task)
             approved_plan = await _run_plan_review_loop(task, config, employee_index)
+            post_task_event(config, "plan_review_complete", task)
             if approved_plan is None:
                 logger.warning(
                     "Plan phase failed for employee %d, marking task failed",
@@ -469,7 +509,7 @@ async def _run_and_monitor(
         # Note: analyze/plan mode enforcement is handled by employee_runner.py
         # which selects analyst.md prompt and disallows write tools.
         employee_task = asyncio.create_task(
-            run_employee(task, config, employee_index, approved_plan=approved_plan)
+            run_employee(task, config, employee_index, approved_plan=approved_plan, actual_running=actual_running)
         )
 
         # Wait briefly for stream file to appear, then start monitoring
