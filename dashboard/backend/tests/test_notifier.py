@@ -2,7 +2,8 @@
 
 Covers:
 - _should_notify filter logic
-- All four message formatters (Slack, Discord, Telegram, Generic)
+- All four adapter formatters (Slack, Discord, Telegram, Generic)
+- Adapter registry (get_adapter, register_adapter, list_adapters)
 - send_notification with bypass filter
 - send_test_notification flow
 - Error handling (never crashes)
@@ -13,17 +14,80 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.services.adapters import (
+    GenericWebhookAdapter,
+    get_adapter,
+    list_adapters,
+    register_adapter,
+)
+from app.services.adapters.base import NotificationAdapter
+from app.services.adapters.discord import DiscordAdapter
+from app.services.adapters.slack import SlackAdapter
+from app.services.adapters.telegram import TelegramAdapter
 from app.services.notifier import (
-    _format_discord,
-    _format_generic,
-    _format_slack,
-    _format_telegram,
     _send_notification_detailed,
     _should_notify,
     send_notification,
     send_test_notification,
 )
 
+
+# ---------------------------------------------------------------------------
+# Adapter Registry
+# ---------------------------------------------------------------------------
+
+class TestAdapterRegistry:
+    """Tests for the adapter registry in adapters/__init__.py."""
+
+    def test_get_adapter_slack(self):
+        adapter = get_adapter("slack")
+        assert isinstance(adapter, SlackAdapter)
+        assert adapter.name == "slack"
+
+    def test_get_adapter_discord(self):
+        adapter = get_adapter("discord")
+        assert isinstance(adapter, DiscordAdapter)
+        assert adapter.name == "discord"
+
+    def test_get_adapter_telegram(self):
+        adapter = get_adapter("telegram")
+        assert isinstance(adapter, TelegramAdapter)
+        assert adapter.name == "telegram"
+
+    def test_get_adapter_generic(self):
+        adapter = get_adapter("generic")
+        assert isinstance(adapter, GenericWebhookAdapter)
+        assert adapter.name == "generic"
+
+    def test_get_adapter_unknown_falls_back_to_generic(self):
+        adapter = get_adapter("unknown_provider")
+        assert isinstance(adapter, GenericWebhookAdapter)
+
+    def test_list_adapters_returns_all_builtins(self):
+        names = list_adapters()
+        assert "discord" in names
+        assert "generic" in names
+        assert "slack" in names
+        assert "telegram" in names
+
+    def test_register_custom_adapter(self):
+        class CustomAdapter(NotificationAdapter):
+            @property
+            def name(self) -> str:
+                return "custom_test"
+
+            def format_message(self, **kwargs):
+                return {"custom": True}
+
+        register_adapter(CustomAdapter())
+        adapter = get_adapter("custom_test")
+        assert adapter.name == "custom_test"
+        assert adapter.format_message() == {"custom": True}
+
+
+# ---------------------------------------------------------------------------
+# _should_notify
+# ---------------------------------------------------------------------------
 
 class TestShouldNotify:
     """Tests for the _should_notify filter function."""
@@ -80,7 +144,7 @@ class TestShouldNotify:
             "enabled": True,
             "method": "webhook",
             "webhook_url": "https://x",
-            # No notify_on specified — should use defaults
+            # No notify_on specified -- should use defaults
         }
         assert _should_notify("approve", config) is True
         assert _should_notify("reject", config) is True
@@ -96,11 +160,18 @@ class TestShouldNotify:
         assert _should_notify("TEST", config) is False
 
 
-class TestFormatSlack:
-    """Tests for the Slack Block Kit formatter."""
+# ---------------------------------------------------------------------------
+# Slack adapter
+# ---------------------------------------------------------------------------
+
+class TestSlackAdapter:
+    """Tests for the Slack Block Kit adapter."""
+
+    def setup_method(self):
+        self.adapter = SlackAdapter()
 
     def test_basic_approve_message(self):
-        payload = _format_slack(
+        payload = self.adapter.format_message(
             event_type="APPROVE",
             project="kenhaesler/my-repo",
             issue_number=42,
@@ -123,7 +194,7 @@ class TestFormatSlack:
         assert any("47,234" in f["text"] for f in fields)
 
     def test_minimal_message(self):
-        payload = _format_slack(
+        payload = self.adapter.format_message(
             event_type="error",
             project="unknown",
             issue_number=None,
@@ -137,7 +208,7 @@ class TestFormatSlack:
         assert payload["blocks"][0]["type"] == "header"
 
     def test_long_header_truncated(self):
-        payload = _format_slack(
+        payload = self.adapter.format_message(
             event_type="APPROVE",
             project="a" * 200,
             issue_number=None,
@@ -150,7 +221,7 @@ class TestFormatSlack:
         assert len(payload["blocks"][0]["text"]["text"]) <= 150
 
     def test_dashboard_link_included(self):
-        payload = _format_slack(
+        payload = self.adapter.format_message(
             event_type="APPROVE",
             project="test/repo",
             issue_number=None,
@@ -166,11 +237,18 @@ class TestFormatSlack:
         assert "dash.example.com/runs/run-456" in context_blocks[0]["elements"][0]["text"]
 
 
-class TestFormatDiscord:
-    """Tests for the Discord embed formatter."""
+# ---------------------------------------------------------------------------
+# Discord adapter
+# ---------------------------------------------------------------------------
+
+class TestDiscordAdapter:
+    """Tests for the Discord embed adapter."""
+
+    def setup_method(self):
+        self.adapter = DiscordAdapter()
 
     def test_basic_approve_message(self):
-        payload = _format_discord(
+        payload = self.adapter.format_message(
             event_type="APPROVE",
             project="kenhaesler/my-repo",
             issue_number=42,
@@ -190,7 +268,7 @@ class TestFormatDiscord:
         assert embed["url"] == "https://dashboard.example.com/runs/run-123"
 
     def test_reject_color(self):
-        payload = _format_discord(
+        payload = self.adapter.format_message(
             event_type="REJECT",
             project="test/repo",
             issue_number=None,
@@ -203,7 +281,7 @@ class TestFormatDiscord:
         assert payload["embeds"][0]["color"] == 15548997  # red
 
     def test_unknown_event_uses_grey(self):
-        payload = _format_discord(
+        payload = self.adapter.format_message(
             event_type="UNKNOWN",
             project="test/repo",
             issue_number=None,
@@ -216,11 +294,18 @@ class TestFormatDiscord:
         assert payload["embeds"][0]["color"] == 8421504  # grey
 
 
-class TestFormatTelegram:
-    """Tests for the Telegram Bot API formatter."""
+# ---------------------------------------------------------------------------
+# Telegram adapter
+# ---------------------------------------------------------------------------
+
+class TestTelegramAdapter:
+    """Tests for the Telegram Bot API adapter."""
+
+    def setup_method(self):
+        self.adapter = TelegramAdapter()
 
     def test_basic_message(self):
-        payload = _format_telegram(
+        payload = self.adapter.format_message(
             event_type="APPROVE",
             project="kenhaesler/my-repo",
             issue_number=42,
@@ -229,7 +314,7 @@ class TestFormatTelegram:
             summary="All good",
             run_id="run-123",
             dashboard_url="https://dashboard.example.com",
-            chat_id="-1001234567890",
+            config={"telegram_chat_id": "-1001234567890"},
         )
         assert payload["parse_mode"] == "HTML"
         assert payload["chat_id"] == "-1001234567890"
@@ -240,7 +325,7 @@ class TestFormatTelegram:
         assert payload["disable_web_page_preview"] is True
 
     def test_no_chat_id(self):
-        payload = _format_telegram(
+        payload = self.adapter.format_message(
             event_type="APPROVE",
             project="test/repo",
             issue_number=None,
@@ -253,11 +338,18 @@ class TestFormatTelegram:
         assert "chat_id" not in payload
 
 
-class TestFormatGeneric:
-    """Tests for the generic JSON payload formatter."""
+# ---------------------------------------------------------------------------
+# Generic webhook adapter
+# ---------------------------------------------------------------------------
+
+class TestGenericWebhookAdapter:
+    """Tests for the generic JSON payload adapter."""
+
+    def setup_method(self):
+        self.adapter = GenericWebhookAdapter()
 
     def test_includes_all_fields(self):
-        payload = _format_generic(
+        payload = self.adapter.format_message(
             event_type="APPROVE",
             project="kenhaesler/my-repo",
             issue_number=42,
@@ -277,7 +369,7 @@ class TestFormatGeneric:
         assert payload["dashboard_url"] == "https://dashboard.example.com/runs/run-123"
 
     def test_null_dashboard_url(self):
-        payload = _format_generic(
+        payload = self.adapter.format_message(
             event_type="error",
             project="test/repo",
             issue_number=None,
@@ -290,8 +382,12 @@ class TestFormatGeneric:
         assert payload["dashboard_url"] is None
 
 
+# ---------------------------------------------------------------------------
+# send_test_notification
+# ---------------------------------------------------------------------------
+
 class TestSendTestNotification:
-    """Tests for the send_test_notification function — validates the bug fix."""
+    """Tests for the send_test_notification function -- validates the bug fix."""
 
     @pytest.mark.asyncio
     async def test_test_notification_bypasses_should_notify_filter(self):
@@ -431,6 +527,10 @@ class TestSendTestNotification:
             assert "Connection refused" in result["error"]
 
 
+# ---------------------------------------------------------------------------
+# _send_notification_detailed
+# ---------------------------------------------------------------------------
+
 class TestSendNotificationDetailed:
     """Tests for _send_notification_detailed return values."""
 
@@ -505,6 +605,10 @@ class TestSendNotificationDetailed:
             assert success is True
             assert detail is None
 
+
+# ---------------------------------------------------------------------------
+# send_notification
+# ---------------------------------------------------------------------------
 
 class TestSendNotification:
     """Tests for send_notification with _bypass_filter parameter."""
@@ -688,7 +792,7 @@ class TestSendNotification:
             )
             mock_client_cls.return_value = mock_client
 
-            # Should not raise — returns False
+            # Should not raise -- returns False
             result = await send_notification(
                 event_type="APPROVE",
                 project="test/repo",
