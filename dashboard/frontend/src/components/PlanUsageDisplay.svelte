@@ -2,6 +2,7 @@
   import { getTokenUsage, getPlanUsage } from '../lib/api';
   import type { TokenUsageData, PlanUsageData } from '../lib/types';
   import ArcGauge from './ArcGauge.svelte';
+  import { themeStore } from '../lib/theme.svelte';
 
   let loading = $state(true);
   let error = $state('');
@@ -37,22 +38,25 @@
   }
 
   let sessionColor = $derived(
-    !planUsage ? '#94a3b8' :
-    planUsage.session_usage_percent >= 80 ? '#ef4444' :
-    planUsage.session_usage_percent >= 60 ? '#f59e0b' :
-    planUsage.session_usage_percent >= 30 ? '#6366f1' : '#10b981'
+    !planUsage ? themeStore.getStatusColor('idle') :
+    planUsage.session_usage_percent >= 80 ? themeStore.getStatusColor('inactive') :
+    planUsage.session_usage_percent >= 60 ? themeStore.getStatusColor('thinking') :
+    planUsage.session_usage_percent >= 30 ? themeStore.theme.colors['--color-accent-blue'] :
+    themeStore.theme.colors['--color-accent-emerald']
   );
 
   let tokenColor = $derived(
-    !planUsage ? '#94a3b8' :
-    planUsage.weekly_usage_percent >= 80 ? '#ef4444' :
-    planUsage.weekly_usage_percent >= 60 ? '#f59e0b' :
-    planUsage.weekly_usage_percent >= 30 ? '#6366f1' : '#10b981'
+    !planUsage ? themeStore.getStatusColor('idle') :
+    planUsage.weekly_usage_percent >= 80 ? themeStore.getStatusColor('inactive') :
+    planUsage.weekly_usage_percent >= 60 ? themeStore.getStatusColor('thinking') :
+    planUsage.weekly_usage_percent >= 30 ? themeStore.theme.colors['--color-accent-blue'] :
+    themeStore.theme.colors['--color-accent-emerald']
   );
 
   let agentCapColor = $derived(
-    !tokenUsage ? '#94a3b8' :
-    tokenUsage.max_usage_percent >= 80 ? '#f59e0b' : '#3b82f6'
+    !tokenUsage ? themeStore.getStatusColor('idle') :
+    tokenUsage.max_usage_percent >= 80 ? themeStore.getStatusColor('thinking') :
+    themeStore.theme.colors['--color-info']
   );
 </script>
 

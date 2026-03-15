@@ -286,6 +286,24 @@ export interface OAuthCallbackResponse {
   error?: string;
 }
 
+export interface GitHubOAuthStartResponse {
+  auth_url: string;
+  state: string;
+}
+
+export interface GitHubOAuthCallbackResponse {
+  success: boolean;
+  username?: string;
+  error?: string;
+}
+
+export interface GitHubOAuthStatusResponse {
+  connected: boolean;
+  username?: string;
+  scopes?: string[];
+  error?: string;
+}
+
 export interface ToastMessage {
   id: number;
   type: 'success' | 'error' | 'info';

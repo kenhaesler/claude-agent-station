@@ -46,6 +46,29 @@
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
 
+  /* Scrollbar */
+  --color-scrollbar: oklch(0.35 0.005 260);
+  --color-scrollbar-hover: oklch(0.42 0.005 260);
+
+  /* Markdown / content */
+  --color-code-bg: rgba(255, 255, 255, 0.08);
+  --color-code-text: #f0abfc;
+  --color-pre-bg: rgba(0, 0, 0, 0.3);
+  --color-pre-border: rgba(255, 255, 255, 0.06);
+  --color-blockquote-border: rgba(99, 102, 241, 0.5);
+  --color-blockquote-text: rgba(226, 232, 240, 0.7);
+  --color-link: #60a5fa;
+  --color-table-border: rgba(255, 255, 255, 0.1);
+  --color-table-header-bg: rgba(255, 255, 255, 0.05);
+  --color-hr: rgba(255, 255, 255, 0.1);
+
+  /* Status colors */
+  --color-status-active: #22c55e;
+  --color-status-inactive: #ef4444;
+  --color-status-thinking: #f59e0b;
+  --color-status-error: #ef4444;
+  --color-status-idle: #6b7280;
+
   /* Layout */
   --spacing-rail: 56px;
   --spacing-panel: 400px;
@@ -83,11 +106,11 @@ body {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: oklch(0.35 0.005 260);
+  background: var(--color-scrollbar);
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: oklch(0.42 0.005 260);
+  background: var(--color-scrollbar-hover);
 }
 
 /* Surface utility */
@@ -147,7 +170,7 @@ body {
 
 @keyframes highlight-fade {
   from {
-    background: oklch(0.22 0.005 260);
+    background: var(--color-surface-2);
   }
   to {
     background: transparent;
@@ -191,7 +214,7 @@ body {
 }
 
 .phase-active {
-  background: oklch(0.22 0.005 260);
+  background: var(--color-surface-2);
   animation: none;
 }
 

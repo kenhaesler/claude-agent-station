@@ -9,7 +9,7 @@
 
   const sizeMap = { sm: 8, md: 12, lg: 16 };
   let s = $derived(sizeMap[size]);
-  let fillColor = $derived(color ?? (active ? '#22c55e' : '#ef4444'));
+  let fillColor = $derived(color ?? (active ? 'var(--color-status-active)' : 'var(--color-status-inactive)'));
 </script>
 
 <span

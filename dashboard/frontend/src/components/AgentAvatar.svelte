@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { AgentRole } from '../lib/agent-presence.svelte';
+  import { themeStore } from '../lib/theme.svelte';
 
   interface Props {
     name: string;
@@ -10,7 +11,9 @@
     showName?: boolean;
   }
 
-  let { name, role = 'employee', color = '#3b82f6', status = 'idle', size = 'md', showName = false }: Props = $props();
+  let { name, role = 'employee', color, status = 'idle', size = 'md', showName = false }: Props = $props();
+
+  let resolvedColor = $derived(color ?? themeStore.theme.colors['--color-agent-dev-0']);
 
   let sizeClasses = $derived(
     size === 'sm' ? 'w-6 h-6' :
@@ -23,15 +26,16 @@
   );
 
   let statusColor = $derived(
-    status === 'active' ? '#22c55e' :
-    status === 'thinking' ? '#f59e0b' :
-    status === 'error' ? '#ef4444' : '#6b7280'
+    status === 'active' ? themeStore.getStatusColor('active') :
+    status === 'thinking' ? themeStore.getStatusColor('thinking') :
+    status === 'error' ? themeStore.getStatusColor('error') :
+    themeStore.getStatusColor('idle')
   );
 </script>
 
 <div class="flex items-center gap-1.5">
-  <div class="relative {sizeClasses} rounded-full flex items-center justify-center shrink-0" style="background: {color}20; border: 1.5px solid {color}60">
-    <svg class="{size === 'sm' ? 'w-3 h-3' : size === 'lg' ? 'w-5 h-5' : 'w-4 h-4'}" viewBox="0 0 16 16" fill="none" stroke={color} stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+  <div class="relative {sizeClasses} rounded-full flex items-center justify-center shrink-0" style="background: {resolvedColor}20; border: 1.5px solid {resolvedColor}60">
+    <svg class="{size === 'sm' ? 'w-3 h-3' : size === 'lg' ? 'w-5 h-5' : 'w-4 h-4'}" viewBox="0 0 16 16" fill="none" stroke={resolvedColor} stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
       {#if role === 'manager'}
         <!-- Shield -->
         <path d="M8 2L3 4.5V7.5C3 10.5 5 13 8 14C11 13 13 10.5 13 7.5V4.5L8 2Z" />
@@ -63,6 +67,6 @@
   </div>
 
   {#if showName}
-    <span class="{textSize} font-medium" style="color: {color}">{name}</span>
+    <span class="{textSize} font-medium" style="color: {resolvedColor}">{name}</span>
   {/if}
 </div>

@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { themeStore } from '../lib/theme.svelte';
+
   interface DataPoint {
     label: string;
     value: number;
@@ -17,12 +19,14 @@
   let {
     data,
     title = '',
-    color = '#6366f1',
+    color,
     fillOpacity = 0.15,
     height = 180,
     valueFormatter = (v: number) => v.toLocaleString(),
     showDots = true,
   }: Props = $props();
+
+  let resolvedColor = $derived(color ?? themeStore.theme.colors['--color-accent-blue']);
 
   // Layout
   const PAD_LEFT = 44;
@@ -84,8 +88,8 @@
       <defs>
         <!-- Area gradient -->
         <linearGradient id="{uid}-fill" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stop-color={color} stop-opacity={fillOpacity} />
-          <stop offset="100%" stop-color={color} stop-opacity="0" />
+          <stop offset="0%" stop-color={resolvedColor} stop-opacity={fillOpacity} />
+          <stop offset="100%" stop-color={resolvedColor} stop-opacity="0" />
         </linearGradient>
       </defs>
 
@@ -122,7 +126,7 @@
         <path
           d={linePath()}
           fill="none"
-          stroke={color}
+          stroke={resolvedColor}
           stroke-width="2"
           stroke-linejoin="round"
           stroke-linecap="round"
@@ -163,8 +167,8 @@
             cx={pt.x}
             cy={pt.y}
             r={hoveredIndex === i ? 5 : 3}
-            fill={hoveredIndex === i ? color : 'rgba(15, 23, 42, 0.8)'}
-            stroke={color}
+            fill={hoveredIndex === i ? resolvedColor : 'rgba(15, 23, 42, 0.8)'}
+            stroke={resolvedColor}
             stroke-width={hoveredIndex === i ? 2 : 1.5}
             style="transition: r 0.15s ease, fill 0.15s ease"
           />
