@@ -14,8 +14,6 @@ Usage::
 
 from __future__ import annotations
 
-from typing import Any
-
 from app.services.adapters.base import NotificationAdapter
 from app.services.adapters.discord import DiscordAdapter
 from app.services.adapters.generic_webhook import GenericWebhookAdapter
@@ -54,13 +52,12 @@ register_adapter(TelegramAdapter())
 register_adapter(GenericWebhookAdapter())
 
 __all__ = [
+    "DiscordAdapter",
+    "GenericWebhookAdapter",
     "NotificationAdapter",
+    "SlackAdapter",
+    "TelegramAdapter",
     "get_adapter",
     "list_adapters",
     "register_adapter",
-    # Concrete adapters
-    "DiscordAdapter",
-    "GenericWebhookAdapter",
-    "SlackAdapter",
-    "TelegramAdapter",
 ]
