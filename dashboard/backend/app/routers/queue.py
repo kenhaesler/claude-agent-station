@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from typing import Optional
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db
@@ -220,32 +220,53 @@ async def claim_work(
 ):
     """Atomically claim the highest-priority pending item (work-stealing pattern).
 
+    Uses an atomic UPDATE-WHERE to prevent race conditions when multiple
+    employees try to claim simultaneously.  SQLite serializes writes, so
+    the second claimer sees rowcount == 0 and gets 204.
+
     Returns the claimed item, or 204 No Content if nothing is available.
     """
-    q = (
-        select(QueueItem)
+    # Subquery: find the best pending item's ID
+    sub = (
+        select(QueueItem.id)
         .where(QueueItem.state == "pending")
-        .order_by(QueueItem.priority.desc(), QueueItem.created_at.asc())
-        .limit(1)
     )
     if project_repo:
-        q = q.where(QueueItem.project_repo == project_repo)
+        sub = sub.where(QueueItem.project_repo == project_repo)
     if mode:
-        q = q.where(QueueItem.mode == mode)
-
-    result = await db.execute(q)
-    item = result.scalar_one_or_none()
-    if not item:
-        return Response(status_code=204)
+        sub = sub.where(QueueItem.mode == mode)
+    sub = sub.order_by(QueueItem.priority.desc(), QueueItem.created_at.asc()).limit(1)
+    best = sub.scalar_subquery()
 
     now = _utcnow()
-    item.state = "claimed"
-    item.assigned_to = employee_index
-    item.run_id = run_id
-    item.assigned_at = now
-    item.updated_at = now
+    stmt = (
+        update(QueueItem)
+        .where(QueueItem.id == best, QueueItem.state == "pending")
+        .values(
+            state="claimed",
+            assigned_to=employee_index,
+            run_id=run_id,
+            assigned_at=now,
+            updated_at=now,
+        )
+    )
+    result = await db.execute(stmt)
+    if result.rowcount == 0:
+        return Response(status_code=204)
+
     await db.commit()
-    await db.refresh(item)
+
+    # Fetch the claimed item for the response
+    fetch = await db.execute(
+        select(QueueItem).where(
+            QueueItem.assigned_to == employee_index,
+            QueueItem.run_id == run_id,
+            QueueItem.state == "claimed",
+        ).order_by(QueueItem.updated_at.desc()).limit(1)
+    )
+    item = fetch.scalar_one_or_none()
+    if not item:
+        return Response(status_code=204)
 
     await event_bus_publish({
         "type": "queue_claimed",

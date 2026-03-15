@@ -54,6 +54,7 @@ export interface Run {
   employee_report: string | null;
   verdict_detail: string | null;
   log_file: string | null;
+  trace_id: string | null;
   employee_index: number | null;
   concurrent_group_id: string | null;
 }

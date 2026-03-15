@@ -79,12 +79,12 @@ claude-agent-station/
 │   │   │   ├── main.py             # App, lifespan, router registration
 │   │   │   ├── config.py           # pydantic-settings (STATION_ prefix)
 │   │   │   ├── database.py         # Async SQLAlchemy + migrations
-│   │   │   ├── models.py           # ORM models (9 tables)
+│   │   │   ├── models.py           # ORM models (14 tables)
 │   │   │   ├── schemas.py          # Pydantic request/response schemas
 │   │   │   ├── dependencies.py     # FastAPI dependency injection
 │   │   │   ├── middleware/
 │   │   │   │   └── auth.py         # API key authentication middleware
-│   │   │   ├── routers/            # 16 API routers
+│   │   │   ├── routers/            # 20 API routers
 │   │   │   │   ├── analytics.py    # Token usage charts, verdicts
 │   │   │   │   ├── config_router.py# Agent configuration CRUD
 │   │   │   │   ├── coordinator.py  # DAG, tasks, guidance API
@@ -148,7 +148,7 @@ claude-agent-station/
 
 ---
 
-## Database Schema (9 tables)
+## Database Schema (14 tables)
 
 | Table | Purpose | Key fields |
 |-------|---------|------------|
@@ -161,6 +161,11 @@ claude-agent-station/
 | `notifications` | Run completion alerts | type (approve/reject/pr/error) |
 | `task_queue` | Work queue with state machine | state, priority, retry_count |
 | `plan_usage_history` | Token usage tracking | plan_tier, weekly_tokens_used |
+| `agent_events` | Structured audit trail (ESAA) | workflow_id, agent_id, event_type |
+| `task_outcomes` | Adaptive scheduling learning | mode_used, model_used, success |
+| `brainstorm_sessions` | AI brainstorm conversations | project_id, persona, title |
+| `brainstorm_messages` | Brainstorm chat messages | session_id, role, content |
+| `prompt_versions` | Prompt A/B testing | prompt_name, version, content_hash |
 
 ---
 
@@ -168,10 +173,10 @@ claude-agent-station/
 
 | Layer | Mechanism |
 |-------|-----------|
-| **API authentication** | Optional API key via `STATION_API_KEY` env var. Bearer token or query parameter. Health/webhook/SSE endpoints always public. |
+| **API authentication** | Optional API key via `STATION_API_KEY` env var. Bearer token or query parameter. Health and webhook endpoints always public. SSE requires API key when configured. |
 | **Webhook authentication** | Optional shared secret via `STATION_WEBHOOK_SECRET`. X-Webhook-Token header. |
 | **Event idempotency** | In-memory deduplication with TTL (prevents replay attacks) |
-| **Path traversal** | `os.path.realpath()` + `startswith()` checks on log endpoints |
+| **Path traversal** | `os.path.realpath()` + `Path.is_relative_to()` checks on log endpoints |
 | **XSS prevention** | DOMPurify for markdown rendering, Svelte auto-escaping |
 | **CORS** | Explicit origin whitelist (no wildcard with credentials) |
 | **OAuth** | PKCE flow with TTL state parameter |
