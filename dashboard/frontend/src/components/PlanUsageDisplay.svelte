@@ -1,21 +1,24 @@
 <script lang="ts">
-  import { getUsage, getTokenUsage } from '../lib/api';
-  import type { UsageData, TokenUsageData } from '../lib/types';
+  import { getUsage, getTokenUsage, getPlanUsage } from '../lib/api';
+  import type { UsageData, TokenUsageData, PlanUsageData } from '../lib/types';
   import ArcGauge from './ArcGauge.svelte';
 
   let loading = $state(true);
   let error = $state('');
   let usage = $state<UsageData | null>(null);
   let tokenUsage = $state<TokenUsageData | null>(null);
+  let planUsage = $state<PlanUsageData | null>(null);
 
   async function loadUsage() {
     try {
-      const [usageRes, tokenRes] = await Promise.allSettled([
+      const [usageRes, tokenRes, planRes] = await Promise.allSettled([
         getUsage(),
         getTokenUsage(),
+        getPlanUsage(),
       ]);
       if (usageRes.status === 'fulfilled') usage = usageRes.value;
       if (tokenRes.status === 'fulfilled') tokenUsage = tokenRes.value;
+      if (planRes.status === 'fulfilled') planUsage = planRes.value;
       error = '';
     } catch (e: any) {
       error = e.message;
@@ -49,6 +52,13 @@
     usage.usage_percent >= 80 ? '#ef4444' :
     usage.usage_percent >= 60 ? '#f59e0b' :
     usage.usage_percent >= 30 ? '#6366f1' : '#10b981'
+  );
+
+  let tokenColor = $derived(
+    !planUsage ? '#94a3b8' :
+    planUsage.weekly_usage_percent >= 80 ? '#ef4444' :
+    planUsage.weekly_usage_percent >= 60 ? '#f59e0b' :
+    planUsage.weekly_usage_percent >= 30 ? '#6366f1' : '#10b981'
   );
 
   let agentCapColor = $derived(
@@ -85,22 +95,28 @@
         </div>
       </div>
 
-      <!-- Token Usage (Daily) -->
+      <!-- Token Usage (Weekly Plan) -->
       <div class="flex items-center gap-3 bg-white/[0.02] rounded-lg px-3 py-3 border border-border/20">
         <ArcGauge
-          value={0}
+          value={planUsage?.weekly_usage_percent ?? 0}
           size={56}
-          color="#6366f1"
+          color={tokenColor}
           label="TOKENS"
         />
         <div class="min-w-0">
-          <div class="text-sm font-medium text-text">Tokens (24h)</div>
+          <div class="text-sm font-medium text-text">Tokens (Week)</div>
           <div class="text-xs text-text-dim font-data">
-            {formatTokens(tokenUsage?.daily.tokens_total ?? 0)} consumed
+            {formatTokens(planUsage?.weekly_tokens_used ?? 0)} / {formatTokens(planUsage?.weekly_tokens_limit ?? 0)}
           </div>
-          <div class="text-[10px] text-text-dim font-data mt-0.5">
-            In: {formatTokens(tokenUsage?.daily.tokens_input ?? 0)} / Out: {formatTokens(tokenUsage?.daily.tokens_output ?? 0)}
-          </div>
+          {#if planUsage?.should_throttle}
+            <div class="text-[10px] text-reject font-data mt-0.5">
+              Throttled
+            </div>
+          {:else}
+            <div class="text-[10px] text-text-dim font-data mt-0.5">
+              {planUsage?.plan_tier ?? 'unknown'} plan
+            </div>
+          {/if}
         </div>
       </div>
 
