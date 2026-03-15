@@ -279,7 +279,14 @@
       const res = await startGitHubOAuth();
       githubOAuthState = res.state; githubOAuthFlow = 'waiting_for_code'; githubOAuthCode = '';
       window.open(res.auth_url, '_blank');
-    } catch (e: any) { githubOAuthError = e.message; }
+    } catch (e: any) {
+      const msg = e.message || '';
+      if (msg.includes('not configured') || msg.includes('STATION_GITHUB_CLIENT_ID')) {
+        githubOAuthError = 'GitHub OAuth not configured. Set STATION_GITHUB_CLIENT_ID and STATION_GITHUB_CLIENT_SECRET environment variables on the server.';
+      } else {
+        githubOAuthError = msg;
+      }
+    }
   }
 
   async function handleGitHubOAuthSubmit() {
