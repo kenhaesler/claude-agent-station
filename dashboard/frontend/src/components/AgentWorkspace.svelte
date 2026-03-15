@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { WorkspaceRenderer } from '../lib/workspace-renderer';
   import { agentPresence, togglePanel } from '../lib/agent-presence.svelte';
   import { navigate } from '../lib/router.svelte';
@@ -25,6 +26,10 @@
   // HUD tool cycling state
   let hudToolCycleIndex = $state(0);
   let hudToolCycleTimer: ReturnType<typeof setInterval> | null = null;
+
+  // rAF throttle for renderer updates — prevents effect storms from starving the animation loop
+  let dataRafPending = false;
+  let activityRafPending = false;
 
   // Initialize renderer
   $effect(() => {
@@ -74,43 +79,74 @@
   });
 
   // Feed agent-presence data to renderer (with employee data)
+  // Throttled to once per animation frame — during active runs, agentPresence
+  // $state changes dozens of times/sec (tool calls, thinking, intensity samples).
+  // Without throttling, each change re-runs this effect synchronously,
+  // starving requestAnimationFrame and freezing the canvas.
   $effect(() => {
-    renderer?.setData({
-      agents: agentPresence.agents.map(a => ({
-        id: a.name,
-        role: a.role,
-        name: a.name,
-        color: a.color,
-        isActive: a.status === 'active' || a.status === 'thinking',
-        isThinking: a.status === 'thinking',
-        currentAction: a.currentAction,
-        turnCount: agentPresence.turnCount,
-        tokenCount: agentPresence.tokensBurned,
-        employees: agentPresence.activeRuns
-          .filter(r => r.mode !== 'manager' && r.mode !== 'analyst')
-          .map((r, i) => ({
-            index: i,
-            runId: r.run_id,
-            status: r.status === 'running' ? 'working' as const : 'waiting' as const,
-            tool: null,
-            issueNumber: r.issue_number,
-            inWorktree: false, // TODO: populate from backend when available
-            tokensUsed: 0,
-            turnsUsed: r.turns ?? 0,
+    // Read all reactive deps to establish tracking
+    const agents = agentPresence.agents;
+    const activeRuns = agentPresence.activeRuns;
+    const phase = agentPresence.phase;
+    const turnCount = agentPresence.turnCount;
+    const tokensBurned = agentPresence.tokensBurned;
+    const activityIntensity = agentPresence.activityIntensity;
+    const svcActive = systemStatus?.service.active ?? false;
+    const usagePct = usage?.usage_percent ?? 0;
+    // Deep-read agent properties so Svelte tracks them
+    const agentSnapshot = agents.map(a => ({ name: a.name, role: a.role, color: a.color, status: a.status, currentAction: a.currentAction }));
+    const runSnapshot = activeRuns.map(r => ({ run_id: r.run_id, mode: r.mode, status: r.status, issue_number: r.issue_number, turns: r.turns }));
+
+    if (dataRafPending) return;
+    dataRafPending = true;
+    requestAnimationFrame(() => {
+      dataRafPending = false;
+      untrack(() => {
+        renderer?.setData({
+          agents: agentSnapshot.map(a => ({
+            id: a.name,
+            role: a.role,
+            name: a.name,
+            color: a.color,
+            isActive: a.status === 'active' || a.status === 'thinking',
+            isThinking: a.status === 'thinking',
+            currentAction: a.currentAction,
+            turnCount,
+            tokenCount: tokensBurned,
+            employees: runSnapshot
+              .filter(r => r.mode !== 'manager' && r.mode !== 'analyst')
+              .map((r, i) => ({
+                index: i,
+                runId: r.run_id,
+                status: r.status === 'running' ? 'working' as const : 'waiting' as const,
+                tool: null,
+                issueNumber: r.issue_number,
+                inWorktree: false,
+                tokensUsed: 0,
+                turnsUsed: r.turns ?? 0,
+              })),
           })),
-      })),
-      phase: agentPresence.phase,
-      serviceActive: systemStatus?.service.active ?? false,
-      usagePercent: usage?.usage_percent ?? 0,
-      activityIntensity: agentPresence.activityIntensity,
+          phase,
+          serviceActive: svcActive,
+          usagePercent: usagePct,
+          activityIntensity,
+        });
+      });
     });
   });
 
   $effect(() => {
-    renderer?.setActivity({
-      intensity: agentPresence.activityIntensity,
-      currentTool: agentPresence.currentTool?.summary ?? null,
-      activeAgent: agentPresence.agents.find(a => a.status === 'active')?.name ?? null,
+    const intensity = agentPresence.activityIntensity;
+    const toolSummary = agentPresence.currentTool?.summary ?? null;
+    const activeAgent = agentPresence.agents.find(a => a.status === 'active')?.name ?? null;
+
+    if (activityRafPending) return;
+    activityRafPending = true;
+    requestAnimationFrame(() => {
+      activityRafPending = false;
+      untrack(() => {
+        renderer?.setActivity({ intensity, currentTool: toolSummary, activeAgent });
+      });
     });
   });
 

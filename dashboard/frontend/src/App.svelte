@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { route, navigate, handleLinkClick } from './lib/router.svelte';
   import { getSystemStatus, getAuthStatus, getUsage, triggerRun, getGitHubOAuthStatus } from './lib/api';
   import { toastSuccess, toastError } from './lib/toast.svelte';
@@ -121,7 +122,7 @@
 
   // Intelligence cache lifecycle
   $effect(() => {
-    startIntelligenceRefresh();
+    untrack(() => startIntelligenceRefresh());
     return () => stopIntelligenceRefresh();
   });
 
