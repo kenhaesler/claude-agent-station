@@ -57,7 +57,7 @@ export function getAgentName(employeeIndex: number | null, mode?: string | null)
   if (mode === 'manager') return 'Manager';
   if (mode === 'analyst') return 'Analyst';
   if (mode === 'coordinator') return 'Coordinator';
-  if (mode === 'planner') return 'Planner';
+  if (mode === 'planner' || mode === 'plan') return 'Planner';
   if (mode === 'assigner') return 'Assigner';
   if (employeeIndex != null) return `Dev-${employeeIndex}`;
   return 'Dev-0';

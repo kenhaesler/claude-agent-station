@@ -1177,6 +1177,11 @@ print(f'{t:,}')
         log_warn "Employee exited with code $exit_code: $repo"
     fi
 
+    # Emit planner_complete if this was a plan-mode employee
+    if [ "$mode" = "plan" ]; then
+        webhook_event "planner_complete" "\"project\":\"$repo\",\"employee_index\":$employee_index,\"exit_code\":$exit_code"
+    fi
+
     # Use employee-specific run_id to complete the correct Run record
     curl -s --max-time 3 -X POST "$_ewh_url" \
         -H "Content-Type: application/json" \
