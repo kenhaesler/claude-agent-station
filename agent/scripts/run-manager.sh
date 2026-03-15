@@ -2532,6 +2532,24 @@ print(f'Wrote {len(assignments)} assignments')
                 fi
             fi
 
+            # ---- Issue freshness check ----
+            # Verify the assigned issue is still open before spawning an employee.
+            # Prevents wasted work on issues closed/resolved since assignment.
+            local _assign_file="$workspace/.claude-assignment-${ei}.json"
+            if [ -f "$_assign_file" ]; then
+                local _issue_num
+                _issue_num=$(python3 -c "import json; print(json.load(open('$_assign_file')).get('issue_number',''))" 2>/dev/null || echo "")
+                if [ -n "$_issue_num" ] && [ "$_issue_num" != "None" ] && [ "$_issue_num" != "null" ]; then
+                    local _issue_state
+                    _issue_state=$(gh issue view "$_issue_num" --repo "$repo" --json state -q '.state' 2>/dev/null || echo "")
+                    if [ -n "$_issue_state" ] && ! echo "$_issue_state" | grep -qi "open"; then
+                        log_warn "Issue #$_issue_num is no longer open (state: $_issue_state), skipping employee $ei for $repo"
+                        continue
+                    fi
+                fi
+            fi
+            # ---- End issue freshness check ----
+
             if [ "$is_parallel" = true ]; then
                 # Parallel mode: wait for a slot, then spawn in background
                 wait_for_slot "$max_concurrent"
@@ -2881,6 +2899,22 @@ print(json.dumps(result))
                     rm -f "$WORKSPACES_DIR/$rn/.claude-manager-feedback.json"
                 done
                 break 2
+            fi
+
+            # Issue freshness check before retry
+            local _retry_assign="$ws_r/.claude-assignment-0.json"
+            if [ -f "$_retry_assign" ]; then
+                local _retry_issue
+                _retry_issue=$(python3 -c "import json; print(json.load(open('$_retry_assign')).get('issue_number',''))" 2>/dev/null || echo "")
+                if [ -n "$_retry_issue" ] && [ "$_retry_issue" != "None" ] && [ "$_retry_issue" != "null" ]; then
+                    local _retry_state
+                    _retry_state=$(gh issue view "$_retry_issue" --repo "$repo_r" --json state -q '.state' 2>/dev/null || echo "")
+                    if [ -n "$_retry_state" ] && ! echo "$_retry_state" | grep -qi "open"; then
+                        log_warn "Issue #$_retry_issue is no longer open (state: $_retry_state), skipping retry for $repo_r"
+                        rm -f "$ws_r/.claude-manager-feedback.json"
+                        continue
+                    fi
+                fi
             fi
 
             log_info "Retrying employee for: $repo_r"
