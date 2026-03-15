@@ -63,6 +63,8 @@ async def _migrate_add_columns(conn) -> None:
         ("task_queue", "parent_task_id", "ALTER TABLE task_queue ADD COLUMN parent_task_id TEXT"),
         ("task_queue", "confidence", "ALTER TABLE task_queue ADD COLUMN confidence REAL"),
         ("task_queue", "handoff_context", "ALTER TABLE task_queue ADD COLUMN handoff_context TEXT"),
+        # Security reviewer feature (issue #128)
+        ("projects", "security_review_enabled", "ALTER TABLE projects ADD COLUMN security_review_enabled BOOLEAN DEFAULT 0"),
     ]
     for table, column, sql in migrations:
         try:

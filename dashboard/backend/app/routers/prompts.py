@@ -55,6 +55,11 @@ PROMPT_ROLES = {
         "description": "Distributes issues among parallel employees to prevent duplicates",
         "file": "assigner.md",
     },
+    "security-reviewer": {
+        "label": "Security Reviewer",
+        "description": "Dedicated security review of code changes before manager approval",
+        "file": "security-reviewer.md",
+    },
 }
 
 DB_KEY_PREFIX = "prompt_override_"

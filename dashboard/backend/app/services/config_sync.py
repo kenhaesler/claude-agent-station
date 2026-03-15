@@ -78,6 +78,9 @@ async def sync_config_to_db(db: AsyncSession) -> int:
             existing.setup_script = proj_data.get(
                 "setup_script", existing.setup_script
             )
+            existing.security_review_enabled = proj_data.get(
+                "security_review_enabled", existing.security_review_enabled or False
+            )
         else:
             project = Project(
                 repo=repo,
@@ -87,6 +90,7 @@ async def sync_config_to_db(db: AsyncSession) -> int:
                 branch=proj_data.get("branch", "main"),
                 custom_instructions=proj_data.get("custom_instructions"),
                 setup_script=proj_data.get("setup_script"),
+                security_review_enabled=proj_data.get("security_review_enabled", False),
             )
             db.add(project)
         count += 1
