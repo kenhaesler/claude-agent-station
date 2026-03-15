@@ -139,6 +139,9 @@ def _find_claude_cli() -> str:
     """Find the claude CLI binary."""
     path = shutil.which("claude")
     if not path:
+        for fallback in ["/home/claude-agent/.local/bin/claude", "/usr/local/bin/claude"]:
+            if os.path.isfile(fallback) and os.access(fallback, os.X_OK):
+                return fallback
         raise HTTPException(status_code=503, detail="claude CLI not found in PATH")
     return path
 
@@ -374,18 +377,10 @@ async def send_message(
         """Stream the AI response via Claude CLI subprocess."""
         assistant_msg_id = f"msg-{uuid.uuid4().hex[:12]}"
         full_response = ""
+        sp_path: str | None = None
 
         try:
             claude_bin = _find_claude_cli()
-
-            # Build the prompt: system prompt + conversation history as a single prompt
-            # Claude CLI's -p flag takes a single user prompt; we encode history into it.
-            prompt_parts = [f"[System]\n{system_prompt}\n"]
-            for msg in history:
-                role_label = "User" if msg["role"] == "user" else "Assistant"
-                prompt_parts.append(f"[{role_label}]\n{msg['content']}\n")
-
-            full_prompt = "\n".join(prompt_parts)
 
             # Write system prompt to a temp file for --system-prompt-file
             with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as sp_file:
@@ -427,9 +422,25 @@ async def send_message(
                 limit=1024 * 1024,  # 1MB line buffer (hook output can be large)
             )
 
-            async for line in proc.stdout:
+            # Read stdout lines with a 2s timeout so we can emit SSE keepalive
+            # comments while the CLI is thinking. This prevents proxy timeouts
+            # and lets the frontend know the connection is alive.
+            got_text = False
+            while True:
                 if await request.is_disconnected():
                     proc.kill()
+                    break
+
+                try:
+                    line = await asyncio.wait_for(
+                        proc.stdout.readline(), timeout=2.0
+                    )
+                except asyncio.TimeoutError:
+                    if not got_text:
+                        yield ": keepalive\n\n"
+                    continue
+
+                if not line:  # EOF
                     break
 
                 line_str = line.decode("utf-8", errors="replace").strip()
@@ -445,11 +456,12 @@ async def send_message(
 
                 # Claude CLI stream-json emits "assistant" events with full content
                 if etype == "assistant":
-                    msg = event.get("message", {})
-                    for block in msg.get("content", []):
+                    msg_data = event.get("message", {})
+                    for block in msg_data.get("content", []):
                         if block.get("type") == "text":
                             text = block.get("text", "")
                             if text:
+                                got_text = True
                                 full_response += text
                                 event_data = json.dumps({"type": "delta", "text": text})
                                 yield f"data: {event_data}\n\n"
@@ -458,23 +470,25 @@ async def send_message(
                 elif etype == "result" and not full_response:
                     text = event.get("result", "")
                     if text:
+                        got_text = True
                         full_response = text
                         event_data = json.dumps({"type": "delta", "text": text})
                         yield f"data: {event_data}\n\n"
 
             await proc.wait()
 
-            # Clean up temp file
-            try:
-                os.unlink(sp_path)
-            except OSError:
-                pass
-
-        except Exception:
+        except Exception as e:
             logger.exception("Error streaming brainstorm response")
-            error_data = json.dumps({"type": "error", "message": "An error occurred while generating the response. Check server logs for details."})
+            error_detail = f"{type(e).__name__}: {e}"
+            error_data = json.dumps({"type": "error", "message": f"Brainstorm error — {error_detail}"})
             yield f"data: {error_data}\n\n"
             return
+        finally:
+            if sp_path:
+                try:
+                    os.unlink(sp_path)
+                except OSError:
+                    pass
 
         # Save assistant message to DB
         try:
