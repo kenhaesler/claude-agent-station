@@ -146,12 +146,12 @@ class TestPromptRouterSync:
         router_count = len(PROMPT_ROLES)
 
         # This assertion documents the gap. Update both sides when fixed.
-        assert actual_files_count == 7, (
-            f"Expected 7 prompt files on disk, found {actual_files_count}"
+        assert actual_files_count == 8, (
+            f"Expected 8 prompt files on disk, found {actual_files_count}"
         )
-        assert router_count == 5, (
+        assert router_count == 6, (
             f"PROMPT_ROLES currently has {router_count} entries. "
-            f"Expected 5 (reviewer and triager not yet added to router)."
+            f"Expected 6 (triager not yet added to router)."
         )
 
 
