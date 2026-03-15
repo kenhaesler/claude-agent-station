@@ -3,6 +3,8 @@
   import { getSystemStatus, getAuthStatus, getUsage, triggerRun } from './lib/api';
   import { toastSuccess, toastError } from './lib/toast.svelte';
   import { agentPresence, connect as connectPresence, disconnect as disconnectPresence, togglePanel } from './lib/agent-presence.svelte';
+  // Import theme store to trigger initialization (applies saved theme on load)
+  import './lib/theme.svelte';
   import NavRail from './components/NavRail.svelte';
   import HeaderBar from './components/HeaderBar.svelte';
   import AgentPanel from './components/AgentPanel.svelte';

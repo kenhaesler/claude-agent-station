@@ -2,6 +2,7 @@
   import StatusOrb from './StatusOrb.svelte';
   import ArcGauge from './ArcGauge.svelte';
   import AgentAvatar from './AgentAvatar.svelte';
+  import ThemeSwitcher from './ThemeSwitcher.svelte';
   import { agentPresence } from '../lib/agent-presence.svelte';
   import { getStoredApiKey } from '../lib/api';
 
@@ -102,6 +103,9 @@
       <span class="text-[10px] text-text-dim font-data hidden lg:inline">{sessionsUsed}/{sessionLimit}</span>
       <ArcGauge value={usagePercent} size={28} color={usageColor} />
     </div>
+
+    <!-- Theme Switcher -->
+    <ThemeSwitcher />
 
     <!-- Trigger Run -->
     <button
