@@ -63,9 +63,12 @@ if (typeof document !== 'undefined') {
   applyTheme(getThemeById(loadSavedThemeId()));
 }
 
-// Re-apply reactively whenever the theme changes
-$effect(() => {
-  applyTheme(currentTheme);
+// Re-apply reactively whenever the theme changes.
+// Use $effect.root() since this runs at module scope, outside any component.
+const _cleanup = $effect.root(() => {
+  $effect(() => {
+    applyTheme(currentTheme);
+  });
 });
 
 // Listen for system scheme changes
