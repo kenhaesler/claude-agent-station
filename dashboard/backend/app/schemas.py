@@ -17,6 +17,7 @@ class ProjectCreate(BaseModel):
     branch: str = "main"
     custom_instructions: str | None = None
     setup_script: str | None = None
+    security_review_enabled: bool = False
 
 
 class ProjectUpdate(BaseModel):
@@ -26,6 +27,7 @@ class ProjectUpdate(BaseModel):
     branch: str | None = None
     custom_instructions: str | None = None
     setup_script: str | None = None
+    security_review_enabled: bool | None = None
 
 
 class ProjectOut(BaseModel):
@@ -37,6 +39,7 @@ class ProjectOut(BaseModel):
     branch: str
     custom_instructions: str | None = None
     setup_script: str | None = None
+    security_review_enabled: bool = False
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
