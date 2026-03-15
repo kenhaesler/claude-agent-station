@@ -91,9 +91,10 @@ async def get_config():
 class StationConfigUpdate(BaseModel):
     models: dict[str, Any] | None = None
     limits: dict[str, Any] | None = None
-    schedule: dict[str, Any] | None = None
+    schedule: str | None = None
     notifications: dict[str, Any] | None = None
     logging: dict[str, Any] | None = None
+    intelligence: dict[str, Any] | None = None
     model_config = ConfigDict(extra="forbid")
 
 

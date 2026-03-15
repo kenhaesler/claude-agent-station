@@ -45,7 +45,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       let message: string;
       try {
         const parsed = JSON.parse(body);
-        message = parsed.detail || body;
+        const detail = parsed.detail;
+        message = Array.isArray(detail)
+          ? detail.map((e: any) => e.msg ?? JSON.stringify(e)).join('; ')
+          : (detail || body);
       } catch { message = body; }
       throw new Error(`${res.status}: ${message}`);
     }
