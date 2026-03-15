@@ -266,12 +266,12 @@ async def github_oauth_status():
         return GitHubOAuthStatusResponse(
             connected=True,
             username=token_data.get("username"),
-            scopes=token_data.get("scope", "").split(",") if token_data.get("scope") else None,
+            scopes=token_data.get("scope", "").split() if token_data.get("scope") else None,
             error="Could not verify token (network error)",
         )
 
     scope_str = token_data.get("scope", "")
-    scopes = [s.strip() for s in scope_str.split(",") if s.strip()] if scope_str else None
+    scopes = scope_str.split() if scope_str else None
 
     return GitHubOAuthStatusResponse(
         connected=True,
