@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 from typing import Any
 
 from app.services.adapters.base import NotificationAdapter, STATUS_EMOJI
@@ -33,19 +34,19 @@ class TelegramAdapter(NotificationAdapter):
     ) -> dict[str, Any]:
         emoji = STATUS_EMOJI.get(event_type, "\u2139\uFE0F")
 
-        lines = [f"<b>{emoji} {event_type} \u2014 {project}</b>"]
+        lines = [f"<b>{emoji} {html.escape(event_type)} \u2014 {html.escape(project)}</b>"]
 
         if issue_number is not None:
             issue_text = f"#{issue_number}"
             if issue_title:
-                issue_text += f" {issue_title}"
+                issue_text += f" {html.escape(issue_title)}"
             lines.append(f"<b>Issue:</b> {issue_text}")
 
         if tokens_total is not None:
             lines.append(f"<b>Tokens:</b> {tokens_total:,}")
 
         if summary:
-            lines.append(f"\n{summary[:1000]}")
+            lines.append(f"\n{html.escape(summary[:1000])}")
 
         if dashboard_url and run_id:
             lines.append(f'\n<a href="{dashboard_url}/runs/{run_id}">View in Dashboard</a>')

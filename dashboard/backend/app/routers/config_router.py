@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -87,8 +88,17 @@ async def get_config():
     return _normalize_config(config)
 
 
+class StationConfigUpdate(BaseModel):
+    models: dict[str, Any] | None = None
+    limits: dict[str, Any] | None = None
+    schedule: dict[str, Any] | None = None
+    notifications: dict[str, Any] | None = None
+    logging: dict[str, Any] | None = None
+    model_config = ConfigDict(extra="forbid")
+
+
 @router.put("")
-async def update_config(body: dict[str, Any], db: AsyncSession = Depends(get_db)):
+async def update_config(body: StationConfigUpdate, db: AsyncSession = Depends(get_db)):
     """Update the full station config (writes to JSON file + syncs DB).
 
     Accepts the full config object. Projects are synced to the DB.
@@ -101,9 +111,8 @@ async def update_config(body: dict[str, Any], db: AsyncSession = Depends(get_db)
     # Read current config to preserve any fields not sent by frontend
     current = await asyncio.to_thread(_read_config_json)
     # Merge: update only keys the frontend sends
-    for key in ("models", "limits", "schedule", "notifications", "logging"):
-        if key in body:
-            current[key] = body[key]
+    for key, value in body.model_dump(exclude_none=True).items():
+        current[key] = value
 
     # Normalize limits (migrate old -> new) before persisting
     current = _normalize_config(current)
