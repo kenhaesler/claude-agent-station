@@ -1,4 +1,4 @@
-import type { Project, ProjectCreate, ProjectUpdate, Run, RunList, RunFullContext, ActiveEmployeeData, Plan, PlanList, SystemStatus, AuthStatus, LogSearchResult, RunLogs, UsageData, TokenUsageData, PlanUsageData, OAuthStartResponse, OAuthCallbackResponse, CoordinatorTask, CoordinatorTaskDetail, CoordinatorDAG, CoordinatorMessage, AnalyticsData, DiffResult, QueueItem, QueueItemList, QueueStats, IntelligenceInsights, IntelligenceDecision, BackpressureStatus } from './types';
+import type { Project, ProjectCreate, ProjectUpdate, Run, RunList, RunFullContext, ActiveEmployeeData, Plan, PlanList, SystemStatus, AuthStatus, LogSearchResult, RunLogs, UsageData, TokenUsageData, PlanUsageData, OAuthStartResponse, OAuthCallbackResponse, GitHubOAuthStartResponse, GitHubOAuthCallbackResponse, GitHubOAuthStatusResponse, CoordinatorTask, CoordinatorTaskDetail, CoordinatorDAG, CoordinatorMessage, AnalyticsData, DiffResult, QueueItem, QueueItemList, QueueStats, IntelligenceInsights, IntelligenceDecision, BackpressureStatus } from './types';
 
 const BASE = import.meta.env.VITE_API_URL || '';
 
@@ -106,7 +106,7 @@ export const serviceAction = (action: string, unit?: string) => {
 };
 export const getAuthStatus = () => request<AuthStatus>('/api/system/auth');
 
-// OAuth
+// OAuth (Claude)
 export const startOAuthLogin = () =>
   request<OAuthStartResponse>('/api/oauth/start', { method: 'POST' });
 export const submitOAuthCode = (code: string, state: string) =>
@@ -114,6 +114,19 @@ export const submitOAuthCode = (code: string, state: string) =>
     method: 'POST',
     body: JSON.stringify({ code, state }),
   });
+
+// OAuth (GitHub)
+export const getGitHubOAuthStatus = () =>
+  request<GitHubOAuthStatusResponse>('/api/oauth/github/status');
+export const startGitHubOAuth = () =>
+  request<GitHubOAuthStartResponse>('/api/oauth/github/start');
+export const submitGitHubOAuthCode = (code: string, state: string) =>
+  request<GitHubOAuthCallbackResponse>('/api/oauth/github/callback', {
+    method: 'POST',
+    body: JSON.stringify({ code, state }),
+  });
+export const disconnectGitHub = () =>
+  request<{ success: boolean; message: string }>('/api/oauth/github', { method: 'DELETE' });
 
 // Plans
 export const listPlans = (params?: { limit?: number; offset?: number; project_id?: number; status?: string }) => {

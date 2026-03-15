@@ -41,6 +41,13 @@ class Settings(BaseSettings):
     # (backward-compatible with existing deployments).
     webhook_secret: str | None = None
 
+    # GitHub OAuth App credentials (for dashboard-managed GitHub login)
+    # Set via STATION_GITHUB_CLIENT_ID and STATION_GITHUB_CLIENT_SECRET env vars
+    github_client_id: str = ""
+    github_client_secret: str = ""
+    # Optional redirect URI for GitHub OAuth callback
+    github_oauth_redirect_uri: str = ""
+
     # CORS allowed origins for cross-origin requests (e.g. frontend dev server)
     # Override with STATION_ALLOWED_ORIGINS as a JSON list or comma-separated string
     allowed_origins: list[str] = [

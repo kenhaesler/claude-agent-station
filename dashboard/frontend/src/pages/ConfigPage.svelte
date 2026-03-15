@@ -5,12 +5,13 @@
    *
    * Re-uses existing page component internals.
    */
-  import type { Project, ProjectCreate, ProjectUpdate, SystemStatus, AuthStatus, StationConfig } from '../lib/types';
+  import type { Project, ProjectCreate, ProjectUpdate, SystemStatus, AuthStatus, StationConfig, GitHubOAuthStatusResponse } from '../lib/types';
   import {
     listProjects, createProject, updateProject, deleteProject,
     getConfig, updateConfig, testNotification,
     getSystemStatus, getAuthStatus, serviceAction, triggerRun,
     startOAuthLogin, submitOAuthCode,
+    getGitHubOAuthStatus, startGitHubOAuth, submitGitHubOAuthCode, disconnectGitHub,
     listPrompts, updatePrompt, resetPrompt, type PromptData,
     searchLogs,
   } from '../lib/api';
@@ -222,12 +223,25 @@
   let oauthCode = $state('');
   let oauthError = $state('');
 
+  // GitHub OAuth state
+  let githubStatus = $state<GitHubOAuthStatusResponse | null>(null);
+  let githubOAuthFlow = $state<OAuthFlowState>('idle');
+  let githubOAuthState = $state('');
+  let githubOAuthCode = $state('');
+  let githubOAuthError = $state('');
+  let githubDisconnecting = $state(false);
+
   async function loadSystem() {
     try {
       const [sysRes, authRes] = await Promise.all([getSystemStatus(), getAuthStatus()]);
       system = sysRes; auth = authRes;
     } catch (e: any) { toastError(e.message); }
     finally { systemLoading = false; }
+  }
+
+  async function loadGitHubStatus() {
+    try { githubStatus = await getGitHubOAuthStatus(); }
+    catch { /* GitHub OAuth may not be configured */ }
   }
 
   async function doServiceAction(action: string, unit: string) {
@@ -257,6 +271,43 @@
       if (res.success) { oauthFlow = 'done'; toastSuccess('Authentication successful'); await loadSystem(); setTimeout(() => { oauthFlow = 'idle'; }, 2000); }
       else { oauthError = res.error || 'Token exchange failed'; oauthFlow = 'waiting_for_code'; }
     } catch (e: any) { oauthError = e.message; oauthFlow = 'waiting_for_code'; }
+  }
+
+  async function handleGitHubOAuthStart() {
+    githubOAuthError = '';
+    try {
+      const res = await startGitHubOAuth();
+      githubOAuthState = res.state; githubOAuthFlow = 'waiting_for_code'; githubOAuthCode = '';
+      window.open(res.auth_url, '_blank');
+    } catch (e: any) { githubOAuthError = e.message; }
+  }
+
+  async function handleGitHubOAuthSubmit() {
+    if (!githubOAuthCode.trim()) return;
+    githubOAuthError = ''; githubOAuthFlow = 'submitting';
+    try {
+      const res = await submitGitHubOAuthCode(githubOAuthCode.trim(), githubOAuthState);
+      if (res.success) {
+        githubOAuthFlow = 'done';
+        toastSuccess(`GitHub connected as ${res.username || 'unknown'}`);
+        await loadGitHubStatus();
+        setTimeout(() => { githubOAuthFlow = 'idle'; }, 2000);
+      } else {
+        githubOAuthError = res.error || 'Token exchange failed';
+        githubOAuthFlow = 'waiting_for_code';
+      }
+    } catch (e: any) { githubOAuthError = e.message; githubOAuthFlow = 'waiting_for_code'; }
+  }
+
+  async function handleGitHubDisconnect() {
+    if (!confirm('Disconnect GitHub account?')) return;
+    githubDisconnecting = true;
+    try {
+      await disconnectGitHub();
+      githubStatus = { connected: false };
+      toastSuccess('GitHub account disconnected');
+    } catch (e: any) { toastError(e.message); }
+    finally { githubDisconnecting = false; }
   }
 
   function formatUptime(s: number | null | undefined): string {
@@ -324,6 +375,7 @@
     loadProjects();
     loadConfig();
     loadSystem();
+    loadGitHubStatus();
     loadPrompts();
     const sysInterval = setInterval(loadSystem, 10000);
     return () => clearInterval(sysInterval);
@@ -739,6 +791,61 @@
         {/if}
         {#if oauthError}
           <p class="text-xs text-reject">{oauthError}</p>
+        {/if}
+      </GlassCard>
+
+      <GlassCard glow={githubStatus?.connected ? 'emerald' : 'none'} class="p-4 space-y-3">
+        <h3 class="text-sm font-semibold">GitHub Connection</h3>
+        <div class="flex items-center gap-2">
+          <StatusOrb active={githubStatus?.connected === true} />
+          <span class="text-xs">
+            {#if githubStatus?.connected}
+              Connected as <span class="font-semibold text-text">{githubStatus.username ?? 'unknown'}</span>
+            {:else}
+              Not connected
+            {/if}
+          </span>
+        </div>
+        {#if githubStatus?.connected && githubStatus.scopes?.length}
+          <p class="text-[10px] text-text-dim">Scopes: {githubStatus.scopes.join(', ')}</p>
+        {/if}
+        {#if githubStatus?.error}
+          <p class="text-[10px] text-warning">{githubStatus.error}</p>
+        {/if}
+        {#if githubOAuthFlow === 'idle'}
+          <div class="flex items-center gap-2">
+            {#if githubStatus?.connected}
+              <button onclick={handleGitHubOAuthStart} class="px-3 py-1 text-xs bg-info text-white rounded-md cursor-pointer hover:opacity-90 transition-opacity">
+                Reconnect
+              </button>
+              <button onclick={handleGitHubDisconnect} disabled={githubDisconnecting}
+                class="px-3 py-1 text-xs glass text-reject rounded-md cursor-pointer hover:bg-reject/10 transition-colors border border-reject/20 disabled:opacity-50">
+                {githubDisconnecting ? 'Disconnecting...' : 'Disconnect'}
+              </button>
+            {:else}
+              <button onclick={handleGitHubOAuthStart} class="px-3 py-1 text-xs bg-info text-white rounded-md cursor-pointer hover:opacity-90 transition-opacity">
+                Connect GitHub
+              </button>
+            {/if}
+          </div>
+        {:else if githubOAuthFlow === 'waiting_for_code'}
+          <div class="space-y-2">
+            <p class="text-xs text-text-dim">Paste the authorization code from the new tab:</p>
+            <div class="flex gap-2">
+              <input type="text" bind:value={githubOAuthCode} placeholder="Auth code"
+                class="flex-1 px-3 py-1 text-sm bg-white/[0.04] border border-border/50 rounded-lg focus:outline-none transition-colors"
+                onkeydown={(e: KeyboardEvent) => { if (e.key === 'Enter') handleGitHubOAuthSubmit(); }} />
+              <button onclick={handleGitHubOAuthSubmit} disabled={!githubOAuthCode.trim()} class="px-3 py-1 text-xs bg-info text-white rounded-md cursor-pointer disabled:opacity-50">Submit</button>
+              <button onclick={() => { githubOAuthFlow = 'idle'; githubOAuthCode = ''; githubOAuthError = ''; }} class="px-3 py-1 text-xs glass rounded-md text-text-dim cursor-pointer">Cancel</button>
+            </div>
+          </div>
+        {:else if githubOAuthFlow === 'submitting'}
+          <div class="flex items-center gap-2 text-xs text-text-dim"><LoadingSpinner /> Exchanging...</div>
+        {:else if githubOAuthFlow === 'done'}
+          <p class="text-xs text-approve">Connected!</p>
+        {/if}
+        {#if githubOAuthError}
+          <p class="text-xs text-reject">{githubOAuthError}</p>
         {/if}
       </GlassCard>
     {/if}

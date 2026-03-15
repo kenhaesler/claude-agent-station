@@ -22,6 +22,27 @@ from agent.coordinator.skill_loader import load_skills
 SCRIPT_DIR = Path(__file__).resolve().parent.parent / "scripts"
 PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 
+# Default path for the dashboard-managed GitHub token (matches github_oauth.py)
+GITHUB_TOKEN_PATH = Path.home() / ".claude-agent-station" / "github_token"
+
+
+def get_github_token() -> str | None:
+    """Read GitHub token from dashboard-managed file, falling back to GH_TOKEN env var.
+
+    The dashboard stores the token at ~/.claude-agent-station/github_token as JSON
+    with an ``access_token`` field (written by the GitHub OAuth flow).
+    If the file is missing or unreadable, falls back to the ``GH_TOKEN`` environment
+    variable for backward compatibility.
+    """
+    try:
+        data = json.loads(GITHUB_TOKEN_PATH.read_text())
+        token = data.get("access_token")
+        if token:
+            return token
+    except (FileNotFoundError, json.JSONDecodeError, KeyError, OSError):
+        pass
+    return os.environ.get("GH_TOKEN")
+
 # Patterns that indicate Claude CLI rate limiting or plan exhaustion
 RATE_LIMIT_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"429", re.IGNORECASE),
@@ -524,6 +545,9 @@ async def run_employee_plan_phase(
 
     env = os.environ.copy()
     env["GITHUB_REPO"] = task.project_repo
+    gh_token = get_github_token()
+    if gh_token:
+        env["GH_TOKEN"] = gh_token
 
     return await _run_claude_subprocess(
         prompt=prompt,
@@ -611,6 +635,9 @@ async def run_employee(
 
     env = os.environ.copy()
     env["GITHUB_REPO"] = task.project_repo
+    gh_token = get_github_token()
+    if gh_token:
+        env["GH_TOKEN"] = gh_token
 
     # Append skill content from mode spec
     if mode_spec and mode_spec.skills:
