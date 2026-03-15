@@ -68,6 +68,29 @@ else:
 " 2>/dev/null
 }
 
+ensure_gh_token() {
+    # Load GH_TOKEN from dashboard-managed file if not already set.
+    # Falls back to existing GH_TOKEN env var for backward compatibility.
+    local token_file="$HOME/.claude-agent-station/github_token"
+    if [ -f "$token_file" ]; then
+        local file_token
+        file_token=$(python3 -c "
+import json, sys
+try:
+    with open('$token_file') as f:
+        print(json.load(f).get('access_token', ''))
+except Exception:
+    pass
+" 2>/dev/null || echo "")
+        if [ -n "$file_token" ]; then
+            export GH_TOKEN="$file_token"
+            return 0
+        fi
+    fi
+    # Keep existing GH_TOKEN if set (backward compatibility)
+    return 0
+}
+
 notify() {
     local status="$1" message="$2"
     local enabled
@@ -2188,6 +2211,9 @@ main() {
     done
 
     preflight
+
+    # Load dashboard-managed GitHub token (falls back to existing GH_TOKEN)
+    ensure_gh_token
 
     local project_count
     project_count=$(get_project_count)

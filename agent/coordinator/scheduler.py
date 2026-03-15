@@ -21,6 +21,7 @@ from agent.coordinator.employee_runner import (
     _get_stream_file as _employee_get_stream_file,
     EmployeeResult,
     PROMPTS_DIR,
+    get_github_token,
 )
 from agent.coordinator.stream_monitor import (
     EmployeeActivity,
@@ -118,6 +119,9 @@ Write your plan verdict to: {verdict_file}
 
     env = os.environ.copy()
     env["GITHUB_REPO"] = task.project_repo
+    gh_token = get_github_token()
+    if gh_token:
+        env["GH_TOKEN"] = gh_token
 
     # Use shared subprocess helper (also adds rate limit detection that was
     # previously missing from manager plan review)
