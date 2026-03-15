@@ -407,6 +407,7 @@ async def run_scheduler(dag: TaskDAG, config: CoordinatorConfig) -> None:
                     task, config, employee_index, activity,
                     stop_event, conflict_detector, semaphore,
                     dag, rate_limit_tracker,
+                    actual_running=len(running) + 1,
                 )
             )
 
@@ -476,6 +477,7 @@ async def _run_and_monitor(
     semaphore: asyncio.Semaphore,
     dag: TaskDAG,
     rate_limit_tracker: RateLimitTracker | None = None,
+    actual_running: int = 1,
 ) -> str:
     """Run an employee and monitor their stream. Returns task_id when done."""
     try:
@@ -501,7 +503,7 @@ async def _run_and_monitor(
         # Note: analyze/plan mode enforcement is handled by employee_runner.py
         # which selects analyst.md prompt and disallows write tools.
         employee_task = asyncio.create_task(
-            run_employee(task, config, employee_index, approved_plan=approved_plan)
+            run_employee(task, config, employee_index, approved_plan=approved_plan, actual_running=actual_running)
         )
 
         # Wait briefly for stream file to appear, then start monitoring
