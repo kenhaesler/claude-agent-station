@@ -11,7 +11,7 @@
   --color-border-subtle: oklch(0.24 0.004 260);
   --color-text: oklch(0.93 0.005 260);
   --color-text-dim: oklch(0.63 0.01 260);
-  --color-text-muted: oklch(0.45 0.008 260);
+  --color-text-muted: oklch(0.50 0.008 260);
   --color-approve: oklch(0.72 0.17 155);
   --color-reject: oklch(0.63 0.2 25);
   --color-pr: oklch(0.65 0.18 300);
@@ -29,6 +29,22 @@
   --color-agent-dev-2: oklch(0.65 0.15 200);
   --color-agent-coordinator: oklch(0.60 0.20 300);
   --color-agent-analyst: oklch(0.58 0.18 290);
+  --color-agent-planner: oklch(0.65 0.17 160);
+  --color-agent-assigner: oklch(0.60 0.19 15);
+
+  /* Elevated surfaces */
+  --color-surface-raised: oklch(0.20 0.005 260);
+  --color-surface-overlay: oklch(0.14 0.006 260);
+
+  /* Focus */
+  --color-focus: oklch(0.65 0.20 260);
+
+  /* Motion */
+  --duration-fast: 100ms;
+  --duration-normal: 200ms;
+  --duration-slow: 400ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
 
   /* Layout */
   --spacing-rail: 56px;
@@ -182,6 +198,55 @@ body {
 /* Agent panel */
 .agent-panel-enter {
   animation: panel-slide-in 0.25s ease-out both;
+}
+
+/* Focus ring */
+:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+/* Skip to content */
+.skip-to-content {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 9999;
+  padding: 0.5rem 1rem;
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: 0.375rem;
+  font-size: 0.75rem;
+}
+.skip-to-content:focus {
+  left: 0.5rem;
+  top: 0.5rem;
+}
+
+/* Z-layer system for Cortex backdrop */
+.z-cortex { z-index: 0; }
+.z-content { z-index: 1; }
+.z-nav { z-index: 40; }
+.z-overlay { z-index: 50; }
+.z-modal { z-index: 999; }
+
+/* Cortex content overlay gradient */
+.cortex-overlay {
+  background: linear-gradient(
+    to bottom,
+    oklch(0.13 0.004 260 / 0.85),
+    oklch(0.13 0.004 260 / 0.95)
+  );
+}
+
+/* Cortex-transparent overlay for pulse/command page */
+.cortex-overlay-transparent {
+  background: linear-gradient(
+    to bottom,
+    oklch(0.13 0.004 260 / 0.10),
+    oklch(0.13 0.004 260 / 0.25)
+  );
 }
 
 /* Reduced motion */

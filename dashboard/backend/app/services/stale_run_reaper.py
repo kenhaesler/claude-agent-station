@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import QueueItem, Run
+from app.models import CoordinatorTask, QueueItem, Run
 from app.services.event_bus import publish as event_bus_publish
 from app.services.notifier import send_notification
 from app.services.systemd import get_service_status
@@ -62,6 +62,20 @@ async def reap_stale_runs(db: AsyncSession) -> int:
                 "project": None,
             },
         })
+
+    # Reap stale CoordinatorTask records (same root cause — agent died)
+    ct_result = await db.execute(
+        select(CoordinatorTask).where(
+            CoordinatorTask.status.in_(["running", "ready", "blocked"])
+        )
+    )
+    stale_tasks = ct_result.scalars().all()
+    for ct in stale_tasks:
+        logger.info(
+            "Reaped stale coordinator task %s (was %s)", ct.id, ct.status
+        )
+        ct.status = "failed"
+        ct.finished_at = now
 
     # Recover orphaned queue items from reaped runs
     reaped_run_ids = [r.run_id for r in stale_runs]

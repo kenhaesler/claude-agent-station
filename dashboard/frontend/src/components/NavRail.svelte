@@ -3,10 +3,12 @@
   import { agentPresence } from '../lib/agent-presence.svelte';
 
   const links = [
-    { page: 'command', label: 'Command', icon: 'command' },
+    { page: 'command', label: 'Pulse', icon: 'command' },
     { page: 'stream', label: 'Work', icon: 'stream' },
     { page: 'decide', label: 'Decide', icon: 'decide' },
     { page: 'brainstorm', label: 'Brainstorm', icon: 'brainstorm' },
+    { page: 'agents', label: 'Agents', icon: 'agents' },
+    { page: 'analytics', label: 'Stats', icon: 'analytics' },
     { page: 'config', label: 'Config', icon: 'config' },
   ] as const;
 
@@ -15,7 +17,9 @@
     if (linkPage === 'stream') return route.page === 'stream' || route.page === 'stream-detail';
     if (linkPage === 'decide') return route.page === 'decide' || route.page === 'decide-detail';
     if (linkPage === 'brainstorm') return route.page === 'brainstorm' || route.page === 'brainstorm-session';
+    if (linkPage === 'agents') return route.page === 'agents' || route.page === 'agent-detail';
     if (linkPage === 'config') return route.page === 'config';
+    if (linkPage === 'analytics') return route.page === 'analytics';
     return false;
   }
 </script>
@@ -24,7 +28,7 @@
   {#each links as link}
     {@const active = isActive(link.page)}
     <a
-      href="#/{link.page}"
+      href="/{link.page}"
       class="relative flex flex-col items-center justify-center gap-0.5 flex-1 md:flex-none md:w-full md:py-3 transition-colors no-underline
         {active ? 'text-text bg-white/[0.04]' : 'text-text-muted hover:text-text-dim hover:bg-white/[0.02]'}"
       title={link.label}
@@ -53,6 +57,14 @@
           <path d="M6.5 11c-2 1-3.5 3-3.5 5h14c0-2-1.5-4-3.5-5" />
           <path d="M13 4.5c1.5-1 3.5-0.5 4 1s-0.5 3-2 3.5" />
           <path d="M7 4.5c-1.5-1-3.5-0.5-4 1s0.5 3 2 3.5" />
+        {:else if link.icon === 'agents'}
+          <circle cx="7" cy="7" r="3" />
+          <circle cx="13" cy="7" r="3" />
+          <circle cx="10" cy="14" r="3" />
+          <line x1="9" y1="8" x2="10" y2="11" />
+          <line x1="11" y1="8" x2="10" y2="11" />
+        {:else if link.icon === 'analytics'}
+          <path d="M3 17V10M7.5 17V6M12 17V3M16.5 17V8" stroke-width="2" stroke-linecap="round" />
         {:else if link.icon === 'config'}
           <circle cx="10" cy="10" r="3" />
           <path d="M10 1.5v2M10 16.5v2M1.5 10h2M16.5 10h2M3.4 3.4l1.4 1.4M15.2 15.2l1.4 1.4M3.4 16.6l1.4-1.4M15.2 4.8l1.4-1.4" />

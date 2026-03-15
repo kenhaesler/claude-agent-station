@@ -39,6 +39,7 @@ const EVENT_TYPES = [
   'manager_review',
   'verdict_execute',
   'run_complete',
+  'run_interrupted',
   // Legacy names
   'started',
   'finished',

@@ -216,6 +216,38 @@ async def receive_run_event(
         )
         db.add(notification)
 
+    elif event_name == "plan_reviewing":
+        # Manager plan review phase — set status so dashboard attributes to Manager
+        if not run:
+            run = Run(
+                run_id=event.run_id,
+                project_id=project_id,
+                status="plan_reviewing",
+                started_at=datetime.now(timezone.utc),
+                trace_id=event.trace_id,
+            )
+            db.add(run)
+        else:
+            run.status = "plan_reviewing"
+            run.trace_id = event.trace_id or run.trace_id
+
+    elif event_name == "plan_review_done":
+        # Manager finished plan review — transition back to running
+        if not run:
+            run = Run(
+                run_id=event.run_id,
+                project_id=project_id,
+                status="running",
+                started_at=datetime.now(timezone.utc),
+                trace_id=event.trace_id,
+            )
+            db.add(run)
+        else:
+            run.status = "running"
+            # Do NOT set run.verdict here — plan review results like
+            # APPROVE_PLAN are not final verdicts (APPROVE/REJECT/PR).
+            run.trace_id = event.trace_id or run.trace_id
+
     elif event_name in ("task_started", "task_completed", "task_failed", "task_ready", "task_blocked"):
         # Coordinator task events — upsert CoordinatorTask records.
         # With the DB-backed coordinator, these rows may already exist
@@ -373,6 +405,9 @@ def _normalize_event_name(event_name: str) -> str:
         "manager_review": "reviewing",
         "run_complete": "finished",
         "verdict_execute": "verdict",
+        # Plan review events (coordinator emits these)
+        "plan_review_start": "plan_reviewing",
+        "plan_review_complete": "plan_review_done",
         # Legacy / direct names pass through
         "started": "started",
         "finished": "finished",

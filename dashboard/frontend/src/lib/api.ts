@@ -1,4 +1,4 @@
-import type { Project, ProjectCreate, ProjectUpdate, Run, RunList, RunFullContext, ActiveEmployeeData, Plan, PlanList, SystemStatus, AuthStatus, LogSearchResult, RunLogs, UsageData, TokenUsageData, OAuthStartResponse, OAuthCallbackResponse, CoordinatorTask, CoordinatorTaskDetail, CoordinatorDAG, CoordinatorMessage, AnalyticsData, DiffResult, QueueItem, QueueItemList, QueueStats, IntelligenceInsights, IntelligenceDecision, BackpressureStatus, BrainstormSession, BrainstormSessionDetail } from './types';
+import type { Project, ProjectCreate, ProjectUpdate, Run, RunList, RunFullContext, ActiveEmployeeData, Plan, PlanList, SystemStatus, AuthStatus, LogSearchResult, RunLogs, UsageData, TokenUsageData, PlanUsageData, OAuthStartResponse, OAuthCallbackResponse, CoordinatorTask, CoordinatorTaskDetail, CoordinatorDAG, CoordinatorMessage, AnalyticsData, DiffResult, QueueItem, QueueItemList, QueueStats, IntelligenceInsights, IntelligenceDecision, BackpressureStatus, BrainstormSession, BrainstormSessionDetail } from './types';
 
 const BASE = import.meta.env.VITE_API_URL || '';
 
@@ -92,6 +92,7 @@ export const rescanRuns = () => request<{ status: string; imported: number }>('/
 export const getConfig = () => request<Record<string, unknown>>('/api/config');
 export const getUsage = () => request<UsageData>('/api/config/usage');
 export const getTokenUsage = () => request<TokenUsageData>('/api/config/token-usage');
+export const getPlanUsage = () => request<PlanUsageData>('/api/plan-usage');
 export const updateConfig = (data: Record<string, unknown>) =>
   request<Record<string, unknown>>('/api/config', { method: 'PUT', body: JSON.stringify(data) });
 export const testNotification = () =>
