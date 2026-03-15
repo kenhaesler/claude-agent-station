@@ -357,9 +357,10 @@ if os.path.exists(tracking_file):
         pass
 state['sessions_used'] = state.get('sessions_used', 0) + 1
 state['last_run'] = now
+os.makedirs(os.path.dirname(tracking_file), exist_ok=True)
 with open(tracking_file, 'w') as f:
     json.dump(state, f, indent=2)
-" 2>/dev/null
+" 2>/dev/null || true
 }
 
 # check_rate_limit() removed — unified into check_rate_limit() which queries
