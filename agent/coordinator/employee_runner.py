@@ -540,8 +540,18 @@ async def run_employee(
     config: CoordinatorConfig,
     employee_index: int,
     approved_plan: dict | None = None,
+    actual_running: int = 1,
 ) -> EmployeeResult:
     """Spawn a Claude employee subprocess for a task.
+
+    Args:
+        task: The task to execute.
+        config: Coordinator configuration.
+        employee_index: Index of this employee.
+        approved_plan: Optional pre-approved implementation plan.
+        actual_running: Number of employees actually running right now
+            (including this one). Used for per-employee turn budget
+            scaling instead of the configured max_concurrent ceiling.
 
     Returns an EmployeeResult with exit code, stream file path,
     and rate limit detection information.
@@ -577,8 +587,11 @@ async def run_employee(
         model = config.employee_model
         max_turns = config.max_employee_turns
 
-    # Apply per-employee budget scaling for concurrent mode
-    running_count = max(1, config.max_concurrent)
+    # Apply per-employee budget scaling for concurrent mode.
+    # Uses actual_running (employees currently active) instead of the
+    # configured max_concurrent ceiling so a lone employee gets the full
+    # turn budget rather than a fraction of it.
+    running_count = max(1, actual_running)
     if running_count > 1:
         max_turns = max(50, max_turns // running_count)
 
