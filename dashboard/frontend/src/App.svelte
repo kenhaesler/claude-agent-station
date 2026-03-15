@@ -1,6 +1,6 @@
 <script lang="ts">
   import { route } from './lib/router.svelte';
-  import { getSystemStatus, getAuthStatus, getUsage, triggerRun } from './lib/api';
+  import { getSystemStatus, getAuthStatus, getUsage, triggerRun, getGitHubOAuthStatus } from './lib/api';
   import { toastSuccess, toastError } from './lib/toast.svelte';
   import { agentPresence, connect as connectPresence, disconnect as disconnectPresence, togglePanel } from './lib/agent-presence.svelte';
   import NavRail from './components/NavRail.svelte';
@@ -15,6 +15,8 @@
 
   let serviceActive = $state(false);
   let authOk = $state(false);
+  let githubConnected = $state(false);
+  let githubUsername = $state<string | null>(null);
   let usagePercent = $state(0);
   let sessionsUsed = $state(0);
   let sessionLimit = $state(50);
@@ -23,10 +25,11 @@
 
   async function loadStatus() {
     try {
-      const [sysRes, authRes, usageRes] = await Promise.allSettled([
+      const [sysRes, authRes, usageRes, ghRes] = await Promise.allSettled([
         getSystemStatus(),
         getAuthStatus(),
         getUsage(),
+        getGitHubOAuthStatus(),
       ]);
       if (sysRes.status === 'fulfilled') {
         serviceActive = sysRes.value.service.active;
@@ -38,6 +41,10 @@
         usagePercent = usageRes.value.usage_percent;
         sessionsUsed = usageRes.value.sessions_used;
         sessionLimit = usageRes.value.plan_limit || usageRes.value.max_usage_percent;
+      }
+      if (ghRes.status === 'fulfilled') {
+        githubConnected = ghRes.value.connected;
+        githubUsername = ghRes.value.username ?? null;
       }
     } catch {
       // silently fail
@@ -111,6 +118,8 @@
     <HeaderBar
       {serviceActive}
       {authOk}
+      {githubConnected}
+      {githubUsername}
       {usagePercent}
       {sessionsUsed}
       {sessionLimit}
