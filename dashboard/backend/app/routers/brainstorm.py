@@ -127,6 +127,11 @@ def _get_system_prompt(persona: str, project_repo: str | None = None) -> str:
             f"\n\nThe user is working on the project: {project_repo}. "
             "Keep this context in mind and reference it when relevant."
         )
+    base += (
+        "\n\nIMPORTANT: This is a conversational brainstorm session. "
+        "Do NOT use any tools — respond with text only. Never call tools like "
+        "Read, Bash, WebSearch, Glob, Grep, etc. Just think and respond."
+    )
     return base
 
 
@@ -410,7 +415,7 @@ async def send_message(
                 "--output-format", "stream-json",
                 "--no-session-persistence",
                 "--model", model,
-                "--max-turns", "1",
+                "--max-turns", "3",
                 "--system-prompt-file", sp_path,
                 user_prompt,
             ]
@@ -477,6 +482,14 @@ async def send_message(
 
             await proc.wait()
 
+            # Log stderr for debugging CLI issues
+            if proc.stderr:
+                stderr_data = await proc.stderr.read()
+                if stderr_data:
+                    stderr_str = stderr_data.decode("utf-8", errors="replace").strip()
+                    if stderr_str:
+                        logger.warning("Claude CLI stderr: %s", stderr_str[:500])
+
         except Exception as e:
             logger.exception("Error streaming brainstorm response")
             error_detail = f"{type(e).__name__}: {e}"
@@ -489,6 +502,16 @@ async def send_message(
                     os.unlink(sp_path)
                 except OSError:
                     pass
+
+        # If the CLI produced no text (e.g. it tried to use tools and hit
+        # max-turns), surface an error instead of saving an empty message.
+        if not full_response:
+            error_data = json.dumps({
+                "type": "error",
+                "message": "JARVIS didn't generate a response. Please try rephrasing your question.",
+            })
+            yield f"data: {error_data}\n\n"
+            return
 
         # Save assistant message to DB
         try:
