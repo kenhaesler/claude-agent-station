@@ -25,6 +25,7 @@ class ModeSpec:
     manager_review: bool  # Whether manager reviews the output
     verification_required: bool  # Whether independent reviewer checks the work
     disallowed_tools: list[str] = field(default_factory=list)
+    skills: list[str] = field(default_factory=list)  # Skill filenames from agent/skills/
     escalates_to: str | None = None  # Mode to escalate on failure/low-confidence
     concurrency_weight: float = 1.0  # 0.0 = free (read-only), 1.0 = full slot
     max_retries: int = 1
@@ -48,6 +49,7 @@ MODE_REGISTRY: dict[str, ModeSpec] = {
         manager_review=True,
         verification_required=True,
         disallowed_tools=[],
+        skills=["code-review", "testing", "security", "git-workflow", "debugging"],
         escalates_to=None,
         concurrency_weight=1.0,
         max_retries=1,
@@ -66,6 +68,7 @@ MODE_REGISTRY: dict[str, ModeSpec] = {
         manager_review=True,
         verification_required=False,
         disallowed_tools=[],
+        skills=["debugging", "testing", "git-workflow"],
         escalates_to="full",
         concurrency_weight=0.5,
         max_retries=0,
@@ -84,6 +87,7 @@ MODE_REGISTRY: dict[str, ModeSpec] = {
         manager_review=True,
         verification_required=False,
         disallowed_tools=_READONLY_TOOLS,
+        skills=["code-review", "security"],
         escalates_to=None,
         concurrency_weight=0.0,
         max_retries=0,
