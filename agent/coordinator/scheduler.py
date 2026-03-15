@@ -245,15 +245,13 @@ async def _run_plan_review_loop(
     return None
 
 
-async def _is_issue_open(project_repo: str, issue_number: int, workspaces_dir: str) -> bool:
+async def _is_issue_open(project_repo: str, issue_number: int) -> bool:
     """Check if a GitHub issue is still open. Returns True if open or on error (fail-open)."""
-    repo_name = project_repo.split("/")[-1] if "/" in project_repo else project_repo
-    cwd = os.path.join(workspaces_dir, repo_name)
     try:
         result = await asyncio.to_thread(
             subprocess.run,
             ["gh", "issue", "view", str(issue_number), "--repo", project_repo, "--json", "state"],
-            capture_output=True, text=True, timeout=15, cwd=cwd,
+            capture_output=True, text=True, timeout=15,
         )
         if result.returncode == 0:
             data = json.loads(result.stdout)
@@ -356,7 +354,7 @@ async def run_scheduler(dag: TaskDAG, config: CoordinatorConfig) -> None:
 
             # Freshness check: verify issue is still open before spawning (#139)
             if task.issue_number:
-                if not await _is_issue_open(task.project_repo, task.issue_number, config.workspaces_dir):
+                if not await _is_issue_open(task.project_repo, task.issue_number):
                     logger.warning(
                         "Skipping task '%s': issue #%d is no longer open",
                         task.title, task.issue_number,
