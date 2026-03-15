@@ -1,3 +1,9 @@
+---
+name: Testing
+description: Test strategy, writing good tests, edge cases, and coverage guidelines
+role: employee
+---
+
 # Skill: Testing
 
 Apply these practices when writing or evaluating tests.

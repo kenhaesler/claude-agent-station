@@ -1,3 +1,9 @@
+---
+name: Git Workflow
+description: Commit conventions, branching strategy, PR guidelines, and safety rules
+role: employee
+---
+
 # Skill: Git Workflow
 
 Follow these conventions for all git operations.

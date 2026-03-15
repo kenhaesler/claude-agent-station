@@ -1,3 +1,9 @@
+---
+name: Code Review
+description: Clean code checklist, naming, SOLID principles, and code smells
+role: employee
+---
+
 # Skill: Code Review
 
 Apply this checklist when reviewing or writing code.

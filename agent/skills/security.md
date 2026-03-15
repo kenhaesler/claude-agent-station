@@ -1,3 +1,9 @@
+---
+name: Security
+description: Input validation, auth, secrets management, and common vulnerabilities
+role: employee
+---
+
 # Skill: Security
 
 Apply this checklist to every code change touching user input, auth, or data.

@@ -1,3 +1,9 @@
+---
+name: Debugging
+description: Systematic bug diagnosis — reproduce, isolate, root-cause, fix, prevent
+role: employee
+---
+
 # Skill: Debugging
 
 Follow this systematic approach to diagnose and fix bugs.
