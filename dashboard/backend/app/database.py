@@ -65,6 +65,9 @@ async def _migrate_add_columns(conn) -> None:
         ("task_queue", "handoff_context", "ALTER TABLE task_queue ADD COLUMN handoff_context TEXT"),
         # Security reviewer feature (issue #128)
         ("projects", "security_review_enabled", "ALTER TABLE projects ADD COLUMN security_review_enabled BOOLEAN DEFAULT 0"),
+        # Intelligent Agent Swarm: subsystem + employee_index on task_outcomes
+        ("task_outcomes", "subsystem", "ALTER TABLE task_outcomes ADD COLUMN subsystem TEXT"),
+        ("task_outcomes", "employee_index", "ALTER TABLE task_outcomes ADD COLUMN employee_index INTEGER"),
     ]
     for table, column, sql in migrations:
         try:

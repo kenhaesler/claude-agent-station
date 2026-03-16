@@ -172,6 +172,8 @@ async def record_outcome(
         tests_passed=data.tests_passed,
         verdict=data.verdict,
         failure_category=data.failure_category,
+        subsystem=data.subsystem,
+        employee_index=data.employee_index,
         tokens_consumed=data.tokens_consumed,
         duration_seconds=data.duration_seconds,
     )

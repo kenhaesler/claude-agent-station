@@ -166,6 +166,45 @@ def _load_assignment(workspace: str, employee_index: int) -> dict:
     return {}
 
 
+def _get_analyzable_issues(repo: str, workspace: str) -> tuple[int, str]:
+    """Pre-filter issues for analyze mode: exclude refined/in-progress/skip labels.
+
+    Returns (count, summary_text) of eligible issues.
+    """
+    import subprocess as _sp
+
+    SKIP = {
+        "autonomous-agent/refined", "autonomous-agent/in-progress",
+        "autonomous-agent/needs-help", "NO AI", "backlog", "wontfix",
+    }
+    try:
+        result = _sp.run(
+            ["gh", "issue", "list", "--repo", repo, "--state", "open",
+             "--limit", "100", "--json", "number,title,labels"],
+            capture_output=True, text=True, timeout=30, cwd=workspace,
+        )
+        if result.returncode != 0:
+            return 0, "  (failed to fetch issues)"
+        issues = json.loads(result.stdout)
+        filtered = [
+            i for i in issues
+            if not SKIP & {l["name"] for l in i.get("labels", [])}
+        ]
+        if not filtered:
+            return 0, "  (none)"
+        lines = []
+        for i in filtered:
+            labels = ", ".join(l["name"] for l in i.get("labels", []))
+            line = f"  #{i['number']} — {i['title']}"
+            if labels:
+                line += f" [{labels}]"
+            lines.append(line)
+        return len(filtered), "\n".join(lines)
+    except Exception as exc:
+        logger.warning("get_analyzable_issues failed: %s", exc)
+        return 0, "  (error fetching issues)"
+
+
 def _build_employee_prompt(task: Task, config: CoordinatorConfig, employee_index: int) -> str:
     """Build the employee prompt for a coordinated task."""
     report_suffix = f"-{employee_index}" if employee_index > 0 else ""
@@ -210,6 +249,22 @@ You are expected to primarily work on these files:
 Focus on these files. Other employees are working on different parts of the codebase.
 """
 
+    # Pre-filter issues for analyze mode
+    analyze_section = ""
+    if config.project_mode == "analyze":
+        count, summary = _get_analyzable_issues(task.project_repo, task.workspace)
+        analyze_section = f"""
+IMPORTANT — PRE-FILTERED ISSUE LIST ({count} issues eligible for analysis):
+{summary}
+
+These issues have already been filtered to EXCLUDE issues labeled autonomous-agent/refined,
+autonomous-agent/in-progress, autonomous-agent/needs-help, NO AI, backlog, or wontfix.
+ONLY work on issues from this list when refining existing issues. Do NOT re-analyze issues
+not on this list — they have already been refined in a previous run.
+
+If this list is empty, focus on creating new issues from codebase analysis only.
+"""
+
     prompt = f"""Work on the repository: {task.project_repo}
 
 Environment variables available:
@@ -228,7 +283,7 @@ Other employees are working on related sub-tasks in parallel or sequence.
 {assignment_section}
 {deps_section}
 {files_section}
-
+{analyze_section}
 ## Guidance Channel
 
 The manager may send you real-time guidance during your work.

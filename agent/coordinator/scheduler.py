@@ -37,6 +37,7 @@ from agent.coordinator.manager import (
     DEFAULT_MAX_USAGE_PERCENT,
 )
 from agent.coordinator.reporter import post_task_event, post_conflict, post_guidance
+from agent.coordinator.foreman import run_foreman
 
 logger = logging.getLogger(__name__)
 
@@ -284,6 +285,12 @@ async def run_scheduler(dag: TaskDAG, config: CoordinatorConfig) -> None:
 
     logger.info("Scheduler started: %d tasks, max_concurrent=%d", await dag.task_count(), config.max_concurrent)
 
+    # Launch Foreman as background task for active management
+    foreman_stop = asyncio.Event()
+    foreman_task = asyncio.create_task(
+        run_foreman(config, dag, activities, conflict_detector, task_workspaces, foreman_stop)
+    )
+
     # Track usage check interval (don't check every loop iteration)
     usage_check_counter = 0
     usage_check_interval = 5  # Check every N loop iterations
@@ -375,8 +382,48 @@ async def run_scheduler(dag: TaskDAG, config: CoordinatorConfig) -> None:
                     continue
 
             await semaphore.acquire()
+
+            # Smart employee selection when intelligence is enabled
             employee_index = next_employee_index
-            next_employee_index += 1
+            if config.auto_mode_selection:
+                try:
+                    from agent.coordinator.smart_router import select_best_employee
+                    from agent.coordinator.issue_profiler import IssueProfile
+                    from agent.coordinator.employee_profiles import (
+                        build_employee_profiles,
+                        EmployeeProfile,
+                    )
+
+                    # Build a minimal issue profile from the task
+                    issue_profile = IssueProfile(
+                        number=task.issue_number or 0,
+                        title=task.title,
+                    )
+
+                    # Build employee profiles and mark current tasks
+                    emp_profiles = build_employee_profiles(config.db_path, task.project_repo)
+                    emp_list = []
+                    for i in range(next_employee_index + 1):
+                        ep = emp_profiles.get(i, EmployeeProfile(employee_index=i))
+                        # Mark employees currently running tasks
+                        for _, act in activities.items():
+                            if act.employee_index == i:
+                                ep.current_tasks += 1
+                                ep.currently_touching.update(act.files_touched)
+                        emp_list.append(ep)
+                    # Add the next_employee_index as an option too
+                    if next_employee_index not in emp_profiles:
+                        emp_list.append(EmployeeProfile(employee_index=next_employee_index))
+
+                    best = select_best_employee(issue_profile, emp_list)
+                    if best is not None:
+                        employee_index = best
+                except Exception as e:
+                    logger.debug("Smart employee selection failed (using sequential): %s", e)
+                    employee_index = next_employee_index
+
+            if employee_index >= next_employee_index:
+                next_employee_index = employee_index + 1
 
             # Setup workspace (worktree for non-zero employees)
             workspace = await _setup_task_workspace(task, config, employee_index)
@@ -441,6 +488,24 @@ async def run_scheduler(dag: TaskDAG, config: CoordinatorConfig) -> None:
                 del activities[task_id]
             task_workspaces.pop(task_id, None)
 
+        # Work stealing: idle employees pick up unstarted tasks
+        if config.work_stealing and done:
+            for completed_future in done:
+                completed_id = completed_future.result()
+                completed_activity = activities.get(completed_id)
+                if completed_activity:
+                    try:
+                        stolen = await _try_work_steal(
+                            completed_activity.employee_index, dag, running, config,
+                        )
+                        if stolen:
+                            logger.info(
+                                "Work stealing: employee %d picks up '%s'",
+                                completed_activity.employee_index, stolen.title,
+                            )
+                    except Exception as e:
+                        logger.debug("Work stealing failed: %s", e)
+
         # Periodic conflict detection
         if config.conflict_detection:
             for task_id, activity in activities.items():
@@ -466,9 +531,39 @@ async def run_scheduler(dag: TaskDAG, config: CoordinatorConfig) -> None:
                             task.project_repo,
                         )
 
+    # Shut down the Foreman
+    foreman_stop.set()
+    try:
+        await asyncio.wait_for(foreman_task, timeout=5.0)
+    except asyncio.TimeoutError:
+        foreman_task.cancel()
+
     # Final summary
     summary = await dag.summary()
     logger.info("Scheduler complete: %s", summary)
+
+
+async def _try_work_steal(
+    completed_employee: int,
+    dag: TaskDAG,
+    running: dict[str, asyncio.Task],
+    config: CoordinatorConfig,
+) -> Task | None:
+    """Check if there are unstarted tasks this employee could steal.
+
+    Work stealing rules:
+    1. Only steal READY tasks (all deps complete)
+    2. Task not already being worked on
+    3. work_stealing config must be enabled (checked by caller)
+    """
+    ready = await dag.ready_tasks()
+    stealable = [t for t in ready if t.id not in running]
+
+    if not stealable:
+        return None
+
+    # Return the first stealable task (could be enhanced with affinity scoring)
+    return stealable[0]
 
 
 async def _run_and_monitor(

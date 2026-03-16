@@ -83,28 +83,24 @@ Output JSON only:
 If there are no critical issues, set verified=true and recommendation="approve".
 Only flag genuine problems, not style preferences."""
 
-    # Run reviewer via Claude CLI
+    # Run reviewer via Anthropic SDK (direct API, no subprocess)
     try:
-        # Use reviewer prompt file if available, otherwise inline
-        reviewer_cmd = [
-            "claude", "-p", reviewer_prompt,
-            "--model", "claude-sonnet-4-6",
-            "--max-turns", "1",
-            "--no-input",
-        ]
+        # Load system prompt if available
+        system = ""
         prompt_file = Path(prompt_dir) / "reviewer.md" if prompt_dir else None
         if prompt_file and prompt_file.exists():
-            reviewer_cmd.extend(["--system-prompt-file", str(prompt_file)])
+            system = prompt_file.read_text()
 
-        result = subprocess.run(
-            reviewer_cmd,
-            capture_output=True, text=True, timeout=120,
-            cwd=workspace,
+        from agent.coordinator.llm import call_llm
+        resp = call_llm(
+            reviewer_prompt,
+            model="claude-sonnet-4-6",
+            system=system,
+            max_tokens=4096,
         )
 
-        if result.returncode == 0 and result.stdout.strip():
-            # Parse JSON from response
-            text = result.stdout.strip()
+        if resp.text.strip():
+            text = resp.text.strip()
             start = text.find("{")
             end = text.rfind("}") + 1
             if start != -1 and end > 0:
@@ -117,8 +113,6 @@ Only flag genuine problems, not style preferences."""
                 }
     except json.JSONDecodeError:
         logger.warning("Failed to parse reviewer response")
-    except subprocess.TimeoutExpired:
-        logger.warning("Reviewer timed out")
     except Exception as e:
         logger.warning("Verification failed: %s", e)
 

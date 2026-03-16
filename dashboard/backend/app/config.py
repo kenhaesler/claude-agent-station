@@ -8,7 +8,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     # Database
-    db_path: str = "/opt/git/claude-agent-station/dashboard/backend/station.db"
+    db_path: str = "/var/lib/claude-agent-station/station.db"
 
     # Agent log directory
     log_dir: str = "/var/log/claude-agent"

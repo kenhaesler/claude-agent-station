@@ -163,18 +163,14 @@ def cmd_select_mode(args: argparse.Namespace) -> None:
 
 
 def _call_haiku(prompt: str):
-    """Call Haiku via subprocess for complexity assessment."""
-    import subprocess
+    """Call Haiku via Anthropic SDK for complexity assessment."""
     from agent.coordinator.mode_selector import parse_complexity_response
 
     try:
-        result = subprocess.run(
-            ["claude", "-p", prompt, "--model", "claude-haiku-4-5-20251001",
-             "--max-turns", "1", "--no-input"],
-            capture_output=True, text=True, timeout=30,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            return parse_complexity_response(result.stdout)
+        from agent.coordinator.llm import call_llm
+        resp = call_llm(prompt, model="claude-haiku-4-5-20251001", max_tokens=512)
+        if resp.text.strip():
+            return parse_complexity_response(resp.text)
     except Exception as e:
         logger.warning("Haiku call failed: %s", e)
     return None
@@ -381,6 +377,7 @@ def cmd_record_outcome(args: argparse.Namespace) -> None:
     payload = {
         "project_repo": args.project_repo,
         "issue_number": int(args.issue_number) if args.issue_number else None,
+        "issue_type": args.issue_type or None,
         "mode_used": args.mode or "full",
         "model_used": args.model or "claude-sonnet-4-6",
         "success": success,
@@ -390,6 +387,7 @@ def cmd_record_outcome(args: argparse.Namespace) -> None:
         "duration_seconds": int(args.duration) if args.duration else None,
         "complexity_score": int(args.complexity) if args.complexity else None,
         "escalation_rung": int(args.escalation_rung) if args.escalation_rung else 0,
+        "subsystem": args.subsystem or None,
     }
 
     # POST to dashboard API
@@ -509,6 +507,8 @@ def main() -> None:
     p_out.add_argument("--duration", default=None)
     p_out.add_argument("--complexity", default=None)
     p_out.add_argument("--escalation-rung", default="0")
+    p_out.add_argument("--issue-type", default=None, help="Issue type: bug, feature, chore, refactor")
+    p_out.add_argument("--subsystem", default=None, help="Subsystem: frontend, backend, agent, infra, mixed")
     p_out.set_defaults(func=cmd_record_outcome)
 
     # should-verify

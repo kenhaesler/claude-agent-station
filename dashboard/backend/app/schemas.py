@@ -485,6 +485,8 @@ class TaskOutcomeCreate(BaseModel):
     tests_passed: bool | None = None
     verdict: str | None = None
     failure_category: str | None = None
+    subsystem: str | None = None
+    employee_index: int | None = None
     tokens_consumed: int | None = None
     duration_seconds: int | None = None
 
@@ -505,6 +507,8 @@ class TaskOutcomeOut(BaseModel):
     tests_passed: bool | None = None
     verdict: str | None = None
     failure_category: str | None = None
+    subsystem: str | None = None
+    employee_index: int | None = None
     tokens_consumed: int | None = None
     duration_seconds: int | None = None
     created_at: datetime | None = None

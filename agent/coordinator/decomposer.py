@@ -168,30 +168,24 @@ async def decompose_issue(
 Decompose this issue into sub-tasks for {employee_count} employees."""
 
     try:
-        result = subprocess.run(
-            [
-                "claude", "-p", prompt,
-                "--model", config.decomposition_model,
-                "--max-turns", "1",
-                "--no-session-persistence",
-                "--dangerously-skip-permissions",
-                "--output-format", "text",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=60,
-            cwd=workspace,
+        from agent.coordinator.llm import call_llm
+        resp = call_llm(
+            prompt,
+            model=config.decomposition_model,
+            system=DECOMPOSITION_PROMPT,
+            max_tokens=4096,
+        )
+        logger.info(
+            "Decomposition LLM call: %d input + %d output tokens",
+            resp.input_tokens, resp.output_tokens,
         )
 
-        if result.returncode != 0:
-            logger.warning("Decomposition agent failed (exit %d), using single task", result.returncode)
+        if not resp.text.strip():
+            logger.warning("Decomposition returned empty response, using single task")
             return await _fallback_dag(config, session_factory, repo, issue_body, issue_number, effective_run_id)
 
-        return await _parse_decomposition(result.stdout, config, session_factory, repo, issue_number, effective_run_id)
+        return await _parse_decomposition(resp.text, config, session_factory, repo, issue_number, effective_run_id)
 
-    except subprocess.TimeoutExpired:
-        logger.warning("Decomposition agent timed out, using single task")
-        return await _fallback_dag(config, session_factory, repo, issue_body, issue_number, effective_run_id)
     except Exception as e:
         logger.warning("Decomposition failed: %s, using single task", e)
         return await _fallback_dag(config, session_factory, repo, issue_body, issue_number, effective_run_id)
@@ -241,6 +235,11 @@ async def _parse_decomposition(
             expected_files=td.get("expected_files", []),
         )
         task_ids.append(task.id)
+
+    # Safety check: detect cycles in the dependency graph
+    if await dag.has_cycle():
+        logger.warning("Decomposition produced cyclic dependencies, falling back to single task")
+        return await _fallback_dag(config, session_factory, repo, "", issue_number, effective_run_id)
 
     logger.info("Decomposed issue into %d tasks", len(task_ids))
     return dag

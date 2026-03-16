@@ -18,8 +18,8 @@
     "planner": "claude-sonnet-4-6"
   },
   "limits": {
-    "max_concurrent_employees": 1,
-    "max_employees_per_project": 1,
+    "max_concurrent_employees": 5,
+    "max_employees_per_project": 3,
     "max_employee_turns": 200,
     "max_manager_turns": 30,
     "max_analyst_turns": 50,
@@ -45,10 +45,15 @@
     "max_revisions": 2
   },
   "coordinator": {
-    "enabled": true
+    "enabled": true,
+    "decomposition_model": "claude-sonnet-4-6"
   },
   "intelligence": {
-    "auto_mode_selection": false,
-    "independent_verification": false
+    "auto_mode_selection": true,
+    "progressive_deepening": true,
+    "confidence_gating": true,
+    "adaptive_scheduling": false,
+    "independent_verification": false,
+    "work_stealing": false
   }
 }

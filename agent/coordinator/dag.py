@@ -291,6 +291,36 @@ class TaskDAG:
             await session.commit()
             return result.rowcount
 
+    async def has_cycle(self) -> bool:
+        """Detect cycles via DFS. Called after adding tasks to prevent scheduler hangs."""
+        async with self._sf() as session:
+            result = await session.execute(
+                select(DbCoordinatorTask).where(
+                    DbCoordinatorTask.run_id == self.run_id,
+                )
+            )
+            rows = result.scalars().all()
+
+        adj: dict[str, list[str]] = {
+            r.id: json.loads(r.depends_on) if r.depends_on else []
+            for r in rows
+        }
+        visited: set[str] = set()
+        in_stack: set[str] = set()
+
+        def dfs(node: str) -> bool:
+            visited.add(node)
+            in_stack.add(node)
+            for dep in adj.get(node, []):
+                if dep in in_stack:
+                    return True
+                if dep not in visited and dfs(dep):
+                    return True
+            in_stack.discard(node)
+            return False
+
+        return any(dfs(n) for n in adj if n not in visited)
+
     # -- internal helpers --
 
     async def _next_seq(self, session: AsyncSession) -> int:

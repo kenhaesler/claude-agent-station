@@ -1,7 +1,8 @@
 """Async SQLAlchemy engine for the coordinator process.
 
 Connects to the same SQLite DB as the dashboard but with its own engine.
-Tables are created by the dashboard on startup — we only connect here.
+Tables are created defensively (CREATE IF NOT EXISTS) in case the dashboard
+has not yet started or the DB was recreated.
 """
 
 from __future__ import annotations
@@ -74,8 +75,8 @@ class DbCoordinatorMessage(Base):
 async def init_db(db_path: str) -> async_sessionmaker[AsyncSession]:
     """Create engine + session factory for the coordinator.
 
-    The tables already exist (created by dashboard init).
-    We just connect and enable WAL mode.
+    Defensively creates coordinator tables if they don't exist yet
+    (e.g. dashboard hasn't started, or DB was recreated).
     """
     global _session_factory
 
@@ -93,10 +94,11 @@ async def init_db(db_path: str) -> async_sessionmaker[AsyncSession]:
         engine, class_=AsyncSession, expire_on_commit=False,
     )
 
-    # Verify connectivity
+    # Defensively create coordinator tables if they don't exist.
+    # Uses CREATE TABLE IF NOT EXISTS so it's safe when the dashboard
+    # has already created them.
     async with engine.begin() as conn:
-        result = await conn.execute(text("SELECT 1"))
-        result.fetchone()
+        await conn.run_sync(Base.metadata.create_all)
 
     logger.info("Coordinator DB connected: %s", db_path)
     return _session_factory
