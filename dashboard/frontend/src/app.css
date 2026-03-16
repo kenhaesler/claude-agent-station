@@ -254,12 +254,12 @@ body {
 .z-overlay { z-index: 50; }
 .z-modal { z-index: 999; }
 
-/* Cortex content overlay gradient */
+/* Cortex content overlay gradient (theme-aware via color-mix) */
 .cortex-overlay {
   background: linear-gradient(
     to bottom,
-    oklch(0.13 0.004 260 / 0.85),
-    oklch(0.13 0.004 260 / 0.95)
+    color-mix(in oklch, var(--color-bg) 50%, transparent),
+    color-mix(in oklch, var(--color-bg) 70%, transparent)
   );
 }
 
@@ -267,8 +267,8 @@ body {
 .cortex-overlay-transparent {
   background: linear-gradient(
     to bottom,
-    oklch(0.13 0.004 260 / 0.10),
-    oklch(0.13 0.004 260 / 0.25)
+    color-mix(in oklch, var(--color-bg) 10%, transparent),
+    color-mix(in oklch, var(--color-bg) 25%, transparent)
   );
 }
 

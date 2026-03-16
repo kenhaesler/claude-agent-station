@@ -29,7 +29,7 @@
     }
   }
 
-  type BackgroundMode = '3d' | '2d' | 'off';
+  type BackgroundMode = 'rich' | 'lite' | 'off';
 
   interface Props {
     serviceActive: boolean;
@@ -59,19 +59,19 @@
     triggering,
     onPanelToggle,
     onAuthClick,
-    backgroundMode = '3d',
+    backgroundMode = 'rich',
     onBackgroundModeChange,
   }: Props = $props();
 
   function cycleBackgroundMode() {
-    const modes: BackgroundMode[] = ['3d', '2d', 'off'];
+    const modes: BackgroundMode[] = ['rich', 'lite', 'off'];
     const next = modes[(modes.indexOf(backgroundMode) + 1) % modes.length];
     onBackgroundModeChange?.(next);
   }
 
   let bgModeLabel = $derived(
-    backgroundMode === '3d' ? '3D Space' :
-    backgroundMode === '2d' ? '2D Particles' : 'Off'
+    backgroundMode === 'rich' ? 'Neural Aurora' :
+    backgroundMode === 'lite' ? 'Ambient Glow' : 'Off'
   );
 
   let hasApiKey = $derived(getStoredApiKey() !== null);
@@ -183,22 +183,16 @@
       title="Background: {bgModeLabel}"
     >
       <svg class="w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-        {#if backgroundMode === '3d'}
-          <!-- Globe/stars icon -->
-          <circle cx="8" cy="8" r="6" />
-          <ellipse cx="8" cy="8" rx="2.5" ry="6" />
-          <line x1="2" y1="8" x2="14" y2="8" />
-          <circle cx="12" cy="3" r="0.8" fill="currentColor" stroke="none" />
-          <circle cx="4" cy="4" r="0.5" fill="currentColor" stroke="none" />
-        {:else if backgroundMode === '2d'}
-          <!-- Sparkle/dots icon -->
-          <circle cx="8" cy="4" r="1" fill="currentColor" stroke="none" />
-          <circle cx="4" cy="8" r="0.8" fill="currentColor" stroke="none" />
-          <circle cx="12" cy="7" r="0.6" fill="currentColor" stroke="none" />
-          <circle cx="6" cy="12" r="0.7" fill="currentColor" stroke="none" />
-          <circle cx="11" cy="11" r="0.9" fill="currentColor" stroke="none" />
-          <circle cx="8" cy="8" r="1.2" fill="currentColor" stroke="none" />
-          <path d="M8 1v2M8 13v2M1 8h2M13 8h2" />
+        {#if backgroundMode === 'rich'}
+          <!-- Aurora wave icon -->
+          <path d="M2 6 Q5 3, 8 6 Q11 9, 14 6" />
+          <path d="M2 8.5 Q5 5.5, 8 8.5 Q11 11.5, 14 8.5" opacity="0.7" />
+          <path d="M2 11 Q5 8, 8 11 Q11 14, 14 11" opacity="0.4" />
+        {:else if backgroundMode === 'lite'}
+          <!-- Soft glow icon -->
+          <circle cx="8" cy="8" r="3" opacity="0.3" fill="currentColor" stroke="none" />
+          <circle cx="8" cy="8" r="5" opacity="0.15" fill="currentColor" stroke="none" />
+          <circle cx="8" cy="8" r="6.5" />
         {:else}
           <!-- Off icon (empty circle with line) -->
           <circle cx="8" cy="8" r="6" />

@@ -12,8 +12,8 @@
   import NavRail from './components/NavRail.svelte';
   import HeaderBar from './components/HeaderBar.svelte';
   import AgentPanel from './components/AgentPanel.svelte';
-  import SpaceBackground from './components/SpaceBackground.svelte';
-  import AmbientParticles from './components/AmbientParticles.svelte';
+  import NeuralAurora from './components/NeuralAurora.svelte';
+  import AmbientGlow from './components/AmbientGlow.svelte';
   import ApiKeyModal from './components/ApiKeyModal.svelte';
   import CommandPalette from './components/CommandPalette.svelte';
   import Toast from './components/Toast.svelte';
@@ -38,20 +38,14 @@
   let paletteOpen = $state(false);
 
   // Background mode (persisted to localStorage)
-  type BackgroundMode = '3d' | '2d' | 'off';
-  let backgroundMode = $state<BackgroundMode>(
-    (localStorage.getItem('station-bg-mode') as BackgroundMode) ?? '3d'
-  );
-
-  // Reduced motion detection
-  let reduceMotion = $state(false);
-  $effect(() => {
-    const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
-    reduceMotion = mq.matches;
-    const handler = (e: MediaQueryListEvent) => { reduceMotion = e.matches; };
-    mq.addEventListener('change', handler);
-    return () => mq.removeEventListener('change', handler);
-  });
+  type BackgroundMode = 'rich' | 'lite' | 'off';
+  // Migrate legacy values
+  const rawBg = localStorage.getItem('station-bg-mode');
+  const migratedBg: BackgroundMode =
+    rawBg === '3d' ? 'rich' : rawBg === '2d' ? 'lite' :
+    (rawBg as BackgroundMode) ?? 'rich';
+  if (rawBg === '3d' || rawBg === '2d') localStorage.setItem('station-bg-mode', migratedBg);
+  let backgroundMode = $state<BackgroundMode>(migratedBg);
 
   // System status and usage for Cortex
   let systemStatus = $state<SystemStatus | null>(null);
@@ -173,12 +167,12 @@
 <!-- Skip to content (accessibility) -->
 <a href="#main-content" class="skip-to-content">Skip to content</a>
 
-<!-- Ambient background — configurable 3D space / 2D particles / off -->
+<!-- Ambient background — Neural Aurora / Ambient Glow / off -->
 <div class="fixed inset-0 z-cortex" aria-hidden="true">
-  {#if backgroundMode === '3d' && !reduceMotion}
-    <SpaceBackground phase={agentPresence.phase} />
-  {:else if backgroundMode === '2d' && !reduceMotion}
-    <AmbientParticles phase={agentPresence.phase} />
+  {#if backgroundMode === 'rich'}
+    <NeuralAurora phase={agentPresence.phase} />
+  {:else if backgroundMode === 'lite'}
+    <AmbientGlow phase={agentPresence.phase} />
   {/if}
 </div>
 
