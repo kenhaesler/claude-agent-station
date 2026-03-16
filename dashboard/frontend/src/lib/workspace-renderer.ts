@@ -208,12 +208,12 @@ const STREAM_TEXT_SAMPLES = [
 ];
 
 function hexToRgb(hex: string): [number, number, number] {
+  if (!hex) return [100, 110, 130];
   const h = hex.replace('#', '');
-  return [
-    parseInt(h.substring(0, 2), 16),
-    parseInt(h.substring(2, 4), 16),
-    parseInt(h.substring(4, 6), 16),
-  ];
+  const r = parseInt(h.substring(0, 2), 16);
+  const g = parseInt(h.substring(2, 4), 16);
+  const b = parseInt(h.substring(4, 6), 16);
+  return [isNaN(r) ? 100 : r, isNaN(g) ? 110 : g, isNaN(b) ? 130 : b];
 }
 
 // ── Renderer ─────────────────────────────────────────────────
@@ -238,11 +238,14 @@ export class WorkspaceRenderer {
   private ripples: Ripple[] = [];
   private thinkingDots: ThinkingDot[] = [];
   private dataStreamTexts: DataStreamText[] = [];
+  private stars: { x: number; y: number; brightness: number; size: number }[] = [];
+  private hubPulseRings: { radius: number; alpha: number }[] = [];
 
   // Hub
   private hubX = 0;
   private hubY = 0;
   private hubRadius = 35;
+  private baseNodeR = 28;
   private orbitRadius = 0;
 
   // Clocks
@@ -309,7 +312,19 @@ export class WorkspaceRenderer {
     this.hubX = w / 2;
     this.hubY = h / 2;
     this.orbitRadius = Math.min(w, h) * 0.32;
-    this.hubRadius = Math.max(25, Math.min(w, h) * 0.045);
+    this.hubRadius = Math.max(25, Math.min(42, Math.min(w, h) * 0.045));
+    this.baseNodeR = Math.max(14, Math.min(28, Math.min(w, h) * 0.07));
+
+    // Seed starfield
+    this.stars = [];
+    for (let i = 0; i < 80; i++) {
+      this.stars.push({
+        x: Math.random() * w,
+        y: Math.random() * h,
+        brightness: 0.15 + Math.random() * 0.4,
+        size: 0.3 + Math.random() * 1.2,
+      });
+    }
 
     this.bloomCanvas = document.createElement('canvas');
     this.bloomCanvas.width = Math.floor(w * this.dpr * 0.25);
@@ -439,7 +454,7 @@ export class WorkspaceRenderer {
     const rect = this.canvas.getBoundingClientRect();
     const x = clientX - rect.left;
     const y = clientY - rect.top;
-    const hitR = 40;
+    const hitR = this.baseNodeR * 1.43;
     for (const node of this.nodes) {
       const dx = x - node.x, dy = y - node.y;
       if (dx * dx + dy * dy < hitR * hitR) return node;
@@ -452,12 +467,12 @@ export class WorkspaceRenderer {
     const rect = this.canvas.getBoundingClientRect();
     const x = clientX - rect.left;
     const y = clientY - rect.top;
-    const hitR = 12;
+    const hitR = Math.max(10, this.baseNodeR * 0.43);
     for (const node of this.nodes) {
       for (const emp of node.employees) {
-        const empR = node.role === 'employee' ? 22 : 35;
-        const ex = node.x + Math.cos(emp.orbitAngle) * empR;
-        const ey = node.y + Math.sin(emp.orbitAngle) * empR;
+        const empOrbitR = this.baseNodeR * (node.scale ?? 1) + this.baseNodeR * 0.75;
+        const ex = node.x + Math.cos(emp.orbitAngle) * empOrbitR;
+        const ey = node.y + Math.sin(emp.orbitAngle) * empOrbitR;
         const dx = x - ex, dy = y - ey;
         if (dx * dx + dy * dy < hitR * hitR) {
           return { nodeId: node.id, employeeIndex: emp.index, runId: emp.runId };
@@ -579,8 +594,10 @@ export class WorkspaceRenderer {
     // hubX = w/2, hubY = h/2.
     const w = this.hubX * 2;
     const h = this.hubY * 2;
-    const baseRx = w * 0.40;   // generous horizontal spread
-    const baseRy = h * 0.25;   // compact vertical band
+    // Padding-aware radii that respect canvas bounds
+    const pad = this.baseNodeR * 1.5 + 20;
+    const baseRx = (w / 2 - pad) * 0.85;
+    const baseRy = (h / 2 - pad) * 0.65;
 
     // Overlap guard: on an ellipse, minimum adjacent-node distance =
     // 2·sin(π/n)·min(rx,ry). We only need to floor the shorter axis.
@@ -635,6 +652,10 @@ export class WorkspaceRenderer {
 
       node.targetX = this.hubX + Math.cos(angle) * targetRx;
       node.targetY = this.hubY + Math.sin(angle) * targetRy;
+
+      // Bounds clamping safety net
+      node.targetX = Math.max(pad, Math.min(this.w - pad, node.targetX));
+      node.targetY = Math.max(pad, Math.min(this.h - pad, node.targetY));
     }
   }
 
@@ -655,7 +676,7 @@ export class WorkspaceRenderer {
       vy: (Math.random() - 0.5) * 0.2,
       life: randomLife ? Math.random() * 8000 : 0,
       maxLife: 6000 + Math.random() * 6000,
-      size: 0.5 + Math.random() * 1,
+      size: 0.8 + Math.random() * 1.5,
       alpha: 0,
     };
   }
@@ -800,9 +821,9 @@ export class WorkspaceRenderer {
     emp.status = 'reaped';
     emp.shatterProgress = 0.01; // start shatter
     emp.shatterParticles = [];
-    const empR = node.role === 'employee' ? 22 : 35;
-    const ex = node.x + Math.cos(emp.orbitAngle) * empR;
-    const ey = node.y + Math.sin(emp.orbitAngle) * empR;
+    const empOrbitR = this.baseNodeR * (node.scale ?? 1) + this.baseNodeR * 0.75;
+    const ex = node.x + Math.cos(emp.orbitAngle) * empOrbitR;
+    const ey = node.y + Math.sin(emp.orbitAngle) * empOrbitR;
     // Create shatter particles
     for (let i = 0; i < 20; i++) {
       const angle = Math.random() * Math.PI * 2;
@@ -863,8 +884,9 @@ export class WorkspaceRenderer {
     try {
       this.update(dt);
       this.draw();
-    } catch {
-      // Swallow draw/update errors to keep the animation loop alive
+    } catch (e) {
+      // Log draw/update errors for debugging
+      console.error('[WorkspaceRenderer] tick error:', e);
     }
     this.rafId = requestAnimationFrame(this.tick);
   };
@@ -879,6 +901,17 @@ export class WorkspaceRenderer {
     this.nebulaClock += dtSec * 0.15;
     if (this.phase !== 'idle') {
       this.radarAngle += dtSec * 0.6;
+    }
+
+    // Hub pulse rings
+    if (this.time % 3 < dtSec) {
+      this.hubPulseRings.push({ radius: this.hubRadius, alpha: 0.3 });
+    }
+    for (let i = this.hubPulseRings.length - 1; i >= 0; i--) {
+      const ring = this.hubPulseRings[i];
+      ring.radius += dt * 0.03;
+      ring.alpha -= dt * 0.00015;
+      if (ring.alpha <= 0) this.hubPulseRings.splice(i, 1);
     }
 
     // Parallax (holographic depth)
@@ -906,7 +939,7 @@ export class WorkspaceRenderer {
       node.y += node.velY;
 
       // Opacity fade in
-      const targetOpacity = node.isActive ? 1 : (this.phase === 'idle' ? 0.5 : 0.35);
+      const targetOpacity = node.isActive ? 1 : (this.phase === 'idle' ? 0.6 : 0.45);
       node.opacity += (targetOpacity - node.opacity) * 0.05;
 
       // Scale
@@ -1100,6 +1133,7 @@ export class WorkspaceRenderer {
     ctx.clearRect(0, 0, w, h);
 
     this.drawBackground();
+    this.drawStarfield();
     this.drawNebula();
     this.drawGrid();
     this.drawRadarSweep();
@@ -1115,6 +1149,7 @@ export class WorkspaceRenderer {
     if (!isAmbient) this.drawReaperSweep();
     this.drawThinkingDots();
     if (!isAmbient) this.drawLabels();
+    if (!isAmbient) this.drawVignette();
     if (!isAmbient) this.drawBloom();
   }
 
@@ -1125,8 +1160,8 @@ export class WorkspaceRenderer {
     const [cr, cg, cb] = this.getPhaseColor();
 
     const grad = ctx.createRadialGradient(this.hubX, this.hubY, 0, this.hubX, this.hubY, Math.max(w, h) * 0.7);
-    grad.addColorStop(0, `rgba(${20 + cr * 0.03}, ${22 + cg * 0.02}, ${35 + cb * 0.02}, 1)`);
-    grad.addColorStop(1, `rgba(15, 17, 25, 1)`);
+    grad.addColorStop(0, `rgba(${18 + cr * 0.14}, ${20 + cg * 0.10}, ${35 + cb * 0.12}, 1)`);
+    grad.addColorStop(1, `rgba(${12 + cr * 0.05}, ${14 + cg * 0.04}, ${22 + cb * 0.05}, 1)`);
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, w, h);
   }
@@ -1142,14 +1177,14 @@ export class WorkspaceRenderer {
     const py = this.parallaxY * 3;
 
     const nebulae = [
-      { cx: 0.3 + Math.sin(t * 0.7) * 0.08, cy: 0.35 + Math.cos(t * 0.5) * 0.06, r: 0.35, color: [cr * 0.3, cg * 0.3, cb * 0.6] },
-      { cx: 0.7 + Math.cos(t * 0.6) * 0.07, cy: 0.65 + Math.sin(t * 0.8) * 0.05, r: 0.3, color: [cr * 0.5, cg * 0.15, cb * 0.5] },
+      { cx: 0.3 + Math.sin(t * 0.7) * 0.08, cy: 0.35 + Math.cos(t * 0.5) * 0.06, r: 0.35, color: [cr * 0.7, cg * 0.5, cb * 0.9] },
+      { cx: 0.7 + Math.cos(t * 0.6) * 0.07, cy: 0.65 + Math.sin(t * 0.8) * 0.05, r: 0.3, color: [cr * 0.8, cg * 0.35, cb * 0.7] },
     ];
 
     for (const n of nebulae) {
       const grad = ctx.createRadialGradient(n.cx * w + px, n.cy * h + py, 0, n.cx * w + px, n.cy * h + py, n.r * Math.min(w, h));
-      grad.addColorStop(0, `rgba(${n.color[0]}, ${n.color[1]}, ${n.color[2]}, 0.05)`);
-      grad.addColorStop(0.5, `rgba(${n.color[0]}, ${n.color[1]}, ${n.color[2]}, 0.02)`);
+      grad.addColorStop(0, `rgba(${n.color[0]}, ${n.color[1]}, ${n.color[2]}, 0.20)`);
+      grad.addColorStop(0.5, `rgba(${n.color[0]}, ${n.color[1]}, ${n.color[2]}, 0.08)`);
       grad.addColorStop(1, `rgba(${n.color[0]}, ${n.color[1]}, ${n.color[2]}, 0)`);
       ctx.fillStyle = grad;
       ctx.fillRect(0, 0, w, h);
@@ -1162,7 +1197,7 @@ export class WorkspaceRenderer {
     const { ctx, w, h } = this;
     const [cr, cg, cb] = this.getPhaseColor();
     const isActive = this.phase !== 'idle';
-    const alpha = isActive ? 0.04 : 0.02;
+    const alpha = isActive ? 0.12 : 0.06;
     // Parallax for grid (mid layer)
     const px = this.parallaxX * 1.5;
     const py = this.parallaxY * 1.5;
@@ -1179,7 +1214,7 @@ export class WorkspaceRenderer {
     }
 
     // 8 radial lines
-    ctx.strokeStyle = `rgba(${cr}, ${cg}, ${cb}, ${alpha * 0.7})`;
+    ctx.strokeStyle = `rgba(${cr}, ${cg}, ${cb}, ${alpha * 0.85})`;
     for (let i = 0; i < 8; i++) {
       const angle = (i / 8) * Math.PI * 2;
       ctx.beginPath();
@@ -1198,8 +1233,8 @@ export class WorkspaceRenderer {
     const sweepR = this.orbitRadius * 1.15;
 
     const grad = ctx.createConicGradient(this.radarAngle, this.hubX, this.hubY);
-    grad.addColorStop(0, `rgba(${cr}, ${cg}, ${cb}, 0.06)`);
-    grad.addColorStop(0.08, `rgba(${cr}, ${cg}, ${cb}, 0.02)`);
+    grad.addColorStop(0, `rgba(${cr}, ${cg}, ${cb}, 0.18)`);
+    grad.addColorStop(0.08, `rgba(${cr}, ${cg}, ${cb}, 0.07)`);
     grad.addColorStop(0.15, `rgba(${cr}, ${cg}, ${cb}, 0)`);
     grad.addColorStop(1, `rgba(${cr}, ${cg}, ${cb}, 0)`);
 
@@ -1219,7 +1254,7 @@ export class WorkspaceRenderer {
     const py = this.parallaxY * 0.5;
 
     for (const p of this.particles) {
-      const a = p.alpha * 0.2;
+      const a = p.alpha * 0.6;
       if (a < 0.01) continue;
       ctx.beginPath();
       ctx.arc(p.x + px, p.y + py, p.size, 0, Math.PI * 2);
@@ -1259,7 +1294,7 @@ export class WorkspaceRenderer {
           ctx.beginPath();
           ctx.moveTo(this.hubX + ox, this.hubY + oy);
           ctx.quadraticCurveTo(cpx + ox, cpy + oy, node.x + ox, node.y + oy);
-          ctx.strokeStyle = `rgba(${cr}, ${cg}, ${cb}, ${0.15 + this.intensity * 0.1 + pulse * 0.05})`;
+          ctx.strokeStyle = `rgba(${cr}, ${cg}, ${cb}, ${0.28 + this.intensity * 0.18 + pulse * 0.10})`;
           ctx.lineWidth = 1;
           ctx.stroke();
         }
@@ -1268,7 +1303,7 @@ export class WorkspaceRenderer {
         ctx.beginPath();
         ctx.moveTo(this.hubX, this.hubY);
         ctx.quadraticCurveTo(cpx, cpy, node.x, node.y);
-        ctx.strokeStyle = `rgba(${cr}, ${cg}, ${cb}, ${0.03 + this.intensity * 0.04})`;
+        ctx.strokeStyle = `rgba(${cr}, ${cg}, ${cb}, ${0.10 + this.intensity * 0.12})`;
         ctx.lineWidth = railGap * 2 + 2;
         ctx.stroke();
 
@@ -1303,7 +1338,7 @@ export class WorkspaceRenderer {
         ctx.lineTo(mx + Math.cos(ang + 2.5) * 4, my + Math.sin(ang + 2.5) * 4);
         ctx.moveTo(mx + Math.cos(ang) * 6, my + Math.sin(ang) * 6);
         ctx.lineTo(mx + Math.cos(ang - 2.5) * 4, my + Math.sin(ang - 2.5) * 4);
-        ctx.strokeStyle = `rgba(${cr}, ${cg}, ${cb}, 0.4)`;
+        ctx.strokeStyle = `rgba(${cr}, ${cg}, ${cb}, 0.55)`;
         ctx.lineWidth = 1.5;
         ctx.stroke();
       } else {
@@ -1311,7 +1346,7 @@ export class WorkspaceRenderer {
         ctx.beginPath();
         ctx.moveTo(this.hubX, this.hubY);
         ctx.quadraticCurveTo(cpx, cpy, node.x, node.y);
-        ctx.strokeStyle = `rgba(100, 110, 130, ${0.05 * node.opacity})`;
+        ctx.strokeStyle = `rgba(100, 110, 130, ${0.14 * node.opacity})`;
         ctx.lineWidth = 0.5;
         ctx.setLineDash([3, 8]);
         ctx.stroke();
@@ -1343,7 +1378,7 @@ export class WorkspaceRenderer {
       // Fade at edges
       const fadeAlpha = Math.sin(t * Math.PI) * st.alpha;
 
-      ctx.fillStyle = `rgba(${cr}, ${cg}, ${cb}, ${fadeAlpha * 0.5})`;
+      ctx.fillStyle = `rgba(${cr}, ${cg}, ${cb}, ${fadeAlpha * 0.7})`;
       ctx.fillText(st.text, x, y - 8);
     }
   }
@@ -1390,7 +1425,7 @@ export class WorkspaceRenderer {
       // Glow
       ctx.beginPath();
       ctx.arc(head.x, head.y, 4, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(${cr}, ${cg}, ${cb}, ${0.1 * fadeAlpha})`;
+      ctx.fillStyle = `rgba(${cr}, ${cg}, ${cb}, ${0.2 * fadeAlpha})`;
       ctx.fill();
     }
 
@@ -1410,8 +1445,8 @@ export class WorkspaceRenderer {
       const breathe = 10 * Math.sin(this.time * 0.3 * Math.PI * 2);
       const glowR = r * 3.5 + breathe;
       const grad = ctx.createRadialGradient(this.hubX, this.hubY, r * 0.3, this.hubX, this.hubY, glowR);
-      grad.addColorStop(0, `rgba(${cr}, ${cg}, ${cb}, ${0.06 * pulse})`);
-      grad.addColorStop(0.5, `rgba(${cr}, ${cg}, ${cb}, ${0.03 * pulse})`);
+      grad.addColorStop(0, `rgba(${cr}, ${cg}, ${cb}, ${0.18 * pulse})`);
+      grad.addColorStop(0.5, `rgba(${cr}, ${cg}, ${cb}, ${0.08 * pulse})`);
       grad.addColorStop(1, `rgba(${cr}, ${cg}, ${cb}, 0)`);
       ctx.beginPath();
       ctx.arc(this.hubX, this.hubY, glowR, 0, Math.PI * 2);
@@ -1422,9 +1457,9 @@ export class WorkspaceRenderer {
     // Concentric rings: 3 rings — pulse faster with threat level
     const threatPulseSpeed = 1 + this.intensity * 3;
     const rings = [
-      { r: r * 1.8, dash: [0, 0], speed: 0, alpha: 0.15 },
-      { r: r * 1.5, dash: [3, 8], speed: 0.2 * threatPulseSpeed, alpha: 0.1 },
-      { r: r * 1.2, dash: [3, 8], speed: -0.3 * threatPulseSpeed, alpha: 0.06 },
+      { r: r * 1.8, dash: [0, 0], speed: 0, alpha: 0.25 },
+      { r: r * 1.5, dash: [3, 8], speed: 0.2 * threatPulseSpeed, alpha: 0.18 },
+      { r: r * 1.2, dash: [3, 8], speed: -0.3 * threatPulseSpeed, alpha: 0.10 },
     ];
     for (const ring of rings) {
       ctx.beginPath();
@@ -1440,12 +1475,21 @@ export class WorkspaceRenderer {
       ctx.lineDashOffset = 0;
     }
 
+    // Hub pulse rings (expanding heartbeat)
+    for (const pr of this.hubPulseRings) {
+      ctx.beginPath();
+      ctx.arc(this.hubX, this.hubY, pr.radius, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(${cr}, ${cg}, ${cb}, ${pr.alpha})`;
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+
     // Phase core circle
     ctx.beginPath();
     ctx.arc(this.hubX, this.hubY, r, 0, Math.PI * 2);
-    ctx.fillStyle = `rgba(20, 22, 30, 0.9)`;
+    ctx.fillStyle = `rgba(22, 25, 38, 0.92)`;
     ctx.fill();
-    ctx.strokeStyle = `rgba(${cr}, ${cg}, ${cb}, ${this.serviceActive ? 0.4 + pulse * 0.2 : 0.15})`;
+    ctx.strokeStyle = `rgba(${cr}, ${cg}, ${cb}, ${this.serviceActive ? 0.55 + pulse * 0.25 : 0.25})`;
     ctx.lineWidth = 2;
     ctx.stroke();
 
@@ -1509,31 +1553,32 @@ export class WorkspaceRenderer {
   private drawAgentNode(node: AgentNode) {
     const { ctx } = this;
     const [cr, cg, cb] = node.color;
-    const nodeR = 28 * node.scale;
+    const nodeR = this.baseNodeR * node.scale;
 
     ctx.save();
     ctx.globalAlpha = node.opacity;
 
     // Layer 1: Gravity well glow
     if (node.glowIntensity > 0.05) {
-      const grad = ctx.createRadialGradient(node.x, node.y, nodeR * 0.2, node.x, node.y, 120);
-      grad.addColorStop(0, `rgba(${cr}, ${cg}, ${cb}, ${0.03 * node.glowIntensity})`);
+      const glowR = this.baseNodeR * 4.3;
+      const grad = ctx.createRadialGradient(node.x, node.y, nodeR * 0.2, node.x, node.y, glowR);
+      grad.addColorStop(0, `rgba(${cr}, ${cg}, ${cb}, ${0.12 * node.glowIntensity})`);
       grad.addColorStop(1, `rgba(${cr}, ${cg}, ${cb}, 0)`);
       ctx.beginPath();
-      ctx.arc(node.x, node.y, 120, 0, Math.PI * 2);
+      ctx.arc(node.x, node.y, glowR, 0, Math.PI * 2);
       ctx.fillStyle = grad;
       ctx.fill();
     }
 
     // Layer 2: Outer tech ring — rotating arc segments
-    const outerR = nodeR + 12;
+    const outerR = nodeR + this.baseNodeR * 0.43;
     ctx.lineWidth = 1;
     for (let i = 0; i < 3; i++) {
       const segStart = node.arcRotation + (i * Math.PI * 2) / 3;
       const segSweep = Math.PI / 3;
       ctx.beginPath();
       ctx.arc(node.x, node.y, outerR, segStart, segStart + segSweep);
-      const arcAlpha = node.isActive ? 0.5 + (node.isThinking ? 0.3 * Math.sin(this.time * 9.4) : 0) : 0.2;
+      const arcAlpha = node.isActive ? 0.5 + (node.isThinking ? 0.3 * Math.sin(this.time * 9.4) : 0) : 0.3;
       ctx.strokeStyle = `rgba(${cr}, ${cg}, ${cb}, ${arcAlpha})`;
       ctx.stroke();
     }
@@ -1554,12 +1599,18 @@ export class WorkspaceRenderer {
       ctx.lineCap = 'butt';
     }
 
-    // Layer 4: Core circle
+    // Layer 4: Core circle with inner radial gradient (3D convex illusion)
     ctx.beginPath();
     ctx.arc(node.x, node.y, nodeR, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(20, 22, 30, 0.9)';
+    const innerGrad = ctx.createRadialGradient(
+      node.x - nodeR * 0.2, node.y - nodeR * 0.25, nodeR * 0.1,
+      node.x, node.y, nodeR
+    );
+    innerGrad.addColorStop(0, `rgba(${35 + cr * 0.08}, ${38 + cg * 0.06}, ${55 + cb * 0.07}, 0.92)`);
+    innerGrad.addColorStop(1, `rgba(24, 27, 40, 0.92)`);
+    ctx.fillStyle = innerGrad;
     ctx.fill();
-    ctx.strokeStyle = `rgba(${cr}, ${cg}, ${cb}, ${node.isActive ? 0.6 : 0.25})`;
+    ctx.strokeStyle = `rgba(${cr}, ${cg}, ${cb}, ${node.isActive ? 0.75 : 0.35})`;
     ctx.lineWidth = 2;
     ctx.stroke();
 
@@ -1614,7 +1665,7 @@ export class WorkspaceRenderer {
     for (const node of this.nodes) {
       for (const emp of node.employees) {
         // Determine orbit radius — worktree employees on outer ring
-        const baseOrbitR = 28 * node.scale + 18;
+        const baseOrbitR = this.baseNodeR * node.scale + this.baseNodeR * 0.75;
         const empOrbitR = emp.inWorktree ? baseOrbitR + 14 : baseOrbitR;
         const ex = node.x + Math.cos(emp.orbitAngle) * empOrbitR;
         const ey = node.y + Math.sin(emp.orbitAngle) * empOrbitR;
@@ -1623,7 +1674,7 @@ export class WorkspaceRenderer {
         if (emp.shatterProgress >= 1) continue;
 
         const [sr, sg, sb] = EMPLOYEE_STATUS_COLORS[emp.status] ?? [100, 100, 100];
-        const dotR = 6;
+        const dotR = 9;
 
         ctx.save();
 
@@ -1652,7 +1703,7 @@ export class WorkspaceRenderer {
         // Glow
         if (emp.glow > 0.1) {
           const grad = ctx.createRadialGradient(ex, ey, dotR * 0.3, ex, ey, dotR * 3);
-          grad.addColorStop(0, `rgba(${sr}, ${sg}, ${sb}, ${0.15 * emp.glow})`);
+          grad.addColorStop(0, `rgba(${sr}, ${sg}, ${sb}, ${0.25 * emp.glow})`);
           grad.addColorStop(1, `rgba(${sr}, ${sg}, ${sb}, 0)`);
           ctx.beginPath();
           ctx.arc(ex, ey, dotR * 3, 0, Math.PI * 2);
@@ -1670,11 +1721,14 @@ export class WorkspaceRenderer {
           else ctx.lineTo(hx, hy);
         }
         ctx.closePath();
-        ctx.fillStyle = 'rgba(20, 22, 30, 0.9)';
+        ctx.fillStyle = 'rgba(28, 32, 48, 0.92)';
         ctx.fill();
-        ctx.strokeStyle = `rgba(${sr}, ${sg}, ${sb}, 0.7)`;
+        ctx.strokeStyle = `rgba(${sr}, ${sg}, ${sb}, 0.9)`;
         ctx.lineWidth = 1.5;
         ctx.stroke();
+
+        // Employee icon inside hexagon
+        this.drawAgentIcon(ex, ey, dotR * 0.45, 'employee', sr, sg, sb);
 
         // Status indicator: pulsing core
         if (emp.status === 'working') {
@@ -1755,7 +1809,7 @@ export class WorkspaceRenderer {
       if (node.shieldAlpha < 0.02 || node.role === 'manager') continue;
 
       const [cr, cg, cb] = [245, 158, 11]; // amber shield
-      const nodeR = 28 * node.scale;
+      const nodeR = this.baseNodeR * node.scale;
       const shieldR = nodeR + 20;
       const alpha = node.shieldAlpha;
 
@@ -1797,7 +1851,7 @@ export class WorkspaceRenderer {
     for (const r of this.ripples) {
       ctx.beginPath();
       ctx.arc(r.x, r.y, r.radius, 0, Math.PI * 2);
-      ctx.strokeStyle = `rgba(${r.color[0]}, ${r.color[1]}, ${r.color[2]}, ${r.alpha * 0.6})`;
+      ctx.strokeStyle = `rgba(${r.color[0]}, ${r.color[1]}, ${r.color[2]}, ${r.alpha * 0.8})`;
       ctx.lineWidth = 1.5 * r.alpha;
       ctx.stroke();
     }
@@ -1869,13 +1923,16 @@ export class WorkspaceRenderer {
       const node = this.nodes[dot.nodeIndex];
       if (!node) continue;
       const [cr, cg, cb] = node.color;
-      const orbitR = 44 * node.scale;
+      const orbitR = (this.baseNodeR * 1.57) * node.scale;
       const x = node.x + Math.cos(dot.angle) * orbitR;
       const y = node.y + Math.sin(dot.angle) * orbitR;
+      ctx.shadowColor = `rgba(${cr}, ${cg}, ${cb}, 0.6)`;
+      ctx.shadowBlur = 6;
       ctx.beginPath();
-      ctx.arc(x, y, 2.5, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(${cr}, ${cg}, ${cb}, 0.5)`;
+      ctx.arc(x, y, 3, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(${cr}, ${cg}, ${cb}, 0.7)`;
       ctx.fill();
+      ctx.shadowBlur = 0;
     }
   }
 
@@ -1886,13 +1943,13 @@ export class WorkspaceRenderer {
 
     for (const node of this.nodes) {
       const [cr, cg, cb] = node.color;
-      const labelY = node.y + 28 * node.scale + 16;
+      const labelY = node.y + this.baseNodeR * node.scale + Math.max(10, this.baseNodeR * 0.57);
 
       ctx.save();
       ctx.globalAlpha = node.opacity;
 
       // Name
-      ctx.font = '600 12px Inter, system-ui, sans-serif';
+      ctx.font = `600 ${Math.max(9, this.baseNodeR * 0.43)}px Inter, system-ui, sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'top';
       ctx.fillStyle = `rgba(${cr}, ${cg}, ${cb}, 0.85)`;
@@ -1901,7 +1958,7 @@ export class WorkspaceRenderer {
       // Activity text
       if (node.currentAction) {
         const action = node.currentAction.length > 24 ? node.currentAction.slice(0, 24) + '...' : node.currentAction;
-        ctx.font = '10px Inter, system-ui, sans-serif';
+        ctx.font = `${Math.max(8, this.baseNodeR * 0.36)}px Inter, system-ui, sans-serif`;
         ctx.fillStyle = `rgba(200, 205, 215, 0.5)`;
         ctx.fillText(action, node.x, labelY + 16);
       }
@@ -1911,7 +1968,7 @@ export class WorkspaceRenderer {
         const metricText = node.tokenCount > 1000
           ? `${(node.tokenCount / 1000).toFixed(0)}K tok`
           : `${node.turnCount} turns`;
-        ctx.font = '9px "SF Mono", ui-monospace, monospace';
+        ctx.font = `${Math.max(7, this.baseNodeR * 0.32)}px "SF Mono", ui-monospace, monospace`;
         const tw = ctx.measureText(metricText).width;
         const badgeX = node.x - tw / 2 - 4;
         const badgeY = labelY + (node.currentAction ? 30 : 16);
@@ -1942,11 +1999,47 @@ export class WorkspaceRenderer {
 
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
-    ctx.globalAlpha = 0.1;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
+    // First pass: standard bloom
+    ctx.globalAlpha = 0.25;
     ctx.drawImage(this.bloomCanvas, 0, 0, this.canvas.width, this.canvas.height);
+    // Second pass: wider halo with subtle warm shift
+    ctx.globalAlpha = 0.06;
+    ctx.filter = 'blur(2px)';
+    ctx.drawImage(this.bloomCanvas, -2, -2, this.canvas.width + 4, this.canvas.height + 4);
+    ctx.filter = 'none';
     ctx.restore();
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+  }
+
+  // ── Layer 1b: Starfield ──────────────────────────────────
+
+  private drawStarfield() {
+    const { ctx } = this;
+    const [cr, cg, cb] = this.getPhaseColor();
+    const twinkle = this.time * 0.5;
+    for (const s of this.stars) {
+      const flicker = s.brightness + Math.sin(twinkle + s.x * 0.1) * 0.08;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.size, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(${180 + cr * 0.3}, ${190 + cg * 0.25}, ${210 + cb * 0.2}, ${flicker})`;
+      ctx.fill();
+    }
+  }
+
+  // ── Layer 12b: Vignette ──────────────────────────────────
+
+  private drawVignette() {
+    const { ctx, w, h } = this;
+    const grad = ctx.createRadialGradient(
+      this.hubX, this.hubY, Math.min(w, h) * 0.3,
+      this.hubX, this.hubY, Math.max(w, h) * 0.75
+    );
+    grad.addColorStop(0, 'rgba(0, 0, 0, 0)');
+    grad.addColorStop(0.7, 'rgba(0, 0, 0, 0.08)');
+    grad.addColorStop(1, 'rgba(0, 0, 0, 0.3)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, w, h);
   }
 
   private drawAgentIcon(cx: number, cy: number, size: number, role: string, cr: number, cg: number, cb: number) {
