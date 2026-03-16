@@ -377,6 +377,10 @@ preflight() {
         log_error "Config file not found: $CONFIG_FILE"
         exit 1
     fi
+    if [ ! -r "$CONFIG_FILE" ]; then
+        log_error "Config file not readable (check permissions): $CONFIG_FILE"
+        exit 1
+    fi
 
     for cmd in python3 claude git gh; do
         if ! command -v "$cmd" &>/dev/null; then
@@ -600,6 +604,20 @@ assign_work() {
     local workspace="$WORKSPACES_DIR/$name"
 
     log_info "Pre-assigning issues for $repo ($employee_count employees)..."
+
+    # Try smart router first if auto_mode_selection is enabled
+    local auto_mode
+    auto_mode=$(json_get "$CONFIG_FILE" "intelligence.auto_mode_selection" 2>/dev/null || echo "false")
+    if [ "$auto_mode" = "true" ]; then
+        python3 -m agent.coordinator.smart_router \
+            --repo "$repo" --workspace "$workspace" \
+            --employee-count "$employee_count" \
+            --config "$CONFIG_FILE" --run-id "$RUN_ID" 2>/dev/null && {
+            log_info "Smart router produced assignments for $repo"
+            return 0
+        }
+        log_warn "Smart router failed, falling back to Haiku assigner"
+    fi
 
     # Fetch open issues
     local issues_json
@@ -1857,6 +1875,40 @@ print(json.dumps(v))
             _report_model_used=$(python3 -c "import json; print(json.load(open('$workspace/.claude-employee-report.json')).get('model',''))" 2>/dev/null || echo "")
             _report_esc_rung=$(python3 -c "import json; print(json.load(open('$workspace/.claude-employee-report.json')).get('escalation_rung',0))" 2>/dev/null || echo "0")
         fi
+
+        # Extract issue_type and subsystem from labels for the learning loop
+        local _issue_type="" _subsystem=""
+        if [ -f "$workspace/.claude-assignment-0.json" ]; then
+            _issue_type=$(python3 -c "
+import json, sys
+a = json.load(open('$workspace/.claude-assignment-0.json'))
+labels = [l.get('name','') if isinstance(l,dict) else str(l) for l in a.get('labels',[])]
+for n in labels:
+    if n in ('bug','fix','hotfix'): print('bug'); sys.exit()
+    elif n in ('enhancement','feature'): print('feature'); sys.exit()
+    elif n in ('chore','maintenance','docs'): print('chore'); sys.exit()
+    elif n in ('refactor','tech-debt'): print('refactor'); sys.exit()
+print('feature')
+" 2>/dev/null || echo "")
+            _subsystem=$(python3 -c "
+import json
+a = json.load(open('$workspace/.claude-assignment-0.json'))
+body = a.get('body','') or ''
+title = a.get('issue_title','') or ''
+text = title + ' ' + body
+scores = {'frontend':0,'backend':0,'agent':0,'infra':0}
+for pat in ['dashboard/frontend/','src/lib/','.svelte','.tsx','.css']:
+    if pat in text: scores['frontend'] += 1
+for pat in ['dashboard/backend/','app/routers/','app/models','.py']:
+    if pat in text: scores['backend'] += 1
+for pat in ['agent/scripts/','agent/prompts/','agent/coordinator/','run-manager','run-employee']:
+    if pat in text: scores['agent'] += 1
+for pat in ['systemd','.service','Dockerfile','docker-compose','nginx','.conf']:
+    if pat in text: scores['infra'] += 1
+best = max(scores, key=scores.get)
+print(best if scores[best] > 0 else 'mixed')
+" 2>/dev/null || echo "")
+        fi
         python3 -m agent.coordinator.decide --run-id "$RUN_ID" \
             record-outcome \
             --project-repo "$project" \
@@ -1869,7 +1921,40 @@ print(json.dumps(v))
             --duration "${_report_duration:-}" \
             --complexity "${_report_complexity:-}" \
             --escalation-rung "${_report_esc_rung:-0}" \
+            --issue-type "${_issue_type:-}" \
+            --subsystem "${_subsystem:-}" \
             >/dev/null 2>&1 &
+
+        # Redundant task outcome recording via HTTP API (fallback if decide.py fails)
+        local _outcome_success="false"
+        [[ "$verdict" == "APPROVE" || "$verdict" == "PR" ]] && _outcome_success="true"
+        local _oi="${issue_number:-}"
+        [[ -z "$_oi" || "$_oi" == "None" || "$_oi" == "null" ]] && _oi=""
+        local _outcome_json
+        _outcome_json=$(python3 -c "
+import json
+def intval(s):
+    try: return int(s)
+    except: return None
+d = {
+    'project_repo': '$project',
+    'issue_number': intval('$_oi'),
+    'mode_used': '${_report_mode_used:-${verdict_mode:-full}}',
+    'model_used': '${_report_model_used:-claude-sonnet-4-6}',
+    'success': '$_outcome_success' == 'true',
+    'verdict': '$verdict',
+    'failure_category': '$verdict',
+    'employee_index': intval('${employee_idx:-}'),
+    'escalation_rung': intval('${_report_esc_rung:-0}') or 0,
+    'complexity_score': intval('${_report_complexity:-}'),
+    'tokens_consumed': intval('${_report_tokens:-}'),
+    'duration_seconds': intval('${_report_duration:-}'),
+    'issue_type': '${_issue_type:-}' or None,
+    'subsystem': '${_subsystem:-}' or None,
+}
+print(json.dumps(d))
+" 2>/dev/null) && \
+        queue_api POST "/api/intelligence/outcomes" "$_outcome_json" >/dev/null 2>&1 &
 
         if [ ! -d "$workspace/.git" ]; then
             log_error "Workspace not found: $workspace"
