@@ -226,6 +226,8 @@ class TaskOutcome(Base):
     tests_passed = Column(Boolean, nullable=True)
     verdict = Column(Text, nullable=True)  # approve, pr, reject
     failure_category = Column(Text, nullable=True)  # test_failure, wrong_approach, incomplete, quality
+    subsystem = Column(Text, nullable=True)  # frontend, backend, agent, infra, mixed
+    employee_index = Column(Integer, nullable=True)
     tokens_consumed = Column(Integer, nullable=True)
     duration_seconds = Column(Integer, nullable=True)
     created_at = Column(DateTime, default=_utcnow)

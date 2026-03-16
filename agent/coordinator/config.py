@@ -34,7 +34,7 @@ class CoordinatorConfig:
     guidance_check_interval: float = 5.0
     conflict_detection: bool = True
     max_consecutive_failures: int = 3
-    decomposition_model: str = "claude-haiku-4-5-20251001"
+    decomposition_model: str = "claude-sonnet-4-6"
 
     # Plan usage enforcement
     plan_tier: str = "max_5x"

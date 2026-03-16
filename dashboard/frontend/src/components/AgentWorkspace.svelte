@@ -22,6 +22,16 @@
   let container: HTMLDivElement;
   let renderer: WorkspaceRenderer | null = null;
   let tooltip = $state<{ text: string; x: number; y: number } | null>(null);
+  let isFullscreen = $state(false);
+
+  function toggleFullscreen() {
+    if (!container) return;
+    if (document.fullscreenElement) {
+      document.exitFullscreen();
+    } else {
+      container.requestFullscreen();
+    }
+  }
 
   // HUD tool cycling state
   let hudToolCycleIndex = $state(0);
@@ -64,11 +74,15 @@
       hudToolCycleIndex++;
     }, 3000);
 
+    function onFsChange() { isFullscreen = !!document.fullscreenElement; }
+    document.addEventListener('fullscreenchange', onFsChange);
+
     return () => {
       renderer?.stop();
       unsubSound();
       renderer = null;
       ro.disconnect();
+      document.removeEventListener('fullscreenchange', onFsChange);
       if (hudToolCycleTimer) { clearInterval(hudToolCycleTimer); hudToolCycleTimer = null; }
     };
   });
@@ -296,7 +310,7 @@
 
 <div
   bind:this={container}
-  class="relative w-full h-full"
+  class="relative w-full h-full {isFullscreen ? 'bg-[#0f1119]' : ''}"
   style="opacity: {opacity}"
   role="img"
   aria-label="Agent network visualization -- Mission Cortex"
@@ -316,6 +330,26 @@
     >
       {tooltip.text}
     </div>
+  {/if}
+
+  {#if interactive}
+    <button
+      onclick={toggleFullscreen}
+      class="absolute top-2 right-20 z-20 p-1 rounded opacity-40 hover:opacity-80
+             transition-opacity text-text-dim hover:text-text cursor-pointer"
+      title={isFullscreen ? 'Exit fullscreen' : 'Expand'}
+    >
+      <svg class="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none"
+           stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+        {#if isFullscreen}
+          <polyline points="4,1 1,1 1,4" /><polyline points="12,1 15,1 15,4" />
+          <polyline points="4,15 1,15 1,12" /><polyline points="12,15 15,15 15,12" />
+        {:else}
+          <polyline points="1,5 1,1 5,1" /><polyline points="11,1 15,1 15,5" />
+          <polyline points="1,11 1,15 5,15" /><polyline points="11,15 15,15 15,11" />
+        {/if}
+      </svg>
+    </button>
   {/if}
 
   <!-- HUD: top-left — phase + active employee count -->

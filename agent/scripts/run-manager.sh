@@ -609,6 +609,23 @@ cleanup_all_worktrees() {
 }
 
 # ============================================================================
+# PRE-FILTER: Exclude refined/in-progress issues for analyze mode
+# ============================================================================
+
+get_analyzable_issues() {
+    local repo="$1" workspace="$2"
+    cd "$workspace" && gh issue list --repo "$repo" --state open --limit 100 \
+        --json number,title,labels \
+        | python3 -c "
+import json, sys
+SKIP = {'autonomous-agent/refined', 'autonomous-agent/in-progress', 'autonomous-agent/needs-help', 'NO AI', 'backlog', 'wontfix'}
+issues = json.load(sys.stdin)
+filtered = [i for i in issues if not SKIP & {l['name'] for l in i.get('labels', [])}]
+print(json.dumps(filtered))
+" 2>/dev/null
+}
+
+# ============================================================================
 # ISSUE ASSIGNMENT (pre-assignment for concurrent employees)
 # ============================================================================
 
@@ -643,7 +660,7 @@ assign_work() {
 
     # Fetch open PRs to avoid duplicating work
     local prs_json
-    prs_json=$(cd "$workspace" && GITHUB_REPO="$repo" gh pr list --repo "$repo" --state open --json number,title,headRefName 2>/dev/null) || prs_json="[]"
+    prs_json=$(cd "$workspace" && GITHUB_REPO="$repo" gh pr list --repo "$repo" --state all --json number,title,headRefName,state 2>/dev/null) || prs_json="[]"
 
     # Build assignment prompt
     local assignment_prompt="Assign issues from this repository to $employee_count employees.
@@ -894,6 +911,19 @@ Write your report to $workspace/.claude-employee-report${report_suffix}.json
 
 Remember: You are in PLAN mode. Read and analyze only — do NOT modify any source files."
     elif [ "$mode" = "analyze" ]; then
+        # Programmatic pre-filter: exclude refined/in-progress issues
+        local analyzable_issues
+        analyzable_issues=$(get_analyzable_issues "$repo" "$workspace" 2>/dev/null || echo "[]")
+        local analyzable_count
+        analyzable_count=$(echo "$analyzable_issues" | python3 -c "import json,sys; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "0")
+        local analyzable_summary
+        analyzable_summary=$(echo "$analyzable_issues" | python3 -c "
+import json, sys
+for i in json.load(sys.stdin):
+    labels = ', '.join(l['name'] for l in i.get('labels', []))
+    print(f\"  #{i['number']} — {i['title']}\" + (f' [{labels}]' if labels else ''))
+" 2>/dev/null || echo "  (none)")
+
         system_prompt="$(resolve_prompt analyst)"
         employee_prompt="Analyze the repository: $repo
 
@@ -903,7 +933,15 @@ Environment variables available:
 
 Your workspace is: $workspace
 
-Analyze the codebase for bugs, technical debt, security issues, and improvement opportunities. Create well-defined GitHub issues for each finding. Refine any existing vague issues with analysis details.
+IMPORTANT — PRE-FILTERED ISSUE LIST ($analyzable_count issues eligible for analysis):
+$analyzable_summary
+
+These issues have already been filtered to EXCLUDE issues labeled autonomous-agent/refined,
+autonomous-agent/in-progress, autonomous-agent/needs-help, NO AI, backlog, or wontfix.
+ONLY work on issues from this list when refining existing issues. Do NOT re-analyze issues
+not on this list — they have already been refined in a previous run.
+
+If this list is empty, focus on creating new issues from codebase analysis only.
 
 Write your report to $workspace/.claude-employee-report${report_suffix}.json
 

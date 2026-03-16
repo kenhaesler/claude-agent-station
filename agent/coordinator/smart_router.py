@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 SKIP_LABELS = {
     "autonomous-agent/in-progress",
     "autonomous-agent/needs-help",
+    "autonomous-agent/refined",
     "NO AI",
     "backlog",
     "wontfix",
