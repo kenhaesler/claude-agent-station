@@ -6,8 +6,11 @@ import json
 import logging
 import re
 import subprocess
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+import anthropic
 
 if TYPE_CHECKING:
     from agent.coordinator.config import CoordinatorConfig
@@ -167,28 +170,60 @@ async def decompose_issue(
 
 Decompose this issue into sub-tasks for {employee_count} employees."""
 
-    try:
-        from agent.coordinator.llm import call_llm
-        resp = call_llm(
-            prompt,
-            model=config.decomposition_model,
-            system=DECOMPOSITION_PROMPT,
-            max_tokens=4096,
-        )
-        logger.info(
-            "Decomposition LLM call: %d input + %d output tokens",
-            resp.input_tokens, resp.output_tokens,
-        )
+    max_retries = 3
+    retry_backoff = [2, 4]  # seconds between retries
 
-        if not resp.text.strip():
-            logger.warning("Decomposition returned empty response, using single task")
-            return await _fallback_dag(config, session_factory, repo, issue_body, issue_number, effective_run_id)
+    from agent.coordinator.llm import call_llm
 
-        return await _parse_decomposition(resp.text, config, session_factory, repo, issue_number, effective_run_id)
+    for attempt in range(max_retries):
+        try:
+            resp = call_llm(
+                prompt,
+                model=config.decomposition_model,
+                system=DECOMPOSITION_PROMPT,
+                max_tokens=4096,
+            )
+            logger.info(
+                "Decomposition LLM call: %d input + %d output tokens",
+                resp.input_tokens, resp.output_tokens,
+            )
 
-    except Exception as e:
-        logger.warning("Decomposition failed: %s, using single task", e)
-        return await _fallback_dag(config, session_factory, repo, issue_body, issue_number, effective_run_id)
+            if not resp.text.strip():
+                logger.warning("Decomposition returned empty response, using fallback")
+                return await _fallback_dag(
+                    config, session_factory, repo, issue_body, issue_number,
+                    effective_run_id, employee_count=employee_count,
+                )
+
+            return await _parse_decomposition(resp.text, config, session_factory, repo, issue_number, effective_run_id)
+
+        except (anthropic.APITimeoutError, anthropic.RateLimitError) as e:
+            if attempt < max_retries - 1:
+                wait = retry_backoff[attempt] if attempt < len(retry_backoff) else retry_backoff[-1]
+                logger.warning("Decomposition attempt %d/%d failed (%s), retrying in %ds", attempt + 1, max_retries, e, wait)
+                time.sleep(wait)
+            else:
+                logger.warning("Decomposition failed after %d attempts: %s", max_retries, e)
+
+        except anthropic.APIStatusError as e:
+            if e.status_code in (500, 529) and attempt < max_retries - 1:
+                wait = retry_backoff[attempt] if attempt < len(retry_backoff) else retry_backoff[-1]
+                logger.warning("Decomposition attempt %d/%d failed (HTTP %d), retrying in %ds", attempt + 1, max_retries, e.status_code, wait)
+                time.sleep(wait)
+            elif e.status_code in (500, 529):
+                logger.warning("Decomposition failed after %d attempts: HTTP %d", max_retries, e.status_code)
+            else:
+                logger.warning("Decomposition failed (non-retryable HTTP %d): %s", e.status_code, e)
+                break  # Don't retry 4xx errors
+
+        except Exception as e:
+            logger.warning("Decomposition failed (unexpected): %s", e)
+            break  # Don't retry unexpected errors
+
+    return await _fallback_dag(
+        config, session_factory, repo, issue_body, issue_number,
+        effective_run_id, employee_count=employee_count,
+    )
 
 
 async def _parse_decomposition(
@@ -252,15 +287,32 @@ async def _fallback_dag(
     description: str,
     issue_number: int | None,
     run_id: str | None = None,
+    employee_count: int = 1,
 ) -> TaskDAG:
-    """Create a single-task DAG as fallback."""
+    """Create a fallback DAG.
+
+    With an issue or single employee: 1 task (can't decompose, avoid conflicts).
+    No issue + multi-employee: N independent self-select tasks.
+    """
     effective_run_id = run_id or config.run_id
-    return await TaskDAG.single_task(
-        effective_run_id, repo, session_factory,
-        title=f"Implement issue #{issue_number}" if issue_number else "Implement feature",
-        description=description[:2000],
-        issue_number=issue_number,
-    )
+
+    if issue_number or employee_count <= 1:
+        return await TaskDAG.single_task(
+            effective_run_id, repo, session_factory,
+            title=f"Implement issue #{issue_number}" if issue_number else "Implement feature",
+            description=description[:2000],
+            issue_number=issue_number,
+        )
+
+    # No issue + multi-employee: N independent self-select tasks
+    logger.info("Fallback: creating %d self-select tasks (no issue to decompose)", employee_count)
+    dag = TaskDAG(effective_run_id, repo, session_factory)
+    for i in range(employee_count):
+        await dag.add_task(
+            title=f"Self-select and implement (employee {i + 1})",
+            description="Pick an open issue from the repository and implement it.",
+        )
+    return dag
 
 
 def _get_workspace_partitions(workspace: str, employee_count: int) -> list[list[str]]:

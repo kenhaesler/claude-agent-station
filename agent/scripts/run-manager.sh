@@ -482,12 +482,13 @@ repo_name() {
 # Ensure workspace exists and is up to date
 setup_workspace() {
     local repo="$1"
+    local target_branch="${2:-}"  # Optional: project's configured branch
     local name
     name=$(repo_name "$repo")
     local workspace="$WORKSPACES_DIR/$name"
 
     if [ -d "$workspace/.git" ]; then
-        log_info "Resetting workspace to main for $repo..." >&2
+        log_info "Resetting workspace for $repo (target branch: ${target_branch:-auto})..." >&2
         cd "$workspace"
 
         # 1. Remove any lingering worktrees first (they block branch operations)
@@ -502,10 +503,12 @@ setup_workspace() {
         git reset --hard HEAD 2>/dev/null >&2 || true
         git clean -fd 2>/dev/null >&2 || true
 
-        # 3. Switch to main (or master) — force checkout in case of conflicts
-        local default_branch="main"
-        if ! git rev-parse --verify main >/dev/null 2>&1; then
-            default_branch="master"
+        # 3. Switch to configured branch, or detect default (main/master)
+        local default_branch="${target_branch:-main}"
+        if [ -z "$target_branch" ]; then
+            if ! git rev-parse --verify main >/dev/null 2>&1; then
+                default_branch="master"
+            fi
         fi
         git checkout -f "$default_branch" 2>/dev/null >&2 || {
             log_warn "Could not checkout $default_branch for $repo, trying to recover..." >&2
@@ -2084,32 +2087,47 @@ Run: $RUN_ID" 2>/dev/null || true
 
         case "$verdict" in
             APPROVE)
-                log_info "APPROVE: Pushing, merging, and closing issue (base: $base_branch)"
+                log_info "APPROVE: Pushing and creating PR (base: $base_branch)"
                 local push_merge_ok=false
-                # Push the branch
-                if git push origin "$branch" 2>/dev/null; then
+
+                # Ensure we're on the feature branch
+                git checkout "$branch" 2>&1 | while IFS= read -r line; do log_info "  $line"; done || true
+
+                # Push with retry (2 attempts)
+                local push_ok=false
+                for attempt in 1 2; do
+                    if git push -u origin "$branch" 2>&1 | while IFS= read -r line; do log_info "  $line"; done; then
+                        push_ok=true
+                        break
+                    fi
+                    [ "$attempt" -lt 2 ] && sleep 3
+                done
+
+                if [ "$push_ok" = true ]; then
                     log_ok "Pushed $branch"
 
-                    # Merge to base branch
-                    git checkout "$base_branch" 2>/dev/null
-                    if git merge "$branch" 2>/dev/null; then
-                        git push origin "$base_branch" 2>/dev/null && log_ok "Merged to $base_branch"
-                        push_merge_ok=true
+                    # Create PR and merge via GitHub API (works with protected branches)
+                    local pr_url
+                    pr_url=$(gh pr create --repo "$project" --base "$base_branch" --head "$branch" \
+                        --title "autonomous: $(git log -1 --format=%s)" \
+                        --body "Approved by autonomous manager.
 
-                        # Cleanup branch
-                        git branch -d "$branch" 2>/dev/null || true
-                        git push origin --delete "$branch" 2>/dev/null || true
+Run: $RUN_ID" 2>&1) || true
+
+                    if [ -n "$pr_url" ]; then
+                        log_info "PR created: $pr_url"
+                        # Merge the PR
+                        if gh pr merge "$pr_url" --merge --delete-branch 2>&1 | while IFS= read -r line; do log_info "  $line"; done; then
+                            push_merge_ok=true
+                            log_ok "PR merged to $base_branch"
+                        else
+                            log_error "PR merge failed — left open for manual review: $pr_url"
+                        fi
                     else
-                        log_error "Merge failed. Creating PR instead."
-                        git checkout "$branch" 2>/dev/null
-                        gh pr create --repo "$project" --base "$base_branch" \
-                            --title "autonomous: $(git log -1 --format=%s)" \
-                            --body "Merge conflict detected. Manual resolution needed.
-
-Run: $RUN_ID" 2>/dev/null || true
+                        log_error "PR creation failed for $branch"
                     fi
                 else
-                    log_error "Push failed for $branch"
+                    log_error "Push failed for $branch after 2 attempts"
                 fi
 
                 # Close issue with documentation (after push/merge)
@@ -2482,8 +2500,10 @@ for item in data.get('items', []):
         # Only pre-assign if multiple employees on same project in full mode
         if [ "$employees_for_assign" -gt 1 ] && [ "$mode_check" = "full" ]; then
             # Need workspace for fetching issues
+            local mode_branch
+            mode_branch=$(get_project_field "$i" "branch" 2>/dev/null || echo "")
             local assign_workspace
-            assign_workspace=$(setup_workspace "$repo_check") || {
+            assign_workspace=$(setup_workspace "$repo_check" "$mode_branch") || {
                 log_warn "Failed to setup workspace for $repo_check assignment, will self-select"
                 continue
             }
@@ -2542,6 +2562,7 @@ for i, proj in enumerate(projects):
         'employee_count': employees,
         'mode': mode,
         'issue_number': issue_number,
+        'branch': proj.get('branch', ''),
     })
 
 json.dump(assignments, open('$assignments_json', 'w'), indent=2)
@@ -2581,8 +2602,9 @@ print(f'Wrote {len(assignments)} assignments')
             continue
         fi
 
-        local mode_for_project
+        local mode_for_project proj_branch
         mode_for_project=$(get_project_field "$i" "mode" 2>/dev/null || echo "full")
+        proj_branch=$(get_project_field "$i" "branch" 2>/dev/null || echo "")
         local employees_this_project=$max_per_project
 
         for ((ei = 0; ei < employees_this_project; ei++)); do
@@ -2606,7 +2628,7 @@ print(f'Wrote {len(assignments)} assignments')
             # Setup workspace: employee 0 uses main workspace, others get worktrees
             local workspace
             if [ "$ei" -eq 0 ]; then
-                workspace=$(setup_workspace "$repo") || {
+                workspace=$(setup_workspace "$repo" "$proj_branch") || {
                     log_error "Failed to setup workspace for $repo"
                     continue 2
                 }

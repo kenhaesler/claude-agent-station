@@ -43,6 +43,27 @@ def _load_assignments(path: str) -> list[dict]:
         return json.load(f)
 
 
+def _fetch_top_open_issue(repo: str, workspace: str) -> tuple[int, str] | None:
+    """Best-effort: fetch the top open issue from GitHub for decomposition."""
+    try:
+        result = subprocess.run(
+            ["gh", "issue", "list", "--repo", repo, "--state", "open",
+             "--limit", "1", "--json", "number,title,body"],
+            capture_output=True, text=True, timeout=15, cwd=workspace,
+        )
+        if result.returncode == 0:
+            issues = json.loads(result.stdout)
+            if issues:
+                issue = issues[0]
+                number = issue.get("number")
+                body = f"# {issue.get('title', '')}\n\n{issue.get('body', '')}"
+                if number:
+                    return int(number), body
+    except Exception as e:
+        logger.warning("Failed to fetch open issues for %s: %s", repo, e)
+    return None
+
+
 def _fetch_issue_body(repo: str, issue_number: int, workspace: str) -> str:
     """Fetch issue body from GitHub."""
     try:
@@ -98,6 +119,13 @@ async def coordinate(config: CoordinatorConfig) -> int:
         # Fetch issue body if we have an issue number but no body
         if issue_number and not issue_body:
             issue_body = _fetch_issue_body(repo, issue_number, workspace)
+
+        # In full mode with multiple employees but no issue, try to fetch one
+        if not issue_number and project_mode == "full" and employee_count > 1:
+            fetched = _fetch_top_open_issue(repo, workspace)
+            if fetched:
+                issue_number, issue_body = fetched
+                logger.info("Auto-selected issue #%d for %s", issue_number, repo)
 
         # Check for existing tasks in DB (crash recovery)
         dag = TaskDAG(run_id, repo, session_factory)
