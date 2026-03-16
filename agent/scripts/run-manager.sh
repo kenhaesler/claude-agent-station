@@ -24,6 +24,7 @@ resolve_prompt() {
     fi
 }
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
+_RUN_COMPLETE_SENT=0  # Flag: set to 1 once run_complete webhook has been sent
 LOG_DIR=""
 DIGEST_DIR=""
 WORKSPACES_DIR="${STATION_WORKSPACES:-/home/claude-agent/workspaces}"
@@ -226,6 +227,20 @@ cleanup_children() {
 
 trap 'queue_api POST "/api/queue/batch-pause" "{\"run_id\":\"run-$RUN_ID\"}" 2>/dev/null; cleanup_children TERM; cleanup_all_worktrees 2>/dev/null || true; exit 130' SIGTERM
 trap 'queue_api POST "/api/queue/batch-pause" "{\"run_id\":\"run-$RUN_ID\"}" 2>/dev/null; cleanup_children INT; cleanup_all_worktrees 2>/dev/null || true; exit 130' SIGINT
+
+# EXIT trap: guarantee run_complete webhook fires on ALL exit paths
+# (normal exit, set -e crash, signals). Runs AFTER SIGTERM/SIGINT traps.
+_send_run_complete_on_exit() {
+    local exit_code=$?
+    if [ "$_RUN_COMPLETE_SENT" -eq 0 ] && [ -n "${RUN_ID:-}" ]; then
+        local status="error"
+        [ $exit_code -eq 0 ] && status="completed"
+        [ $exit_code -eq 130 ] && status="interrupted"
+        webhook_event "run_complete" "\"status\":\"$status\",\"exit_code\":$exit_code" || true
+        _RUN_COMPLETE_SENT=1
+    fi
+}
+trap _send_run_complete_on_exit EXIT
 
 get_max_concurrent() {
     json_get "$CONFIG_FILE" "limits.max_concurrent_employees" 2>/dev/null || echo "1"
@@ -2945,12 +2960,15 @@ print(json.dumps(result))
         log_ok "Run $RUN_ID complete (no work to review)"
         notify "complete" "Run $RUN_ID finished (no work to review)"
         webhook_event "run_complete" "\"status\":\"no_reports\""
+        _RUN_COMPLETE_SENT=1
         exit 0
     fi
 
     if ! check_rate_limit; then
         log_warn "Rate limit reached before manager review. Employee work stays local."
         notify "rate_limit" "Rate limit reached before manager review in run $RUN_ID"
+        webhook_event "run_complete" "\"status\":\"rate_limited\""
+        _RUN_COMPLETE_SENT=1
         exit 0
     fi
 
@@ -3093,6 +3111,7 @@ print(json.dumps(result))
     log_ok "Run $RUN_ID complete"
     notify "complete" "Run $RUN_ID finished successfully"
     webhook_event "run_complete" "\"status\":\"success\""
+    _RUN_COMPLETE_SENT=1
 }
 
 main "$@"
