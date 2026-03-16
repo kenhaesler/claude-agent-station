@@ -113,7 +113,15 @@ async def receive_run_event(
         # Normalize status: run-manager.sh sends "success"/"no_reports",
         # but the frontend expects "completed"/"failed" for styling.
         raw_status = event.status or "finished"
-        status_map = {"success": "completed", "finished": "completed"}
+        status_map = {
+            "success": "completed",
+            "finished": "completed",
+            "no_reports": "completed",
+            "completed": "completed",
+            "rate_limited": "completed",
+            "error": "failed",
+            "interrupted": "interrupted",
+        }
         final_status = status_map.get(raw_status, raw_status)
 
         if not run:
