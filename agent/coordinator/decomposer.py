@@ -21,6 +21,42 @@ from agent.coordinator.dag import TaskDAG
 
 logger = logging.getLogger(__name__)
 
+_SKIP_LABELS_FALLBACK = frozenset({
+    "autonomous-agent/in-progress",
+    "autonomous-agent/needs-help",
+    "NO AI",
+    "backlog",
+})
+
+
+def _fetch_open_issues(repo: str, workspace: str, count: int) -> list[dict]:
+    """Fetch top N open issues eligible for autonomous work."""
+    try:
+        result = subprocess.run(
+            ["gh", "issue", "list", "--repo", repo, "--state", "open",
+             "--limit", str(count + 10),
+             "--json", "number,title,body,labels"],
+            capture_output=True, text=True, timeout=15, cwd=workspace,
+        )
+        if result.returncode != 0:
+            return []
+        eligible: list[dict] = []
+        for issue in json.loads(result.stdout):
+            labels = {l.get("name", "") for l in issue.get("labels", [])}
+            if labels & _SKIP_LABELS_FALLBACK:
+                continue
+            eligible.append({
+                "number": issue["number"],
+                "body": f"# {issue.get('title', '')}\n\n{issue.get('body', '')}",
+            })
+            if len(eligible) >= count:
+                break
+        return eligible
+    except Exception as e:
+        logger.warning("Failed to fetch issues for fallback: %s", e)
+        return []
+
+
 DECOMPOSITION_PROMPT = """<identity>
 You are a task decomposition agent. Given a GitHub issue, split it into sub-tasks for separate employee agents (Claude Code).
 </identity>
@@ -192,7 +228,7 @@ Decompose this issue into sub-tasks for {employee_count} employees."""
                 logger.warning("Decomposition returned empty response, using fallback")
                 return await _fallback_dag(
                     config, session_factory, repo, issue_body, issue_number,
-                    effective_run_id, employee_count=employee_count,
+                    effective_run_id, employee_count=employee_count, workspace=workspace,
                 )
 
             return await _parse_decomposition(resp.text, config, session_factory, repo, issue_number, effective_run_id)
@@ -222,7 +258,7 @@ Decompose this issue into sub-tasks for {employee_count} employees."""
 
     return await _fallback_dag(
         config, session_factory, repo, issue_body, issue_number,
-        effective_run_id, employee_count=employee_count,
+        effective_run_id, employee_count=employee_count, workspace=workspace,
     )
 
 
@@ -288,11 +324,12 @@ async def _fallback_dag(
     issue_number: int | None,
     run_id: str | None = None,
     employee_count: int = 1,
+    workspace: str | None = None,
 ) -> TaskDAG:
     """Create a fallback DAG.
 
-    With an issue or single employee: 1 task (can't decompose, avoid conflicts).
-    No issue + multi-employee: N independent self-select tasks.
+    User-assigned issue or single employee: 1 task (avoid conflicts).
+    Multi-employee: pre-fetch distinct issues, one per employee.
     """
     effective_run_id = run_id or config.run_id
 
@@ -304,14 +341,27 @@ async def _fallback_dag(
             issue_number=issue_number,
         )
 
-    # No issue + multi-employee: N independent self-select tasks
-    logger.info("Fallback: creating %d self-select tasks (no issue to decompose)", employee_count)
+    # Multi-employee: pre-fetch distinct issues to avoid race condition
+    issues = _fetch_open_issues(repo, workspace, employee_count) if workspace else []
     dag = TaskDAG(effective_run_id, repo, session_factory)
+
+    if issues:
+        logger.info("Fallback: pre-assigning %d issues to %d employees", len(issues), employee_count)
+    else:
+        logger.info("Fallback: creating %d self-select tasks (no issues fetched)", employee_count)
+
     for i in range(employee_count):
-        await dag.add_task(
-            title=f"Self-select and implement (employee {i + 1})",
-            description="Pick an open issue from the repository and implement it.",
-        )
+        if i < len(issues):
+            await dag.add_task(
+                title=f"Implement issue #{issues[i]['number']}",
+                description=issues[i]['body'][:2000],
+                issue_number=issues[i]['number'],
+            )
+        else:
+            await dag.add_task(
+                title=f"Self-select and implement (employee {i + 1})",
+                description="Pick an open issue from the repository and implement it.",
+            )
     return dag
 
 

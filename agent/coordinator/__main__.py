@@ -124,8 +124,8 @@ async def coordinate(config: CoordinatorConfig) -> int:
         if not issue_number and project_mode == "full" and employee_count > 1:
             fetched = _fetch_top_open_issue(repo, workspace)
             if fetched:
-                issue_number, issue_body = fetched
-                logger.info("Auto-selected issue #%d for %s", issue_number, repo)
+                _, issue_body = fetched
+                logger.info("Auto-fetched issue context for %s decomposition", repo)
 
         # Check for existing tasks in DB (crash recovery)
         dag = TaskDAG(run_id, repo, session_factory)
