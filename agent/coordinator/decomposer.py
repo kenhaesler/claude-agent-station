@@ -18,15 +18,9 @@ if TYPE_CHECKING:
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from agent.coordinator.dag import TaskDAG
+from agent.coordinator.modes import SKIP_LABELS
 
 logger = logging.getLogger(__name__)
-
-_SKIP_LABELS_FALLBACK = frozenset({
-    "autonomous-agent/in-progress",
-    "autonomous-agent/needs-help",
-    "NO AI",
-    "backlog",
-})
 
 
 def _fetch_open_issues(repo: str, workspace: str, count: int) -> list[dict]:
@@ -43,7 +37,7 @@ def _fetch_open_issues(repo: str, workspace: str, count: int) -> list[dict]:
         eligible: list[dict] = []
         for issue in json.loads(result.stdout):
             labels = {l.get("name", "") for l in issue.get("labels", [])}
-            if labels & _SKIP_LABELS_FALLBACK:
+            if labels & SKIP_LABELS:
                 continue
             eligible.append({
                 "number": issue["number"],

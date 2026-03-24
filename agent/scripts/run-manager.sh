@@ -1344,10 +1344,12 @@ should_skip_planning() {
     planning_enabled=$(json_get "$CONFIG_FILE" "planning.enabled" 2>/dev/null || echo "true")
     [ "$planning_enabled" = "false" ] && return 0
 
-    # Analyze mode: skip planning entirely (analyst prompt only — no implementation plans)
+    # Non-full modes: skip planning gate (only full mode uses plan-before-implement)
     local project_mode
     project_mode=$(get_project_field "$project_index" "mode" 2>/dev/null || echo "full")
-    if [ "$project_mode" = "analyze" ]; then
+    if [ "$project_mode" = "analyze" ] || [ "$project_mode" = "plan" ] || \
+       [ "$project_mode" = "triage" ] || [ "$project_mode" = "review" ] || \
+       [ "$project_mode" = "fix" ]; then
         return 0
     fi
 
@@ -2614,13 +2616,6 @@ print(f'Wrote {len(assignments)} assignments')
             if ! check_rate_limit; then
                 log_warn "Rate limit reached. Stopping before $repo employee $ei"
                 notify "rate_limit" "Rate limit reached before $repo employee $ei in run $RUN_ID"
-                break 2
-            fi
-
-            # Check token budget before each employee
-            if ! check_rate_limit; then
-                log_warn "Plan usage cap reached. Stopping before $repo employee $ei"
-                notify "rate_limit" "Plan usage cap reached before $repo employee $ei in run $RUN_ID"
                 queue_api POST "/api/queue/batch-pause" "{\"run_id\":\"run-$RUN_ID\"}" >/dev/null 2>&1 &
                 break 2
             fi

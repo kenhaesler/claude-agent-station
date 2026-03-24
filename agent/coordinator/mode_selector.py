@@ -30,9 +30,11 @@ COMPLEXITY_TO_MODE: dict[int, str] = {
     5: "full",
 }
 
+# Turns should align with ModeSpec.default_max_turns for the mapped mode.
+# Complexity 1-2 → fix (75 turns), complexity 3-5 → full (100-200 turns).
 COMPLEXITY_TO_TURNS: dict[int, int] = {
-    1: 30,
-    2: 50,
+    1: 50,
+    2: 75,
     3: 100,
     4: 150,
     5: 200,

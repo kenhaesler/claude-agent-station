@@ -88,6 +88,7 @@ async def init_db(db_path: str) -> async_sessionmaker[AsyncSession]:
         cursor = dbapi_conn.cursor()
         cursor.execute("PRAGMA journal_mode=WAL")
         cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.execute("PRAGMA busy_timeout=5000")
         cursor.close()
 
     _session_factory = async_sessionmaker(

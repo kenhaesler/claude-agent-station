@@ -36,6 +36,7 @@ from agent.coordinator.manager import (
     RateLimitTracker,
     DEFAULT_MAX_USAGE_PERCENT,
 )
+from agent.coordinator.modes import MODE_REGISTRY
 from agent.coordinator.reporter import post_task_event, post_conflict, post_guidance
 from agent.coordinator.foreman import run_foreman
 
@@ -444,9 +445,12 @@ async def run_scheduler(dag: TaskDAG, config: CoordinatorConfig) -> None:
             post_employee_start(config, task)
 
             # Create activity tracker and stop event
+            mode_spec = MODE_REGISTRY.get(config.project_mode)
+            resolved_max_turns = mode_spec.default_max_turns if mode_spec else config.max_employee_turns
             activity = EmployeeActivity(
                 employee_index=employee_index,
                 task_id=task.id,
+                max_turns=resolved_max_turns,
             )
             activities[task.id] = activity
             stop_event = asyncio.Event()
@@ -488,23 +492,10 @@ async def run_scheduler(dag: TaskDAG, config: CoordinatorConfig) -> None:
                 del activities[task_id]
             task_workspaces.pop(task_id, None)
 
-        # Work stealing: idle employees pick up unstarted tasks
-        if config.work_stealing and done:
-            for completed_future in done:
-                completed_id = completed_future.result()
-                completed_activity = activities.get(completed_id)
-                if completed_activity:
-                    try:
-                        stolen = await _try_work_steal(
-                            completed_activity.employee_index, dag, running, config,
-                        )
-                        if stolen:
-                            logger.info(
-                                "Work stealing: employee %d picks up '%s'",
-                                completed_activity.employee_index, stolen.title,
-                            )
-                    except Exception as e:
-                        logger.debug("Work stealing failed: %s", e)
+        # TODO: implement work stealing properly (see issue #204 C2)
+        # Previous implementation was non-functional (activities cleaned up
+        # before work-stealing block could read them, and stolen tasks were
+        # never actually spawned). Removed dead code.
 
         # Periodic conflict detection
         if config.conflict_detection:
@@ -541,29 +532,6 @@ async def run_scheduler(dag: TaskDAG, config: CoordinatorConfig) -> None:
     # Final summary
     summary = await dag.summary()
     logger.info("Scheduler complete: %s", summary)
-
-
-async def _try_work_steal(
-    completed_employee: int,
-    dag: TaskDAG,
-    running: dict[str, asyncio.Task],
-    config: CoordinatorConfig,
-) -> Task | None:
-    """Check if there are unstarted tasks this employee could steal.
-
-    Work stealing rules:
-    1. Only steal READY tasks (all deps complete)
-    2. Task not already being worked on
-    3. work_stealing config must be enabled (checked by caller)
-    """
-    ready = await dag.ready_tasks()
-    stealable = [t for t in ready if t.id not in running]
-
-    if not stealable:
-        return None
-
-    # Return the first stealable task (could be enhanced with affinity scoring)
-    return stealable[0]
 
 
 async def _run_and_monitor(
@@ -672,6 +640,9 @@ async def _run_and_monitor(
 
     finally:
         semaphore.release()
+        # Clean up worktree for non-zero employees
+        if employee_index > 0 and task.workspace:
+            _cleanup_worktree(task.workspace, config)
         # Send employee_complete to update the Run record in the dashboard
         from agent.coordinator.reporter import post_employee_complete
         exit_code_final = result.exit_code if result else 1
@@ -703,6 +674,7 @@ async def _setup_task_workspace(task: Task, config: CoordinatorConfig, employee_
             except Exception as e:
                 logger.error("Clone failed for %s: %s", task.project_repo, e)
                 return None
+        _ensure_agent_gitexclude(main_workspace)
         return main_workspace
 
     # Create worktree for concurrent employees
@@ -744,11 +716,76 @@ async def _setup_task_workspace(task: Task, config: CoordinatorConfig, employee_
             return None
 
         logger.info("Created worktree for employee %d: %s", employee_index, worktree_dir)
+        _ensure_agent_gitexclude(worktree_dir)
         return worktree_dir
 
     except Exception as e:
         logger.error("Worktree setup failed: %s", e)
         return None
+
+
+def _ensure_agent_gitexclude(workspace: str) -> None:
+    """Add .claude-*.json to local git exclude so agent files don't pollute git status."""
+    git_path = Path(workspace) / ".git"
+    try:
+        if git_path.is_file():
+            # Worktree: .git is a file with "gitdir: /path/to/..."
+            real_git = git_path.read_text().strip().split("gitdir: ", 1)[-1]
+            exclude_file = Path(real_git) / "info" / "exclude"
+        else:
+            exclude_file = git_path / "info" / "exclude"
+        pattern = ".claude-*.json"
+        if exclude_file.exists() and pattern in exclude_file.read_text():
+            return
+        exclude_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(exclude_file, "a") as f:
+            f.write(f"\n# Agent coordination files\n{pattern}\n")
+    except OSError as e:
+        logger.debug("Could not update git exclude in %s: %s", workspace, e)
+
+
+def _cleanup_worktree(workspace: str, config: "CoordinatorConfig") -> None:
+    """Remove a worktree directory after an employee finishes."""
+    workspace_path = Path(workspace)
+    if not workspace_path.exists():
+        return
+    # Derive main workspace from worktree name ({repo}-e{N} → {repo})
+    parts = workspace_path.name.rsplit("-e", 1)
+    if len(parts) < 2:
+        return
+    main_workspace = str(workspace_path.parent / parts[0])
+    if not Path(main_workspace).exists():
+        return
+    try:
+        subprocess.run(
+            ["git", "worktree", "remove", "--force", workspace],
+            cwd=main_workspace, capture_output=True, timeout=10,
+        )
+        logger.info("Cleaned up worktree: %s", workspace)
+    except Exception as e:
+        logger.debug("Failed to remove worktree %s: %s", workspace, e)
+
+
+def cleanup_all_worktrees(workspaces_dir: str) -> None:
+    """Best-effort cleanup of all employee worktrees (for signal handlers)."""
+    wdir = Path(workspaces_dir)
+    if not wdir.exists():
+        return
+    for d in wdir.iterdir():
+        if d.is_dir() and "-e" in d.name:
+            parts = d.name.rsplit("-e", 1)
+            # Verify the suffix is a number (avoid false positives like "my-example")
+            if not parts[1].isdigit():
+                continue
+            main = wdir / parts[0]
+            if main.is_dir():
+                try:
+                    subprocess.run(
+                        ["git", "worktree", "remove", "--force", str(d)],
+                        cwd=str(main), capture_output=True, timeout=10,
+                    )
+                except Exception:
+                    pass
 
 
 def _get_stream_file(config: CoordinatorConfig, project_repo: str, employee_index: int) -> str:

@@ -22,6 +22,7 @@ class EmployeeActivity:
 
     employee_index: int
     task_id: str
+    max_turns: int = 200
     files_touched: set[str] = field(default_factory=set)
     tool_calls: int = 0
     test_failures: int = 0
