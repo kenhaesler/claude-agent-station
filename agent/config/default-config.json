@@ -60,7 +60,8 @@
     "auto_validate": true,
     "auto_promote": false,
     "promotion_strategy": "batch",
-    "sync_before_merge": true
+    "sync_before_merge": true,
+    "auto_bisect": true
   },
   "sprint": {
     "enabled": false,

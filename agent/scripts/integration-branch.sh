@@ -305,7 +305,117 @@ validate_dev() {
         webhook_event "dev_validation_fail" "\"project\":\"$project\",\"dev_branch\":\"$dev_branch\",\"exit_code\":$test_exit" >&2
     fi
 
+    # Auto-bisect if enabled
+    if [ "$test_exit" -ne 0 ]; then
+        local auto_bisect
+        auto_bisect=$(json_get "$CONFIG_FILE" "integration.auto_bisect" 2>/dev/null || echo "true")
+        if [ "$auto_bisect" = "true" ]; then
+            log_info "Auto-bisecting validation failure..."
+            bisect_validation_failure "$project" "$setup_script" || log_warn "Bisect could not identify culprit"
+        fi
+    fi
+
     return "$test_exit"
+}
+
+# ============================================================================
+# SELF-HEALING: BISECT VALIDATION FAILURES
+# ============================================================================
+
+bisect_validation_failure() {
+    local project="$1" setup_script="${2:-}"
+    local dev_branch
+    dev_branch=$(get_dev_branch)
+    local name
+    name=$(repo_name "$project")
+    local workspace="$WORKSPACES_DIR/$name"
+
+    cd "$workspace" || { log_error "Workspace $workspace not found"; return 1; }
+
+    log_info "Bisecting validation failure on $dev_branch for $project"
+
+    git checkout "$dev_branch" 2>/dev/null || return 1
+    git pull origin "$dev_branch" 2>/dev/null || true
+
+    # Get the most recent merge commit (the likely culprit)
+    local last_merge
+    last_merge=$(git log --merges --format="%H" -1 2>/dev/null || echo "")
+
+    if [ -z "$last_merge" ]; then
+        log_warn "No merge commits found on $dev_branch — cannot bisect"
+        return 1
+    fi
+
+    local last_merge_msg
+    last_merge_msg=$(git log --format="%s" -1 "$last_merge" 2>/dev/null || echo "unknown")
+
+    log_info "Reverting last merge: $last_merge ($last_merge_msg)"
+
+    # Revert the merge commit
+    if git revert -m 1 "$last_merge" --no-edit 2>/dev/null; then
+        log_ok "Reverted merge: $last_merge"
+
+        # Run tests again to confirm dev is green
+        if validate_dev "$project" "$setup_script"; then
+            log_ok "Validation passed after reverting — culprit identified: $last_merge"
+
+            # Push the revert
+            git push origin "$dev_branch" 2>/dev/null || {
+                log_error "Failed to push revert"
+                return 1
+            }
+
+            # Extract issue number from merge commit message
+            local issue_number
+            issue_number=$(echo "$last_merge_msg" | grep -oP '#\K[0-9]+' | head -1)
+
+            if [ -n "$issue_number" ]; then
+                # Update feature state via API
+                local feature_id
+                feature_id=$(queue_api GET "/api/integration/features?project_repo=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$project'))")" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+for item in data.get('items', []):
+    if item.get('issue_number') == $issue_number:
+        print(item['id'])
+        break
+" 2>/dev/null || echo "")
+
+                if [ -n "$feature_id" ]; then
+                    queue_api PUT "/api/integration/features/$feature_id" '{"state":"validation_failed","validation_status":"fail"}' >/dev/null 2>&1
+                fi
+
+                # Label the issue
+                gh issue edit "$issue_number" --repo "$project" --add-label "autonomous-agent/validation-failed" 2>/dev/null || true
+                gh issue comment "$issue_number" --repo "$project" --body "## Validation Failed
+
+Feature branch reverted from \`$dev_branch\` — tests failed after merge.
+
+The merge commit \`${last_merge:0:12}\` has been reverted. This issue will be re-attempted in the next sprint cycle.
+
+---
+Autonomous run: $RUN_ID" 2>/dev/null || true
+            fi
+
+            webhook_event "dev_bisect_complete" "\"project\":\"$project\",\"culprit\":\"$last_merge\",\"issue_number\":\"${issue_number:-unknown}\",\"status\":\"reverted\"" >&2
+            notify "validation_failed" "Feature reverted from $dev_branch: $last_merge_msg (#${issue_number:-?})"
+            return 0
+        else
+            # Still failing after revert — problem is deeper
+            log_warn "Validation still failing after revert — problem may be in multiple features"
+            git revert HEAD --no-edit 2>/dev/null || true  # Undo our revert
+            git push origin "$dev_branch" 2>/dev/null || true
+
+            webhook_event "dev_bisect_complete" "\"project\":\"$project\",\"status\":\"inconclusive\"" >&2
+            return 1
+        fi
+    else
+        # Revert failed (conflicts)
+        git revert --abort 2>/dev/null || true
+        log_warn "Could not revert merge $last_merge — revert has conflicts"
+        webhook_event "dev_bisect_complete" "\"project\":\"$project\",\"status\":\"revert_conflict\"" >&2
+        return 1
+    fi
 }
 
 # ============================================================================

@@ -1,0 +1,16 @@
+[Unit]
+Description=Claude Agent Validation and Promotion
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=claude-agent
+Group=claude-agent
+ExecStart=/opt/claude-agent-station/agent/scripts/promote.sh --validate-and-promote
+TimeoutStartSec=1800
+Environment=HOME=/home/claude-agent
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+
+[Install]
+WantedBy=multi-user.target

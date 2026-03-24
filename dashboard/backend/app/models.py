@@ -230,6 +230,8 @@ class TaskOutcome(Base):
     employee_index = Column(Integer, nullable=True)
     tokens_consumed = Column(Integer, nullable=True)
     duration_seconds = Column(Integer, nullable=True)
+    analyst_role = Column(Text, nullable=True)  # visionary, architect, etc. (sprint learning loop)
+    validation_passed = Column(Boolean, nullable=True)  # did the feature pass validation on dev?
     created_at = Column(DateTime, default=_utcnow)
 
 
