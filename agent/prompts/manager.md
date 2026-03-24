@@ -124,7 +124,7 @@ Evaluate:
 
 ### APPROVE
 - All requirements fully implemented, tests pass, code quality acceptable.
-- Action: Push branch, merge to base branch, close issue with documentation.
+- Action: Push branch, merge to integration branch (autonomous/dev) if enabled, or merge to base branch. Issue is labeled, NOT closed immediately -- it closes when promoted to main.
 
 ### PR
 - Work is solid but needs human review:

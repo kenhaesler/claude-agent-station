@@ -25,6 +25,7 @@ def run_verification(
     repo: str = "",
     report_file: str = "",
     prompt_dir: str = "",
+    integration_branch: str | None = None,
 ) -> dict:
     """Run independent verification on a branch diff.
 
@@ -36,10 +37,12 @@ def run_verification(
             "recommendation": "approve|revoke_auto_pr|needs_review",
         }
     """
+    target = integration_branch if integration_branch else base_branch
+
     # Get the diff to review
     try:
         diff_result = subprocess.run(
-            ["git", "-C", workspace, "diff", f"{base_branch}...{branch}"],
+            ["git", "-C", workspace, "diff", f"{target}...{branch}"],
             capture_output=True, text=True, timeout=30,
         )
         if diff_result.returncode != 0:
@@ -64,7 +67,7 @@ def run_verification(
 
 Repository: {repo}
 Branch: {branch}
-Base: {base_branch}
+Base: {target}
 
 ```diff
 {diff_text}

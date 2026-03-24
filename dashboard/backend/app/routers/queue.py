@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 
@@ -132,11 +133,18 @@ async def queue_pressure(db: AsyncSession = Depends(get_db)):
     )
     active_count = result.scalar() or 0
 
-    # Simple heuristic: treat active items / 5 as utilization percentage
-    # In production, this would use actual plan/token usage data
-    usage = min(100, active_count * 20)
+    # Read configured max concurrent from config to calculate utilization
+    # as a ratio of active items to capacity, not an arbitrary multiplier
+    from app.services.config_sync import _read_config_json
+    try:
+        config = await asyncio.to_thread(_read_config_json)
+        max_concurrent = int(config.get("limits", {}).get("max_concurrent_employees", 10))
+    except Exception:
+        max_concurrent = 10
 
-    state = calculate_backpressure(usage, base_max_concurrent=3)
+    usage = min(100, int((active_count / max(max_concurrent, 1)) * 100))
+
+    state = calculate_backpressure(usage, base_max_concurrent=max_concurrent)
     return BackpressureStatus(
         level=state.level,
         usage_percent=state.usage_percent,

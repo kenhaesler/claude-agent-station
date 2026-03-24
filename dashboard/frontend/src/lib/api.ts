@@ -1,4 +1,4 @@
-import type { Project, ProjectCreate, ProjectUpdate, Run, RunList, RunFullContext, ActiveEmployeeData, Plan, PlanList, SystemStatus, AuthStatus, LogSearchResult, RunLogs, UsageData, TokenUsageData, PlanUsageData, OAuthStartResponse, OAuthCallbackResponse, GitHubDeviceStartResponse, GitHubDevicePollResponse, GitHubOAuthStatusResponse, CoordinatorTask, CoordinatorTaskDetail, CoordinatorDAG, CoordinatorMessage, AnalyticsData, DiffResult, QueueItem, QueueItemList, QueueStats, IntelligenceInsights, IntelligenceDecision, BackpressureStatus, BrainstormSession, BrainstormSessionDetail } from './types';
+import type { Project, ProjectCreate, ProjectUpdate, Run, RunList, RunFullContext, ActiveEmployeeData, Plan, PlanList, SystemStatus, AuthStatus, LogSearchResult, RunLogs, UsageData, TokenUsageData, PlanUsageData, OAuthStartResponse, OAuthCallbackResponse, GitHubDeviceStartResponse, GitHubDevicePollResponse, GitHubOAuthStatusResponse, CoordinatorTask, CoordinatorTaskDetail, CoordinatorDAG, CoordinatorMessage, AnalyticsData, DiffResult, QueueItem, QueueItemList, QueueStats, IntelligenceInsights, IntelligenceDecision, BackpressureStatus, BrainstormSession, BrainstormSessionDetail, IntegrationStatus, IntegrationFeature, IntegrationFeatureList, SprintStatus, SprintFindings, SprintSummary } from './types';
 
 const BASE = import.meta.env.VITE_API_URL || '';
 
@@ -315,3 +315,45 @@ export function streamBrainstormMessage(
 
   return controller;
 }
+
+// Integration Branch
+export const getIntegrationStatus = (repo: string) =>
+  request<IntegrationStatus>(`/api/integration/status/${encodeURIComponent(repo)}`);
+export const getIntegrationFeatures = (params?: { project_repo?: string; state?: string; limit?: number; offset?: number }) => {
+  const q = new URLSearchParams();
+  if (params?.project_repo) q.set('project_repo', params.project_repo);
+  if (params?.state) q.set('state', params.state);
+  if (params?.limit) q.set('limit', String(params.limit));
+  if (params?.offset) q.set('offset', String(params.offset));
+  return request<IntegrationFeatureList>(`/api/integration/features?${q}`);
+};
+export const getIntegrationFeature = (id: number) =>
+  request<IntegrationFeature>(`/api/integration/features/${id}`);
+export const promoteToMain = (repo: string, featureIds?: number[], strategy?: string) =>
+  request<{ status: string; message: string }>('/api/integration/promote', {
+    method: 'POST',
+    body: JSON.stringify({ project_repo: repo, feature_ids: featureIds, strategy }),
+  });
+export const syncDevWithMain = (repo: string) =>
+  request<{ status: string; message: string }>(`/api/integration/sync/${encodeURIComponent(repo)}`, { method: 'POST' });
+export const validateDev = (repo: string) =>
+  request<{ status: string; message: string }>(`/api/integration/validate/${encodeURIComponent(repo)}`, { method: 'POST' });
+export const excludeFeature = (id: number, reason: string) =>
+  request<IntegrationFeature>(`/api/integration/exclude/${id}`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  });
+export const includeFeature = (id: number) =>
+  request<IntegrationFeature>(`/api/integration/exclude/${id}`, { method: 'DELETE' });
+
+// Sprint
+export const getSprintStatus = (repo: string) =>
+  request<SprintStatus>(`/api/sprint/status/${encodeURIComponent(repo)}`);
+export const getSprintFindings = (sprintId: string, role?: string) => {
+  const url = role
+    ? `/api/sprint/findings/${sprintId}/${role}`
+    : `/api/sprint/findings/${sprintId}`;
+  return request<SprintFindings[]>(url);
+};
+export const getSprintHistory = (repo: string) =>
+  request<SprintSummary[]>(`/api/sprint/history/${encodeURIComponent(repo)}`);

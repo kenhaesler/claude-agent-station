@@ -1,4 +1,4 @@
-type Page = 'command' | 'stream' | 'stream-detail' | 'decide' | 'decide-detail' | 'config' | 'brainstorm' | 'brainstorm-session' | 'agents' | 'agent-detail' | 'analytics';
+type Page = 'command' | 'stream' | 'stream-detail' | 'decide' | 'decide-detail' | 'config' | 'brainstorm' | 'brainstorm-session' | 'agents' | 'agent-detail' | 'analytics' | 'integration';
 
 interface Route {
   page: Page;
@@ -49,7 +49,7 @@ function parsePath(): Route {
 
   // Handle old route redirects (without params)
   const redirect = REDIRECTS[`/${raw}`];
-  if (redirect && !['command', 'stream', 'decide', 'config', 'brainstorm', 'agents', 'analytics'].includes(raw)) {
+  if (redirect && !['command', 'stream', 'decide', 'config', 'brainstorm', 'agents', 'analytics', 'integration'].includes(raw)) {
     navigate(redirect, true);
     return { page: redirect.slice(1) as Page, param: null };
   }
@@ -66,6 +66,7 @@ function parsePath(): Route {
   if (raw === 'agents' && parts.length > 1) return { page: 'agent-detail', param: parts[1] };
   if (raw === 'agents') return { page: 'agents', param: null };
   if (raw === 'analytics') return { page: 'analytics', param: null };
+  if (raw === 'integration') return { page: 'integration', param: null };
 
   // Fallback
   return { page: 'command', param: null };

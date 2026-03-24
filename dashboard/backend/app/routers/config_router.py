@@ -95,6 +95,8 @@ class StationConfigUpdate(BaseModel):
     notifications: dict[str, Any] | None = None
     logging: dict[str, Any] | None = None
     intelligence: dict[str, Any] | None = None
+    integration: dict[str, Any] | None = None
+    sprint: dict[str, Any] | None = None
     model_config = ConfigDict(extra="forbid")
 
 

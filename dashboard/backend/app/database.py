@@ -68,6 +68,9 @@ async def _migrate_add_columns(conn) -> None:
         # Intelligent Agent Swarm: subsystem + employee_index on task_outcomes
         ("task_outcomes", "subsystem", "ALTER TABLE task_outcomes ADD COLUMN subsystem TEXT"),
         ("task_outcomes", "employee_index", "ALTER TABLE task_outcomes ADD COLUMN employee_index INTEGER"),
+        # Self-healing learning loop columns (Phase 4)
+        ("task_outcomes", "analyst_role", "ALTER TABLE task_outcomes ADD COLUMN analyst_role TEXT"),
+        ("task_outcomes", "validation_passed", "ALTER TABLE task_outcomes ADD COLUMN validation_passed BOOLEAN"),
     ]
     for table, column, sql in migrations:
         try:
@@ -90,6 +93,7 @@ async def init_db():
             ConfigEntry,
             CoordinatorMessage,
             CoordinatorTask,
+            IntegrationFeature,
             Notification,
             Plan,
             PlanUsageHistory,

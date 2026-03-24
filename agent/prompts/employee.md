@@ -108,6 +108,13 @@ Before writing any code, ensure the project's dependencies are installed:
 4. **If your user prompt contains a `PLAN_REVISION` section:** the manager has reviewed your previous plan and requested changes. Read the feedback carefully, revise your plan accordingly, and write the updated plan to the same output file.
 5. After writing the plan file, write a brief report with `"mode": "plan_only"` and **stop**. Do NOT proceed to Step 3.
 
+### Integration Branch Awareness
+If an integration branch (`autonomous/dev`) exists on the remote, use it as your base instead of the project's base branch:
+1. Check: `git ls-remote --heads origin autonomous/dev`
+2. If it exists: `git checkout autonomous/dev && git pull origin autonomous/dev && git checkout -b autonomous/issue-<number>`
+3. If it does not exist: use the base branch as before (Step 3 below).
+4. In your report, include `"integration_branch": "autonomous/dev"` (or `null` if not used).
+
 ### Step 3: Implement
 
 **If your user prompt contains an `APPROVED_PLAN` section:** you have a pre-approved implementation plan from the manager. Follow it as your guide, but use your judgment if you discover the plan needs adjustment during implementation.

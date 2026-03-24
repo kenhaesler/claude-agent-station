@@ -5,6 +5,7 @@
   const links = [
     { page: 'command', label: 'Pulse', icon: 'command' },
     { page: 'stream', label: 'Work', icon: 'stream' },
+    { page: 'integration', label: 'Integrate', icon: 'integration' },
     { page: 'decide', label: 'Decide', icon: 'decide' },
     { page: 'brainstorm', label: 'Brainstorm', icon: 'brainstorm' },
     { page: 'agents', label: 'Agents', icon: 'agents' },
@@ -18,6 +19,7 @@
     if (linkPage === 'decide') return route.page === 'decide' || route.page === 'decide-detail';
     if (linkPage === 'brainstorm') return route.page === 'brainstorm' || route.page === 'brainstorm-session';
     if (linkPage === 'agents') return route.page === 'agents' || route.page === 'agent-detail';
+    if (linkPage === 'integration') return route.page === 'integration';
     if (linkPage === 'config') return route.page === 'config';
     if (linkPage === 'analytics') return route.page === 'analytics';
     return false;
@@ -49,6 +51,12 @@
         {:else if link.icon === 'stream'}
           <path d="M3 5h14M3 10h10M3 15h12" />
           <circle cx="16" cy="10" r="1.5" fill="currentColor" stroke="none" />
+        {:else if link.icon === 'integration'}
+          <path d="M4 4v12M16 4v12" />
+          <path d="M4 10h12" />
+          <circle cx="4" cy="7" r="2" fill="currentColor" stroke="none" />
+          <circle cx="16" cy="13" r="2" fill="currentColor" stroke="none" />
+          <path d="M8 6l4 4-4 4" stroke-width="1.5" />
         {:else if link.icon === 'decide'}
           <path d="M4 4h12M4 8h12M4 12h8" />
           <path d="M13 12l2 2 4-4" stroke-width="2" />
