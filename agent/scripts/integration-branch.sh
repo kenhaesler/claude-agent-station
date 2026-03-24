@@ -167,7 +167,9 @@ merge_to_dev() {
     git pull origin "$dev_branch" 2>/dev/null || true
 
     # Attempt the merge
+    local merge_commit_sha=""
     if git merge "$branch" --no-edit 2>/dev/null; then
+        merge_commit_sha=$(git rev-parse HEAD 2>/dev/null || echo "")
         log_ok "Merged $branch into $dev_branch"
 
         git push origin "$dev_branch" 2>/dev/null || {
@@ -221,15 +223,27 @@ Autonomous run: $RUN_ID" 2>/dev/null || log_warn "Failed to comment on issue #$i
     fi
 
     # Record the feature in the dashboard API
-    local escaped_reasoning
-    escaped_reasoning=$(printf '%s' "$reasoning" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read()))" 2>/dev/null || echo "\"\"")
+    # Resolve issue_title from the assignment file if available
+    local _issue_title=""
+    if [ -f "$workspace/.claude-assignment-0.json" ]; then
+        _issue_title=$(python3 -c "import json; print(json.load(open('$workspace/.claude-assignment-0.json')).get('issue_title',''))" 2>/dev/null || echo "")
+    fi
+    local _escaped_title
+    _escaped_title=$(printf '%s' "$_issue_title" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read())[1:-1])" 2>/dev/null || echo "")
+
+    # Build issue_number as int or null for JSON
+    local _issue_num_json="null"
+    if [ -n "$issue_number" ] && [ "$issue_number" != "None" ] && [ "$issue_number" != "null" ]; then
+        _issue_num_json="$issue_number"
+    fi
+
     queue_api POST "/api/integration/features" "{
-        \"project\": \"$project\",
+        \"project_repo\": \"$project\",
         \"branch\": \"$branch\",
-        \"issue_number\": \"$issue_number\",
-        \"dev_branch\": \"$dev_branch\",
+        \"issue_number\": $_issue_num_json,
+        \"issue_title\": \"$_escaped_title\",
         \"run_id\": \"run-$RUN_ID\",
-        \"reasoning\": $escaped_reasoning
+        \"merge_commit\": \"$merge_commit_sha\"
     }" >/dev/null 2>&1 || true
 
     webhook_event "dev_merged" "\"project\":\"$project\",\"branch\":\"$branch\",\"issue_number\":\"$issue_number\",\"status\":\"success\"" >&2
