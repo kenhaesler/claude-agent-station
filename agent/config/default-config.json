@@ -53,5 +53,23 @@
   "logging": {
     "log_dir": "/var/log/claude-agent",
     "digest_dir": "/var/log/claude-agent/digests"
+  },
+  "integration": {
+    "enabled": false,
+    "dev_branch": "autonomous/dev",
+    "auto_validate": true,
+    "auto_promote": false,
+    "promotion_strategy": "batch",
+    "sync_before_merge": true
+  },
+  "sprint": {
+    "enabled": false,
+    "analyze_threshold": 10,
+    "roles": ["visionary", "architect", "designer", "security", "quality", "performance"],
+    "creative_roles": ["visionary", "architect", "designer"],
+    "defensive_roles": ["security", "quality", "performance"],
+    "max_new_issues_per_role": 3,
+    "auto_implement": true,
+    "role_turns": 40
   }
 }

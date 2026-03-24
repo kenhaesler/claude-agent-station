@@ -90,6 +90,7 @@ async def init_db():
             ConfigEntry,
             CoordinatorMessage,
             CoordinatorTask,
+            IntegrationFeature,
             Notification,
             Plan,
             PlanUsageHistory,

@@ -228,6 +228,8 @@ export interface StationConfig {
     log_dir?: string;
     digest_dir?: string;
   };
+  integration?: IntegrationConfig;
+  sprint?: SprintConfig;
 }
 
 // --- Agent Events ---
@@ -567,4 +569,120 @@ export interface AnalyticsData {
   verdict_distribution: VerdictDistribution[];
   project_token_usage: ProjectTokenUsage[];
   daily_run_counts: DailyRunCount[];
+}
+
+// ============================================================================
+// Integration Branch
+// ============================================================================
+
+export interface IntegrationFeature {
+  id: number;
+  project_repo: string;
+  issue_number: number | null;
+  issue_title: string | null;
+  branch: string;
+  state: 'merged_to_dev' | 'validated' | 'promoted' | 'conflict' | 'excluded' | 'validation_failed';
+  merge_commit: string | null;
+  validation_status: 'pass' | 'fail' | 'pending' | null;
+  validation_output: string | null;
+  pr_number: number | null;
+  run_id: string | null;
+  promotion_run_id: string | null;
+  excluded_reason: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface IntegrationFeatureList {
+  items: IntegrationFeature[];
+  total: number;
+}
+
+export interface IntegrationStatus {
+  project_repo: string;
+  dev_branch: string;
+  feature_count: number;
+  validated_count: number;
+  conflict_count: number;
+  last_validation: string | null;
+  validation_status: 'pass' | 'fail' | 'pending' | null;
+}
+
+export interface IntegrationConfig {
+  enabled: boolean;
+  dev_branch: string;
+  auto_validate: boolean;
+  auto_promote: boolean;
+  promotion_strategy: 'batch' | 'individual';
+  sync_before_merge: boolean;
+}
+
+// ============================================================================
+// Sprint Cycle
+// ============================================================================
+
+export interface SprintConfig {
+  enabled: boolean;
+  analyze_threshold: number;
+  roles: string[];
+  creative_roles: string[];
+  defensive_roles: string[];
+  max_new_issues_per_role: number;
+  auto_implement: boolean;
+  role_turns: number;
+}
+
+export interface SprintRoleStatus {
+  role: string;
+  status: 'waiting' | 'active' | 'complete' | 'failed';
+  proposals_count: number;
+  reviews_count: number;
+  turn: number | null;
+  max_turns: number | null;
+  duration_ms: number | null;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
+export interface SprintStatus {
+  sprint_id: string | null;
+  project_repo: string;
+  phase: 'idle' | 'analyzing' | 'implementing' | 'validating' | 'complete';
+  roles: SprintRoleStatus[];
+  issues_created: number;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
+export interface SprintFindings {
+  role: string;
+  timestamp: string;
+  sprint_id: string;
+  proposals: Array<{
+    id: string;
+    title: string;
+    type: string;
+    priority: string;
+    scope: string;
+    description: string;
+    create_github_issue: boolean;
+    issue_number?: number;
+  }>;
+  reviews: Array<{
+    target_role: string;
+    target_id: string;
+    assessment: string;
+    feasibility?: string;
+  }>;
+}
+
+export interface SprintSummary {
+  sprint_id: string;
+  project_repo: string;
+  roles_run: string[];
+  issues_created: number;
+  implemented: number;
+  validated: boolean;
+  started_at: string;
+  completed_at: string;
 }

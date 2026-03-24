@@ -25,6 +25,7 @@
   import AgentObservatoryPage from './pages/AgentObservatoryPage.svelte';
   import RunDetailPage from './pages/RunDetailPage.svelte';
   import AnalyticsPage from './pages/AnalyticsPage.svelte';
+  import IntegrationPage from './pages/IntegrationPage.svelte';
 
   let serviceActive = $state(false);
   let authOk = $state(false);
@@ -154,11 +155,12 @@
     }
     if (e.key === '1') { navigate('/command'); return; }
     if (e.key === '2') { navigate('/stream'); return; }
-    if (e.key === '3') { navigate('/decide'); return; }
-    if (e.key === '4') { navigate('/brainstorm'); return; }
-    if (e.key === '5') { navigate('/config'); return; }
+    if (e.key === '3') { navigate('/integration'); return; }
+    if (e.key === '4') { navigate('/decide'); return; }
+    if (e.key === '5') { navigate('/brainstorm'); return; }
     if (e.key === '6') { navigate('/agents'); return; }
     if (e.key === '7') { navigate('/analytics'); return; }
+    if (e.key === '8') { navigate('/config'); return; }
   }
 </script>
 
@@ -227,6 +229,8 @@
           <AgentObservatoryPage />
         {:else if route.page === 'analytics'}
           <AnalyticsPage />
+        {:else if route.page === 'integration'}
+          <IntegrationPage />
         {/if}
       </main>
 

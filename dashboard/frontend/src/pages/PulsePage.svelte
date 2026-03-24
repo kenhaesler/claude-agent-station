@@ -1,7 +1,7 @@
 <script lang="ts">
   import { agentPresence } from '../lib/agent-presence.svelte';
-  import { listProjects } from '../lib/api';
-  import type { SystemStatus, UsageData, Project } from '../lib/types';
+  import { listProjects, getIntegrationStatus, getSprintStatus } from '../lib/api';
+  import type { SystemStatus, UsageData, Project, IntegrationStatus, SprintStatus } from '../lib/types';
   import { navigate } from '../lib/router.svelte';
   import AgentWorkspace from '../components/AgentWorkspace.svelte';
   import Timeline from '../components/Timeline.svelte';
@@ -10,6 +10,7 @@
   import MetricPanel from '../components/MetricPanel.svelte';
   import StatusOrb from '../components/StatusOrb.svelte';
   import IntelligencePanel from '../components/IntelligencePanel.svelte';
+  import SprintLiveView from '../components/SprintLiveView.svelte';
   import { formatTokens } from '../lib/format';
 
   interface Props {
@@ -20,13 +21,35 @@
   let { systemStatus = null, usage = null }: Props = $props();
 
   let projects = $state<Project[]>([]);
+  let integrationStatus = $state<IntegrationStatus | null>(null);
+  let sprintStatus = $state<SprintStatus | null>(null);
+  let currentProjectRepo = $state<string | null>(null);
 
   async function loadProjects() {
     try {
       const res = await listProjects();
       projects = res;
+
+      // Fetch integration + sprint status for first enabled project
+      const enabledProject = res.find(p => p.enabled) ?? res[0];
+      if (enabledProject) {
+        currentProjectRepo = enabledProject.repo;
+        try {
+          integrationStatus = await getIntegrationStatus(enabledProject.repo);
+        } catch { integrationStatus = null; }
+        try {
+          sprintStatus = await getSprintStatus(enabledProject.repo);
+        } catch { sprintStatus = null; }
+      }
     } catch { /* silent */ }
   }
+
+  let validationColor = $derived(
+    integrationStatus?.validation_status === 'pass' ? 'bg-green-400' :
+    integrationStatus?.validation_status === 'fail' ? 'bg-red-400' :
+    integrationStatus?.validation_status === 'pending' ? 'bg-yellow-400 animate-pulse' :
+    'bg-white/20'
+  );
 
   $effect(() => {
     loadProjects();
@@ -58,6 +81,31 @@
       </span>
       <span class="text-[10px] text-text-muted ml-auto">Click to review</span>
     </button>
+  {/if}
+
+  <!-- Integration Status Strip -->
+  {#if integrationStatus && integrationStatus.feature_count > 0}
+    <div class="glass border border-border/50 rounded-lg px-4 py-2">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <span class="w-2 h-2 rounded-full {validationColor}"></span>
+          <span class="text-sm font-mono text-white/70">{integrationStatus.dev_branch}</span>
+          <span class="text-xs text-white/40">{integrationStatus.feature_count} feature{integrationStatus.feature_count !== 1 ? 's' : ''}</span>
+          <span class="text-xs text-white/40">{integrationStatus.validated_count} validated</span>
+          {#if integrationStatus.conflict_count > 0}
+            <span class="text-xs text-red-400">{integrationStatus.conflict_count} conflict{integrationStatus.conflict_count !== 1 ? 's' : ''}</span>
+          {/if}
+        </div>
+        <button onclick={() => navigate('/config')} class="text-xs text-blue-400 hover:text-blue-300 transition-colors">
+          View &rarr;
+        </button>
+      </div>
+    </div>
+  {/if}
+
+  <!-- Sprint Live View -->
+  {#if sprintStatus && sprintStatus.sprint_id}
+    <SprintLiveView projectRepo={currentProjectRepo ?? undefined} />
   {/if}
 
   <!-- Quick metrics row -->

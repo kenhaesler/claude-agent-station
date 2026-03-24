@@ -110,6 +110,25 @@
   let intelConfidenceGating = $state(false);
   let intelIndependentVerification = $state(false);
   let intelAdaptiveScheduling = $state(false);
+  // Integration branch settings
+  let integrationEnabled = $state(false);
+  let integrationDevBranch = $state('autonomous/dev');
+  let integrationAutoValidate = $state(true);
+  let integrationAutoPromote = $state(false);
+  let integrationPromotionStrategy = $state<'batch' | 'individual'>('batch');
+  let integrationSyncBeforeMerge = $state(true);
+  // Sprint cycle settings
+  let sprintEnabled = $state(false);
+  let sprintAnalyzeThreshold = $state(10);
+  let sprintMaxIssuesPerRole = $state(3);
+  let sprintRoleTurns = $state(40);
+  let sprintAutoImplement = $state(false);
+  let sprintCreativeVisionary = $state(true);
+  let sprintCreativeArchitect = $state(true);
+  let sprintCreativeDesigner = $state(true);
+  let sprintDefensiveSecurity = $state(true);
+  let sprintDefensiveQuality = $state(true);
+  let sprintDefensivePerformance = $state(true);
 
   function applyConfig(cfg: StationConfig) {
     employeeModel = cfg.models?.employee ?? '';
@@ -142,6 +161,27 @@
     intelConfidenceGating = cfg.intelligence?.confidence_gating ?? false;
     intelIndependentVerification = cfg.intelligence?.independent_verification ?? false;
     intelAdaptiveScheduling = cfg.intelligence?.adaptive_scheduling ?? false;
+    // Integration branch
+    integrationEnabled = cfg.integration?.enabled ?? false;
+    integrationDevBranch = cfg.integration?.dev_branch ?? 'autonomous/dev';
+    integrationAutoValidate = cfg.integration?.auto_validate ?? true;
+    integrationAutoPromote = cfg.integration?.auto_promote ?? false;
+    integrationPromotionStrategy = cfg.integration?.promotion_strategy ?? 'batch';
+    integrationSyncBeforeMerge = cfg.integration?.sync_before_merge ?? true;
+    // Sprint cycle
+    sprintEnabled = cfg.sprint?.enabled ?? false;
+    sprintAnalyzeThreshold = cfg.sprint?.analyze_threshold ?? 10;
+    sprintMaxIssuesPerRole = cfg.sprint?.max_new_issues_per_role ?? 3;
+    sprintRoleTurns = cfg.sprint?.role_turns ?? 40;
+    sprintAutoImplement = cfg.sprint?.auto_implement ?? false;
+    const creativeRoles = cfg.sprint?.creative_roles ?? ['visionary', 'architect', 'designer'];
+    sprintCreativeVisionary = creativeRoles.includes('visionary');
+    sprintCreativeArchitect = creativeRoles.includes('architect');
+    sprintCreativeDesigner = creativeRoles.includes('designer');
+    const defensiveRoles = cfg.sprint?.defensive_roles ?? ['security', 'quality', 'performance'];
+    sprintDefensiveSecurity = defensiveRoles.includes('security');
+    sprintDefensiveQuality = defensiveRoles.includes('quality');
+    sprintDefensivePerformance = defensiveRoles.includes('performance');
   }
 
   async function loadConfig() {
@@ -187,6 +227,39 @@
         dashboard_url: dashboardUrl || undefined, telegram_chat_id: telegramChatId || undefined,
       },
       logging: { log_dir: logDir || undefined, digest_dir: digestDir || undefined },
+      integration: {
+        enabled: integrationEnabled,
+        dev_branch: integrationDevBranch || 'autonomous/dev',
+        auto_validate: integrationAutoValidate,
+        auto_promote: integrationAutoPromote,
+        promotion_strategy: integrationPromotionStrategy,
+        sync_before_merge: integrationSyncBeforeMerge,
+      },
+      sprint: {
+        enabled: sprintEnabled,
+        analyze_threshold: sprintAnalyzeThreshold,
+        roles: [
+          ...(sprintCreativeVisionary ? ['visionary'] : []),
+          ...(sprintCreativeArchitect ? ['architect'] : []),
+          ...(sprintCreativeDesigner ? ['designer'] : []),
+          ...(sprintDefensiveSecurity ? ['security'] : []),
+          ...(sprintDefensiveQuality ? ['quality'] : []),
+          ...(sprintDefensivePerformance ? ['performance'] : []),
+        ],
+        creative_roles: [
+          ...(sprintCreativeVisionary ? ['visionary'] : []),
+          ...(sprintCreativeArchitect ? ['architect'] : []),
+          ...(sprintCreativeDesigner ? ['designer'] : []),
+        ],
+        defensive_roles: [
+          ...(sprintDefensiveSecurity ? ['security'] : []),
+          ...(sprintDefensiveQuality ? ['quality'] : []),
+          ...(sprintDefensivePerformance ? ['performance'] : []),
+        ],
+        max_new_issues_per_role: sprintMaxIssuesPerRole,
+        auto_implement: sprintAutoImplement,
+        role_turns: sprintRoleTurns,
+      },
     };
   }
 
@@ -571,6 +644,119 @@
             </div>
             <input type="checkbox" bind:checked={intelIndependentVerification} class="w-4 h-4 accent-info cursor-pointer" />
           </label>
+        </div>
+      </GlassCard>
+
+      <GlassCard glow="emerald" class="p-4">
+        <h3 class="text-sm font-semibold mb-1">Integration Branch</h3>
+        <p class="text-xs text-text-dim mb-3">Merge employee PRs into a shared dev branch before promoting to main.</p>
+        <div class="space-y-3">
+          <label class="flex items-center justify-between text-sm text-text cursor-pointer">
+            <div>
+              <span class="text-xs">Enable integration branch</span>
+              <p class="text-[10px] text-text-muted">Route approved PRs through a dev branch instead of merging directly to main</p>
+            </div>
+            <input type="checkbox" bind:checked={integrationEnabled} class="w-4 h-4 accent-approve cursor-pointer" />
+          </label>
+          {#if integrationEnabled}
+            <div>
+              <label for="int-dev-branch" class="block text-xs text-text-dim mb-1">Branch name</label>
+              <input id="int-dev-branch" type="text" bind:value={integrationDevBranch} placeholder="autonomous/dev" class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-1.5 text-sm text-text focus:outline-none focus:border-info/50 transition-colors" />
+            </div>
+            <label class="flex items-center justify-between text-sm text-text cursor-pointer">
+              <div>
+                <span class="text-xs">Auto-validate after merge</span>
+                <p class="text-[10px] text-text-muted">Run tests on the dev branch after each feature merge</p>
+              </div>
+              <input type="checkbox" bind:checked={integrationAutoValidate} class="w-4 h-4 accent-approve cursor-pointer" />
+            </label>
+            <label class="flex items-center justify-between text-sm text-text cursor-pointer">
+              <div>
+                <span class="text-xs">Auto-promote when validated</span>
+                <p class="text-[10px] text-text-muted">Automatically create a PR to merge dev into main when tests pass</p>
+              </div>
+              <input type="checkbox" bind:checked={integrationAutoPromote} class="w-4 h-4 accent-approve cursor-pointer" />
+            </label>
+            <div>
+              <label for="int-promo-strategy" class="block text-xs text-text-dim mb-1">Promotion strategy</label>
+              <select id="int-promo-strategy" bind:value={integrationPromotionStrategy} class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-1.5 text-sm text-text focus:outline-none focus:border-info/50 transition-colors">
+                <option value="batch">Batch (promote all at once)</option>
+                <option value="individual">Individual (promote one at a time)</option>
+              </select>
+            </div>
+            <label class="flex items-center justify-between text-sm text-text cursor-pointer">
+              <div>
+                <span class="text-xs">Sync dev with main before merges</span>
+                <p class="text-[10px] text-text-muted">Rebase or merge main into dev before adding new features</p>
+              </div>
+              <input type="checkbox" bind:checked={integrationSyncBeforeMerge} class="w-4 h-4 accent-approve cursor-pointer" />
+            </label>
+          {/if}
+        </div>
+      </GlassCard>
+
+      <GlassCard glow="purple" class="p-4">
+        <h3 class="text-sm font-semibold mb-1">Sprint Cycle</h3>
+        <p class="text-xs text-text-dim mb-3">Autonomous analysis roles that identify improvements and create issues.</p>
+        <div class="space-y-3">
+          <label class="flex items-center justify-between text-sm text-text cursor-pointer">
+            <div>
+              <span class="text-xs">Enable sprint cycle</span>
+              <p class="text-[10px] text-text-muted">Run analysis roles to discover improvements when backlog is thin</p>
+            </div>
+            <input type="checkbox" bind:checked={sprintEnabled} class="w-4 h-4 accent-info cursor-pointer" />
+          </label>
+          {#if sprintEnabled}
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div>
+                <label for="sprint-threshold" class="block text-xs text-text-dim mb-1">Analyze threshold</label>
+                <input id="sprint-threshold" type="number" min="0" max="100" bind:value={sprintAnalyzeThreshold} class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-1.5 text-sm text-text focus:outline-none focus:border-info/50 transition-colors" />
+              </div>
+              <div>
+                <label for="sprint-max-issues" class="block text-xs text-text-dim mb-1">Max issues per role</label>
+                <input id="sprint-max-issues" type="number" min="1" max="20" bind:value={sprintMaxIssuesPerRole} class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-1.5 text-sm text-text focus:outline-none focus:border-info/50 transition-colors" />
+              </div>
+              <div>
+                <label for="sprint-role-turns" class="block text-xs text-text-dim mb-1">Turns per role</label>
+                <input id="sprint-role-turns" type="number" min="5" max="200" bind:value={sprintRoleTurns} class="w-full bg-white/[0.04] border border-border/50 rounded-lg px-3 py-1.5 text-sm text-text focus:outline-none focus:border-info/50 transition-colors" />
+              </div>
+            </div>
+            <label class="flex items-center justify-between text-sm text-text cursor-pointer">
+              <div>
+                <span class="text-xs">Auto-implement after analysis</span>
+                <p class="text-[10px] text-text-muted">Automatically assign new issues to employees after sprint analysis</p>
+              </div>
+              <input type="checkbox" bind:checked={sprintAutoImplement} class="w-4 h-4 accent-info cursor-pointer" />
+            </label>
+            <div>
+              <p class="text-xs text-text-dim mb-2">Creative Roles <span class="text-[10px] text-text-muted">(run when backlog is thin)</span></p>
+              <div class="flex flex-wrap gap-x-4 gap-y-1">
+                <label class="flex items-center gap-1.5 text-xs text-text cursor-pointer">
+                  <input type="checkbox" bind:checked={sprintCreativeVisionary} class="w-3.5 h-3.5 accent-info cursor-pointer" /> Visionary
+                </label>
+                <label class="flex items-center gap-1.5 text-xs text-text cursor-pointer">
+                  <input type="checkbox" bind:checked={sprintCreativeArchitect} class="w-3.5 h-3.5 accent-info cursor-pointer" /> Architect
+                </label>
+                <label class="flex items-center gap-1.5 text-xs text-text cursor-pointer">
+                  <input type="checkbox" bind:checked={sprintCreativeDesigner} class="w-3.5 h-3.5 accent-info cursor-pointer" /> Designer
+                </label>
+              </div>
+            </div>
+            <div>
+              <p class="text-xs text-text-dim mb-2">Defensive Roles <span class="text-[10px] text-text-muted">(always run)</span></p>
+              <div class="flex flex-wrap gap-x-4 gap-y-1">
+                <label class="flex items-center gap-1.5 text-xs text-text cursor-pointer">
+                  <input type="checkbox" bind:checked={sprintDefensiveSecurity} class="w-3.5 h-3.5 accent-info cursor-pointer" /> Security
+                </label>
+                <label class="flex items-center gap-1.5 text-xs text-text cursor-pointer">
+                  <input type="checkbox" bind:checked={sprintDefensiveQuality} class="w-3.5 h-3.5 accent-info cursor-pointer" /> Quality
+                </label>
+                <label class="flex items-center gap-1.5 text-xs text-text cursor-pointer">
+                  <input type="checkbox" bind:checked={sprintDefensivePerformance} class="w-3.5 h-3.5 accent-info cursor-pointer" /> Performance
+                </label>
+              </div>
+            </div>
+          {/if}
         </div>
       </GlassCard>
 

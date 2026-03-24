@@ -256,6 +256,27 @@ class BrainstormMessage(Base):
     created_at = Column(DateTime, default=_utcnow)
 
 
+class IntegrationFeature(Base):
+    """A feature branch merged into the integration (dev) branch."""
+    __tablename__ = "integration_features"
+
+    id = Column(Integer, primary_key=True)
+    project_repo = Column(Text, nullable=False, index=True)
+    issue_number = Column(Integer, nullable=True)
+    issue_title = Column(Text, nullable=True)
+    branch = Column(Text, nullable=False)
+    state = Column(Text, nullable=False, default="merged_to_dev")
+    merge_commit = Column(Text, nullable=True)
+    validation_status = Column(Text, nullable=True)
+    validation_output = Column(Text, nullable=True)
+    pr_number = Column(Integer, nullable=True)
+    run_id = Column(Text, nullable=True)
+    promotion_run_id = Column(Text, nullable=True)
+    excluded_reason = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=_utcnow)
+    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+
 class PromptVersion(Base):
     """Tracks prompt versions for A/B testing and evolution."""
     __tablename__ = "prompt_versions"

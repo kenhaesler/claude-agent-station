@@ -195,6 +195,24 @@ Write your report to the file path specified in your user prompt:
 }
 ```
 
+### Sprint Workspace Coordination
+When you are running as part of a sprint (indicated by a `<SPRINT_ROLE>` section in your prompt):
+1. **Read the Sprint Brief**: `.claude-sprint/brief.json` — understand project state and priorities
+2. **Read previous roles' findings**: `.claude-sprint/{role}/findings.json` — build on their work
+3. **Write your findings**: Output to `.claude-sprint/{your_role}/findings.json` using this schema:
+   ```json
+   {
+     "role": "your_role",
+     "timestamp": "ISO8601",
+     "sprint_id": "from brief",
+     "inputs_read": ["brief", "previous_role"],
+     "proposals": [{ "id": "role-001", "title": "...", "create_github_issue": true, ... }],
+     "reviews": [{ "target_role": "...", "target_id": "...", "assessment": "..." }]
+   }
+   ```
+4. **Mark actionable items**: Set `"create_github_issue": true` on proposals that warrant implementation
+5. **Do NOT create GitHub issues directly** — the sprint orchestrator creates them after all roles finish
+
 </workflow>
 
 <rules>

@@ -10,6 +10,7 @@ set -euo pipefail
 # ============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/integration-branch.sh"
 CONFIG_FILE="${STATION_CONFIG:-/home/claude-agent/.claude/autonomous/manager-config.json}"
 
 # Resolve prompt file: prefer custom override if it exists, else use default
@@ -1867,6 +1868,7 @@ print(f'{t:,}')
 
 execute_verdicts() {
     local verdicts_file="$1"
+    local had_integration_merges=false
 
     if [ ! -f "$verdicts_file" ]; then
         log_error "No verdicts file found: $verdicts_file"
@@ -2089,54 +2091,76 @@ Run: $RUN_ID" 2>/dev/null || true
 
         case "$verdict" in
             APPROVE)
-                log_info "APPROVE: Pushing and creating PR (base: $base_branch)"
-                local push_merge_ok=false
+                log_info "APPROVE: Processing verdict (base: $base_branch)"
 
-                # Ensure we're on the feature branch
-                git checkout "$branch" 2>&1 | while IFS= read -r line; do log_info "  $line"; done || true
+                if integration_enabled; then
+                    # Integration branch mode: merge to dev, don't close issue
+                    merge_to_dev "$project" "$branch" "$base_branch" "$issue_number" "$reasoning"
+                    local merge_status=$?
 
-                # Push with retry (2 attempts)
-                local push_ok=false
-                for attempt in 1 2; do
-                    if git push -u origin "$branch" 2>&1 | while IFS= read -r line; do log_info "  $line"; done; then
-                        push_ok=true
-                        break
+                    if [ "$merge_status" -eq 0 ]; then
+                        notify "approve" "APPROVED & merged to dev: $project #$issue_number"
+                        had_integration_merges=true
+                    else
+                        notify "error" "APPROVE merge to dev failed: $project #$issue_number"
                     fi
-                    [ "$attempt" -lt 2 ] && sleep 3
-                done
 
-                if [ "$push_ok" = true ]; then
-                    log_ok "Pushed $branch"
+                    # Queue: approved → completed (feature is on dev)
+                    local _vqid
+                    _vqid=$(queue_api GET "/api/queue?project_repo=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$project'))" 2>/dev/null)&run_id=run-$RUN_ID&state=review&limit=1" | python3 -c "import json,sys; items=json.load(sys.stdin).get('items',[]); print(items[0]['id'] if items else '')" 2>/dev/null || echo "")
+                    if [ -n "$_vqid" ]; then
+                        queue_api PUT "/api/queue/$_vqid" "{\"state\":\"approved\"}" >/dev/null 2>&1
+                        queue_api PUT "/api/queue/$_vqid" "{\"state\":\"completed\"}" >/dev/null 2>&1
+                    fi
+                else
+                    # Original behavior: push → PR → merge → close issue
+                    local push_merge_ok=false
 
-                    # Create PR and merge via GitHub API (works with protected branches)
-                    local pr_url
-                    pr_url=$(gh pr create --repo "$project" --base "$base_branch" --head "$branch" \
-                        --title "autonomous: $(git log -1 --format=%s)" \
-                        --body "Approved by autonomous manager.
+                    # Ensure we're on the feature branch
+                    git checkout "$branch" 2>&1 | while IFS= read -r line; do log_info "  $line"; done || true
+
+                    # Push with retry (2 attempts)
+                    local push_ok=false
+                    for attempt in 1 2; do
+                        if git push -u origin "$branch" 2>&1 | while IFS= read -r line; do log_info "  $line"; done; then
+                            push_ok=true
+                            break
+                        fi
+                        [ "$attempt" -lt 2 ] && sleep 3
+                    done
+
+                    if [ "$push_ok" = true ]; then
+                        log_ok "Pushed $branch"
+
+                        # Create PR and merge via GitHub API (works with protected branches)
+                        local pr_url
+                        pr_url=$(gh pr create --repo "$project" --base "$base_branch" --head "$branch" \
+                            --title "autonomous: $(git log -1 --format=%s)" \
+                            --body "Approved by autonomous manager.
 
 Run: $RUN_ID" 2>&1) || true
 
-                    if [ -n "$pr_url" ]; then
-                        log_info "PR created: $pr_url"
-                        # Merge the PR
-                        if gh pr merge "$pr_url" --merge --delete-branch 2>&1 | while IFS= read -r line; do log_info "  $line"; done; then
-                            push_merge_ok=true
-                            log_ok "PR merged to $base_branch"
+                        if [ -n "$pr_url" ]; then
+                            log_info "PR created: $pr_url"
+                            # Merge the PR
+                            if gh pr merge "$pr_url" --merge --delete-branch 2>&1 | while IFS= read -r line; do log_info "  $line"; done; then
+                                push_merge_ok=true
+                                log_ok "PR merged to $base_branch"
+                            else
+                                log_error "PR merge failed — left open for manual review: $pr_url"
+                            fi
                         else
-                            log_error "PR merge failed — left open for manual review: $pr_url"
+                            log_error "PR creation failed for $branch"
                         fi
                     else
-                        log_error "PR creation failed for $branch"
+                        log_error "Push failed for $branch after 2 attempts"
                     fi
-                else
-                    log_error "Push failed for $branch after 2 attempts"
-                fi
 
-                # Close issue with documentation (after push/merge)
-                if [ "$push_merge_ok" = true ] && [ -n "$issue_number" ] && [ "$issue_number" != "None" ] && [ "$issue_number" != "null" ]; then
-                    local feedback
-                    feedback=$(echo "$verdict_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('feedback_to_employee','Good work.'))")
-                    gh issue comment "$issue_number" --repo "$project" --body "## Completed by Autonomous Agent
+                    # Close issue with documentation (after push/merge)
+                    if [ "$push_merge_ok" = true ] && [ -n "$issue_number" ] && [ "$issue_number" != "None" ] && [ "$issue_number" != "null" ]; then
+                        local feedback
+                        feedback=$(echo "$verdict_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('feedback_to_employee','Good work.'))")
+                        gh issue comment "$issue_number" --repo "$project" --body "## Completed by Autonomous Agent
 
 ### Manager Review: APPROVED
 
@@ -2150,31 +2174,32 @@ Branch \`$branch\` merged to \`$base_branch\`.
 ---
 Autonomous run: $RUN_ID" 2>/dev/null || log_warn "Failed to comment on issue #$issue_number"
 
-                    if gh issue close "$issue_number" --repo "$project" --reason completed 2>&1; then
-                        log_ok "Issue #$issue_number closed"
-                    else
-                        log_error "Failed to close issue #$issue_number, retrying..."
-                        sleep 2
                         if gh issue close "$issue_number" --repo "$project" --reason completed 2>&1; then
-                            log_ok "Issue #$issue_number closed (retry succeeded)"
+                            log_ok "Issue #$issue_number closed"
                         else
-                            log_error "Failed to close issue #$issue_number after retry"
+                            log_error "Failed to close issue #$issue_number, retrying..."
+                            sleep 2
+                            if gh issue close "$issue_number" --repo "$project" --reason completed 2>&1; then
+                                log_ok "Issue #$issue_number closed (retry succeeded)"
+                            else
+                                log_error "Failed to close issue #$issue_number after retry"
+                            fi
                         fi
+
+                        # Clean up agent labels
+                        gh issue edit "$issue_number" --repo "$project" --remove-label "autonomous-agent/done" 2>/dev/null || true
+                        gh issue edit "$issue_number" --repo "$project" --remove-label "autonomous-agent/in-progress" 2>/dev/null || true
                     fi
 
-                    # Clean up agent labels
-                    gh issue edit "$issue_number" --repo "$project" --remove-label "autonomous-agent/done" 2>/dev/null || true
-                    gh issue edit "$issue_number" --repo "$project" --remove-label "autonomous-agent/in-progress" 2>/dev/null || true
-                fi
+                    notify "approve" "APPROVED: $project #$issue_number - $reasoning"
 
-                notify "approve" "APPROVED: $project #$issue_number - $reasoning"
-
-                # Queue: approved → completed
-                local _vqid
-                _vqid=$(queue_api GET "/api/queue?project_repo=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$project'))" 2>/dev/null)&run_id=run-$RUN_ID&state=review&limit=1" | python3 -c "import json,sys; items=json.load(sys.stdin).get('items',[]); print(items[0]['id'] if items else '')" 2>/dev/null || echo "")
-                if [ -n "$_vqid" ]; then
-                    queue_api PUT "/api/queue/$_vqid" "{\"state\":\"approved\"}" >/dev/null 2>&1
-                    queue_api PUT "/api/queue/$_vqid" "{\"state\":\"completed\"}" >/dev/null 2>&1
+                    # Queue: approved → completed
+                    local _vqid
+                    _vqid=$(queue_api GET "/api/queue?project_repo=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$project'))" 2>/dev/null)&run_id=run-$RUN_ID&state=review&limit=1" | python3 -c "import json,sys; items=json.load(sys.stdin).get('items',[]); print(items[0]['id'] if items else '')" 2>/dev/null || echo "")
+                    if [ -n "$_vqid" ]; then
+                        queue_api PUT "/api/queue/$_vqid" "{\"state\":\"approved\"}" >/dev/null 2>&1
+                        queue_api PUT "/api/queue/$_vqid" "{\"state\":\"completed\"}" >/dev/null 2>&1
+                    fi
                 fi
                 ;;
 
@@ -2321,6 +2346,23 @@ Run: $RUN_ID" 2>/dev/null || true
         # Always return to base branch
         git checkout "$base_branch" 2>/dev/null || true
     done
+
+    # Post-verdict: validate integration branch if we had approvals
+    if integration_enabled && [ "$had_integration_merges" = true ]; then
+        local auto_validate
+        auto_validate=$(json_get "$CONFIG_FILE" "integration.auto_validate" 2>/dev/null || echo "true")
+        if [ "$auto_validate" = "true" ]; then
+            validate_dev "$project" "" || log_warn "Validation failed for $project"
+
+            local auto_promote
+            auto_promote=$(json_get "$CONFIG_FILE" "integration.auto_promote" 2>/dev/null || echo "false")
+            if [ "$auto_promote" = "true" ]; then
+                local strategy
+                strategy=$(json_get "$CONFIG_FILE" "integration.promotion_strategy" 2>/dev/null || echo "batch")
+                promote_to_main "$project" "${base_branch:-main}" "$strategy" || log_warn "Promotion failed for $project"
+            fi
+        fi
+    fi
 }
 
 # ============================================================================
@@ -2627,6 +2669,12 @@ print(f'Wrote {len(assignments)} assignments')
                     log_error "Failed to setup workspace for $repo"
                     continue 2
                 }
+
+                # Sync integration branch with main at the start of each run
+                if integration_enabled; then
+                    create_integration_labels "$repo"
+                    sync_dev_with_main "$repo" "${proj_branch:-main}"
+                fi
             elif [ "$employees_this_project" -gt 1 ]; then
                 # Create isolated worktree for concurrent employees — NO fallback
                 workspace=$(setup_employee_worktree "$repo" "$ei") || {
