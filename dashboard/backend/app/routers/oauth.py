@@ -11,6 +11,7 @@ import os
 import secrets
 import tempfile
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlencode, urlparse
 
@@ -200,3 +201,102 @@ async def oauth_callback(req: OAuthCallbackRequest):
         return OAuthCallbackResponse(success=False, error=f"Failed to write credentials: {e}")
 
     return OAuthCallbackResponse(success=True)
+
+
+# ---------------------------------------------------------------------------
+# Token refresh
+# ---------------------------------------------------------------------------
+
+REFRESH_THRESHOLD_SECONDS = 600  # 10 minutes
+
+
+class OAuthRefreshResponse(BaseModel):
+    refreshed: bool
+    error: str | None = None
+    expires_at: str | None = None
+
+
+@router.post("/refresh", response_model=OAuthRefreshResponse)
+async def refresh_oauth_token():
+    """Refresh the OAuth access token using the stored refresh token.
+
+    Reads the current credentials, checks whether the token is within
+    REFRESH_THRESHOLD_SECONDS of expiry, and if so performs a refresh_token
+    grant against the Anthropic OAuth endpoint.  The updated credentials are
+    written back atomically.
+
+    If the token is still valid with enough remaining time, this is a no-op
+    that returns refreshed=False (not an error).
+    """
+    if not CREDS_PATH.exists():
+        raise HTTPException(status_code=404, detail="Credentials file not found")
+
+    try:
+        with open(CREDS_PATH) as f:
+            creds = json.load(f)
+    except Exception as e:
+        logger.error("Failed to read credentials: %s", e)
+        raise HTTPException(status_code=500, detail=f"Failed to read credentials: {e}")
+
+    oauth = creds.get("claudeAiOauth", {})
+    refresh_token_value = oauth.get("refreshToken")
+    if not refresh_token_value:
+        raise HTTPException(status_code=400, detail="No refresh token available in credentials")
+
+    # Check if refresh is actually needed
+    expires_at_ms = oauth.get("expiresAt", 0)
+    remaining = (expires_at_ms / 1000) - time.time() if expires_at_ms else 0
+    if remaining > REFRESH_THRESHOLD_SECONDS:
+        expires_dt = datetime.fromtimestamp(expires_at_ms / 1000, tz=timezone.utc)
+        return OAuthRefreshResponse(
+            refreshed=False,
+            error=None,
+            expires_at=expires_dt.isoformat(),
+        )
+
+    # Perform the refresh
+    token_payload = {
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_token_value,
+        "client_id": CLIENT_ID,
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as http_client:
+            response = await http_client.post(
+                TOKEN_URL,
+                json=token_payload,
+                headers={"User-Agent": "claude-agent-station/1.0"},
+            )
+            response.raise_for_status()
+            result = response.json()
+    except httpx.HTTPStatusError as e:
+        body = e.response.text
+        logger.error("Token refresh failed: HTTP %d: %s", e.response.status_code, body)
+        return OAuthRefreshResponse(refreshed=False, error=f"Token refresh failed: {body}")
+    except httpx.RequestError as e:
+        logger.error("Token refresh failed: %s", e)
+        return OAuthRefreshResponse(refreshed=False, error=f"Token refresh failed: {e}")
+
+    # Update credentials with new values
+    if "access_token" in result:
+        oauth["accessToken"] = result["access_token"]
+    if "refresh_token" in result:
+        oauth["refreshToken"] = result["refresh_token"]
+    if "expires_in" in result:
+        oauth["expiresAt"] = int((time.time() + result["expires_in"]) * 1000)
+    elif "expires_at" in result:
+        oauth["expiresAt"] = result["expires_at"]
+
+    creds["claudeAiOauth"] = oauth
+
+    try:
+        _write_credentials(CREDS_PATH, creds)
+        logger.info("Token refreshed, credentials written to %s", CREDS_PATH)
+    except Exception as e:
+        logger.error("Failed to write refreshed credentials: %s", e)
+        return OAuthRefreshResponse(refreshed=False, error=f"Failed to write credentials: {e}")
+
+    new_expires_ms = oauth.get("expiresAt", 0)
+    expires_dt = datetime.fromtimestamp(new_expires_ms / 1000, tz=timezone.utc)
+    return OAuthRefreshResponse(refreshed=True, expires_at=expires_dt.isoformat())

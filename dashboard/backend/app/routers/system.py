@@ -53,7 +53,11 @@ async def service_action(action: str, unit: str = "claude-agent.service"):
 
 @router.get("/auth")
 async def auth_status():
-    """Check Claude CLI auth status by inspecting credentials file."""
+    """Check Claude CLI auth status by inspecting credentials file.
+
+    Returns remaining seconds until expiry and whether auto-refresh is
+    available (i.e. a refresh token exists in the credentials).
+    """
     creds_path = settings.credentials_path
     if not os.path.exists(creds_path):
         return {"logged_in": False, "expired": True}
@@ -70,12 +74,17 @@ async def auth_status():
 
         # expiresAt is epoch milliseconds
         expires_dt = datetime.fromtimestamp(expires_at / 1000, tz=timezone.utc)
-        expired = datetime.now(timezone.utc) > expires_dt
+        now = datetime.now(timezone.utc)
+        expired = now > expires_dt
+        remaining_seconds = max(0, int((expires_dt - now).total_seconds()))
+        has_refresh_token = bool(oauth.get("refreshToken"))
 
         return {
             "logged_in": True,
             "expired": expired,
             "expires_at": expires_dt.isoformat(),
+            "remaining_seconds": remaining_seconds,
+            "auto_refresh_available": has_refresh_token,
         }
     except Exception as e:
         return {"logged_in": False, "expired": True, "error": str(e)}

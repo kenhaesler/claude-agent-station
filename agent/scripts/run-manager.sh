@@ -405,7 +405,7 @@ preflight() {
         fi
     done
 
-    # Check authentication (with token expiry validation)
+    # Check authentication (with token expiry validation + auto-refresh)
     if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
         local creds_file="$HOME/.claude/.credentials.json"
         if [ -f "$creds_file" ]; then
@@ -418,17 +418,32 @@ try:
     oauth = data.get('claudeAiOauth', {})
     expires = oauth.get('expiresAt', 0) / 1000
     remaining = expires - time.time()
-    if remaining > 300:
+    if remaining > 600:
         print('valid')
+    elif remaining > 0:
+        print('expiring_soon')
     else:
         print('expired')
 except:
     print('unknown')
 " 2>/dev/null || echo "unknown")
-            if [ "$token_status" = "expired" ]; then
-                log_error "OAuth token expired. Re-authenticate or provide ANTHROPIC_API_KEY."
-                notify "auth_failure" "OAuth token expired in run $RUN_ID"
-                exit 1
+            if [ "$token_status" = "expired" ] || [ "$token_status" = "expiring_soon" ]; then
+                log_warn "OAuth token ${token_status}. Attempting auto-refresh..."
+                local refresh_script="$SCRIPT_DIR/refresh-token.py"
+                if [ -f "$refresh_script" ]; then
+                    # Use 10-minute threshold: refresh if <600s remaining
+                    if REFRESH_THRESHOLD=600 python3 "$refresh_script" 2>&1 | while IFS= read -r line; do log_info "[refresh] $line"; done; then
+                        log_ok "OAuth token refreshed successfully"
+                    else
+                        log_error "OAuth token refresh failed. Re-authenticate or provide ANTHROPIC_API_KEY."
+                        notify "auth_failure" "OAuth token refresh failed in run $RUN_ID"
+                        exit 1
+                    fi
+                else
+                    log_error "OAuth token ${token_status} and refresh script not found at $refresh_script"
+                    notify "auth_failure" "OAuth token ${token_status} in run $RUN_ID"
+                    exit 1
+                fi
             fi
             log_info "Authentication: OAuth token valid"
         else
