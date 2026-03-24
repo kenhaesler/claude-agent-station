@@ -23,18 +23,9 @@ from agent.coordinator.employee_profiles import (
     get_project_averages,
     DEFAULT_RATE,
 )
+from agent.coordinator.modes import SKIP_LABELS
 
 logger = logging.getLogger(__name__)
-
-# Labels that should be skipped entirely
-SKIP_LABELS = {
-    "autonomous-agent/in-progress",
-    "autonomous-agent/needs-help",
-    "autonomous-agent/refined",
-    "NO AI",
-    "backlog",
-    "wontfix",
-}
 
 
 @dataclass

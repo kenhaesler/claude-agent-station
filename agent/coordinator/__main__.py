@@ -16,7 +16,8 @@ from agent.coordinator.config import CoordinatorConfig
 from agent.coordinator.dag import TaskDAG
 from agent.coordinator.db import init_db
 from agent.coordinator.decomposer import decompose_issue
-from agent.coordinator.scheduler import run_scheduler
+from agent.coordinator.modes import MODE_REGISTRY
+from agent.coordinator.scheduler import run_scheduler, cleanup_all_worktrees
 from agent.coordinator.reporter import post_event
 
 logging.basicConfig(
@@ -110,7 +111,7 @@ async def coordinate(config: CoordinatorConfig) -> int:
 
         # Extract and validate project mode from assignment
         project_mode = assignment.get("mode", "full")
-        if project_mode not in ("full", "plan", "analyze"):
+        if project_mode not in MODE_REGISTRY:
             logger.warning("Unknown mode '%s' for %s, defaulting to 'full'", project_mode, repo)
             project_mode = "full"
         config.project_mode = project_mode
@@ -203,6 +204,9 @@ def main() -> None:
 
     def handle_signal(sig: int, frame) -> None:
         logger.warning("Received signal %d, shutting down...", sig)
+        # Clean up employee worktrees before cancelling tasks
+        if config.workspaces_dir:
+            cleanup_all_worktrees(config.workspaces_dir)
         for task in asyncio.all_tasks(loop):
             task.cancel()
 

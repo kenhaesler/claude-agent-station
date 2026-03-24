@@ -153,6 +153,18 @@ MODE_REGISTRY: dict[str, ModeSpec] = {
 }
 
 
+# Shared skip-labels set. Issues with any of these labels are excluded
+# from autonomous work selection across all coordinator components.
+SKIP_LABELS: frozenset[str] = frozenset({
+    "autonomous-agent/in-progress",
+    "autonomous-agent/needs-help",
+    "autonomous-agent/refined",
+    "NO AI",
+    "backlog",
+    "wontfix",
+})
+
+
 def get_mode(name: str) -> ModeSpec:
     """Get a mode spec by name, raising ValueError for unknown modes."""
     if name not in MODE_REGISTRY:
@@ -172,11 +184,12 @@ def is_readonly_mode(name: str) -> bool:
 
 
 # Progressive deepening escalation ladder
+# max_turns values must align with ModeSpec.default_max_turns for consistency.
 ESCALATION_LADDER: list[dict[str, str | int]] = [
-    {"mode": "fix", "model": "claude-sonnet-4-6", "thinking": "standard", "max_turns": 50},
+    {"mode": "fix", "model": "claude-sonnet-4-6", "thinking": "standard", "max_turns": MODE_REGISTRY["fix"].default_max_turns},
     {"mode": "full", "model": "claude-sonnet-4-6", "thinking": "extended", "max_turns": 100},
     {"mode": "full", "model": "claude-opus-4-6", "thinking": "standard", "max_turns": 150},
-    {"mode": "full", "model": "claude-opus-4-6", "thinking": "extended", "max_turns": 200},
+    {"mode": "full", "model": "claude-opus-4-6", "thinking": "extended", "max_turns": MODE_REGISTRY["full"].default_max_turns},
 ]
 
 

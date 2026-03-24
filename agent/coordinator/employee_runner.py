@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+from agent.coordinator.modes import SKIP_LABELS
 from agent.coordinator.skill_loader import load_skills
 
 SCRIPT_DIR = Path(__file__).resolve().parent.parent / "scripts"
@@ -173,10 +174,7 @@ def _get_analyzable_issues(repo: str, workspace: str) -> tuple[int, str]:
     """
     import subprocess as _sp
 
-    SKIP = {
-        "autonomous-agent/refined", "autonomous-agent/in-progress",
-        "autonomous-agent/needs-help", "NO AI", "backlog", "wontfix",
-    }
+    SKIP = SKIP_LABELS
     try:
         result = _sp.run(
             ["gh", "issue", "list", "--repo", repo, "--state", "open",
@@ -604,6 +602,10 @@ async def run_employee_plan_phase(
     if gh_token:
         env["GH_TOKEN"] = gh_token
 
+    # Intentionally uses employee.md (not planner.md) for the plan phase.
+    # employee.md Step 2.5 handles PLAN_ONLY_MODE which matches the user prompt
+    # format from _build_plan_prompt(). planner.md has a different workflow
+    # (posts to dashboard API) that's incompatible with the plan-review loop.
     return await _run_claude_subprocess(
         prompt=prompt,
         system_prompt_file=str(PROMPTS_DIR / "employee.md"),
@@ -693,6 +695,9 @@ async def run_employee(
     gh_token = get_github_token()
     if gh_token:
         env["GH_TOKEN"] = gh_token
+
+    # Inject actual turn budget so the employee prompt isn't hardcoded to 200
+    prompt += f"\n\nYour turn budget for this run: {max_turns} turns. Pace yourself accordingly.\n"
 
     # Append skill content from mode spec
     if mode_spec and mode_spec.skills:

@@ -116,12 +116,13 @@ async def run_foreman(
                 )
                 continue
 
-            # Check 3: Approaching turn budget
-            budget_pct = activity.tool_calls / max(1, config.max_employee_turns)
+            # Check 3: Approaching turn budget (use mode-resolved max_turns)
+            effective_max = activity.max_turns or config.max_employee_turns
+            budget_pct = activity.tool_calls / max(1, effective_max)
             if budget_pct > 0.8 and not getattr(activity, '_budget_warned', False):
                 send_guidance(
                     workspace, employee, "info",
-                    f"You've used {activity.tool_calls} of ~{config.max_employee_turns} turns. "
+                    f"You've used {activity.tool_calls} of ~{effective_max} turns. "
                     f"Start wrapping up: commit your work and write your report.",
                 )
                 _mark_cooldown(employee, guidance_cooldown)
