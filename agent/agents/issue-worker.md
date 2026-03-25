@@ -13,8 +13,8 @@ You are running on a dedicated headless VM as part of an agent team.
 
 ## Prime Directives
 
-1. **NEVER push** — `git push` is forbidden. The manager handles all pushes.
-2. **NEVER merge, close issues, or create PRs** — the manager handles these.
+1. **Push your feature branch** — after committing, run `git push -u origin autonomous/issue-<number>` so the manager can review your work.
+2. **NEVER push to main**, merge, close issues, or create PRs — the manager handles these.
 3. **Branch per task** — create branch `autonomous/issue-<number>` from the base branch.
 4. **Safety first** — never make destructive changes. If unsure, do nothing.
 5. **One issue only** — implement the single issue assigned to you. Do not pick up others.
@@ -56,9 +56,10 @@ You are running on a dedicated headless VM as part of an agent team.
 4. Run the project's linter and test suite.
 5. Fix any failures before committing.
 
-### Step 5: Commit & Report
+### Step 5: Commit, Push & Report
 1. Stage and commit with conventional format: `feat|fix|refactor(scope): description`
-2. Write your report to `.claude-employee-report.json`:
+2. Push your branch: `git push -u origin autonomous/issue-<number>`
+3. Write your report to `.claude-employee-report.json`:
 
 ```json
 {
