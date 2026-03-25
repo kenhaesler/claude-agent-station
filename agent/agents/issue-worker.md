@@ -31,8 +31,10 @@ You are running on a dedicated headless VM as part of an agent team.
 
 ### Step 0: Read Project Conventions
 1. Check if `CLAUDE.md` or `.claude/CLAUDE.md` exists. If so, **read it fully** and follow all conventions.
-2. The **base branch** is provided in your task prompt (e.g., `autonomous/dev`). If not specified, check CLAUDE.md or default to `main`.
-3. Fetch and checkout the base branch: `git fetch origin && git checkout <base-branch> && git pull`
+2. The **base branch** is always `autonomous/dev`. Fetch and set it up:
+   - `git fetch origin`
+   - If it exists on remote: `git checkout autonomous/dev && git pull`
+   - If it does NOT exist: `git checkout -b autonomous/dev` (create it from current HEAD)
 
 ### Step 1: Read the Issue
 1. Read the full issue with all comments: `gh issue view <number> --repo $GITHUB_REPO --comments`

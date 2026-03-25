@@ -198,9 +198,9 @@ def build_team_prompt(
     max_turns = get_limit(config, "max_employee_turns", 200)
     teammate_model = get_model(config, "employee", "claude-opus-4-6")
 
-    # Determine base branch (integration dev branch if enabled, else main)
+    # Determine base branch (always use integration dev branch)
     integration = config.get("integration", {})
-    base_branch = integration.get("dev_branch", "main") if integration.get("enabled") else "main"
+    base_branch = integration.get("dev_branch", "autonomous/dev")
 
     return f"""You are the lead of an agent team implementing GitHub issues for **{repo}**.
 
