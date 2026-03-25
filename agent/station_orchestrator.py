@@ -26,6 +26,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from claude_agent_sdk import query, ClaudeAgentOptions
+from claude_agent_sdk.types import AgentDefinition
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +62,43 @@ def get_limit(config: dict, key: str, default: int) -> int:
 
 def get_model(config: dict, key: str, default: str) -> str:
     return config.get("models", {}).get(key, default)
+
+
+# Map full model names to SDK short names
+MODEL_MAP = {
+    "claude-opus-4-6": "opus",
+    "claude-sonnet-4-6": "sonnet",
+    "claude-haiku-4-5": "haiku",
+}
+
+
+def load_agent_definition(path: Path) -> tuple[str, AgentDefinition]:
+    """Parse an agent markdown file (with YAML frontmatter) into an AgentDefinition."""
+    text = path.read_text()
+    parts = text.split("---", 2)
+    if len(parts) < 3:
+        raise ValueError(f"Invalid agent definition (missing --- delimiters): {path}")
+
+    # Parse frontmatter manually (avoid yaml dependency)
+    meta: dict[str, str] = {}
+    for line in parts[1].strip().splitlines():
+        if ":" in line:
+            key, _, val = line.partition(":")
+            meta[key.strip()] = val.strip()
+
+    body = parts[2].strip()
+    name = meta.get("name", path.stem)
+    tools_str = meta.get("tools", "")
+    tools = [t.strip() for t in tools_str.split(",")] if tools_str else None
+    model_raw = meta.get("model", "")
+    model = MODEL_MAP.get(model_raw, "opus")
+
+    return name, AgentDefinition(
+        description=meta.get("description", ""),
+        prompt=body,
+        tools=tools,
+        model=model,
+    )
 
 
 # ── Issue Fetching ─────────────────────────────────────────────
@@ -123,6 +161,7 @@ def build_team_prompt(
     issues: list[dict],
     config: dict,
     run_id: str,
+    workspace: str = "",
 ) -> str:
     """Build the lead agent prompt that creates and manages the team."""
     issue_entries = []
@@ -147,8 +186,8 @@ def build_team_prompt(
 4. Each teammate works on exactly ONE issue — no duplicates
 5. **Require plan approval** before any teammate starts implementation
 6. Review each plan — reject if it conflicts with another teammate's work
-7. After all teammates complete, **synthesize a summary** of what was done
-8. **Clean up** the team when finished
+7. **Actively monitor** teammates until ALL have completed (see monitoring rules below)
+8. After all teammates complete, **synthesize a final JSON summary**
 
 ## Issues to Implement ({len(issues)} total)
 
@@ -162,12 +201,28 @@ def build_team_prompt(
 - Each teammate works in an isolated git worktree (automatic)
 - Teammates must commit locally — NEVER push
 
+## CRITICAL: Active Monitoring Rules
+
+After spawning teammates, you MUST actively monitor their progress using tool calls.
+**NEVER end your turn while any teammate is still working.**
+
+Follow this monitoring loop:
+1. After spawning all teammates, run: `sleep 30` (Bash tool)
+2. Check for completed reports: `find {workspace} -name ".claude-employee-report.json" -type f 2>/dev/null`
+3. For each report found, read it and record the status
+4. If any teammate has not yet reported, **go back to step 1**
+5. Only end your turn and provide the final JSON summary AFTER:
+   - All teammates have written their `.claude-employee-report.json`, OR
+   - 20 minutes have elapsed since spawning (report timeout for remaining)
+
+**Why this matters**: If you say "I'm waiting" and end your turn, the session terminates
+and your teammates lose their work. You must keep making tool calls to stay alive.
+
 ## Rules
 
 - Spawn exactly {len(issues)} teammates
 - One teammate per issue — verify no two teammates claim the same issue
 - If a teammate's plan modifies the same files as another, coordinate or reject
-- Track progress and nudge teammates that appear stuck after 10 minutes
 - After all work is done, provide a JSON summary with:
   - issues_completed: list of issue numbers
   - issues_failed: list of issue numbers with reasons
@@ -178,8 +233,23 @@ def build_team_prompt(
 
 - Repository: {repo}
 - Run ID: {run_id}
+- Workspace: {workspace}
 - GH_TOKEN is available for GitHub CLI operations
 """
+
+
+def build_followup_prompt(workspace: str) -> str:
+    """Build a follow-up prompt for re-entering the lead agent session."""
+    return (
+        "Your previous session ended but teammates may still be working.\n\n"
+        "Check their status now:\n"
+        f"1. Run: `find {workspace} -name '.claude-employee-report.json' -type f`\n"
+        "2. Read any reports found and record results\n"
+        "3. If workers haven't finished yet, `sleep 30` and check again\n"
+        "4. Provide the final JSON summary (issues_completed, issues_failed, "
+        "total_turns, conflicts_detected) only when ALL workers are done or timed out.\n\n"
+        "Do NOT shut down the team or end your turn until all work is accounted for."
+    )
 
 
 # ── Dashboard Webhook ──────────────────────────────────────────
@@ -256,12 +326,7 @@ def handle_stream_event(message, config: dict, run_id: str, log_file=None) -> No
     msg_type = getattr(message, "type", None)
 
     if msg_type == "system":
-        subtype = getattr(message, "subtype", "")
-        if subtype == "init":
-            post_webhook(config, "orchestrator_start", {
-                "run_id": f"run-{run_id}",
-                "mode": "agent-teams",
-            })
+        pass  # orchestrator_start webhook is handled in the orchestrate() retry loop
     elif msg_type == "assistant":
         # Log assistant messages (tool calls, thinking) at debug level
         content = getattr(message, "content", None)
@@ -284,6 +349,24 @@ def handle_stream_event(message, config: dict, run_id: str, log_file=None) -> No
             logger.info("Orchestrator result:\n%s", result_text[:2000])
 
 
+# ── Completion Detection ──────────────────────────────────────
+
+def _is_work_complete(result_text: str) -> bool:
+    """Check if the lead agent's result indicates all work is done."""
+    if not result_text:
+        return False
+    # Look for the structured JSON summary markers
+    if "issues_completed" in result_text and "issues_failed" in result_text:
+        return True
+    lower = result_text.lower()
+    return any(phrase in lower for phrase in [
+        "all teammates have completed",
+        "all workers have completed",
+        "final report",
+        "final summary",
+    ])
+
+
 # ── Main Orchestration ─────────────────────────────────────────
 
 async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
@@ -293,7 +376,20 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
     manager_model = get_model(config, "manager", "claude-sonnet-4-6")
     manager_turns = get_limit(config, "max_manager_turns", 30)
 
+    # Load issue-worker agent definition for SDK discovery
+    agent_dir = Path(__file__).parent / "agents"
+    worker_file = agent_dir / "issue-worker.md"
+    agents_dict: dict[str, AgentDefinition] | None = None
+    if worker_file.exists():
+        try:
+            worker_name, worker_def = load_agent_definition(worker_file)
+            agents_dict = {worker_name: worker_def}
+            logger.info("Loaded agent definition: %s from %s", worker_name, worker_file)
+        except Exception as e:
+            logger.warning("Failed to load agent definition %s: %s", worker_file, e)
+
     exit_code = 0
+    max_reentries = 6  # Up to 6 re-entries if lead exits prematurely
 
     for project in projects:
         if not project.get("enabled", True):
@@ -313,9 +409,7 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
 
         logger.info(
             "Found %d eligible issues for %s: %s",
-            len(issues),
-            repo,
-            [f"#{i['number']}" for i in issues],
+            len(issues), repo, [f"#{i['number']}" for i in issues],
         )
 
         # Notify dashboard
@@ -327,24 +421,11 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
             "concurrent_group_id": f"group-{run_id}",
         })
 
-        # Build the team prompt
-        team_prompt = build_team_prompt(repo, issues, config, run_id)
-
-        # Determine agent directory for custom agents
-        agent_dir = Path(__file__).parent / "agents"
-
-        # Construct agents JSON for the issue-worker if the file exists
-        agents_config: dict | None = None
-        worker_file = agent_dir / "issue-worker.md"
-        if worker_file.exists():
-            logger.info("Found issue-worker agent at %s", worker_file)
-
-        # Open stream log file for the Logs tab
+        # Open stream log file
         log_dir = config.get("logging", {}).get("log_dir", "/var/log/claude-agent")
         stream_log_path = os.path.join(log_dir, f"run-{run_id}-orchestrator.stream.jsonl")
         logger.info("Stream log: %s", stream_log_path)
 
-        # Also update the Run record with the log file path
         post_webhook(config, "employee_start", {
             "run_id": f"run-{run_id}",
             "project": repo,
@@ -353,13 +434,28 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
             "concurrent_group_id": f"group-{run_id}",
         })
 
-        # Run the lead agent via SDK
+        # ---- Retry loop: re-enter the lead session if it exits prematurely ----
+        session_id: str | None = None
+        work_complete = False
+        first_init_sent = False
+
         try:
             logger.info("Starting Agent Teams lead for %s (%d issues, model=%s)", repo, len(issues), manager_model)
-            with open(stream_log_path, "w") as log_file:
-                async for message in query(
-                    prompt=team_prompt,
-                    options=ClaudeAgentOptions(
+            with open(stream_log_path, "a") as log_file:
+                for iteration in range(max_reentries):
+                    is_followup = iteration > 0
+
+                    if is_followup:
+                        prompt = build_followup_prompt(workspace)
+                        logger.info(
+                            "Re-entering lead session (iteration %d/%d, session=%s)",
+                            iteration + 1, max_reentries, session_id,
+                        )
+                    else:
+                        prompt = build_team_prompt(repo, issues, config, run_id, workspace)
+
+                    # Build options — use resume for follow-up iterations
+                    options = ClaudeAgentOptions(
                         cwd=workspace,
                         env={
                             "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
@@ -368,9 +464,48 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
                         allowed_tools=["Read", "Bash", "Glob", "Grep", "Edit", "Write", "Agent"],
                         max_turns=manager_turns,
                         model=manager_model,
-                    ),
-                ):
-                    handle_stream_event(message, config, run_id, log_file=log_file)
+                        agents=agents_dict,
+                    )
+                    if is_followup and session_id:
+                        options.resume = session_id
+                        options.continue_conversation = True
+
+                    async for message in query(prompt=prompt, options=options):
+                        # Capture session_id for resume
+                        sid = getattr(message, "session_id", None)
+                        if sid:
+                            session_id = sid
+
+                        # Only send orchestrator_start webhook on the very first init
+                        msg_type = getattr(message, "type", None)
+                        if msg_type == "system" and getattr(message, "subtype", "") == "init":
+                            if not first_init_sent:
+                                post_webhook(config, "orchestrator_start", {
+                                    "run_id": f"run-{run_id}",
+                                    "mode": "agent-teams",
+                                })
+                                first_init_sent = True
+
+                        handle_stream_event(message, config, run_id, log_file=log_file)
+
+                        # Check result for completion
+                        if msg_type == "result":
+                            result_text = getattr(message, "result", "")
+                            if _is_work_complete(result_text):
+                                work_complete = True
+
+                    if work_complete:
+                        logger.info("Agent Teams orchestration completed for %s", repo)
+                        break
+
+                    # Brief pause before re-entry
+                    await asyncio.sleep(15)
+
+            if not work_complete:
+                logger.warning(
+                    "Orchestrator exhausted %d re-entries for %s without completion",
+                    max_reentries, repo,
+                )
 
         except Exception as e:
             logger.exception("Agent Teams orchestration failed for %s: %s", repo, e)
