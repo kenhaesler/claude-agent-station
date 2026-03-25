@@ -198,6 +198,10 @@ def build_team_prompt(
     max_turns = get_limit(config, "max_employee_turns", 200)
     teammate_model = get_model(config, "employee", "claude-opus-4-6")
 
+    # Determine base branch (integration dev branch if enabled, else main)
+    integration = config.get("integration", {})
+    base_branch = integration.get("dev_branch", "main") if integration.get("enabled") else "main"
+
     return f"""You are the lead of an agent team implementing GitHub issues for **{repo}**.
 
 ## Your Tasks
@@ -256,6 +260,7 @@ and your teammates lose their work. You must keep making tool calls to stay aliv
 - Repository: {repo}
 - Run ID: {run_id}
 - Workspace: {workspace}
+- Base branch: `{base_branch}` (teammates must branch FROM this)
 - GH_TOKEN is available for GitHub CLI operations
 """
 

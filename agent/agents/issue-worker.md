@@ -31,7 +31,8 @@ You are running on a dedicated headless VM as part of an agent team.
 
 ### Step 0: Read Project Conventions
 1. Check if `CLAUDE.md` or `.claude/CLAUDE.md` exists. If so, **read it fully** and follow all conventions.
-2. Determine the **base branch** (from CLAUDE.md or default to `main`).
+2. The **base branch** is provided in your task prompt (e.g., `autonomous/dev`). If not specified, check CLAUDE.md or default to `main`.
+3. Fetch and checkout the base branch: `git fetch origin && git checkout <base-branch> && git pull`
 
 ### Step 1: Read the Issue
 1. Read the full issue with all comments: `gh issue view <number> --repo $GITHUB_REPO --comments`
@@ -50,7 +51,7 @@ You are running on a dedicated headless VM as part of an agent team.
 3. Create a step-by-step implementation plan.
 
 ### Step 4: Implement
-1. Create feature branch: `git checkout -b autonomous/issue-<number>`
+1. Create feature branch from the base branch: `git checkout -b autonomous/issue-<number>`
 2. Implement changes following your plan.
 3. Write or update tests as appropriate.
 4. Run the project's linter and test suite.
