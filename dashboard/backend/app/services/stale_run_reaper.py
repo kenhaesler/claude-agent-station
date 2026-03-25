@@ -9,6 +9,7 @@ runs as 'interrupted' so the UI reflects reality.
 """
 
 import logging
+import subprocess
 from datetime import datetime, timezone
 
 from sqlalchemy import select
@@ -22,6 +23,18 @@ from app.services.systemd import get_service_status
 logger = logging.getLogger(__name__)
 
 
+def _is_orchestrator_process_alive() -> bool:
+    """Check if a station_orchestrator process is running (manual/test runs)."""
+    try:
+        result = subprocess.run(
+            ["pgrep", "-f", "station_orchestrator"],
+            capture_output=True, timeout=3,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
 async def reap_stale_runs(db: AsyncSession) -> int:
     """Mark orphaned 'running' runs as 'interrupted' if the agent service is dead.
 
@@ -31,6 +44,10 @@ async def reap_stale_runs(db: AsyncSession) -> int:
     svc = await get_service_status()
     if svc["service_active"]:
         return 0  # Service is alive — nothing to reap
+
+    # Also check for manual orchestrator runs (not via systemd)
+    if _is_orchestrator_process_alive():
+        return 0  # Orchestrator process is alive — nothing to reap
 
     # Service is inactive — find any runs still marked as 'running'
     result = await db.execute(
