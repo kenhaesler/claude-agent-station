@@ -20,15 +20,37 @@ import logging
 import os
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
 from claude_agent_sdk import query, ClaudeAgentOptions
-from claude_agent_sdk.types import AgentDefinition
+from claude_agent_sdk.types import (
+    AgentDefinition,
+    AssistantMessage,
+    ResultMessage,
+    SystemMessage,
+    TaskNotificationMessage,
+    TaskProgressMessage,
+    TaskStartedMessage,
+)
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class _StreamState:
+    """Accumulates stream data for batched webhook delivery."""
+    tokens_in: int = 0
+    tokens_out: int = 0
+    tool_calls: int = 0
+    turns: int = 0
+    last_webhook_time: float = 0.0
+    BATCH_INTERVAL: float = 15.0  # seconds between progress webhooks
+
 
 SKIP_LABELS = frozenset({
     "autonomous-agent/in-progress",
@@ -207,7 +229,7 @@ After spawning teammates, you MUST actively monitor their progress using tool ca
 **NEVER end your turn while any teammate is still working.**
 
 Follow this monitoring loop:
-1. After spawning all teammates, run: `sleep 30` (Bash tool)
+1. After spawning all teammates, run: `sleep 60` (Bash tool)
 2. Check for completed reports: `find {workspace} -name ".claude-employee-report.json" -type f 2>/dev/null`
 3. For each report found, read it and record the status
 4. If any teammate has not yet reported, **go back to step 1**
@@ -245,7 +267,7 @@ def build_followup_prompt(workspace: str) -> str:
         "Check their status now:\n"
         f"1. Run: `find {workspace} -name '.claude-employee-report.json' -type f`\n"
         "2. Read any reports found and record results\n"
-        "3. If workers haven't finished yet, `sleep 30` and check again\n"
+        "3. If workers haven't finished yet, `sleep 60` and check again\n"
         "4. Provide the final JSON summary (issues_completed, issues_failed, "
         "total_turns, conflicts_detected) only when ALL workers are done or timed out.\n\n"
         "Do NOT shut down the team or end your turn until all work is accounted for."
@@ -255,32 +277,82 @@ def build_followup_prompt(workspace: str) -> str:
 # ── Dashboard Webhook ──────────────────────────────────────────
 
 def _message_to_dict(message) -> dict:
-    """Convert an SDK stream message to a JSON-serializable dict."""
+    """Convert an SDK stream message to a JSON-serializable dict.
+
+    Uses isinstance() checks against SDK dataclass types — getattr-based
+    type detection returns None for all SDK messages.
+    """
     result: dict = {}
-    for attr in ("type", "subtype", "session_id", "is_error", "duration_ms",
-                 "num_turns", "result", "stop_reason"):
-        val = getattr(message, attr, None)
-        if val is not None:
-            result[attr] = val
-    # Handle assistant message content
-    if getattr(message, "type", None) == "assistant":
-        msg = getattr(message, "message", None)
-        if msg:
-            content = getattr(msg, "content", None)
-            if content:
-                result["content_types"] = []
-                for block in (content if isinstance(content, list) else [content]):
-                    bt = getattr(block, "type", None) if hasattr(block, "type") else (block.get("type") if isinstance(block, dict) else None)
-                    if bt:
-                        result["content_types"].append(bt)
-                    if bt == "tool_use":
-                        name = getattr(block, "name", None) if hasattr(block, "name") else (block.get("name") if isinstance(block, dict) else None)
-                        if name:
-                            result.setdefault("tool_calls", []).append(name)
-                    elif bt == "text":
-                        text = getattr(block, "text", None) if hasattr(block, "text") else (block.get("text") if isinstance(block, dict) else None)
-                        if text:
-                            result["text_preview"] = text[:200]
+
+    if isinstance(message, AssistantMessage):
+        result["type"] = "assistant"
+        if message.usage:
+            result["usage"] = message.usage
+        if message.content:
+            result["content_types"] = []
+            for block in (message.content if isinstance(message.content, list) else [message.content]):
+                bt = getattr(block, "type", None) or (block.get("type") if isinstance(block, dict) else None)
+                if bt:
+                    result["content_types"].append(bt)
+                if bt == "tool_use":
+                    name = getattr(block, "name", None) or (block.get("name") if isinstance(block, dict) else None)
+                    if name:
+                        result.setdefault("tool_calls", []).append(name)
+                elif bt == "text":
+                    text = getattr(block, "text", None) or (block.get("text") if isinstance(block, dict) else None)
+                    if text:
+                        result["text_preview"] = text[:200]
+
+    elif isinstance(message, ResultMessage):
+        result["type"] = "result"
+        result["subtype"] = getattr(message, "subtype", "success")
+        for attr in ("session_id", "is_error", "duration_ms", "num_turns", "result", "stop_reason"):
+            val = getattr(message, attr, None)
+            if val is not None:
+                result[attr] = val
+        if message.usage:
+            result["usage"] = message.usage
+
+    elif isinstance(message, TaskStartedMessage):
+        result["type"] = "system"
+        result["subtype"] = "task_started"
+        result["task_id"] = message.task_id
+        result["description"] = message.description
+        result["session_id"] = message.session_id
+        result["task_type"] = getattr(message, "task_type", None)
+
+    elif isinstance(message, TaskProgressMessage):
+        result["type"] = "system"
+        result["subtype"] = "task_progress"
+        result["task_id"] = message.task_id
+        result["last_tool_name"] = message.last_tool_name
+        if message.usage:
+            result["usage"] = {
+                "total_tokens": message.usage.total_tokens,
+                "tool_uses": message.usage.tool_uses,
+                "duration_ms": message.usage.duration_ms,
+            }
+
+    elif isinstance(message, TaskNotificationMessage):
+        result["type"] = "system"
+        result["subtype"] = "task_notification"
+        result["task_id"] = message.task_id
+        result["status"] = message.status
+        result["summary"] = message.summary
+        if message.usage:
+            result["usage"] = {
+                "total_tokens": message.usage.total_tokens,
+                "tool_uses": message.usage.tool_uses,
+                "duration_ms": message.usage.duration_ms,
+            }
+
+    elif isinstance(message, SystemMessage):
+        result["type"] = "system"
+        result["subtype"] = getattr(message, "subtype", "")
+        sid = getattr(message, "session_id", None) if hasattr(message, "session_id") else None
+        if sid:
+            result["session_id"] = sid
+
     return result
 
 
@@ -312,38 +384,94 @@ def post_webhook(config: dict, event: str, data: dict | None = None) -> None:
         pass  # Best-effort
 
 
-def handle_stream_event(message, config: dict, run_id: str, log_file=None) -> None:
+def handle_stream_event(
+    message, config: dict, run_id: str, log_file=None, state: _StreamState | None = None,
+) -> None:
     """Forward SDK stream messages to the dashboard and write to log file."""
-    # Write every message to the stream log file (for the Logs tab)
+    # Write structured data to JSONL log (skip empty dicts)
     if log_file is not None:
         try:
-            line = json.dumps(_message_to_dict(message))
-            log_file.write(line + "\n")
-            log_file.flush()
+            d = _message_to_dict(message)
+            if d:
+                log_file.write(json.dumps(d) + "\n")
+                log_file.flush()
         except Exception:
             pass
 
-    msg_type = getattr(message, "type", None)
+    # --- Forward meaningful events to dashboard ---
 
-    if msg_type == "system":
-        pass  # orchestrator_start webhook is handled in the orchestrate() retry loop
-    elif msg_type == "assistant":
-        # Log assistant messages (tool calls, thinking) at debug level
-        content = getattr(message, "content", None)
-        if content:
-            for block in (content if isinstance(content, list) else [content]):
-                block_type = getattr(block, "type", "") if hasattr(block, "type") else block.get("type", "") if isinstance(block, dict) else ""
-                if block_type == "tool_use":
-                    tool_name = getattr(block, "name", "") if hasattr(block, "name") else block.get("name", "")
-                    logger.info("Lead agent tool call: %s", tool_name)
-    elif msg_type == "result":
+    if isinstance(message, AssistantMessage):
+        # Accumulate tokens
+        if state and message.usage:
+            state.tokens_in += message.usage.get("input_tokens", 0)
+            state.tokens_out += message.usage.get("output_tokens", 0)
+        # Count tool calls and log them
+        if message.content:
+            for block in (message.content if isinstance(message.content, list) else [message.content]):
+                bt = getattr(block, "type", None) or (block.get("type") if isinstance(block, dict) else None)
+                if bt == "tool_use":
+                    if state:
+                        state.tool_calls += 1
+                    name = getattr(block, "name", None) or (block.get("name") if isinstance(block, dict) else None)
+                    logger.info("Lead agent tool call: %s", name)
+        # Batch-send progress webhook every BATCH_INTERVAL seconds
+        if state:
+            now = time.monotonic()
+            if now - state.last_webhook_time >= state.BATCH_INTERVAL:
+                state.last_webhook_time = now
+                post_webhook(config, "progress_update", {
+                    "run_id": f"run-{run_id}",
+                    "tokens_input": state.tokens_in,
+                    "tokens_output": state.tokens_out,
+                    "tokens_total": state.tokens_in + state.tokens_out,
+                    "turns": state.turns,
+                })
+
+    elif isinstance(message, TaskStartedMessage):
+        logger.info("Teammate spawned: task=%s desc=%s", message.task_id, message.description)
+        post_webhook(config, "teammate_spawned", {
+            "run_id": f"run-{run_id}",
+            "task_id": message.task_id,
+            "agent_name": message.description,
+        })
+
+    elif isinstance(message, TaskProgressMessage):
+        if state and message.usage:
+            state.turns = message.usage.tool_uses
+        logger.info(
+            "Teammate progress: task=%s tools=%s last=%s",
+            message.task_id,
+            message.usage.tool_uses if message.usage else "?",
+            message.last_tool_name,
+        )
+
+    elif isinstance(message, TaskNotificationMessage):
+        logger.info("Teammate finished: task=%s status=%s", message.task_id, message.status)
+        post_webhook(config, "teammate_completed", {
+            "run_id": f"run-{run_id}",
+            "task_id": message.task_id,
+            "status": message.status,
+            "agent_name": message.summary[:100] if message.summary else "",
+            "tokens_total": message.usage.total_tokens if message.usage else 0,
+            "turns": message.usage.tool_uses if message.usage else 0,
+        })
+
+    elif isinstance(message, ResultMessage):
+        # Final flush of accumulated tokens
+        if state:
+            post_webhook(config, "progress_update", {
+                "run_id": f"run-{run_id}",
+                "tokens_input": state.tokens_in,
+                "tokens_output": state.tokens_out,
+                "tokens_total": state.tokens_in + state.tokens_out,
+                "turns": state.turns,
+            })
         post_webhook(config, "orchestrator_complete", {
             "run_id": f"run-{run_id}",
             "is_error": getattr(message, "is_error", False),
             "duration_ms": getattr(message, "duration_ms", 0),
             "num_turns": getattr(message, "num_turns", 0),
         })
-        # Log the final result
         result_text = getattr(message, "result", "")
         if result_text:
             logger.info("Orchestrator result:\n%s", result_text[:2000])
@@ -438,6 +566,7 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
         session_id: str | None = None
         work_complete = False
         first_init_sent = False
+        stream_state = _StreamState(last_webhook_time=time.monotonic())
 
         try:
             logger.info("Starting Agent Teams lead for %s (%d issues, model=%s)", repo, len(issues), manager_model)
@@ -477,8 +606,7 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
                             session_id = sid
 
                         # Only send orchestrator_start webhook on the very first init
-                        msg_type = getattr(message, "type", None)
-                        if msg_type == "system" and getattr(message, "subtype", "") == "init":
+                        if isinstance(message, SystemMessage) and getattr(message, "subtype", "") == "init":
                             if not first_init_sent:
                                 post_webhook(config, "orchestrator_start", {
                                     "run_id": f"run-{run_id}",
@@ -486,10 +614,10 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
                                 })
                                 first_init_sent = True
 
-                        handle_stream_event(message, config, run_id, log_file=log_file)
+                        handle_stream_event(message, config, run_id, log_file=log_file, state=stream_state)
 
                         # Check result for completion
-                        if msg_type == "result":
+                        if isinstance(message, ResultMessage):
                             result_text = getattr(message, "result", "")
                             if _is_work_complete(result_text):
                                 work_complete = True
