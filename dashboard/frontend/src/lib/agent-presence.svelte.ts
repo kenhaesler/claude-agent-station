@@ -75,8 +75,9 @@ export function getAgentName(employeeIndex: number | null, mode?: string | null)
   if (mode === 'coordinator') return 'Coordinator';
   if (mode === 'planner' || mode === 'plan') return 'Planner';
   if (mode === 'assigner') return 'Assigner';
-  if (employeeIndex != null) return `Dev-${employeeIndex}`;
-  return 'Dev-0';
+  if (mode === 'agent-teams') return 'Lead';
+  if (employeeIndex != null) return `Teammate ${employeeIndex + 1}`;
+  return 'Teammate 1';
 }
 
 // --- State ---
@@ -197,9 +198,10 @@ function deriveAgents(runs: ActiveEmployeeData[]): AgentIdentity[] {
       planner: 'Planner',
       plan: 'Planner',
       assigner: 'Assigner',
+      'agent-teams': 'Lead',
     };
     const role = modeRoleMap[run.mode ?? ''] ?? 'employee';
-    const agentName = modeNameMap[run.mode ?? ''] ?? `Dev-${idx}`;
+    const agentName = modeNameMap[run.mode ?? ''] ?? `Teammate ${idx + 1}`;
     agents.push({
       role,
       name: agentName,
@@ -227,7 +229,7 @@ function handleWsMessage(data: string) {
     ? agentPresence.agents.find(a => a.role === 'manager')
     : (agentPresence.agents.find(a => a.status === 'active' && a.role !== 'manager')
        ?? agentPresence.agents.find(a => a.status === 'active'));
-  const agentName = activeAgent?.name ?? 'Dev-0';
+  const agentName = activeAgent?.name ?? 'Lead';
   const agentColor = activeAgent?.color ?? getRoleColors()['dev-0'];
 
   for (const evt of events) {
@@ -333,7 +335,7 @@ function handleSSEEvent(data: any) {
       break;
     case 'employee_start':
       addConversationEntry({
-        agentName: `Dev-${data.employee_index ?? 0}`,
+        agentName: `Teammate ${(data.employee_index ?? 0) + 1}`,
         agentColor: getAgentColor(`dev-${data.employee_index ?? 0}`),
         type: 'phase',
         content: `Started working${data.issue ? ` on #${data.issue}` : ''}`,
@@ -342,7 +344,7 @@ function handleSSEEvent(data: any) {
       break;
     case 'employee_complete':
       addConversationEntry({
-        agentName: `Dev-${data.employee_index ?? 0}`,
+        agentName: `Teammate ${(data.employee_index ?? 0) + 1}`,
         agentColor: getAgentColor(`dev-${data.employee_index ?? 0}`),
         type: 'phase',
         content: `Finished — ${data.turns ?? '?'} turns`,

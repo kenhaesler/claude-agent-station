@@ -135,7 +135,7 @@
             <IntelligenceChip type="escalation" rung={fullContext.queue_item.escalation_rung} />
           {/if}
 
-          <!-- Employee report -->
+          <!-- Teammate report -->
           {#if run.employee_report}
             <div>
               <p class="text-[10px] text-text-muted uppercase tracking-wider mb-1">Report</p>

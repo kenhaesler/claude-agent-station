@@ -24,7 +24,7 @@ DEVICE_CODE_URL = "https://github.com/login/device/code"
 DEVICE_TOKEN_URL = "https://github.com/login/oauth/access_token"
 USER_API_URL = "https://api.github.com/user"
 GITHUB_CLIENT_ID = "Ov23liUWRzu5iRGDS1kE"
-SCOPES = "repo read:org read:user"
+SCOPES = "repo read:org read:user workflow"
 
 # Default token storage path (alongside Claude credentials)
 GITHUB_TOKEN_PATH = Path.home() / ".claude-agent-station" / "github_token"

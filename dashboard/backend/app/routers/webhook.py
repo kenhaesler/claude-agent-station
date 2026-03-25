@@ -336,6 +336,21 @@ async def receive_run_event(
             run.project_id = project_id
         run.trace_id = event.trace_id or run.trace_id
 
+    # Agent Teams: update team fields on run if present
+    if run and event.team_name:
+        run.team_name = event.team_name
+    if run and event.agent_name and event_name in ("teammate_spawned", "team_created"):
+        # Accumulate team members as JSON array
+        import json as _json
+        members = _json.loads(run.team_members) if run.team_members else []
+        if event.agent_id and not any(m.get("agent_id") == event.agent_id for m in members):
+            members.append({
+                "agent_id": event.agent_id or "",
+                "name": event.agent_name or "",
+                "status": "spawned",
+            })
+            run.team_members = _json.dumps(members)
+
     await db.commit()
     logger.info("Processed webhook event: %s (normalized: %s) for %s", event.event, event_name, event.run_id)
 
@@ -358,6 +373,9 @@ async def receive_run_event(
             "model": event.model,
             "employee_index": event.employee_index,
             "concurrent_group_id": event.concurrent_group_id,
+            "team_name": event.team_name,
+            "agent_id": event.agent_id,
+            "agent_name": event.agent_name,
         },
     })
 
@@ -437,6 +455,15 @@ def _normalize_event_name(event_name: str) -> str:
         "queue_completed": "queue_completed",
         "queue_paused": "queue_paused",
         "queue_failed": "queue_failed",
+        # Agent Teams orchestrator events
+        "orchestrator_start": "started",
+        "orchestrator_complete": "finished",
+        "orchestrator_error": "finished",
+        "team_created": "team_created",
+        "teammate_spawned": "teammate_spawned",
+        "task_claimed": "task_claimed",
+        "teammate_completed": "teammate_completed",
+        "team_cleanup": "team_cleanup",
     }
     return mapping.get(event_name, event_name)
 

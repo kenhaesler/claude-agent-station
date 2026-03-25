@@ -202,5 +202,5 @@
     </details>
   </div>
 {:else}
-  <p class="text-text-dim text-sm">No employee report available</p>
+  <p class="text-text-dim text-sm">No teammate report available</p>
 {/if}

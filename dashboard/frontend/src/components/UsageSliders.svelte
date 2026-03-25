@@ -60,7 +60,7 @@
       style="--slider-color: {usageColor}"
     />
     <p class="text-xs text-text-dim mt-1.5">
-      Agent will stop spawning employees when Claude plan usage exceeds this threshold.
+      Agent will stop spawning teammates when Claude plan usage exceeds this threshold.
       {#if maxUsagePercent === 60}
         <span class="text-accent-emerald">(Recommended)</span>
       {/if}

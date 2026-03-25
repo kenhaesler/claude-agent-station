@@ -234,7 +234,7 @@
                 {#if feature.issue_number}
                   <span class="text-xs font-semibold text-info font-data">#{feature.issue_number}</span>
                 {/if}
-                <p class="text-[11px] text-text truncate mt-0.5">{feature.issue_title ?? feature.branch}</p>
+                <p class="text-[11px] text-text truncate mt-0.5">{feature.issue_title || feature.branch}</p>
               </div>
               <button
                 onclick={() => { excludeTarget = feature; }}
@@ -266,7 +266,7 @@
                 {#if feature.issue_number}
                   <span class="text-xs font-semibold text-approve font-data">#{feature.issue_number}</span>
                 {/if}
-                <p class="text-[11px] text-text truncate mt-0.5">{feature.issue_title ?? feature.branch}</p>
+                <p class="text-[11px] text-text truncate mt-0.5">{feature.issue_title || feature.branch}</p>
               </div>
               <Badge label="pass" variant="success" size="sm" />
             </div>
@@ -294,7 +294,7 @@
                 {#if feature.issue_number}
                   <span class="text-xs font-semibold text-reject font-data">#{feature.issue_number}</span>
                 {/if}
-                <p class="text-[11px] text-text truncate mt-0.5">{feature.issue_title ?? feature.branch}</p>
+                <p class="text-[11px] text-text truncate mt-0.5">{feature.issue_title || feature.branch}</p>
               </div>
               <Badge label={stateLabel(feature.state)} variant="error" size="sm" />
             </div>
@@ -324,7 +324,7 @@
               {#if feature.issue_number}
                 <span class="text-xs font-semibold text-accent-purple font-data">#{feature.issue_number}</span>
               {/if}
-              <p class="text-[11px] text-text truncate mt-0.5">{feature.issue_title ?? feature.branch}</p>
+              <p class="text-[11px] text-text truncate mt-0.5">{feature.issue_title || feature.branch}</p>
             </div>
             {#if feature.pr_number}
               <p class="text-[10px] text-text-muted mt-1">PR #{feature.pr_number}</p>
@@ -355,7 +355,7 @@
                 {#if feature.issue_number}
                   <span class="text-xs font-data text-text-muted">#{feature.issue_number}</span>
                 {/if}
-                <p class="text-[11px] text-text-dim truncate mt-0.5">{feature.issue_title ?? feature.branch}</p>
+                <p class="text-[11px] text-text-dim truncate mt-0.5">{feature.issue_title || feature.branch}</p>
               </div>
               <button
                 onclick={() => handleInclude(feature)}

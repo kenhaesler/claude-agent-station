@@ -170,6 +170,62 @@ except: pass
 " 2>/dev/null || echo ""
 }
 
+queue_complete_item() {
+    # Walk a queue item through valid state transitions to reach 'completed'.
+    # Handles items in any active state (assigned, in_progress, review, approved).
+    local qid="$1"
+    local current_state
+    current_state=$(queue_api GET "/api/queue/$qid" | python3 -c "import json,sys; print(json.load(sys.stdin).get('state',''))" 2>/dev/null || echo "")
+    case "$current_state" in
+        assigned)
+            queue_api PUT "/api/queue/$qid" '{"state":"in_progress"}' >/dev/null 2>&1
+            queue_api PUT "/api/queue/$qid" '{"state":"review"}' >/dev/null 2>&1
+            queue_api PUT "/api/queue/$qid" '{"state":"approved"}' >/dev/null 2>&1
+            queue_api PUT "/api/queue/$qid" '{"state":"completed"}' >/dev/null 2>&1
+            ;;
+        in_progress)
+            queue_api PUT "/api/queue/$qid" '{"state":"review"}' >/dev/null 2>&1
+            queue_api PUT "/api/queue/$qid" '{"state":"approved"}' >/dev/null 2>&1
+            queue_api PUT "/api/queue/$qid" '{"state":"completed"}' >/dev/null 2>&1
+            ;;
+        review)
+            queue_api PUT "/api/queue/$qid" '{"state":"approved"}' >/dev/null 2>&1
+            queue_api PUT "/api/queue/$qid" '{"state":"completed"}' >/dev/null 2>&1
+            ;;
+        approved)
+            queue_api PUT "/api/queue/$qid" '{"state":"completed"}' >/dev/null 2>&1
+            ;;
+        completed) ;;  # Already done
+        *) log_warn "queue_complete_item: unexpected state '$current_state' for item $qid" ;;
+    esac
+}
+
+queue_reject_item() {
+    # Walk a queue item to 'review' if needed, then apply rejection payload.
+    local qid="$1" payload="$2"
+    local current_state
+    current_state=$(queue_api GET "/api/queue/$qid" | python3 -c "import json,sys; print(json.load(sys.stdin).get('state',''))" 2>/dev/null || echo "")
+    case "$current_state" in
+        assigned)
+            queue_api PUT "/api/queue/$qid" '{"state":"in_progress"}' >/dev/null 2>&1
+            queue_api PUT "/api/queue/$qid" '{"state":"review"}' >/dev/null 2>&1
+            ;;
+        in_progress)
+            queue_api PUT "/api/queue/$qid" '{"state":"review"}' >/dev/null 2>&1
+            ;;
+        review) ;;  # Already where we need to be
+        *) log_warn "queue_reject_item: unexpected state '$current_state' for item $qid"; return 1 ;;
+    esac
+    queue_api PUT "/api/queue/$qid" "$payload" >/dev/null 2>&1
+}
+
+queue_fail_item() {
+    # Walk a queue item to rejected then failed.
+    local qid="$1" error_msg="$2"
+    queue_reject_item "$qid" "{\"state\":\"rejected\",\"error_message\":\"$error_msg\"}"
+    queue_api PUT "/api/queue/$qid" "{\"state\":\"failed\",\"error_message\":\"$error_msg\"}" >/dev/null 2>&1
+}
+
 usage() {
     cat << 'EOF'
 Manager/Employee Autonomous Agent Orchestrator
@@ -844,7 +900,7 @@ run_employee() {
     local _qid
     _qid=$(queue_find_item "$repo" "$employee_index")
     if [ -n "$_qid" ]; then
-        queue_api PUT "/api/queue/$_qid" "{\"state\":\"in_progress\"}" >/dev/null 2>&1 &
+        queue_api PUT "/api/queue/$_qid" "{\"state\":\"in_progress\"}" >/dev/null 2>&1
     fi
 
     # Run setup script if configured for this project (install dependencies, etc.)
@@ -1312,9 +1368,9 @@ print(f'{t:,}')
         if [ -f "$report_file" ]; then
             local report_escaped
             report_escaped=$(python3 -c "import sys,json; print(json.dumps(open('$report_file').read()))" 2>/dev/null || echo "null")
-            queue_api PUT "/api/queue/$_qid2" "{\"state\":\"review\",\"employee_report\":$report_escaped}" >/dev/null 2>&1 &
+            queue_api PUT "/api/queue/$_qid2" "{\"state\":\"review\",\"employee_report\":$report_escaped}" >/dev/null 2>&1
         else
-            queue_api PUT "/api/queue/$_qid2" "{\"state\":\"review\"}" >/dev/null 2>&1 &
+            queue_api PUT "/api/queue/$_qid2" "{\"state\":\"review\"}" >/dev/null 2>&1
         fi
     fi
 
@@ -2089,13 +2145,12 @@ Run: $RUN_ID" 2>/dev/null || true
 
             # Queue state update for analyze mode
             local _aqid
-            _aqid=$(queue_api GET "/api/queue?project_repo=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$project'))" 2>/dev/null)&run_id=run-$RUN_ID&state=review&limit=1" | python3 -c "import json,sys; items=json.load(sys.stdin).get('items',[]); print(items[0]['id'] if items else '')" 2>/dev/null || echo "")
+            _aqid=$(queue_api GET "/api/queue?project_repo=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$project'))" 2>/dev/null)&run_id=run-$RUN_ID&limit=1" | python3 -c "import json,sys; items=json.load(sys.stdin).get('items',[]); print(items[0]['id'] if items else '')" 2>/dev/null || echo "")
             if [ -n "$_aqid" ]; then
                 if [ "$verdict" = "APPROVE" ]; then
-                    queue_api PUT "/api/queue/$_aqid" "{\"state\":\"approved\"}" >/dev/null 2>&1
-                    queue_api PUT "/api/queue/$_aqid" "{\"state\":\"completed\"}" >/dev/null 2>&1
+                    queue_complete_item "$_aqid"
                 else
-                    queue_api PUT "/api/queue/$_aqid" "{\"state\":\"rejected\"}" >/dev/null 2>&1
+                    queue_reject_item "$_aqid" '{"state":"rejected"}'
                 fi
             fi
 
@@ -2120,12 +2175,11 @@ Run: $RUN_ID" 2>/dev/null || true
                         notify "error" "APPROVE merge to dev failed: $project #$issue_number"
                     fi
 
-                    # Queue: approved → completed (feature is on dev)
+                    # Queue: walk to completed (feature is on dev)
                     local _vqid
-                    _vqid=$(queue_api GET "/api/queue?project_repo=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$project'))" 2>/dev/null)&run_id=run-$RUN_ID&state=review&limit=1" | python3 -c "import json,sys; items=json.load(sys.stdin).get('items',[]); print(items[0]['id'] if items else '')" 2>/dev/null || echo "")
+                    _vqid=$(queue_api GET "/api/queue?project_repo=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$project'))" 2>/dev/null)&run_id=run-$RUN_ID&limit=1" | python3 -c "import json,sys; items=json.load(sys.stdin).get('items',[]); print(items[0]['id'] if items else '')" 2>/dev/null || echo "")
                     if [ -n "$_vqid" ]; then
-                        queue_api PUT "/api/queue/$_vqid" "{\"state\":\"approved\"}" >/dev/null 2>&1
-                        queue_api PUT "/api/queue/$_vqid" "{\"state\":\"completed\"}" >/dev/null 2>&1
+                        queue_complete_item "$_vqid"
                     fi
                 else
                     # Original behavior: push → PR → merge → close issue
@@ -2208,12 +2262,11 @@ Autonomous run: $RUN_ID" 2>/dev/null || log_warn "Failed to comment on issue #$i
 
                     notify "approve" "APPROVED: $project #$issue_number - $reasoning"
 
-                    # Queue: approved → completed
+                    # Queue: walk to completed
                     local _vqid
-                    _vqid=$(queue_api GET "/api/queue?project_repo=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$project'))" 2>/dev/null)&run_id=run-$RUN_ID&state=review&limit=1" | python3 -c "import json,sys; items=json.load(sys.stdin).get('items',[]); print(items[0]['id'] if items else '')" 2>/dev/null || echo "")
+                    _vqid=$(queue_api GET "/api/queue?project_repo=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$project'))" 2>/dev/null)&run_id=run-$RUN_ID&limit=1" | python3 -c "import json,sys; items=json.load(sys.stdin).get('items',[]); print(items[0]['id'] if items else '')" 2>/dev/null || echo "")
                     if [ -n "$_vqid" ]; then
-                        queue_api PUT "/api/queue/$_vqid" "{\"state\":\"approved\"}" >/dev/null 2>&1
-                        queue_api PUT "/api/queue/$_vqid" "{\"state\":\"completed\"}" >/dev/null 2>&1
+                        queue_complete_item "$_vqid"
                     fi
                 fi
                 ;;
@@ -2247,12 +2300,11 @@ Run: $RUN_ID" 2>/dev/null || true
 
                 notify "pr" "PR: $project #$issue_number - $reasoning"
 
-                # Queue: approved → completed (PR is also a terminal success)
+                # Queue: walk to completed (PR is also a terminal success)
                 local _prqid
-                _prqid=$(queue_api GET "/api/queue?project_repo=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$project'))" 2>/dev/null)&run_id=run-$RUN_ID&state=review&limit=1" | python3 -c "import json,sys; items=json.load(sys.stdin).get('items',[]); print(items[0]['id'] if items else '')" 2>/dev/null || echo "")
+                _prqid=$(queue_api GET "/api/queue?project_repo=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$project'))" 2>/dev/null)&run_id=run-$RUN_ID&limit=1" | python3 -c "import json,sys; items=json.load(sys.stdin).get('items',[]); print(items[0]['id'] if items else '')" 2>/dev/null || echo "")
                 if [ -n "$_prqid" ]; then
-                    queue_api PUT "/api/queue/$_prqid" "{\"state\":\"approved\"}" >/dev/null 2>&1
-                    queue_api PUT "/api/queue/$_prqid" "{\"state\":\"completed\"}" >/dev/null 2>&1
+                    queue_complete_item "$_prqid"
                 fi
                 ;;
 
@@ -2305,11 +2357,11 @@ Run: $RUN_ID" 2>/dev/null || true
 
                     # Queue: reject current item and create new pending item with feedback
                     local _rqid
-                    _rqid=$(queue_api GET "/api/queue?project_repo=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$project'))" 2>/dev/null)&run_id=run-$RUN_ID&state=review&limit=1" | python3 -c "import json,sys; items=json.load(sys.stdin).get('items',[]); print(items[0]['id'] if items else '')" 2>/dev/null || echo "")
+                    _rqid=$(queue_api GET "/api/queue?project_repo=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$project'))" 2>/dev/null)&run_id=run-$RUN_ID&limit=1" | python3 -c "import json,sys; items=json.load(sys.stdin).get('items',[]); print(items[0]['id'] if items else '')" 2>/dev/null || echo "")
                     if [ -n "$_rqid" ]; then
                         local fb_escaped
                         fb_escaped=$(echo "$verdict_json" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read()))" 2>/dev/null || echo "null")
-                        queue_api PUT "/api/queue/$_rqid" "{\"state\":\"rejected\",\"manager_feedback\":$fb_escaped}" >/dev/null 2>&1
+                        queue_reject_item "$_rqid" "{\"state\":\"rejected\",\"manager_feedback\":$fb_escaped}"
                     fi
                 else
                     # Max retries exhausted — clean up
@@ -2332,10 +2384,9 @@ Run: $RUN_ID" 2>/dev/null || true
 
                     # Queue: mark as failed (retries exhausted)
                     local _fqid
-                    _fqid=$(queue_api GET "/api/queue?project_repo=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$project'))" 2>/dev/null)&run_id=run-$RUN_ID&state=review&limit=1" | python3 -c "import json,sys; items=json.load(sys.stdin).get('items',[]); print(items[0]['id'] if items else '')" 2>/dev/null || echo "")
+                    _fqid=$(queue_api GET "/api/queue?project_repo=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$project'))" 2>/dev/null)&run_id=run-$RUN_ID&limit=1" | python3 -c "import json,sys; items=json.load(sys.stdin).get('items',[]); print(items[0]['id'] if items else '')" 2>/dev/null || echo "")
                     if [ -n "$_fqid" ]; then
-                        queue_api PUT "/api/queue/$_fqid" "{\"state\":\"rejected\",\"error_message\":\"Max retries exhausted\"}" >/dev/null 2>&1
-                        queue_api PUT "/api/queue/$_fqid" "{\"state\":\"failed\",\"error_message\":\"Max retries exhausted\"}" >/dev/null 2>&1
+                        queue_fail_item "$_fqid" "Max retries exhausted"
                     fi
                 fi
                 ;;
@@ -2346,10 +2397,9 @@ Run: $RUN_ID" 2>/dev/null || true
 
                 # Queue: mark as completed (not a failure)
                 local _sqid
-                _sqid=$(queue_api GET "/api/queue?project_repo=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$project'))" 2>/dev/null)&run_id=run-$RUN_ID&state=review&limit=1" | python3 -c "import json,sys; items=json.load(sys.stdin).get('items',[]); print(items[0]['id'] if items else '')" 2>/dev/null || echo "")
+                _sqid=$(queue_api GET "/api/queue?project_repo=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$project'))" 2>/dev/null)&run_id=run-$RUN_ID&limit=1" | python3 -c "import json,sys; items=json.load(sys.stdin).get('items',[]); print(items[0]['id'] if items else '')" 2>/dev/null || echo "")
                 if [ -n "$_sqid" ]; then
-                    queue_api PUT "/api/queue/$_sqid" "{\"state\":\"approved\"}" >/dev/null 2>&1
-                    queue_api PUT "/api/queue/$_sqid" "{\"state\":\"completed\"}" >/dev/null 2>&1
+                    queue_complete_item "$_sqid"
                 fi
                 ;;
 
@@ -2579,71 +2629,32 @@ for item in data.get('items', []):
     local is_parallel=false
     [ "$max_concurrent" -gt 1 ] && is_parallel=true
 
-    # ---- COORDINATED MODE: delegate to Python async coordinator ----
-    if [ "$coordinated" = "true" ] && [ "$is_parallel" = true ]; then
-        log_info "=== COORDINATED MODE: Using Python async coordinator ==="
+    # ---- Determine orchestration mode ----
+    local orchestrator_mode
+    orchestrator_mode=$(json_get "$CONFIG_FILE" "orchestrator.mode" 2>/dev/null || echo "agent-teams")
 
-        # Build assignments JSON for the coordinator
-        local assignments_json="$LOG_DIR/run-${RUN_ID}-assignments.json"
-        local agent_dir_for_py
-        agent_dir_for_py="$(cd "$SCRIPT_DIR/.." && pwd)"
-        PYTHONPATH="$agent_dir_for_py/.." python3 -c "
-import json, sys
-config = json.load(open('$CONFIG_FILE'))
-projects = config.get('projects', [])
-assignments = []
-max_per = int('$max_per_project')
-workspaces_dir = '$WORKSPACES_DIR'
+    # ---- AGENT TEAMS MODE: delegate to Claude Agent SDK orchestrator ----
+    if [ "$orchestrator_mode" = "agent-teams" ] && [ "$is_parallel" = true ]; then
+        log_info "=== AGENT TEAMS MODE: Using Claude Agent SDK orchestrator ==="
 
-for i, proj in enumerate(projects):
-    if not proj.get('enabled', True):
-        continue
-    repo = proj['repo']
-    mode = proj.get('mode', 'full')
-    employees = max_per
-    repo_name = repo.split('/')[-1] if '/' in repo else repo
-    workspace = f'{workspaces_dir}/{repo_name}'
+        local agent_dir
+        agent_dir="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-    # Check for pre-assignments
-    issue_number = None
-    import os
-    assign_file = f'{workspace}/.claude-assignment-0.json'
-    if os.path.exists(assign_file):
-        try:
-            assign = json.load(open(assign_file))
-            issue_number = assign.get('issue_number')
-        except:
-            pass
+        PYTHONPATH="$agent_dir/.." "$agent_dir/../venv/bin/python3" -m agent.station_orchestrator \
+            --config "$CONFIG_FILE" \
+            --run-id "$RUN_ID" \
+            --workspaces-dir "$WORKSPACES_DIR"
 
-    assignments.append({
-        'repo': repo,
-        'workspace': workspace,
-        'employee_count': employees,
-        'mode': mode,
-        'issue_number': issue_number,
-        'branch': proj.get('branch', ''),
-    })
-
-json.dump(assignments, open('$assignments_json', 'w'), indent=2)
-print(f'Wrote {len(assignments)} assignments')
-" 2>&1 | while read -r line; do log_info "  $line"; done
-
-        if [ -f "$assignments_json" ]; then
-            local agent_dir
-            agent_dir="$(cd "$SCRIPT_DIR/.." && pwd)"
-
-            PYTHONPATH="$agent_dir/.." python3 -m agent.coordinator \
-                --run-id "$RUN_ID" \
-                --config-file "$CONFIG_FILE" \
-                --log-dir "$LOG_DIR" \
-                --workspaces-dir "$WORKSPACES_DIR" \
-                --assignments-file "$assignments_json" \
-                --concurrent-group-id "$CONCURRENT_GROUP_ID"
-
+        local orch_exit=$?
+        if [ $orch_exit -eq 0 ]; then
             has_work=true
+            log_ok "Agent Teams orchestration completed successfully"
         else
-            log_warn "Failed to build assignments JSON, falling back to legacy mode"
+            log_warn "Agent Teams orchestration failed (exit $orch_exit)"
+            # Don't fall through to legacy — if agent-teams was requested, respect the failure
+            has_work=true
         fi
+
     fi
 
     # ---- LEGACY MODE: existing bash employee loop ----
@@ -2877,10 +2888,10 @@ print(f'Wrote {len(assignments)} assignments')
         # Clean up worktrees
         cleanup_worktrees "$repo_wt" 2>/dev/null || true
 
-        # Clean up assignment files and plan files
-        rm -f "$main_ws_wt"/.claude-assignment-*.json 2>/dev/null || true
+        # Clean up employee plan and feedback files (no longer needed after worktree collection)
         rm -f "$main_ws_wt"/.claude-employee-plan-*.json 2>/dev/null || true
         rm -f "$main_ws_wt"/.claude-plan-feedback-*.json 2>/dev/null || true
+        # Note: .claude-assignment-*.json is cleaned up AFTER execute_verdicts (needed by integration-branch.sh for issue_title)
         # Note: .claude-approved-plan-*.json is cleaned up AFTER manager review (needed for cross-reference)
     done
 
@@ -3100,13 +3111,14 @@ print(json.dumps(result))
     # ---- PHASE 3: Execute verdicts ----
     execute_verdicts "$verdicts_file"
 
-    # ---- PHASE 3a: Clean up approved plan files (no longer needed after review) ----
+    # ---- PHASE 3a: Clean up approved plan files and assignment files (no longer needed after verdicts) ----
     for ((i = 0; i < project_count; i++)); do
         local repo_ap
         repo_ap=$(get_project_field "$i" "repo")
         local name_ap
         name_ap=$(repo_name "$repo_ap")
         rm -f "$WORKSPACES_DIR/$name_ap"/.claude-approved-plan-*.json 2>/dev/null || true
+        rm -f "$WORKSPACES_DIR/$name_ap"/.claude-assignment-*.json 2>/dev/null || true
     done
 
     # ---- PHASE 3b: Retry loop for rejected projects ----

@@ -11,7 +11,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db
-from app.models import IntegrationFeature
+from app.models import IntegrationFeature, QueueItem
 
 logger = logging.getLogger(__name__)
 
@@ -170,7 +170,7 @@ async def create_feature(
         project_repo=data.project_repo,
         branch=data.branch,
         issue_number=data.issue_number,
-        issue_title=data.issue_title,
+        issue_title=data.issue_title or None,
         state=data.state,
         merge_commit=data.merge_commit,
         run_id=data.run_id,
@@ -183,6 +183,47 @@ async def create_feature(
         "Integration feature %d created: %s branch=%s state=%s",
         feature.id, feature.project_repo, feature.branch, feature.state,
     )
+
+    # Cross-table coordination: auto-complete matching queue item
+    if data.issue_number is not None:
+        from app.routers.queue import ACTIVE_STATES
+
+        qi_result = await db.execute(
+            select(QueueItem).where(
+                QueueItem.project_repo == data.project_repo,
+                QueueItem.issue_number == data.issue_number,
+                QueueItem.state.in_(ACTIVE_STATES),
+            )
+        )
+        qi = qi_result.scalar_one_or_none()
+        if qi:
+            now = datetime.now(timezone.utc)
+            # Walk through valid transitions to completed
+            transition_path = {
+                "pending": ["assigned", "in_progress", "review", "approved", "completed"],
+                "claimed": ["in_progress", "review", "approved", "completed"],
+                "assigned": ["in_progress", "review", "approved", "completed"],
+                "planning": ["in_progress", "review", "approved", "completed"],
+                "in_progress": ["review", "approved", "completed"],
+                "review": ["approved", "completed"],
+                "verifying": ["approved", "completed"],
+                "approved": ["completed"],
+            }
+            for next_state in transition_path.get(qi.state, []):
+                qi.state = next_state
+                qi.updated_at = now
+                if next_state in ("assigned", "claimed"):
+                    qi.assigned_at = qi.assigned_at or now
+                elif next_state == "in_progress":
+                    qi.started_at = qi.started_at or now
+                elif next_state == "completed":
+                    qi.completed_at = now
+            await db.commit()
+            logger.info(
+                "Auto-completed queue item %d (issue #%d) via integration feature creation",
+                qi.id, data.issue_number,
+            )
+
     return _feature_to_dict(feature)
 
 

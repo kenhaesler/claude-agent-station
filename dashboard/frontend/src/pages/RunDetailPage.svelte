@@ -140,7 +140,7 @@
 
           {#if run.employee_report}
             <GlassCard class="p-4">
-              <h3 class="text-xs font-semibold text-text-muted uppercase tracking-wider mb-2">Employee Report</h3>
+              <h3 class="text-xs font-semibold text-text-muted uppercase tracking-wider mb-2">Teammate Report</h3>
               <div class="text-xs text-text-dim leading-relaxed">
                 <EmployeeReport report={run.employee_report} />
               </div>
