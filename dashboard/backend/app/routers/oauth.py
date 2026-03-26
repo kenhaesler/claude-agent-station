@@ -207,7 +207,7 @@ async def oauth_callback(req: OAuthCallbackRequest):
 # Token refresh
 # ---------------------------------------------------------------------------
 
-REFRESH_THRESHOLD_SECONDS = 600  # 10 minutes
+REFRESH_THRESHOLD_SECONDS = 3600  # 1 hour — must be wider than the background check interval (30 min)
 
 
 class OAuthRefreshResponse(BaseModel):

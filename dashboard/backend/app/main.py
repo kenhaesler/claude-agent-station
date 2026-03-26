@@ -56,6 +56,9 @@ LOG_RESCAN_INTERVAL = 30
 # Interval (seconds) between stale-run checks
 STALE_RUN_CHECK_INTERVAL = 15
 
+# Interval (seconds) between OAuth token refresh checks
+TOKEN_REFRESH_INTERVAL = 1800  # 30 minutes
+
 
 async def _periodic_log_import() -> None:
     """Background task: periodically re-scan log directory for new runs."""
@@ -68,6 +71,22 @@ async def _periodic_log_import() -> None:
                     logger.info("Periodic log import: %d new runs imported", imported)
         except Exception:
             logger.exception("Error in periodic log import")
+
+
+async def _periodic_token_refresh() -> None:
+    """Background task: keep the OAuth token fresh even when nobody uses the dashboard."""
+    while True:
+        await asyncio.sleep(TOKEN_REFRESH_INTERVAL)
+        try:
+            from app.routers.oauth import refresh_oauth_token
+
+            result = await refresh_oauth_token()
+            if result.refreshed:
+                logger.info("Periodic token refresh: new expiry %s", result.expires_at)
+            elif result.error:
+                logger.warning("Periodic token refresh failed: %s", result.error)
+        except Exception:
+            logger.exception("Error in periodic token refresh")
 
 
 async def _periodic_stale_run_check() -> None:
@@ -114,15 +133,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # 5. Start periodic background tasks
     rescan_task = asyncio.create_task(_periodic_log_import())
     reaper_task = asyncio.create_task(_periodic_stale_run_check())
+    token_task = asyncio.create_task(_periodic_token_refresh())
     logger.info("Started periodic log rescan (every %ds)", LOG_RESCAN_INTERVAL)
     logger.info("Started stale run reaper (every %ds)", STALE_RUN_CHECK_INTERVAL)
+    logger.info("Started periodic token refresh (every %ds)", TOKEN_REFRESH_INTERVAL)
 
     yield
 
     # Cancel background tasks on shutdown
     rescan_task.cancel()
     reaper_task.cancel()
-    for task in (rescan_task, reaper_task):
+    token_task.cancel()
+    for task in (rescan_task, reaper_task, token_task):
         with suppress(asyncio.CancelledError):
             await task
     logger.info("Shutting down dashboard backend")

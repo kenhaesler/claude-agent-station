@@ -57,6 +57,8 @@ export interface Run {
   trace_id: string | null;
   employee_index: number | null;
   concurrent_group_id: string | null;
+  team_name: string | null;
+  team_members: string | null;  // JSON
 }
 
 export interface RunList {
@@ -75,7 +77,10 @@ export interface ActiveEmployeeData {
   concurrent_group_id: string | null;
   model: string | null;
   branch: string | null;
+  team_name: string | null;
 }
+
+export type ActiveTeammateData = ActiveEmployeeData;
 
 export interface Plan {
   id: number;
@@ -118,6 +123,8 @@ export interface AuthStatus {
   logged_in: boolean;
   expired: boolean;
   expires_at: string | null;
+  remaining_seconds?: number;
+  auto_refresh_available?: boolean;
   error?: string;
 }
 
@@ -242,6 +249,7 @@ export interface AgentEvent {
   event_type: string;
   event_data: string;
   parent_event_id: number | null;
+  team_name: string | null;
   created_at: string | null;
 }
 
@@ -413,6 +421,9 @@ export interface CoordinatorTask {
   result_summary: string | null;
   log_path: string | null;
   branch: string | null;
+  teammate_agent_id: string | null;
+  claimed_by: string | null;
+  claimed_at: string | null;
   created_at: string | null;
   started_at: string | null;
   finished_at: string | null;
@@ -472,6 +483,29 @@ export interface DailyRunCount {
   failed: number;
 }
 
+// --- Agent Teams ---
+
+export interface TeammateStatus {
+  agent_id: string;
+  name: string;
+  task_id: string | null;
+  issue_number: number | null;
+  status: string;  // spawned, planning, implementing, completed, stuck
+  turns_used: number;
+  tokens_used: number;
+  files_touched: string[];
+}
+
+export interface TeamSummary {
+  team_name: string;
+  lead_agent_id: string | null;
+  teammates: TeammateStatus[];
+  tasks_total: number;
+  tasks_completed: number;
+  tasks_in_progress: number;
+  conflicts: string[];
+}
+
 /** Unified run context returned by GET /api/runs/{id}/full */
 export interface RunFullContext {
   run: Run;
@@ -481,6 +515,7 @@ export interface RunFullContext {
   plan: Plan | null;
   project_repo: string | null;
   intelligence_decisions: AgentEvent[];
+  team_summary: TeamSummary | null;
 }
 
 // --- Intelligence ---
