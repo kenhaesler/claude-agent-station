@@ -1,4 +1,4 @@
-import type { Project, ProjectCreate, ProjectUpdate, Run, RunList, RunFullContext, ActiveEmployeeData, Plan, PlanList, SystemStatus, AuthStatus, LogSearchResult, RunLogs, UsageData, TokenUsageData, PlanUsageData, OAuthStartResponse, OAuthCallbackResponse, GitHubDeviceStartResponse, GitHubDevicePollResponse, GitHubOAuthStatusResponse, CoordinatorTask, CoordinatorTaskDetail, CoordinatorDAG, CoordinatorMessage, AnalyticsData, DiffResult, QueueItem, QueueItemList, QueueStats, IntelligenceInsights, IntelligenceDecision, BackpressureStatus, BrainstormSession, BrainstormSessionDetail, IntegrationStatus, IntegrationFeature, IntegrationFeatureList, SprintStatus, SprintFindings, SprintSummary } from './types';
+import type { Project, ProjectCreate, ProjectUpdate, Run, RunList, RunFullContext, ActiveEmployeeData, Plan, PlanList, SystemStatus, AuthStatus, LogSearchResult, RunLogs, UsageData, TokenUsageData, PlanUsageData, OAuthStartResponse, OAuthCallbackResponse, GitHubDeviceStartResponse, GitHubDevicePollResponse, GitHubOAuthStatusResponse, CoordinatorTask, CoordinatorTaskDetail, CoordinatorDAG, CoordinatorMessage, AnalyticsData, DiffResult, QueueItem, QueueItemList, QueueStats, IntelligenceInsights, IntelligenceDecision, BackpressureStatus, BrainstormSession, BrainstormSessionDetail, IntegrationStatus, IntegrationFeature, IntegrationFeatureList, SprintStatus, SprintFindings, SprintSummary, AgentEvent } from './types';
 
 const BASE = import.meta.env.VITE_API_URL || '';
 
@@ -315,6 +315,36 @@ export function streamBrainstormMessage(
 
   return controller;
 }
+
+// Queue management
+export const purgeQueue = (maxAgeDays?: number) => {
+  const q = new URLSearchParams();
+  if (maxAgeDays) q.set('max_age_days', String(maxAgeDays));
+  return request<{ purged: number }>(`/api/queue/purge?${q}`, { method: 'POST' });
+};
+export const batchPauseQueue = (runId: string) =>
+  request<{ status: string; paused: number }>('/api/queue/batch-pause', {
+    method: 'POST', body: JSON.stringify({ run_id: runId }),
+  });
+
+// Active teammates
+export const getActiveTeammates = () => request<ActiveEmployeeData[]>('/api/runs/active-teammates');
+
+// Agent events
+export const getAgentEvents = (params?: { event_type?: string; agent_id?: string; run_id?: string; limit?: number }) => {
+  const q = new URLSearchParams();
+  if (params?.event_type) q.set('event_type', params.event_type);
+  if (params?.agent_id) q.set('agent_id', params.agent_id);
+  if (params?.run_id) q.set('run_id', params.run_id);
+  if (params?.limit) q.set('limit', String(params.limit));
+  return request<AgentEvent[]>(`/api/agent-events?${q}`);
+};
+export const getAgentEventStats = () =>
+  request<{ by_type: Record<string, number>; total: number }>('/api/agent-events/stats/summary');
+
+// OAuth refresh
+export const refreshOAuthToken = () =>
+  request<{ refreshed: boolean; error?: string; expires_at?: string }>('/api/oauth/refresh', { method: 'POST' });
 
 // Integration Branch
 export const getIntegrationStatus = (repo: string) =>

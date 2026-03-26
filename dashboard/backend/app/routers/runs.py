@@ -16,6 +16,7 @@ from app.dependencies import get_db
 from app.models import AgentEvent, CoordinatorMessage, CoordinatorTask, Plan, Project, QueueItem, Run
 from app.schemas import (
     ActiveEmployeeOut,
+    ActiveTeammateOut,
     AgentEventOut,
     CoordinatorMessageOut,
     CoordinatorTaskOut,
@@ -24,6 +25,8 @@ from app.schemas import (
     RunFullContext,
     RunList,
     RunOut,
+    TeamSummary,
+    TeammateStatus,
 )
 from app.services.diff_parser import DiffResult, parse_unified_diff
 from app.services.log_importer import import_historical_runs
@@ -139,6 +142,12 @@ async def get_active_employees(db: AsyncSession = Depends(get_db)):
     return employees
 
 
+@router.get("/active-teammates", response_model=list[ActiveTeammateOut])
+async def get_active_teammates(db: AsyncSession = Depends(get_db)):
+    """Alias for active-employees using Agent Teams terminology."""
+    return await get_active_employees(db)
+
+
 @router.get("/latest", response_model=Optional[RunOut])
 async def get_latest_run(db: AsyncSession = Depends(get_db)):
     result = await db.execute(
@@ -219,6 +228,33 @@ async def get_run_full_context(run_id: str, db: AsyncSession = Depends(get_db)):
     )
     intel_events = intel_result.scalars().all()
 
+    # Build team summary if this is an Agent Teams run
+    team_summary = None
+    if run.team_name:
+        import json as _json
+        members_raw = _json.loads(run.team_members) if run.team_members else []
+        teammates = [
+            TeammateStatus(
+                agent_id=m.get("agent_id", ""),
+                name=m.get("name", ""),
+                task_id=m.get("task_id"),
+                issue_number=m.get("issue_number"),
+                status=m.get("status", "spawned"),
+                turns_used=m.get("turns_used", 0),
+                tokens_used=m.get("tokens_used", 0),
+            )
+            for m in members_raw
+        ]
+        completed = sum(1 for t in tasks if t.status == "completed")
+        in_progress = sum(1 for t in tasks if t.status in ("running", "in_progress"))
+        team_summary = TeamSummary(
+            team_name=run.team_name,
+            teammates=teammates,
+            tasks_total=len(tasks),
+            tasks_completed=completed,
+            tasks_in_progress=in_progress,
+        )
+
     return RunFullContext(
         run=RunOut.model_validate(run),
         coordinator_tasks=[CoordinatorTaskOut.model_validate(t) for t in tasks],
@@ -227,6 +263,7 @@ async def get_run_full_context(run_id: str, db: AsyncSession = Depends(get_db)):
         plan=PlanOut.model_validate(plan) if plan else None,
         project_repo=project_repo,
         intelligence_decisions=[AgentEventOut.model_validate(e) for e in intel_events],
+        team_summary=team_summary,
     )
 
 

@@ -32,6 +32,28 @@
   --color-agent-planner: oklch(0.65 0.17 160);
   --color-agent-assigner: oklch(0.60 0.19 15);
 
+  /* Queue state colors */
+  --color-queue-pending: oklch(0.55 0.08 250);
+  --color-queue-assigned: oklch(0.60 0.12 220);
+  --color-queue-active: oklch(0.70 0.17 80);
+  --color-queue-review: oklch(0.65 0.18 300);
+  --color-queue-completed: oklch(0.72 0.17 155);
+  --color-queue-failed: oklch(0.63 0.2 25);
+
+  /* Backpressure levels */
+  --color-bp-green: oklch(0.72 0.17 155);
+  --color-bp-yellow: oklch(0.75 0.15 80);
+  --color-bp-red: oklch(0.63 0.2 25);
+  --color-bp-black: oklch(0.30 0.05 0);
+
+  /* Chart palette */
+  --color-chart-1: oklch(0.62 0.17 260);
+  --color-chart-2: oklch(0.65 0.18 300);
+  --color-chart-3: oklch(0.72 0.17 155);
+  --color-chart-4: oklch(0.75 0.15 80);
+  --color-chart-5: oklch(0.63 0.2 25);
+  --color-chart-6: oklch(0.60 0.19 15);
+
   /* Elevated surfaces */
   --color-surface-raised: oklch(0.20 0.005 260);
   --color-surface-overlay: oklch(0.14 0.006 260);
@@ -71,6 +93,7 @@
 
   /* Layout */
   --spacing-rail: 56px;
+  --spacing-header: 48px;
   --spacing-panel: 400px;
 }
 
@@ -119,6 +142,11 @@ body {
   border: 1px solid var(--color-border);
 }
 
+.glass-raised {
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border);
+}
+
 /* Monospace data values */
 .font-data {
   font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', ui-monospace, monospace;
@@ -131,14 +159,13 @@ body {
 
 /* Keyframe animations */
 @keyframes fade-in-up {
-  from {
-    opacity: 0;
-    transform: translateY(12px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 @keyframes spin-slow {
@@ -147,34 +174,18 @@ body {
 }
 
 @keyframes slide-in-right {
-  from {
-    opacity: 0;
-    transform: translateX(20px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
+  from { opacity: 0; transform: translateX(20px); }
+  to { opacity: 1; transform: translateX(0); }
 }
 
 @keyframes slide-in-left {
-  from {
-    opacity: 0;
-    transform: translateX(-12px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
+  from { opacity: 0; transform: translateX(-12px); }
+  to { opacity: 1; transform: translateX(0); }
 }
 
 @keyframes highlight-fade {
-  from {
-    background: var(--color-surface-2);
-  }
-  to {
-    background: transparent;
-  }
+  from { background: var(--color-surface-2); }
+  to { background: transparent; }
 }
 
 @keyframes panel-slide-in {
@@ -192,13 +203,31 @@ body {
   50% { opacity: 1; transform: scale(1.3); }
 }
 
+@keyframes pulse-ring {
+  0% { opacity: 0.6; transform: scale(1); }
+  100% { opacity: 0; transform: scale(2); }
+}
+
+@keyframes dash-flow {
+  from { stroke-dashoffset: 20; }
+  to { stroke-dashoffset: 0; }
+}
+
 /* Animation utilities */
 .animate-fade-in-up {
-  animation: fade-in-up 0.4s ease-out both;
+  animation: fade-in-up 0.4s var(--ease-out) both;
+}
+
+.animate-fade-in {
+  animation: fade-in 0.3s ease-out both;
 }
 
 .animate-slide-in-right {
-  animation: slide-in-right 0.25s ease-out both;
+  animation: slide-in-right 0.25s var(--ease-out) both;
+}
+
+.animate-slide-in-left {
+  animation: slide-in-left 0.25s var(--ease-out) both;
 }
 
 /* Staggered entrance delays */
@@ -207,6 +236,7 @@ body {
 .stagger-3 { animation-delay: 0.15s; }
 .stagger-4 { animation-delay: 0.2s; }
 .stagger-5 { animation-delay: 0.25s; }
+.stagger-6 { animation-delay: 0.3s; }
 
 /* Live activity feed animations */
 .activity-enter {
@@ -220,7 +250,7 @@ body {
 
 /* Agent panel */
 .agent-panel-enter {
-  animation: panel-slide-in 0.25s ease-out both;
+  animation: panel-slide-in 0.25s var(--ease-out) both;
 }
 
 /* Focus ring */
@@ -247,14 +277,14 @@ body {
   top: 0.5rem;
 }
 
-/* Z-layer system for Cortex backdrop */
+/* Z-layer system */
 .z-cortex { z-index: 0; }
 .z-content { z-index: 1; }
 .z-nav { z-index: 40; }
 .z-overlay { z-index: 50; }
 .z-modal { z-index: 999; }
 
-/* Cortex content overlay gradient (theme-aware via color-mix) */
+/* Cortex content overlay gradient */
 .cortex-overlay {
   background: linear-gradient(
     to bottom,
@@ -263,7 +293,6 @@ body {
   );
 }
 
-/* Cortex-transparent overlay for pulse/command page */
 .cortex-overlay-transparent {
   background: linear-gradient(
     to bottom,
@@ -272,12 +301,32 @@ body {
   );
 }
 
+/* DAG edge animation */
+.dag-edge-active {
+  stroke-dasharray: 6 4;
+  animation: dash-flow 0.6s linear infinite;
+}
+
+/* Kanban card drag */
+.drag-ghost {
+  opacity: 0.5;
+  transform: rotate(2deg);
+}
+
+/* Selection highlight for keyboard navigation */
+.kb-selected {
+  box-shadow: inset 0 0 0 2px var(--color-focus);
+}
+
 /* Reduced motion */
 @media (prefers-reduced-motion: reduce) {
   .animate-fade-in-up,
+  .animate-fade-in,
   .animate-slide-in-right,
+  .animate-slide-in-left,
   .activity-enter,
-  .agent-panel-enter {
+  .agent-panel-enter,
+  .dag-edge-active {
     animation: none;
   }
 }

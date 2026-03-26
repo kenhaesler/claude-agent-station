@@ -336,6 +336,43 @@ async def receive_run_event(
             run.project_id = project_id
         run.trace_id = event.trace_id or run.trace_id
 
+    # Agent Teams: progress updates (tokens/turns only, no status change)
+    if run and event_name == "progress_update":
+        if event.tokens_input is not None:
+            run.tokens_input = event.tokens_input
+        if event.tokens_output is not None:
+            run.tokens_output = event.tokens_output
+        if event.tokens_total is not None:
+            run.tokens_total = event.tokens_total
+        if event.turns is not None:
+            run.turns = event.turns
+
+    # Agent Teams: teammate completed — update team_members JSON
+    if run and event_name == "teammate_completed" and event.task_id:
+        import json as _json2
+        members = _json2.loads(run.team_members) if run.team_members else []
+        for m in members:
+            if m.get("task_id") == event.task_id:
+                m["status"] = event.status or "completed"
+                m["tokens_used"] = event.tokens_total or 0
+                break
+        run.team_members = _json2.dumps(members)
+
+    # Agent Teams: update team fields on run if present
+    if run and event.team_name:
+        run.team_name = event.team_name
+    if run and event.agent_name and event_name in ("teammate_spawned", "team_created"):
+        # Accumulate team members as JSON array
+        import json as _json
+        members = _json.loads(run.team_members) if run.team_members else []
+        if event.agent_id and not any(m.get("agent_id") == event.agent_id for m in members):
+            members.append({
+                "agent_id": event.agent_id or "",
+                "name": event.agent_name or "",
+                "status": "spawned",
+            })
+            run.team_members = _json.dumps(members)
+
     await db.commit()
     logger.info("Processed webhook event: %s (normalized: %s) for %s", event.event, event_name, event.run_id)
 
@@ -358,6 +395,13 @@ async def receive_run_event(
             "model": event.model,
             "employee_index": event.employee_index,
             "concurrent_group_id": event.concurrent_group_id,
+            "team_name": event.team_name,
+            "agent_id": event.agent_id,
+            "agent_name": event.agent_name,
+            "tokens_input": event.tokens_input,
+            "tokens_output": event.tokens_output,
+            "tokens_total": event.tokens_total,
+            "turns": event.turns,
         },
     })
 
@@ -437,6 +481,16 @@ def _normalize_event_name(event_name: str) -> str:
         "queue_completed": "queue_completed",
         "queue_paused": "queue_paused",
         "queue_failed": "queue_failed",
+        # Agent Teams orchestrator events
+        "orchestrator_start": "started",
+        "orchestrator_complete": "finished",
+        "orchestrator_error": "finished",
+        "team_created": "team_created",
+        "teammate_spawned": "teammate_spawned",
+        "task_claimed": "task_claimed",
+        "teammate_completed": "teammate_completed",
+        "team_cleanup": "team_cleanup",
+        "progress_update": "progress_update",
     }
     return mapping.get(event_name, event_name)
 

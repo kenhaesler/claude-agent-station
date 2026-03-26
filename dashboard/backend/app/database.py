@@ -71,6 +71,13 @@ async def _migrate_add_columns(conn) -> None:
         # Self-healing learning loop columns (Phase 4)
         ("task_outcomes", "analyst_role", "ALTER TABLE task_outcomes ADD COLUMN analyst_role TEXT"),
         ("task_outcomes", "validation_passed", "ALTER TABLE task_outcomes ADD COLUMN validation_passed BOOLEAN"),
+        # Agent Teams migration (multi-employee coordination overhaul)
+        ("runs", "team_name", "ALTER TABLE runs ADD COLUMN team_name TEXT"),
+        ("runs", "team_members", "ALTER TABLE runs ADD COLUMN team_members TEXT"),
+        ("coordinator_tasks", "teammate_agent_id", "ALTER TABLE coordinator_tasks ADD COLUMN teammate_agent_id TEXT"),
+        ("coordinator_tasks", "claimed_by", "ALTER TABLE coordinator_tasks ADD COLUMN claimed_by TEXT"),
+        ("coordinator_tasks", "claimed_at", "ALTER TABLE coordinator_tasks ADD COLUMN claimed_at DATETIME"),
+        ("agent_events", "team_name", "ALTER TABLE agent_events ADD COLUMN team_name TEXT"),
     ]
     for table, column, sql in migrations:
         try:

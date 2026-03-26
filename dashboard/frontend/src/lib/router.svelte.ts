@@ -1,4 +1,22 @@
-type Page = 'command' | 'stream' | 'stream-detail' | 'decide' | 'decide-detail' | 'config' | 'brainstorm' | 'brainstorm-session' | 'agents' | 'agent-detail' | 'analytics' | 'integration';
+/**
+ * Client-side router — History API based.
+ * Mission Control layout with Command Center home.
+ */
+
+type Page =
+  | 'command-center'      // Home overview (default)
+  | 'theater'             // Live agent visualization
+  | 'runs'                // Run history
+  | 'run-detail'          // Single run deep-dive
+  | 'queue'               // Queue Board (kanban)
+  | 'queue-detail'        // Single queue item
+  | 'intelligence'        // Analytics & Intelligence
+  | 'projects'            // Project Registry
+  | 'project-detail'      // Single project
+  | 'integration'         // Integration Branch Pipeline
+  | 'brainstorm'          // Brainstorm Sessions
+  | 'brainstorm-session'  // Single brainstorm session
+  | 'settings';           // System Configuration
 
 interface Route {
   page: Page;
@@ -7,24 +25,27 @@ interface Route {
 
 /** Map old routes to new equivalents */
 const REDIRECTS: Record<string, string> = {
-  '/': '/command',
-  '/dashboard': '/command',
-  '/runs': '/stream',
-  '/coordinator': '/stream',
-  '/queue': '/stream',
-  '/logs': '/stream',
-  '/plans': '/decide',
-  '/projects': '/config',
-  '/prompts': '/config',
-  '/settings': '/config',
-  '/system': '/config',
-  '/observatory': '/agents',
+  '/ops': '/',
+  '/command': '/',
+  '/dashboard': '/',
+  '/pulse': '/',
+  '/stream': '/runs',
+  '/coordinator': '/runs',
+  '/logs': '/runs',
+  '/decide': '/queue',
+  '/plans': '/queue',
+  '/config': '/settings',
+  '/prompts': '/settings',
+  '/system': '/settings',
+  '/observatory': '/theater',
+  '/agents': '/theater',
+  '/analytics': '/intelligence',
 };
 
 function parsePath(): Route {
   let path = window.location.pathname || '/';
 
-  // Handle legacy hash URLs — redirect to clean path
+  // Handle legacy hash URLs
   if (window.location.hash.startsWith('#/')) {
     const hashPath = window.location.hash.slice(1);
     history.replaceState({}, '', hashPath);
@@ -33,43 +54,54 @@ function parsePath(): Route {
 
   const parts = path.split('/').filter(Boolean);
 
-  if (parts.length === 0) return { page: 'command', param: null };
+  if (parts.length === 0) return { page: 'command-center', param: null };
 
   const raw = parts[0];
 
-  // Handle old routes with params first
-  if (raw === 'runs' && parts.length > 1) {
-    navigate(`/stream/${parts[1]}`, true);
-    return { page: 'stream-detail', param: parts[1] };
+  // Parameterized routes first
+  if (raw === 'runs' && parts.length > 1) return { page: 'run-detail', param: parts[1] };
+  if (raw === 'stream' && parts.length > 1) {
+    navigate(`/runs/${parts[1]}`, true);
+    return { page: 'run-detail', param: parts[1] };
   }
+  if (raw === 'queue' && parts.length > 1) return { page: 'queue-detail', param: parts[1] };
   if (raw === 'plans' && parts.length > 1) {
-    navigate(`/decide/${parts[1]}`, true);
-    return { page: 'decide-detail', param: parts[1] };
+    navigate(`/queue/${parts[1]}`, true);
+    return { page: 'queue-detail', param: parts[1] };
   }
+  if (raw === 'decide' && parts.length > 1) {
+    navigate(`/queue/${parts[1]}`, true);
+    return { page: 'queue-detail', param: parts[1] };
+  }
+  if (raw === 'projects' && parts.length > 1) return { page: 'project-detail', param: parts[1] };
+  if (raw === 'brainstorm' && parts.length > 1) return { page: 'brainstorm-session', param: parts[1] };
+  if (raw === 'settings' && parts.length > 1) return { page: 'settings', param: parts[1] };
 
-  // Handle old route redirects (without params)
+  // Redirect old routes (without params)
   const redirect = REDIRECTS[`/${raw}`];
-  if (redirect && !['command', 'stream', 'decide', 'config', 'brainstorm', 'agents', 'analytics', 'integration'].includes(raw)) {
+  if (redirect) {
     navigate(redirect, true);
-    return { page: redirect.slice(1) as Page, param: null };
+    const rParts = redirect.split('/').filter(Boolean);
+    if (rParts.length === 0) return { page: 'command-center', param: null };
+    return { page: rParts[0] as Page, param: null };
   }
 
   // New routes
-  if (raw === 'command') return { page: 'command', param: null };
-  if (raw === 'stream' && parts.length > 1) return { page: 'stream-detail', param: parts[1] };
-  if (raw === 'stream') return { page: 'stream', param: null };
-  if (raw === 'decide' && parts.length > 1) return { page: 'decide-detail', param: parts[1] };
-  if (raw === 'decide') return { page: 'decide', param: null };
-  if (raw === 'config') return { page: 'config', param: parts[1] ?? null };
-  if (raw === 'brainstorm' && parts.length > 1) return { page: 'brainstorm-session', param: parts[1] };
-  if (raw === 'brainstorm') return { page: 'brainstorm', param: null };
-  if (raw === 'agents' && parts.length > 1) return { page: 'agent-detail', param: parts[1] };
-  if (raw === 'agents') return { page: 'agents', param: null };
-  if (raw === 'analytics') return { page: 'analytics', param: null };
-  if (raw === 'integration') return { page: 'integration', param: null };
+  const routeMap: Record<string, Page> = {
+    theater: 'theater',
+    runs: 'runs',
+    queue: 'queue',
+    intelligence: 'intelligence',
+    projects: 'projects',
+    integration: 'integration',
+    brainstorm: 'brainstorm',
+    settings: 'settings',
+  };
+
+  if (routeMap[raw]) return { page: routeMap[raw], param: null };
 
   // Fallback
-  return { page: 'command', param: null };
+  return { page: 'command-center', param: null };
 }
 
 export let route = $state<Route>(parsePath());
@@ -101,18 +133,35 @@ export function navigate(path: string, replace = false) {
 
 /**
  * Click handler for <a> tags — intercepts navigation to use History API.
- * Use on the root element to handle all internal links.
  */
 export function handleLinkClick(e: MouseEvent) {
   const target = (e.target as HTMLElement).closest('a');
   if (!target) return;
   const href = target.getAttribute('href');
   if (!href) return;
-  // Skip external links, anchors, and special protocols
   if (href.startsWith('http') || href.startsWith('//') || href.startsWith('mailto:') || href.startsWith('#')) return;
-  // Skip links with target="_blank"
   if (target.getAttribute('target') === '_blank') return;
   if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
   e.preventDefault();
   navigate(href);
+}
+
+/** Get page display name */
+export function getPageTitle(page: Page): string {
+  const titles: Record<Page, string> = {
+    'command-center': 'Command Center',
+    'theater': 'Agent Theater',
+    'runs': 'Runs',
+    'run-detail': 'Run Detail',
+    'queue': 'Queue Board',
+    'queue-detail': 'Queue Item',
+    'intelligence': 'Intelligence Hub',
+    'projects': 'Projects',
+    'project-detail': 'Project',
+    'integration': 'Integration',
+    'brainstorm': 'Brainstorm',
+    'brainstorm-session': 'Brainstorm',
+    'settings': 'Settings',
+  };
+  return titles[page] ?? 'Claude Station';
 }

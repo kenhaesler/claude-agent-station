@@ -72,6 +72,9 @@ class RunOut(BaseModel):
     employee_index: int | None = None
     trace_id: str | None = None
     concurrent_group_id: str | None = None
+    # Agent Teams fields
+    team_name: str | None = None
+    team_members: str | None = None  # JSON
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -82,7 +85,9 @@ class RunList(BaseModel):
 
 
 class ActiveEmployeeOut(BaseModel):
-    """A currently-running agent/employee for the workspace visualization."""
+    """A currently-running agent/employee for the workspace visualization.
+    Kept for backward compatibility — use ActiveTeammateOut for new code.
+    """
     run_id: str
     project_id: int | None = None
     mode: str
@@ -95,6 +100,33 @@ class ActiveEmployeeOut(BaseModel):
     branch: str | None = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+# Alias for Agent Teams terminology
+ActiveTeammateOut = ActiveEmployeeOut
+
+
+class TeammateStatus(BaseModel):
+    """Status of a single teammate in an Agent Teams run."""
+    agent_id: str
+    name: str
+    task_id: str | None = None
+    issue_number: int | None = None
+    status: str = "spawned"  # spawned/planning/implementing/completed/stuck
+    turns_used: int = 0
+    tokens_used: int = 0
+    files_touched: list[str] = []
+
+
+class TeamSummary(BaseModel):
+    """Summary of an Agent Teams run."""
+    team_name: str
+    lead_agent_id: str | None = None
+    teammates: list[TeammateStatus] = []
+    tasks_total: int = 0
+    tasks_completed: int = 0
+    tasks_in_progress: int = 0
+    conflicts: list[str] = []
 
 
 # --- Config ---
@@ -236,6 +268,11 @@ class WebhookRunEvent(BaseModel):
     # Guidance fields
     guidance_type: str | None = None
     guidance_content: str | None = None
+    # Agent Teams fields
+    team_name: str | None = None
+    agent_id: str | None = None
+    agent_name: str | None = None
+    member_count: int | None = None
 
 
 # --- Coordinator ---
@@ -258,6 +295,10 @@ class CoordinatorTaskOut(BaseModel):
     result_summary: str | None = None
     log_path: str | None = None
     branch: str | None = None
+    # Agent Teams fields
+    teammate_agent_id: str | None = None
+    claimed_by: str | None = None
+    claimed_at: datetime | None = None
     created_at: datetime | None = None
     started_at: datetime | None = None
     finished_at: datetime | None = None
@@ -442,6 +483,7 @@ class RunFullContext(BaseModel):
     plan: PlanOut | None = None
     project_repo: str | None = None
     intelligence_decisions: list[AgentEventOut] = []
+    team_summary: TeamSummary | None = None
 
 
 # --- Agent Events ---
@@ -453,6 +495,7 @@ class AgentEventCreate(BaseModel):
     event_type: str
     event_data: str  # JSON
     parent_event_id: int | None = None
+    team_name: str | None = None
 
 
 class AgentEventOut(BaseModel):
@@ -463,6 +506,7 @@ class AgentEventOut(BaseModel):
     event_type: str
     event_data: str
     parent_event_id: int | None = None
+    team_name: str | None = None
     created_at: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)

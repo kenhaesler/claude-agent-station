@@ -227,8 +227,7 @@ python -m pytest tests/ --cov=app --cov-report=term-missing
 
 | Component | Technology | Reason |
 |-----------|-----------|--------|
-| Agent orchestration | Bash + Claude CLI | Existing, proven, works |
-| Multi-employee coordinator | Python asyncio | Concurrent task scheduling |
+| Agent orchestration | Bash + Claude Agent SDK | Agent Teams for parallel work |
 | Backend API | Python 3.11+ / FastAPI | Async, auto-docs, lightweight |
 | Database | SQLite (WAL mode) | Zero config, sufficient for scale |
 | Frontend | Svelte 5 + Vite + TailwindCSS | Tiny bundle, no runtime |
@@ -237,3 +236,26 @@ python -m pytest tests/ --cov=app --cov-report=term-missing
 | CI/CD | GitHub Actions | pytest + ruff + frontend build |
 | Linting | ruff | Fast Python linter/formatter |
 | Testing | pytest + pytest-asyncio | 325+ tests, async support |
+
+---
+
+## Deployment Model
+
+### Hardlink Deployment
+
+The project uses two directory paths that point to the same underlying files:
+
+- `/opt/git/claude-agent-station/` — the git repository (used for development)
+- `/opt/claude-agent-station/` — the deployment path (referenced by systemd services)
+
+These are hardlinked, so changes in either path are immediately visible at the other.
+
+### Python Virtual Environment
+
+The venv at `<project-root>/venv/` (Python 3.12) is shared across both paths. Scripts reference it via relative paths:
+
+- `run-manager.sh`: `$agent_dir/../venv/bin/python3`
+- `station_orchestrator.py`: invoked via the same venv python
+- systemd dashboard service: `<project-root>/venv/bin/uvicorn`
+
+This resolution is consistent because the hardlink ensures both paths resolve to the same physical venv.

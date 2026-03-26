@@ -56,6 +56,9 @@ class Run(Base):
     trace_id = Column(Text, nullable=True)
     employee_index = Column(Integer, nullable=True, default=0)
     concurrent_group_id = Column(Text, nullable=True)
+    # Agent Teams fields
+    team_name = Column(Text, nullable=True)
+    team_members = Column(Text, nullable=True)  # JSON: [{agent_id, name, status}]
 
 
 class ConfigEntry(Base):
@@ -106,6 +109,10 @@ class CoordinatorTask(Base):
     log_path = Column(Text, nullable=True)  # Path to employee log file
     branch = Column(Text, nullable=True)  # Git branch used by the employee
     dag_json = Column(Text, nullable=True)  # Full DAG snapshot (on first task only)
+    # Agent Teams fields
+    teammate_agent_id = Column(Text, nullable=True)  # Agent Teams agent ID
+    claimed_by = Column(Text, nullable=True)  # Teammate name that claimed the task
+    claimed_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=_utcnow)
     started_at = Column(DateTime, nullable=True)
     finished_at = Column(DateTime, nullable=True)
@@ -200,8 +207,9 @@ class AgentEvent(Base):
     event_id = Column(Integer, primary_key=True)
     workflow_id = Column(Text, nullable=False, index=True)  # Groups events for one task
     run_id = Column(Text, nullable=True, index=True)
-    agent_id = Column(Text, nullable=False)  # "employee-0", "manager", "reviewer"
+    agent_id = Column(Text, nullable=False)  # "employee-0", "manager", "teammate-{name}"
     event_type = Column(Text, nullable=False, index=True)  # "task.claimed", "analysis.complete", etc.
+    team_name = Column(Text, nullable=True)  # Agent Teams team name
     event_data = Column(Text, nullable=False)  # JSON payload
     parent_event_id = Column(Integer, nullable=True)  # Causal chain
     created_at = Column(DateTime, default=_utcnow)

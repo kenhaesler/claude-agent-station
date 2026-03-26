@@ -3,6 +3,7 @@ from __future__ import annotations
 """System status, service control, and auth endpoints."""
 
 import json
+import logging
 import os
 from datetime import datetime, timezone
 
@@ -16,7 +17,12 @@ from app.services.systemd import (
     systemctl,
 )
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/system", tags=["system"])
+
+# Refresh the token if it expires within this many seconds
+_AUTH_REFRESH_THRESHOLD = 3600  # 1 hour — matches oauth.REFRESH_THRESHOLD_SECONDS
 
 
 @router.get("/status")
@@ -57,6 +63,9 @@ async def auth_status():
 
     Returns remaining seconds until expiry and whether auto-refresh is
     available (i.e. a refresh token exists in the credentials).
+
+    Automatically triggers a token refresh when the token is expired or
+    within the refresh threshold, so the dashboard never shows stale auth.
     """
     creds_path = settings.credentials_path
     if not os.path.exists(creds_path):
@@ -75,9 +84,27 @@ async def auth_status():
         # expiresAt is epoch milliseconds
         expires_dt = datetime.fromtimestamp(expires_at / 1000, tz=timezone.utc)
         now = datetime.now(timezone.utc)
-        expired = now > expires_dt
         remaining_seconds = max(0, int((expires_dt - now).total_seconds()))
         has_refresh_token = bool(oauth.get("refreshToken"))
+
+        # Auto-refresh if expired or near-expiry and a refresh token exists
+        if remaining_seconds <= _AUTH_REFRESH_THRESHOLD and has_refresh_token:
+            try:
+                from app.routers.oauth import refresh_oauth_token
+
+                result = await refresh_oauth_token()
+                if result.refreshed and result.expires_at:
+                    # Re-read the updated values
+                    expires_dt = datetime.fromisoformat(result.expires_at)
+                    now = datetime.now(timezone.utc)
+                    remaining_seconds = max(0, int((expires_dt - now).total_seconds()))
+                    logger.info("Auto-refreshed OAuth token, new expiry: %s", result.expires_at)
+                elif result.error:
+                    logger.warning("Auto-refresh failed: %s", result.error)
+            except Exception as e:
+                logger.warning("Auto-refresh attempt failed: %s", e)
+
+        expired = remaining_seconds == 0
 
         return {
             "logged_in": True,

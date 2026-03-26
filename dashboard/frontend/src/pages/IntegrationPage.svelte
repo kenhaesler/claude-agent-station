@@ -1,102 +1,108 @@
 <script lang="ts">
-  import { listProjects } from '../lib/api';
-  import type { Project } from '../lib/types';
-  import GlassCard from '../components/GlassCard.svelte';
-  import IntegrationPanel from '../components/IntegrationPanel.svelte';
-  import LoadingSpinner from '../components/LoadingSpinner.svelte';
-  import EmptyState from '../components/EmptyState.svelte';
+  import { listProjects, getIntegrationStatus, getIntegrationFeatures } from '../lib/api';
+  import type { Project, IntegrationStatus, IntegrationFeature } from '../lib/types';
 
   let projects = $state<Project[]>([]);
-  let selectedRepo = $state<string>('');
-  let loading = $state(true);
-
-  async function loadProjects() {
-    try {
-      const res = await listProjects();
-      projects = res.filter(p => p.enabled);
-      // Auto-select first project if none selected
-      if (!selectedRepo && projects.length > 0) {
-        selectedRepo = projects[0].repo;
-      }
-    } catch { /* silent */ }
-    loading = false;
-  }
+  let selectedRepo = $state('');
+  let status = $state<IntegrationStatus | null>(null);
+  let features = $state<IntegrationFeature[]>([]);
 
   $effect(() => {
     loadProjects();
   });
+
+  async function loadProjects() {
+    try { projects = await listProjects(); } catch { /* silent */ }
+  }
+
+  $effect(() => {
+    if (selectedRepo) loadIntegration(selectedRepo);
+  });
+
+  async function loadIntegration(repo: string) {
+    const [sRes, fRes] = await Promise.allSettled([
+      getIntegrationStatus(repo),
+      getIntegrationFeatures({ project_repo: repo }),
+    ]);
+    if (sRes.status === 'fulfilled') status = sRes.value;
+    if (fRes.status === 'fulfilled') features = fRes.value.items;
+  }
+
+  const stateColors: Record<string, string> = {
+    merged_to_dev: 'text-info',
+    validated: 'text-approve',
+    excluded: 'text-text-muted',
+    validation_failed: 'text-reject',
+    conflict: 'text-warning',
+  };
 </script>
 
 <div class="space-y-4 animate-fade-in-up">
-  <!-- Page Header -->
-  <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-    <div>
-      <h1 class="text-lg font-semibold text-text">Integration Branch</h1>
-      <p class="text-xs text-text-muted mt-0.5">Feature pipeline from dev to main</p>
-    </div>
-
-    <!-- Project Selector -->
-    {#if projects.length > 0}
-      <select
-        bind:value={selectedRepo}
-        class="px-3 py-1.5 text-xs font-medium bg-surface border border-border rounded-lg text-text focus:outline-none focus:border-info transition-colors appearance-none cursor-pointer"
-      >
-        {#each projects as project (project.id)}
-          <option value={project.repo}>{project.repo}</option>
-        {/each}
-      </select>
-    {/if}
+  <div class="flex items-center justify-between">
+    <h1 class="text-lg font-semibold text-text">Integration Pipeline</h1>
+    <select
+      bind:value={selectedRepo}
+      class="bg-surface text-text-dim text-xs px-3 py-1.5 rounded border border-border-subtle focus:border-focus outline-none"
+    >
+      <option value="">Select project...</option>
+      {#each projects as p}
+        <option value={p.repo}>{p.repo}</option>
+      {/each}
+    </select>
   </div>
 
-  <!-- Main Content -->
-  {#if loading}
-    <div class="flex items-center justify-center py-16">
-      <LoadingSpinner />
+  {#if status}
+    <!-- Status overview -->
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div class="glass rounded-lg px-4 py-3">
+        <div class="text-[10px] text-text-muted uppercase">Features</div>
+        <div class="text-xl font-semibold text-text data-readout">{status.feature_count}</div>
+      </div>
+      <div class="glass rounded-lg px-4 py-3">
+        <div class="text-[10px] text-text-muted uppercase">Validated</div>
+        <div class="text-xl font-semibold text-approve data-readout">{status.validated_count}</div>
+      </div>
+      <div class="glass rounded-lg px-4 py-3">
+        <div class="text-[10px] text-text-muted uppercase">Conflicts</div>
+        <div class="text-xl font-semibold data-readout {status.conflict_count > 0 ? 'text-warning' : 'text-text-dim'}">{status.conflict_count}</div>
+      </div>
+      <div class="glass rounded-lg px-4 py-3">
+        <div class="text-[10px] text-text-muted uppercase">Dev Branch</div>
+        <div class="text-sm text-text-dim font-mono truncate">{status.dev_branch}</div>
+      </div>
     </div>
-  {:else if projects.length === 0}
-    <EmptyState message="No enabled projects found" />
-  {:else}
-    <IntegrationPanel projectRepo={selectedRepo} />
   {/if}
 
-  <!-- Integration Stats -->
-  {#if selectedRepo && !loading}
-    <GlassCard class="p-4">
-      <h2 class="text-sm font-semibold text-text mb-3">Pipeline Overview</h2>
-      <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div class="text-center">
-          <div class="text-2xl font-bold font-data text-info">
-            <svg class="w-5 h-5 mx-auto mb-1 text-info" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M10 3v14M6 7l4-4 4 4" />
-            </svg>
-          </div>
-          <p class="text-[10px] text-text-muted">Features merge to dev branch</p>
-        </div>
-        <div class="text-center">
-          <div class="text-2xl font-bold font-data text-approve">
-            <svg class="w-5 h-5 mx-auto mb-1 text-approve" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M5 10l3 3 7-7" />
-            </svg>
-          </div>
-          <p class="text-[10px] text-text-muted">Tests & validation run on dev</p>
-        </div>
-        <div class="text-center">
-          <div class="text-2xl font-bold font-data text-warning">
-            <svg class="w-5 h-5 mx-auto mb-1 text-warning" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M3 10h14M13 6l4 4-4 4" />
-            </svg>
-          </div>
-          <p class="text-[10px] text-text-muted">Validated features promote to main</p>
-        </div>
-        <div class="text-center">
-          <div class="text-2xl font-bold font-data text-accent-purple">
-            <svg class="w-5 h-5 mx-auto mb-1 text-accent-purple" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M6 3h8l3 4-7 10-7-10z" />
-            </svg>
-          </div>
-          <p class="text-[10px] text-text-muted">Stable code lands on main branch</p>
-        </div>
-      </div>
-    </GlassCard>
+  <!-- Feature list -->
+  {#if features.length > 0}
+    <div class="glass rounded-lg overflow-hidden">
+      <table class="w-full text-xs">
+        <thead>
+          <tr class="border-b border-border-subtle text-text-muted">
+            <th class="px-4 py-2 text-left">Issue</th>
+            <th class="px-4 py-2 text-left">Branch</th>
+            <th class="px-4 py-2 text-left">State</th>
+            <th class="px-4 py-2 text-left">Validation</th>
+          </tr>
+        </thead>
+        <tbody>
+          {#each features as feature}
+            <tr class="border-b border-border-subtle/50">
+              <td class="px-4 py-2 text-text">
+                {#if feature.issue_number}<span class="text-info">#{feature.issue_number}</span>{/if}
+                {feature.issue_title ?? ''}
+              </td>
+              <td class="px-4 py-2 text-text-dim font-mono">{feature.branch}</td>
+              <td class="px-4 py-2 {stateColors[feature.state] ?? 'text-text-dim'} capitalize">{feature.state.replace(/_/g, ' ')}</td>
+              <td class="px-4 py-2 text-text-dim">{feature.validation_status ?? '-'}</td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    </div>
+  {:else if selectedRepo}
+    <div class="text-sm text-text-muted text-center py-8">No features in integration pipeline</div>
+  {:else}
+    <div class="text-sm text-text-muted text-center py-12">Select a project to view its integration pipeline</div>
   {/if}
 </div>

@@ -3,7 +3,7 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 dist/
-venv/
+venv*/
 .venv/
 
 # Node
@@ -37,6 +37,9 @@ agent/config/station-config.json
 
 # Custom prompt overrides (user-specific, managed via dashboard)
 agent/prompts/custom/
+
+# Analysis output (ephemeral diagnostic reports)
+analysis/
 
 # Secrets
 credentials.json
