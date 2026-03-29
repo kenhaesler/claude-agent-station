@@ -31,6 +31,12 @@ DIGEST_DIR=""
 WORKSPACES_DIR="${STATION_WORKSPACES:-/home/claude-agent/workspaces}"
 DRY_RUN=false
 
+# Token accumulation across all employees + manager
+_TOTAL_TOKENS_IN=0
+_TOTAL_TOKENS_OUT=0
+_TOTAL_TURNS=0
+_RUN_START_EPOCH=0
+
 # Tool permissions - UNRESTRICTED
 # This agent runs on a dedicated disposable VM. No tool restrictions needed.
 # Behavioral guardrails (no push, no source edits in analyze mode) are enforced
@@ -140,7 +146,7 @@ webhook_event() {
         -H "Content-Type: application/json" \
         "${auth_header[@]}" \
         -d "{\"event\":\"$event\",\"run_id\":\"run-$RUN_ID\",\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",${payload}}" \
-        2>/dev/null || true
+        >/dev/null 2>/dev/null || true
 }
 
 queue_api() {
@@ -293,7 +299,9 @@ _send_run_complete_on_exit() {
         local status="error"
         [ $exit_code -eq 0 ] && status="completed"
         [ $exit_code -eq 130 ] && status="interrupted"
-        webhook_event "run_complete" "\"status\":\"$status\",\"exit_code\":$exit_code" || true
+        local _duration_ms=0
+        [ "$_RUN_START_EPOCH" -gt 0 ] && _duration_ms=$(( ($(date +%s) - _RUN_START_EPOCH) * 1000 ))
+        webhook_event "run_complete" "\"status\":\"$status\",\"exit_code\":$exit_code,\"tokens_input\":$_TOTAL_TOKENS_IN,\"tokens_output\":$_TOTAL_TOKENS_OUT,\"tokens_total\":$((_TOTAL_TOKENS_IN + _TOTAL_TOKENS_OUT)),\"turns\":$_TOTAL_TURNS,\"duration_ms\":$_duration_ms" || true
         _RUN_COMPLETE_SENT=1
     fi
 }
@@ -433,6 +441,29 @@ os.makedirs(os.path.dirname(tracking_file), exist_ok=True)
 with open(tracking_file, 'w') as f:
     json.dump(state, f, indent=2)
 " 2>/dev/null || true
+}
+
+# Extract token usage from a Claude stream JSONL file
+# Outputs: tokens_in tokens_out tokens_total turns
+extract_stream_tokens() {
+    local stream_file="$1"
+    if [ ! -f "$stream_file" ]; then
+        echo "0 0 0 0"
+        return
+    fi
+    python3 -c "
+import json
+ti=to=turns=0
+for line in open('$stream_file'):
+    try:
+        d=json.loads(line)
+        if d.get('type')=='result':
+            for u in d.get('modelUsage',{}).values():
+                ti+=u.get('inputTokens',0); to+=u.get('outputTokens',0)
+            turns=d.get('num_turns',0)
+    except: pass
+print(f'{ti} {to} {ti+to} {turns}')
+" 2>/dev/null || echo "0 0 0 0"
 }
 
 # check_rate_limit() removed — unified into check_rate_limit() which queries
@@ -1292,6 +1323,17 @@ $custom_instructions"
 
     cd "$workspace"
 
+    # Safety: if employee prompt exceeds 1MB, write to file to avoid ARG_MAX crash
+    local prompt_len=${#employee_prompt}
+    if [ "$prompt_len" -gt 1048576 ]; then
+        local prompt_file="$LOG_DIR/run-${RUN_ID}-employee-${name}${idx_suffix}-prompt.md"
+        echo "$employee_prompt" > "$prompt_file"
+        log_warn "Employee prompt too long ($prompt_len bytes), wrote to file: $prompt_file"
+        employee_prompt="Your full task instructions are in: $prompt_file
+
+Read that file first, then execute the instructions. Your workspace is: $workspace"
+    fi
+
     # Run employee with GITHUB_REPO set for this project
     GITHUB_REPO="$repo" "${cmd[@]}" -- "$employee_prompt" 2>>"$stderr_file" | \
     while IFS= read -r line; do
@@ -1341,10 +1383,19 @@ print(f'{t:,}')
     exit_code=${PIPESTATUS[0]}
     record_session
 
+    # Extract and accumulate token data from this employee's stream
+    local _emp_tokens
+    _emp_tokens=$(extract_stream_tokens "$stream_file")
+    local _et_in _et_out _et_total _et_turns
+    read -r _et_in _et_out _et_total _et_turns <<< "$_emp_tokens"
+    _TOTAL_TOKENS_IN=$((_TOTAL_TOKENS_IN + _et_in))
+    _TOTAL_TOKENS_OUT=$((_TOTAL_TOKENS_OUT + _et_out))
+    _TOTAL_TURNS=$((_TOTAL_TURNS + _et_turns))
+
     if [ $exit_code -eq 0 ]; then
-        log_ok "Employee finished: $repo"
+        log_ok "Employee finished: $repo (tokens: $_et_total, turns: $_et_turns)"
     else
-        log_warn "Employee exited with code $exit_code: $repo"
+        log_warn "Employee exited with code $exit_code: $repo (tokens: $_et_total, turns: $_et_turns)"
     fi
 
     # Emit planner_complete if this was a plan-mode employee
@@ -1356,7 +1407,7 @@ print(f'{t:,}')
     curl -s --max-time 3 -X POST "$_ewh_url" \
         -H "Content-Type: application/json" \
         "${_ewh_auth[@]}" \
-        -d "{\"event\":\"employee_complete\",\"run_id\":\"$employee_run_id\",\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"project\":\"$repo\",\"exit_code\":$exit_code,\"employee_index\":$employee_index,\"concurrent_group_id\":\"${CONCURRENT_GROUP_ID:-run-$RUN_ID}\"}" \
+        -d "{\"event\":\"employee_complete\",\"run_id\":\"$employee_run_id\",\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"project\":\"$repo\",\"exit_code\":$exit_code,\"employee_index\":$employee_index,\"concurrent_group_id\":\"${CONCURRENT_GROUP_ID:-run-$RUN_ID}\",\"tokens_input\":$_et_in,\"tokens_output\":$_et_out,\"tokens_total\":$_et_total,\"turns\":$_et_turns}" \
         2>/dev/null || true
 
     # Transition queue item to review
@@ -1871,17 +1922,12 @@ run_manager_review() {
     cmd+=(--system-prompt-file "$(resolve_prompt manager)")
     # No --allowedTools: full VM access, prompt-enforced guardrails
 
-    # Inline review content directly to avoid wasting turns re-reading the file
-    local review_content
-    review_content=$(cat "$review_package")
+    # Reference the review package file instead of inlining it (avoids ARG_MAX crash on large diffs)
+    local manager_prompt="Review the employee work package at: $review_package
 
-    local manager_prompt="Review the employee work below and write your verdicts to: $verdicts_file
+Write your verdicts to: $verdicts_file
 
-Evaluate each project's work against the criteria in your system prompt. Be strict on completeness — never approve partial implementations.
-
---- BEGIN REVIEW PACKAGE ---
-$review_content
---- END REVIEW PACKAGE ---"
+Read the review package file first, then evaluate each project's work against the criteria in your system prompt. Be strict on completeness — never approve partial implementations."
 
     log_info "Manager command: ${cmd[*]} '<prompt>'" >&2
 
@@ -1929,6 +1975,16 @@ print(f'{t:,}')
     done
 
     record_session
+
+    # Extract and accumulate manager tokens
+    local _mgr_tokens
+    _mgr_tokens=$(extract_stream_tokens "$stream_file")
+    local _mt_in _mt_out _mt_total _mt_turns
+    read -r _mt_in _mt_out _mt_total _mt_turns <<< "$_mgr_tokens"
+    _TOTAL_TOKENS_IN=$((_TOTAL_TOKENS_IN + _mt_in))
+    _TOTAL_TOKENS_OUT=$((_TOTAL_TOKENS_OUT + _mt_out))
+    _TOTAL_TURNS=$((_TOTAL_TURNS + _mt_turns))
+    log_info "  Manager tokens accumulated: $_mt_total" >&2
 
     echo "$verdicts_file"
 }
@@ -1978,7 +2034,7 @@ print(json.dumps(v))
         project=$(echo "$verdict_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('project',''))")
         verdict=$(echo "$verdict_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('verdict','REJECT'))")
         branch=$(echo "$verdict_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('branch',''))")
-        issue_number=$(echo "$verdict_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('issue_number',''))")
+        issue_number=$(echo "$verdict_json" | python3 -c "import json,sys; v=json.load(sys.stdin).get('issue_number'); print('' if v is None else v)")
         reasoning=$(echo "$verdict_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('reasoning',''))")
         base_branch=$(echo "$verdict_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('base_branch','main'))")
         verdict_mode=$(echo "$verdict_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('mode',''))" 2>/dev/null || echo "")
@@ -1993,7 +2049,9 @@ print(json.dumps(v))
         # Escape reasoning for JSON (replace newlines and quotes)
         local escaped_reasoning
         escaped_reasoning=$(echo "$reasoning" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read().strip())[1:-1])" 2>/dev/null || echo "$reasoning")
-        webhook_event "verdict_execute" "\"project\":\"$project\",\"verdict\":\"$verdict\",\"issue_number\":\"$issue_number\",\"branch\":\"$branch\",\"reasoning\":\"$escaped_reasoning\""
+        local issue_num_json="null"
+        [ -n "$issue_number" ] && issue_num_json="$issue_number"
+        webhook_event "verdict_execute" "\"project\":\"$project\",\"verdict\":\"$verdict\",\"issue_number\":$issue_num_json,\"branch\":\"$branch\",\"reasoning\":\"$escaped_reasoning\""
 
         # Intelligence: record outcome for the learning loop
         local _report_confidence="" _report_tokens="" _report_duration="" _report_complexity="" _report_mode_used="" _report_model_used="" _report_esc_rung="0"
@@ -2534,7 +2592,8 @@ main() {
 
     log_info "Concurrency: max_concurrent=$max_concurrent, max_per_project=$max_per_project, strategy=$budget_strategy"
 
-    webhook_event "run_start" "\"project_count\":$project_count,\"max_concurrent\":$max_concurrent,\"concurrent_group_id\":\"$CONCURRENT_GROUP_ID\""
+    _RUN_START_EPOCH=$(date +%s)
+    webhook_event "run_start" "\"project_count\":$project_count,\"max_concurrent\":$max_concurrent,\"concurrent_group_id\":\"$CONCURRENT_GROUP_ID\",\"log_file\":\"$LOG_DIR/run-${RUN_ID}.log\""
 
     # ---- Count total employees to spawn (for budget calculation) ----
     local total_employees=0
@@ -3088,7 +3147,9 @@ print(json.dumps(result))
         write_digest ""
         log_ok "Run $RUN_ID complete (no work to review)"
         notify "complete" "Run $RUN_ID finished (no work to review)"
-        webhook_event "run_complete" "\"status\":\"no_reports\""
+        local _duration_ms_nr=0
+        [ "$_RUN_START_EPOCH" -gt 0 ] && _duration_ms_nr=$(( ($(date +%s) - _RUN_START_EPOCH) * 1000 ))
+        webhook_event "run_complete" "\"status\":\"no_reports\",\"tokens_input\":$_TOTAL_TOKENS_IN,\"tokens_output\":$_TOTAL_TOKENS_OUT,\"tokens_total\":$((_TOTAL_TOKENS_IN + _TOTAL_TOKENS_OUT)),\"turns\":$_TOTAL_TURNS,\"duration_ms\":$_duration_ms_nr"
         _RUN_COMPLETE_SENT=1
         exit 0
     fi
@@ -3096,7 +3157,9 @@ print(json.dumps(result))
     if ! check_rate_limit; then
         log_warn "Rate limit reached before manager review. Employee work stays local."
         notify "rate_limit" "Rate limit reached before manager review in run $RUN_ID"
-        webhook_event "run_complete" "\"status\":\"rate_limited\""
+        local _duration_ms_rl=0
+        [ "$_RUN_START_EPOCH" -gt 0 ] && _duration_ms_rl=$(( ($(date +%s) - _RUN_START_EPOCH) * 1000 ))
+        webhook_event "run_complete" "\"status\":\"rate_limited\",\"tokens_input\":$_TOTAL_TOKENS_IN,\"tokens_output\":$_TOTAL_TOKENS_OUT,\"tokens_total\":$((_TOTAL_TOKENS_IN + _TOTAL_TOKENS_OUT)),\"turns\":$_TOTAL_TURNS,\"duration_ms\":$_duration_ms_rl"
         _RUN_COMPLETE_SENT=1
         exit 0
     fi
@@ -3240,7 +3303,9 @@ print(json.dumps(result))
 
     log_ok "Run $RUN_ID complete"
     notify "complete" "Run $RUN_ID finished successfully"
-    webhook_event "run_complete" "\"status\":\"success\""
+    local _duration_ms_ok=0
+    [ "$_RUN_START_EPOCH" -gt 0 ] && _duration_ms_ok=$(( ($(date +%s) - _RUN_START_EPOCH) * 1000 ))
+    webhook_event "run_complete" "\"status\":\"success\",\"tokens_input\":$_TOTAL_TOKENS_IN,\"tokens_output\":$_TOTAL_TOKENS_OUT,\"tokens_total\":$((_TOTAL_TOKENS_IN + _TOTAL_TOKENS_OUT)),\"turns\":$_TOTAL_TURNS,\"duration_ms\":$_duration_ms_ok"
     _RUN_COMPLETE_SENT=1
 }
 

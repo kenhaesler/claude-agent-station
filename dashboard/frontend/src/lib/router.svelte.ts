@@ -1,29 +1,25 @@
-/**
- * Client-side router — History API based.
- * Mission Control layout with Command Center home.
- */
+// ============================================
+// Client-side Router — History API, Svelte 5 Runes
+// ============================================
 
-type Page =
-  | 'command-center'      // Home overview (default)
-  | 'theater'             // Live agent visualization
-  | 'runs'                // Run history
-  | 'run-detail'          // Single run deep-dive
-  | 'queue'               // Queue Board (kanban)
-  | 'queue-detail'        // Single queue item
-  | 'intelligence'        // Analytics & Intelligence
-  | 'projects'            // Project Registry
-  | 'project-detail'      // Single project
-  | 'integration'         // Integration Branch Pipeline
-  | 'brainstorm'          // Brainstorm Sessions
-  | 'brainstorm-session'  // Single brainstorm session
-  | 'settings';           // System Configuration
+export type Page =
+  | 'command-center'
+  | 'theater'
+  | 'team-comms'
+  | 'runs'
+  | 'run-detail'
+  | 'queue'
+  | 'queue-detail'
+  | 'projects'
+  | 'project-detail'
+  | 'settings';
 
-interface Route {
+export interface Route {
   page: Page;
   param: string | null;
 }
 
-/** Map old routes to new equivalents */
+/** Map legacy routes to new equivalents */
 const REDIRECTS: Record<string, string> = {
   '/ops': '/',
   '/command': '/',
@@ -33,13 +29,11 @@ const REDIRECTS: Record<string, string> = {
   '/coordinator': '/runs',
   '/logs': '/runs',
   '/decide': '/queue',
-  '/plans': '/queue',
   '/config': '/settings',
   '/prompts': '/settings',
   '/system': '/settings',
   '/observatory': '/theater',
-  '/agents': '/theater',
-  '/analytics': '/intelligence',
+  '/workspace': '/theater',
 };
 
 function parsePath(): Route {
@@ -58,23 +52,18 @@ function parsePath(): Route {
 
   const raw = parts[0];
 
-  // Parameterized routes first
+  // Parameterized routes
   if (raw === 'runs' && parts.length > 1) return { page: 'run-detail', param: parts[1] };
   if (raw === 'stream' && parts.length > 1) {
     navigate(`/runs/${parts[1]}`, true);
     return { page: 'run-detail', param: parts[1] };
   }
   if (raw === 'queue' && parts.length > 1) return { page: 'queue-detail', param: parts[1] };
-  if (raw === 'plans' && parts.length > 1) {
-    navigate(`/queue/${parts[1]}`, true);
-    return { page: 'queue-detail', param: parts[1] };
-  }
   if (raw === 'decide' && parts.length > 1) {
     navigate(`/queue/${parts[1]}`, true);
     return { page: 'queue-detail', param: parts[1] };
   }
   if (raw === 'projects' && parts.length > 1) return { page: 'project-detail', param: parts[1] };
-  if (raw === 'brainstorm' && parts.length > 1) return { page: 'brainstorm-session', param: parts[1] };
   if (raw === 'settings' && parts.length > 1) return { page: 'settings', param: parts[1] };
 
   // Redirect old routes (without params)
@@ -86,15 +75,14 @@ function parsePath(): Route {
     return { page: rParts[0] as Page, param: null };
   }
 
-  // New routes
+  // Standard routes
   const routeMap: Record<string, Page> = {
     theater: 'theater',
+    agents: 'theater',
+    'team-comms': 'theater',
     runs: 'runs',
     queue: 'queue',
-    intelligence: 'intelligence',
     projects: 'projects',
-    integration: 'integration',
-    brainstorm: 'brainstorm',
     settings: 'settings',
   };
 
@@ -104,9 +92,23 @@ function parsePath(): Route {
   return { page: 'command-center', param: null };
 }
 
+// --- Exported reactive state ---
+
 export let route = $state<Route>(parsePath());
 
-function onPopState() {
+/** Get current path */
+export function getCurrentPath(): string {
+  if (route.page === 'command-center') return '/';
+  if (route.param) return `/${route.page.replace('-detail', '')}/${route.param}`;
+  return `/${route.page}`;
+}
+
+/** Get current params */
+export function getCurrentParams(): Record<string, string> {
+  return route.param ? { id: route.param } : {};
+}
+
+function onPopState(): void {
   const next = parsePath();
   route.page = next.page;
   route.param = next.param;
@@ -120,7 +122,7 @@ if (typeof window !== 'undefined') {
  * Navigate to a path using History API.
  * @param replace - Use replaceState instead of pushState (for redirects)
  */
-export function navigate(path: string, replace = false) {
+export function navigate(path: string, replace = false): void {
   if (replace) {
     history.replaceState({}, '', path);
   } else {
@@ -131,10 +133,15 @@ export function navigate(path: string, replace = false) {
   route.param = next.param;
 }
 
+/** Parse current route (for external consumers) */
+export function parseRoute(): Route {
+  return { page: route.page, param: route.param };
+}
+
 /**
- * Click handler for <a> tags — intercepts navigation to use History API.
+ * Click handler for <a> tags -- intercepts navigation to use History API.
  */
-export function handleLinkClick(e: MouseEvent) {
+export function handleLinkClick(e: MouseEvent): void {
   const target = (e.target as HTMLElement).closest('a');
   if (!target) return;
   const href = target.getAttribute('href');
@@ -150,17 +157,14 @@ export function handleLinkClick(e: MouseEvent) {
 export function getPageTitle(page: Page): string {
   const titles: Record<Page, string> = {
     'command-center': 'Command Center',
-    'theater': 'Agent Theater',
+    'theater': 'Workspace',
+    'team-comms': 'Team Comms',
     'runs': 'Runs',
     'run-detail': 'Run Detail',
     'queue': 'Queue Board',
     'queue-detail': 'Queue Item',
-    'intelligence': 'Intelligence Hub',
     'projects': 'Projects',
     'project-detail': 'Project',
-    'integration': 'Integration',
-    'brainstorm': 'Brainstorm',
-    'brainstorm-session': 'Brainstorm',
     'settings': 'Settings',
   };
   return titles[page] ?? 'Claude Station';

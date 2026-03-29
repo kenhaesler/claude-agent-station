@@ -4,9 +4,13 @@
  * so multiple stores/components can react to events independently.
  */
 
-import type { AgentEvent } from './event-stream';
+/** Generic SSE event shape for the event bus */
+interface BusEvent {
+  type: string;
+  [key: string]: unknown;
+}
 
-type EventHandler = (event: AgentEvent) => void;
+type EventHandler = (event: BusEvent) => void;
 
 interface Subscription {
   id: number;
@@ -28,7 +32,7 @@ export function subscribe(types: string[] | '*', handler: EventHandler): () => v
 }
 
 /** Dispatch an event to all matching subscribers */
-export function dispatch(event: AgentEvent): void {
+export function dispatch(event: BusEvent): void {
   for (const sub of subscribers) {
     if (sub.types === '*' || sub.types.includes(event.type)) {
       try {

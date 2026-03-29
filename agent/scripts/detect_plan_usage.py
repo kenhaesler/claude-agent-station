@@ -292,41 +292,12 @@ def get_realtime_plan_state(
 # ---------------------------------------------------------------------------
 
 def detect_usage_cli() -> Optional[PlanUsageSnapshot]:
-    """Option A: Try to scrape usage data from Claude CLI.
+    """Option A: CLI scraping -- disabled.
 
-    Attempts to run `claude usage` or parse recent stream output for
-    usage/rate-limit events.
-
-    Returns PlanUsageSnapshot or None if CLI scraping is not available.
+    `claude usage` is not a valid CLI subcommand (it gets interpreted as a
+    prompt). Token tracking is done via stream JSONL parsing in run-manager.sh
+    and stored in the runs table. Falls through to heuristic (Option C).
     """
-    try:
-        result = subprocess.run(
-            ["claude", "--version"],
-            capture_output=True, text=True, timeout=10,
-        )
-        if result.returncode != 0:
-            logger.debug("Claude CLI not available: %s", result.stderr)
-            return None
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        logger.debug("Claude CLI not found or timed out")
-        return None
-
-    # Try `claude usage` (may not exist in all versions)
-    try:
-        result = subprocess.run(
-            ["claude", "usage"],
-            capture_output=True, text=True, timeout=15,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            return _parse_usage_output(result.stdout)
-    except (subprocess.TimeoutExpired, OSError):
-        pass
-
-    # Check for rate limit indicators in recent logs
-    snapshot = _check_rate_limit_signals()
-    if snapshot:
-        return snapshot
-
     return None
 
 

@@ -54,7 +54,7 @@
       />
       <text
         x={pad.left - 6} y={pad.top + yScale(tick) + 3}
-        fill="var(--color-text-muted)" font-size="9" text-anchor="end" class="font-data"
+        fill="var(--color-text-muted)" font-size="9" text-anchor="end" class="font-mono"
       >{yFormat(tick)}</text>
     {/each}
   {/if}

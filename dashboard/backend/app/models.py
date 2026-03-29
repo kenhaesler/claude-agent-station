@@ -31,6 +31,12 @@ class Project(Base):
 
 
 class Run(Base):
+    """Execution tracking: what happened during a Claude agent session.
+
+    Lifecycle: running -> reviewing -> completed/failed/interrupted
+    One Run per employee invocation. Stores tokens consumed, verdicts, timing.
+    Linked to QueueItem via run_id. Linked to CoordinatorTask via run_id.
+    """
     __tablename__ = "runs"
 
     id = Column(Integer, primary_key=True)
@@ -89,6 +95,12 @@ class Plan(Base):
 
 
 class CoordinatorTask(Base):
+    """DAG orchestration: task decomposition for multi-agent runs.
+
+    Lifecycle: pending -> ready -> running -> completed/failed/blocked
+    Used when a Run decomposes work into a dependency graph. Each task may be
+    assigned to a different employee. Linked to Run via run_id.
+    """
     __tablename__ = "coordinator_tasks"
 
     id = Column(Text, primary_key=True)  # "task-{run_id}-{seq}"
@@ -143,6 +155,12 @@ class Notification(Base):
 
 
 class QueueItem(Base):
+    """Work management: what needs to be done.
+
+    Lifecycle: pending -> claimed -> assigned -> in_progress -> review -> completed/failed
+    The input side of the pipeline. Tracks retries, escalation, priority.
+    Linked to Run via run_id once claimed by an employee.
+    """
     __tablename__ = "task_queue"
 
     id = Column(Integer, primary_key=True)

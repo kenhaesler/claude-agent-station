@@ -2,14 +2,14 @@
   import { getConfig, updateConfig, getSystemStatus, getAuthStatus, serviceAction,
            listPrompts, updatePrompt, resetPrompt, startOAuthLogin, getGitHubOAuthStatus,
            startGitHubDeviceFlow, pollGitHubDeviceFlow, refreshOAuthToken } from '../lib/api';
-  import type { PromptData, SystemStatus, AuthStatus } from '../lib/types';
+  import type { PromptInfo, SystemStatus, AuthStatus } from '../lib/types';
   import { toastSuccess, toastError } from '../lib/toast.svelte';
   import Toggle from '../components/forms/Toggle.svelte';
 
   let { tab = null }: { tab?: string | null } = $props();
 
   let config = $state<Record<string, any>>({});
-  let prompts = $state<PromptData[]>([]);
+  let prompts = $state<PromptInfo[]>([]);
   let systemStatus = $state<SystemStatus | null>(null);
   let authStatus = $state<AuthStatus | null>(null);
   let githubStatus = $state<any>(null);
@@ -72,14 +72,14 @@
 </script>
 
 <div class="space-y-4 animate-fade-in-up max-w-4xl">
-  <h1 class="text-lg font-semibold text-text">Settings</h1>
+  <h1 class="text-lg font-semibold text-primary">Settings</h1>
 
   <!-- Tabs -->
-  <div class="flex gap-1 border-b border-border-subtle">
+  <div class="flex gap-1 border-b border-border">
     {#each ['general', 'models', 'services', 'auth', 'prompts'] as t}
       <button
         class="px-3 py-2 text-xs font-medium capitalize transition-colors
-               {activeTab === t ? 'text-text border-b-2 border-accent-blue' : 'text-text-muted hover:text-text-dim'}"
+               {activeTab === t ? 'text-primary border-b-2 border-violet' : 'text-tertiary hover:text-secondary'}"
         onclick={() => activeTab = t}
       >{t}</button>
     {/each}
@@ -87,42 +87,42 @@
 
   {#if activeTab === 'general'}
     <div class="glass rounded-lg p-4 space-y-4">
-      <h2 class="text-xs font-semibold text-text-dim uppercase tracking-wider">Limits</h2>
+      <h2 class="text-xs font-semibold text-secondary uppercase tracking-wider">Limits</h2>
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
         <div>
-          <label class="text-xs text-text-muted mb-1 block">Max Usage %</label>
+          <label class="text-xs text-tertiary mb-1 block">Max Usage %</label>
           <input
             type="number" min="10" max="100"
             value={config.limits?.max_usage_percent ?? 80}
             onchange={(e) => saveConfig('limits', { ...config.limits, max_usage_percent: parseInt((e.target as HTMLInputElement).value) })}
-            class="w-full px-3 py-2 rounded-lg bg-bg text-text text-sm border border-border focus:border-focus outline-none"
+            class="w-full px-3 py-2 rounded-lg bg-void text-primary text-sm border border-border focus:border-border-focus outline-none"
           />
         </div>
         <div>
-          <label class="text-xs text-text-muted mb-1 block">Max Concurrent Employees</label>
+          <label class="text-xs text-tertiary mb-1 block">Max Concurrent Employees</label>
           <input
             type="number" min="1" max="20"
             value={config.limits?.max_concurrent_employees ?? 2}
             onchange={(e) => saveConfig('limits', { ...config.limits, max_concurrent_employees: parseInt((e.target as HTMLInputElement).value) })}
-            class="w-full px-3 py-2 rounded-lg bg-bg text-text text-sm border border-border focus:border-focus outline-none"
+            class="w-full px-3 py-2 rounded-lg bg-void text-primary text-sm border border-border focus:border-border-focus outline-none"
           />
         </div>
         <div>
-          <label class="text-xs text-text-muted mb-1 block">Max Employee Turns</label>
+          <label class="text-xs text-tertiary mb-1 block">Max Employee Turns</label>
           <input
             type="number" min="10" max="500"
             value={config.limits?.max_employee_turns ?? 200}
             onchange={(e) => saveConfig('limits', { ...config.limits, max_employee_turns: parseInt((e.target as HTMLInputElement).value) })}
-            class="w-full px-3 py-2 rounded-lg bg-bg text-text text-sm border border-border focus:border-focus outline-none"
+            class="w-full px-3 py-2 rounded-lg bg-void text-primary text-sm border border-border focus:border-border-focus outline-none"
           />
         </div>
         <div>
-          <label class="text-xs text-text-muted mb-1 block">Schedule (cron)</label>
+          <label class="text-xs text-tertiary mb-1 block">Schedule (cron)</label>
           <input
             type="text"
             value={config.schedule ?? ''}
             onchange={(e) => saveConfig('schedule', (e.target as HTMLInputElement).value)}
-            class="w-full px-3 py-2 rounded-lg bg-bg text-text text-sm border border-border focus:border-focus outline-none font-mono"
+            class="w-full px-3 py-2 rounded-lg bg-void text-primary text-sm border border-border focus:border-border-focus outline-none font-mono"
             placeholder="0 * * * *"
           />
         </div>
@@ -131,15 +131,15 @@
 
   {:else if activeTab === 'models'}
     <div class="glass rounded-lg p-4 space-y-4">
-      <h2 class="text-xs font-semibold text-text-dim uppercase tracking-wider">Model Assignments</h2>
+      <h2 class="text-xs font-semibold text-secondary uppercase tracking-wider">Model Assignments</h2>
       {#each ['employee', 'manager', 'analyst', 'planner'] as role}
         <div class="flex items-center justify-between">
-          <span class="text-sm text-text-dim capitalize">{role}</span>
+          <span class="text-sm text-secondary capitalize">{role}</span>
           <input
             type="text"
             value={config.models?.[role] ?? ''}
             onchange={(e) => saveConfig('models', { ...config.models, [role]: (e.target as HTMLInputElement).value })}
-            class="w-64 px-3 py-1.5 rounded bg-bg text-text text-xs border border-border focus:border-focus outline-none font-mono"
+            class="w-64 px-3 py-1.5 rounded bg-void text-primary text-xs border border-border focus:border-border-focus outline-none font-mono"
             placeholder="claude-opus-4-6"
           />
         </div>
@@ -148,11 +148,11 @@
 
   {:else if activeTab === 'services'}
     <div class="glass rounded-lg p-4 space-y-4">
-      <h2 class="text-xs font-semibold text-text-dim uppercase tracking-wider">System Services</h2>
+      <h2 class="text-xs font-semibold text-secondary uppercase tracking-wider">System Services</h2>
       <div class="flex items-center justify-between">
         <div>
-          <div class="text-sm text-text">Agent Service</div>
-          <div class="text-xs text-text-muted">{systemStatus?.service.active ? 'Active' : 'Inactive'}</div>
+          <div class="text-sm text-primary">Agent Service</div>
+          <div class="text-xs text-tertiary">{systemStatus?.service.active ? 'Active' : 'Inactive'}</div>
         </div>
         <div class="flex gap-2">
           <button onclick={() => handleServiceAction('start')} class="px-3 py-1.5 rounded text-xs bg-approve/20 text-approve hover:bg-approve/30 transition-colors">Start</button>
@@ -163,8 +163,8 @@
       {#if systemStatus?.timer}
         <div class="flex items-center justify-between text-sm">
           <div>
-            <div class="text-text">Timer</div>
-            <div class="text-xs text-text-muted">Next: {systemStatus.timer.next_trigger ?? 'N/A'}</div>
+            <div class="text-primary">Timer</div>
+            <div class="text-xs text-tertiary">Next: {systemStatus.timer.next ?? 'N/A'}</div>
           </div>
           <span class="w-2 h-2 rounded-full {systemStatus.timer.active ? 'bg-status-active' : 'bg-status-inactive'}"></span>
         </div>
@@ -174,21 +174,21 @@
   {:else if activeTab === 'auth'}
     <div class="space-y-4">
       <div class="glass rounded-lg p-4">
-        <h2 class="text-xs font-semibold text-text-dim uppercase tracking-wider mb-3">Claude Auth</h2>
+        <h2 class="text-xs font-semibold text-secondary uppercase tracking-wider mb-3">Claude Auth</h2>
         <div class="flex items-center gap-2 text-sm">
           <span class="w-2 h-2 rounded-full {authStatus?.logged_in && !authStatus?.expired ? 'bg-status-active' : 'bg-status-inactive'}"></span>
-          <span class="text-text-dim">{authStatus?.logged_in ? (authStatus?.expired ? 'Expired' : 'Authenticated') : 'Not logged in'}</span>
+          <span class="text-secondary">{authStatus?.logged_in ? (authStatus?.expired ? 'Expired' : 'Authenticated') : 'Not logged in'}</span>
         </div>
         {#if authStatus?.expires_at}
-          <div class="text-xs text-text-muted mt-1">Expires: {new Date(authStatus.expires_at).toLocaleString()}</div>
+          <div class="text-xs text-tertiary mt-1">Expires: {new Date(authStatus.expires_at).toLocaleString()}</div>
         {/if}
       </div>
 
       <div class="glass rounded-lg p-4">
-        <h2 class="text-xs font-semibold text-text-dim uppercase tracking-wider mb-3">GitHub</h2>
+        <h2 class="text-xs font-semibold text-secondary uppercase tracking-wider mb-3">GitHub</h2>
         <div class="flex items-center gap-2 text-sm">
           <span class="w-2 h-2 rounded-full {githubStatus?.connected ? 'bg-status-active' : 'bg-status-inactive'}"></span>
-          <span class="text-text-dim">{githubStatus?.connected ? `Connected as ${githubStatus.username}` : 'Not connected'}</span>
+          <span class="text-secondary">{githubStatus?.connected ? `Connected as ${githubStatus.username}` : 'Not connected'}</span>
         </div>
       </div>
     </div>
@@ -200,7 +200,7 @@
         {#each prompts as p}
           <button
             class="w-full text-left px-3 py-2 rounded text-xs transition-colors
-                   {selectedPrompt === p.role ? 'bg-surface-2 text-text' : 'text-text-muted hover:text-text-dim hover:bg-surface/50'}"
+                   {selectedPrompt === p.role ? 'bg-surface-2 text-primary' : 'text-tertiary hover:text-secondary hover:bg-surface-0/50'}"
             onclick={() => selectPrompt(p.role)}
           >
             <div class="capitalize font-medium">{p.label}</div>
@@ -216,21 +216,21 @@
         {#if selectedPrompt}
           <div class="glass rounded-lg p-4">
             <div class="flex items-center justify-between mb-3">
-              <h3 class="text-sm font-semibold text-text capitalize">{selectedPrompt}</h3>
+              <h3 class="text-sm font-semibold text-primary capitalize">{selectedPrompt}</h3>
               <div class="flex gap-2">
-                <button onclick={handleResetPrompt} class="text-xs text-text-muted hover:text-text transition-colors">Reset</button>
+                <button onclick={handleResetPrompt} class="text-xs text-tertiary hover:text-primary transition-colors">Reset</button>
                 <button onclick={savePrompt} class="px-3 py-1 rounded text-xs bg-accent-blue/20 text-accent-blue hover:bg-accent-blue/30 transition-colors">Save</button>
               </div>
             </div>
             <textarea
               bind:value={promptContent}
               rows={20}
-              class="w-full px-3 py-2 rounded-lg bg-bg text-text text-xs border border-border
-                     focus:border-focus outline-none resize-y font-data leading-relaxed"
+              class="w-full px-3 py-2 rounded-lg bg-void text-primary text-xs border border-border
+                     focus:border-border-focus outline-none resize-y font-mono leading-relaxed"
             ></textarea>
           </div>
         {:else}
-          <div class="text-sm text-text-muted text-center py-12">Select a prompt to edit</div>
+          <div class="text-sm text-tertiary text-center py-12">Select a prompt to edit</div>
         {/if}
       </div>
     </div>

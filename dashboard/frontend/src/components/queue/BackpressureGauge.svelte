@@ -41,7 +41,7 @@
       />
     {/if}
     {#if !compact}
-      <text x={cx} y={cy + 4} fill={color} font-size="14" font-weight="600" text-anchor="middle" class="font-data">
+      <text x={cx} y={cy + 4} fill={color} font-size="14" font-weight="600" text-anchor="middle" class="font-mono">
         {Math.round(usagePercent)}%
       </text>
     {/if}

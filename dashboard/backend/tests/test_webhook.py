@@ -358,7 +358,7 @@ async def test_verdict_reject_creates_notification(mock_notify, project_client: 
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-@patch("app.routers.webhook.parse_employee_report", return_value=None)
+@patch("app.services.run_lifecycle.parse_employee_report", return_value=None)
 async def test_run_complete_marks_finished(mock_report, project_client: AsyncClient):
     """run_complete should set status=completed and populate token/timing fields."""
     # Create run first
@@ -396,7 +396,7 @@ async def test_run_complete_marks_finished(mock_report, project_client: AsyncCli
 
 
 @pytest.mark.asyncio
-@patch("app.routers.webhook.parse_employee_report", return_value=None)
+@patch("app.services.run_lifecycle.parse_employee_report", return_value=None)
 async def test_run_complete_creates_run_if_missing(mock_report, project_client: AsyncClient):
     """run_complete for unknown run_id should create a run with the final status."""
     resp = await project_client.post("/api/webhook/run-event", json={
@@ -415,7 +415,7 @@ async def test_run_complete_creates_run_if_missing(mock_report, project_client: 
 
 
 @pytest.mark.asyncio
-@patch("app.routers.webhook.parse_employee_report", return_value={"issue_title": "Test"})
+@patch("app.services.run_lifecycle.parse_employee_report", return_value={"issue_title": "Test"})
 async def test_run_complete_reads_employee_report(mock_report, project_client: AsyncClient):
     """run_complete should attempt to read employee report from disk."""
     resp = await project_client.post("/api/webhook/run-event", json={
@@ -660,7 +660,7 @@ def test_normalize_event_name():
 
 def test_build_notification_message():
     """Test the _build_notification_message function."""
-    from app.routers.webhook import _build_notification_message
+    from app.services.run_lifecycle import build_notification_message as _build_notification_message
     from app.schemas import WebhookRunEvent
 
     approve_event = WebhookRunEvent(

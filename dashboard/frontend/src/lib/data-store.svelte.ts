@@ -1,11 +1,241 @@
-/**
- * Reactive data fetching layer with SSE-driven cache invalidation.
- * Replaces ad-hoc $effect + $state patterns in page components.
- */
+// ============================================
+// Central Reactive Data Store — Svelte 5 Runes
+// SSE-driven cache invalidation
+// ============================================
+
+import type {
+  Run, ActiveEmployee, Project,
+  QueueStats, BackpressureStatus,
+  SystemStatus, AuthStatus,
+  Notification,
+} from './types';
+
+import {
+  listRuns, getActiveEmployees, listProjects,
+  getQueueStats, getBackpressure,
+  getSystemStatus, getAuthStatus,
+} from './api';
 
 import { subscribe as busSubscribe } from './event-bus.svelte';
 
-// --- Query Cache ---
+// --- Loading state per domain ---
+
+interface LoadingState {
+  runs: boolean;
+  activeEmployees: boolean;
+  projects: boolean;
+  queueStats: boolean;
+  backpressure: boolean;
+  systemStatus: boolean;
+  authStatus: boolean;
+}
+
+// --- Store state ---
+
+export let runs = $state<Run[]>([]);
+export let runsTotal = $state<number>(0);
+export let activeEmployees = $state<ActiveEmployee[]>([]);
+export let projects = $state<Project[]>([]);
+export let queueStats = $state<QueueStats | null>(null);
+export let backpressure = $state<BackpressureStatus | null>(null);
+export let systemStatus = $state<SystemStatus | null>(null);
+export let authStatus = $state<AuthStatus | null>(null);
+export let notifications = $state<Notification[]>([]);
+export let sseConnected = $state<boolean>(false);
+
+export let loading = $state<LoadingState>({
+  runs: false,
+  activeEmployees: false,
+  projects: false,
+  queueStats: false,
+  backpressure: false,
+  systemStatus: false,
+  authStatus: false,
+});
+
+// --- Refresh functions ---
+
+export async function refreshRuns(limit = 50, offset = 0): Promise<void> {
+  loading.runs = true;
+  try {
+    const result = await listRuns({ limit, offset });
+    runs = result.runs;
+    runsTotal = result.total;
+  } catch {
+    // Error handled by API layer
+  } finally {
+    loading.runs = false;
+  }
+}
+
+export async function refreshActiveEmployees(): Promise<void> {
+  loading.activeEmployees = true;
+  try {
+    activeEmployees = await getActiveEmployees();
+  } catch {
+    // Error handled by API layer
+  } finally {
+    loading.activeEmployees = false;
+  }
+}
+
+export async function refreshProjects(): Promise<void> {
+  loading.projects = true;
+  try {
+    projects = await listProjects();
+  } catch {
+    // Error handled by API layer
+  } finally {
+    loading.projects = false;
+  }
+}
+
+export async function refreshQueueStats(): Promise<void> {
+  loading.queueStats = true;
+  try {
+    queueStats = await getQueueStats();
+  } catch {
+    // Error handled by API layer
+  } finally {
+    loading.queueStats = false;
+  }
+}
+
+export async function refreshBackpressure(): Promise<void> {
+  loading.backpressure = true;
+  try {
+    backpressure = await getBackpressure();
+  } catch {
+    // Error handled by API layer
+  } finally {
+    loading.backpressure = false;
+  }
+}
+
+export async function refreshSystemStatus(): Promise<void> {
+  loading.systemStatus = true;
+  try {
+    systemStatus = await getSystemStatus();
+  } catch {
+    // Error handled by API layer
+  } finally {
+    loading.systemStatus = false;
+  }
+}
+
+export async function refreshAuthStatus(): Promise<void> {
+  loading.authStatus = true;
+  try {
+    authStatus = await getAuthStatus();
+  } catch {
+    // Error handled by API layer
+  } finally {
+    loading.authStatus = false;
+  }
+}
+
+/** Refresh all domains in parallel */
+export async function refreshAll(): Promise<void> {
+  await Promise.allSettled([
+    refreshRuns(),
+    refreshActiveEmployees(),
+    refreshProjects(),
+    refreshQueueStats(),
+    refreshBackpressure(),
+    refreshSystemStatus(),
+    refreshAuthStatus(),
+  ]);
+}
+
+// --- SSE event handler ---
+
+/** Map SSE event types to store refresh actions */
+const sseRefreshMap: Record<string, (() => Promise<void>)[]> = {
+  run_start:           [refreshRuns, refreshActiveEmployees, refreshQueueStats],
+  run_complete:        [refreshRuns, refreshActiveEmployees, refreshQueueStats],
+  employee_start:      [refreshRuns, refreshActiveEmployees],
+  employee_complete:   [refreshRuns, refreshActiveEmployees],
+  verdict_execute:     [refreshRuns],
+  queue_pending:       [refreshQueueStats],
+  queue_claimed:       [refreshQueueStats],
+  queue_assigned:      [refreshQueueStats],
+  queue_in_progress:   [refreshQueueStats],
+  queue_review:        [refreshQueueStats],
+  queue_approved:      [refreshQueueStats],
+  queue_rejected:      [refreshQueueStats],
+  queue_completed:     [refreshQueueStats],
+  queue_failed:        [refreshQueueStats],
+};
+
+// Debounce rapid SSE events
+let pendingRefreshes = new Set<() => Promise<void>>();
+let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+function flushPendingRefreshes(): void {
+  const fns = [...pendingRefreshes];
+  pendingRefreshes.clear();
+  debounceTimer = null;
+  for (const fn of fns) {
+    fn();
+  }
+}
+
+/**
+ * Handle an SSE event and update the relevant store data.
+ * Call this from your SSE connection handler.
+ */
+export function handleSSEEvent(event: Record<string, unknown>): void {
+  const type = (event.type as string) ?? '';
+
+  // Add notification events directly
+  if (type === 'notification' && event.message) {
+    notifications = [
+      {
+        id: Date.now(),
+        run_id: (event.run_id as string) ?? null,
+        type: (event.notification_type as Notification['type']) ?? 'info',
+        message: event.message as string,
+        read: false,
+        created_at: new Date().toISOString(),
+      },
+      ...notifications,
+    ].slice(0, 100); // Keep max 100
+  }
+
+  // Schedule store refreshes based on event type
+  const refreshFns = sseRefreshMap[type];
+  if (refreshFns) {
+    for (const fn of refreshFns) {
+      pendingRefreshes.add(fn);
+    }
+    if (!debounceTimer) {
+      debounceTimer = setTimeout(flushPendingRefreshes, 500);
+    }
+  }
+}
+
+/** Update SSE connection state */
+export function setSSEConnected(connected: boolean): void {
+  sseConnected = connected;
+}
+
+// --- SSE event-bus integration ---
+
+let busSubscribed = false;
+
+/**
+ * Subscribe to the event bus for SSE-driven updates.
+ * Call once at app initialization.
+ */
+export function initStoreSSE(): void {
+  if (busSubscribed) return;
+  busSubscribed = true;
+  busSubscribe('*', (event) => {
+    handleSSEEvent(event as Record<string, unknown>);
+  });
+}
+
+// --- Query Cache (for advanced consumers) ---
 
 interface CacheEntry<T> {
   data: T;
@@ -17,63 +247,19 @@ const cache = new Map<string, CacheEntry<unknown>>();
 const inflight = new Map<string, Promise<unknown>>();
 const refreshCallbacks = new Map<string, Set<() => void>>();
 
-const STALE_TIME = 30_000; // 30s before data considered stale
-
-// --- SSE Invalidation ---
-
-const invalidationMap: Record<string, string[]> = {
-  run_start:           ['runs', 'active-employees', 'analytics', 'queue-stats'],
-  run_complete:        ['runs', 'active-employees', 'analytics', 'queue-stats'],
-  employee_start:      ['runs', 'active-employees'],
-  employee_complete:   ['runs', 'active-employees'],
-  verdict_execute:     ['runs', 'analytics'],
-  coordinator_task_pending:   ['dag'],
-  coordinator_task_ready:     ['dag'],
-  coordinator_task_running:   ['dag'],
-  coordinator_task_completed: ['dag'],
-  coordinator_task_failed:    ['dag'],
-  queue_pending:       ['queue', 'queue-stats'],
-  queue_claimed:       ['queue', 'queue-stats'],
-  queue_assigned:      ['queue', 'queue-stats'],
-  queue_in_progress:   ['queue', 'queue-stats'],
-  queue_review:        ['queue', 'queue-stats'],
-  queue_approved:      ['queue', 'queue-stats'],
-  queue_rejected:      ['queue', 'queue-stats'],
-  queue_completed:     ['queue', 'queue-stats'],
-  queue_failed:        ['queue', 'queue-stats'],
-  intelligence_decision: ['intelligence'],
-  guidance_sent:       ['coordinator-messages'],
-};
-
-let sseSubscribed = false;
-
-function ensureSSESubscription() {
-  if (sseSubscribed) return;
-  sseSubscribed = true;
-  busSubscribe('*', (event) => {
-    const type = event.type ?? (event as any).event;
-    if (!type) return;
-    const keys = invalidationMap[type];
-    if (keys) keys.forEach(invalidateQuery);
-  });
-}
-
 /** Invalidate all queries matching a key prefix */
-export function invalidateQuery(key: string) {
+export function invalidateQuery(key: string): void {
   for (const [k, entry] of cache) {
     if (k === key || k.startsWith(`${key}:`)) {
       entry.stale = true;
     }
   }
-  // Trigger refresh on active queries
   for (const [k, callbacks] of refreshCallbacks) {
     if (k === key || k.startsWith(`${key}:`)) {
-      callbacks.forEach(cb => cb());
+      callbacks.forEach((cb) => cb());
     }
   }
 }
-
-// --- Query Factory ---
 
 export interface QueryResult<T> {
   readonly data: T | null;
@@ -83,23 +269,13 @@ export interface QueryResult<T> {
 }
 
 /**
- * Create a reactive query. Call inside a component's <script> block.
- * Returns a reactive object with data/loading/error.
- *
- * @param key - Cache key (use ':' for parameterized keys, e.g. 'runs:123')
- * @param fetcher - Async function to fetch data
- * @param options - refreshInterval (ms), enabled (conditional)
+ * Create a reactive query with caching and SSE invalidation.
  */
 export function createQuery<T>(
   key: string,
   fetcher: () => Promise<T>,
-  options?: {
-    refreshInterval?: number;
-    enabled?: boolean;
-  }
+  options?: { refreshInterval?: number; enabled?: boolean },
 ): QueryResult<T> {
-  ensureSSESubscription();
-
   const enabled = options?.enabled ?? true;
 
   let result = $state<{ data: T | null; loading: boolean; error: string | null }>({
@@ -108,17 +284,15 @@ export function createQuery<T>(
     error: null,
   });
 
-  // Check cache on init
   const cached = cache.get(key) as CacheEntry<T> | undefined;
   if (cached && !cached.stale) {
     result.data = cached.data;
     result.loading = false;
   }
 
-  async function doFetch() {
+  async function doFetch(): Promise<void> {
     if (!enabled) return;
 
-    // Dedup inflight requests
     let promise = inflight.get(key) as Promise<T> | undefined;
     if (!promise) {
       promise = fetcher();
@@ -126,36 +300,32 @@ export function createQuery<T>(
     }
 
     try {
-      result.loading = result.data === null; // Only show loading if no cached data
+      result.loading = result.data === null;
       const data = await promise;
       result.data = data;
       result.error = null;
       cache.set(key, { data, timestamp: Date.now(), stale: false });
-    } catch (e: any) {
-      result.error = e.message || 'Fetch failed';
+    } catch (e: unknown) {
+      result.error = e instanceof Error ? e.message : 'Fetch failed';
     } finally {
       result.loading = false;
       inflight.delete(key);
     }
   }
 
-  function refresh() {
+  function refresh(): void {
     doFetch();
   }
 
-  // Register for SSE invalidation callbacks
   if (!refreshCallbacks.has(key)) {
     refreshCallbacks.set(key, new Set());
   }
   refreshCallbacks.get(key)!.add(refresh);
 
-  // Initial fetch
   if (enabled) doFetch();
 
-  // Auto-refresh interval
-  let intervalId: ReturnType<typeof setInterval> | undefined;
   if (options?.refreshInterval && enabled) {
-    intervalId = setInterval(refresh, options.refreshInterval);
+    setInterval(refresh, options.refreshInterval);
   }
 
   return {
@@ -167,7 +337,7 @@ export function createQuery<T>(
 }
 
 /** Clear all cached data */
-export function clearQueryCache() {
+export function clearQueryCache(): void {
   cache.clear();
   inflight.clear();
 }

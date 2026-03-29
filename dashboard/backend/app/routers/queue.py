@@ -28,27 +28,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/queue", tags=["queue"])
 
-# Valid state transitions (expanded for orchestration overhaul)
-TRANSITIONS: dict[str, set[str]] = {
-    "pending":     {"assigned", "claimed", "planning", "paused", "failed", "cancelled"},
-    "claimed":     {"in_progress", "pending", "paused"},
-    "assigned":    {"in_progress", "pending", "paused", "failed", "cancelled"},
-    "planning":    {"in_progress", "paused", "failed", "pending"},
-    "in_progress": {"review", "verifying", "paused", "failed", "pending"},
-    "verifying":   {"approved", "rejected", "pending"},
-    "review":      {"approved", "rejected", "pending"},
-    "approved":    {"completed"},
-    "rejected":    {"pending", "failed", "escalated"},
-    "escalated":   {"pending"},
-    "paused":      {"pending"},
-    "failed":      {"pending"},
-    "cancelled":   set(),
-}
-
-ALL_STATES = set(TRANSITIONS.keys()) | {"completed"}
-
-# Active states for deduplication checks
-ACTIVE_STATES = {"pending", "claimed", "assigned", "planning", "in_progress", "review", "verifying"}
+# Import state machine from centralized service (single source of truth)
+from app.services.queue_service import TRANSITIONS, ALL_STATES, ACTIVE_STATES
 
 
 def _utcnow() -> datetime:
@@ -121,20 +102,13 @@ async def queue_stats(db: AsyncSession = Depends(get_db)):
 async def queue_pressure(db: AsyncSession = Depends(get_db)):
     """Get current backpressure status.
 
-    Calculates load based on active queue items vs capacity.
+    Uses actual token consumption (weekly usage %) to calculate backpressure,
+    with queue occupancy as a secondary signal.
     """
     from app.services.backpressure import calculate_backpressure
+    from app.models import Run
 
-    # Count active items
-    result = await db.execute(
-        select(func.count(QueueItem.id)).where(
-            QueueItem.state.in_(["claimed", "assigned", "in_progress", "planning", "verifying"])
-        )
-    )
-    active_count = result.scalar() or 0
-
-    # Read configured max concurrent from config to calculate utilization
-    # as a ratio of active items to capacity, not an arbitrary multiplier
+    # Read configured max concurrent
     from app.services.config_sync import _read_config_json
     try:
         config = await asyncio.to_thread(_read_config_json)
@@ -142,7 +116,22 @@ async def queue_pressure(db: AsyncSession = Depends(get_db)):
     except Exception:
         max_concurrent = 10
 
-    usage = min(100, int((active_count / max(max_concurrent, 1)) * 100))
+    # Get actual token usage from plan-usage calculation
+    # Use weekly token consumption as the primary backpressure signal
+    now = datetime.now(timezone.utc)
+    week_start = now - timedelta(days=7)
+    weekly_result = await db.execute(
+        select(
+            func.coalesce(func.sum(Run.tokens_input), 0).label("input_tokens"),
+            func.coalesce(func.sum(Run.tokens_output), 0).label("output_tokens"),
+        ).where(Run.started_at >= week_start.isoformat())
+    )
+    weekly_row = weekly_result.one()
+    weekly_tokens = weekly_row.input_tokens + weekly_row.output_tokens
+
+    # Default weekly limit (Max 5x plan)
+    DEFAULT_WEEKLY_LIMIT = 900_000_000
+    usage = min(100, (weekly_tokens / max(DEFAULT_WEEKLY_LIMIT, 1)) * 100)
 
     state = calculate_backpressure(usage, base_max_concurrent=max_concurrent)
     return BackpressureStatus(

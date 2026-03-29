@@ -19,15 +19,12 @@ from app.dependencies import verify_api_key
 from app.routers import (
     agent_events,
     analytics,
-    brainstorm,
     config_router,
     coordinator,
     events,
     github_oauth,
     github_webhook,
     health,
-    integration,
-    intelligence,
     logs,
     oauth,
     plan_usage,
@@ -36,7 +33,6 @@ from app.routers import (
     prompts,
     queue,
     runs,
-    sprint,
     system,
     webhook,
 )
@@ -190,10 +186,6 @@ app.include_router(plan_usage.router, dependencies=_auth)
 app.include_router(prompts.router, dependencies=_auth)
 app.include_router(queue.router, dependencies=_auth)
 app.include_router(agent_events.router, dependencies=_auth)
-app.include_router(integration.router, dependencies=_auth)
-app.include_router(intelligence.router, dependencies=_auth)
-app.include_router(brainstorm.router, dependencies=_auth)
-app.include_router(sprint.router, dependencies=_auth)
 
 # GitHub webhook: has own auth via HMAC signature verification
 app.include_router(github_webhook.router)

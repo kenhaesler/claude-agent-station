@@ -13,16 +13,10 @@
       result.push({ label: 'Command Center' });
     } else if (route.page === 'run-detail') {
       result.push({ label: 'Runs', path: '/runs' });
-      result.push({ label: route.param ?? 'Detail' });
-    } else if (route.page === 'queue-detail') {
-      result.push({ label: 'Queue', path: '/queue' });
-      result.push({ label: `#${route.param}` });
+      result.push({ label: route.param ? route.param.slice(0, 12) : 'Detail' });
     } else if (route.page === 'project-detail') {
       result.push({ label: 'Projects', path: '/projects' });
       result.push({ label: route.param ?? 'Detail' });
-    } else if (route.page === 'brainstorm-session') {
-      result.push({ label: 'Brainstorm', path: '/brainstorm' });
-      result.push({ label: 'Session' });
     } else {
       result.push({ label: getPageTitle(route.page) });
     }
@@ -31,20 +25,20 @@
   });
 </script>
 
-<nav class="flex items-center gap-1 text-xs" aria-label="Breadcrumb">
+<nav class="flex items-center gap-1.5 text-xs font-mono" aria-label="Breadcrumb">
   {#each crumbs as crumb, i}
     {#if i > 0}
-      <span class="text-text-muted">/</span>
+      <span class="text-ghost">/</span>
     {/if}
     {#if crumb.path && i < crumbs.length - 1}
-      <a
-        href={crumb.path}
-        class="text-text-muted hover:text-text-dim transition-colors"
+      <button
+        onclick={() => crumb.path && navigate(crumb.path)}
+        class="text-tertiary hover:text-secondary transition-colors duration-150"
       >
         {crumb.label}
-      </a>
+      </button>
     {:else}
-      <span class="text-text-dim font-medium">{crumb.label}</span>
+      <span class="text-secondary font-medium">{crumb.label}</span>
     {/if}
   {/each}
 </nav>

@@ -67,12 +67,12 @@
   <div class="overflow-x-auto">
     <table class="w-full text-sm">
       <thead>
-        <tr class="border-b border-border-subtle">
+        <tr class="border-b border-border">
           {#each columns as col}
             <th
-              class="px-3 py-2 text-xs font-medium text-text-muted whitespace-nowrap
+              class="px-3 py-2 text-xs font-medium text-tertiary whitespace-nowrap
                      {col.align === 'right' ? 'text-right' : 'text-left'}
-                     {col.sortable ? 'cursor-pointer select-none hover:text-text-dim' : ''}"
+                     {col.sortable ? 'cursor-pointer select-none hover:text-secondary' : ''}"
               onclick={() => col.sortable && toggleSort(col.key)}
             >
               {col.label}
@@ -86,7 +86,7 @@
       <tbody>
         {#each sorted as row, i}
           <tr
-            class="border-b border-border-subtle/50 transition-colors duration-100
+            class="border-b border-border/50 transition-colors duration-100
                    {onRowClick ? 'cursor-pointer hover:bg-surface-2' : ''}
                    {i === sel ? 'kb-selected bg-surface-2' : ''}"
             onclick={() => onRowClick?.(row)}
@@ -94,7 +94,7 @@
           >
             {#each columns as col}
               <td
-                class="px-3 py-2 whitespace-nowrap text-text-dim
+                class="px-3 py-2 whitespace-nowrap text-secondary
                        {col.align === 'right' ? 'text-right' : 'text-left'}"
               >{row[col.key] ?? '--'}</td>
             {/each}

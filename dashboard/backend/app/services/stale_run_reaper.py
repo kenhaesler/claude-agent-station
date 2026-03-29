@@ -104,14 +104,8 @@ async def reap_stale_runs(db: AsyncSession) -> int:
     )
     orphaned_items = orphan_result.scalars().all()
     for item in orphaned_items:
-        logger.info(
-            "Recovering orphaned queue item %d (state=%s, run=%s) → pending",
-            item.id, item.state, item.run_id,
-        )
-        item.state = "pending"
-        item.run_id = None
-        item.assigned_to = None
-        item.updated_at = now
+        from app.services.queue_service import reset_orphaned_item
+        await reset_orphaned_item(item, reason="stale run recovery")
 
     await db.commit()
 

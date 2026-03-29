@@ -1,4 +1,21 @@
-import type { Project, ProjectCreate, ProjectUpdate, Run, RunList, RunFullContext, ActiveEmployeeData, Plan, PlanList, SystemStatus, AuthStatus, LogSearchResult, RunLogs, UsageData, TokenUsageData, PlanUsageData, OAuthStartResponse, OAuthCallbackResponse, GitHubDeviceStartResponse, GitHubDevicePollResponse, GitHubOAuthStatusResponse, CoordinatorTask, CoordinatorTaskDetail, CoordinatorDAG, CoordinatorMessage, AnalyticsData, DiffResult, QueueItem, QueueItemList, QueueStats, IntelligenceInsights, IntelligenceDecision, BackpressureStatus, BrainstormSession, BrainstormSessionDetail, IntegrationStatus, IntegrationFeature, IntegrationFeatureList, SprintStatus, SprintFindings, SprintSummary, AgentEvent } from './types';
+// ============================================
+// API Client — Typed fetch wrapper
+// Imports from new unified type system
+// ============================================
+
+import type {
+  Run, RunList, RunFullContext, ActiveEmployee,
+  Project, ProjectCreate,
+  Plan, PlanList,
+  QueueItem, QueueItemList, QueueStats, BackpressureStatus,
+  CoordinatorTask, CoordinatorDAG, CoordinatorMessage, GuidanceSend,
+  SystemStatus, AuthStatus,
+  AnalyticsResponse, DiffResult, PlanUsage,
+  PromptInfo, StationConfig, TokenUsage,
+  AgentEvent, Notification,
+} from './types';
+
+import { toastError } from './toast.svelte';
 
 const BASE = import.meta.env.VITE_API_URL || '';
 
@@ -18,9 +35,11 @@ export function clearStoredApiKey(): void {
   localStorage.removeItem(API_KEY_STORAGE_KEY);
 }
 
+// --- Fetch wrapper ---
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 30000);
+  const timeout = setTimeout(() => controller.abort(), 30_000);
 
   const apiKey = getStoredApiKey();
   const headers: Record<string, string> = {
@@ -37,6 +56,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       headers,
       signal: controller.signal,
     });
+
     if (!res.ok) {
       if (res.status === 401) {
         window.dispatchEvent(new CustomEvent('station-auth-required'));
@@ -47,343 +67,295 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
         const parsed = JSON.parse(body);
         const detail = parsed.detail;
         message = Array.isArray(detail)
-          ? detail.map((e: any) => e.msg ?? JSON.stringify(e)).join('; ')
+          ? detail.map((e: Record<string, unknown>) => e.msg ?? JSON.stringify(e)).join('; ')
           : (detail || body);
-      } catch { message = body; }
+      } catch {
+        message = body;
+      }
       throw new Error(`${res.status}: ${message}`);
     }
+
     if (res.status === 204) return undefined as T;
     return res.json();
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      throw new Error('Request timed out');
+    }
+    throw err;
   } finally {
     clearTimeout(timeout);
   }
 }
 
-// Health
-export const getHealth = () => request<{ status: string }>('/api/health');
+/** request() with automatic toast on error */
+async function requestWithToast<T>(path: string, init?: RequestInit): Promise<T> {
+  try {
+    return await request<T>(path, init);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Request failed';
+    toastError(msg);
+    throw err;
+  }
+}
 
-// Projects
-export const listProjects = () => request<Project[]>('/api/projects');
-export const getProject = (id: number) => request<Project>(`/api/projects/${id}`);
-export const createProject = (data: ProjectCreate) =>
-  request<Project>('/api/projects', { method: 'POST', body: JSON.stringify(data) });
-export const updateProject = (id: number, data: ProjectUpdate) =>
-  request<Project>(`/api/projects/${id}`, { method: 'PUT', body: JSON.stringify(data) });
-export const deleteProject = (id: number) =>
-  request<void>(`/api/projects/${id}`, { method: 'DELETE' });
+// --- Query string helper ---
 
-// Runs
-export const listRuns = (params?: { limit?: number; offset?: number; project_id?: number; status?: string; verdict?: string; concurrent_group_id?: string }) => {
+function qs(params: Record<string, string | number | boolean | undefined | null>): string {
   const q = new URLSearchParams();
-  if (params?.limit) q.set('limit', String(params.limit));
-  if (params?.offset) q.set('offset', String(params.offset));
-  if (params?.project_id) q.set('project_id', String(params.project_id));
-  if (params?.status) q.set('status', params.status);
-  if (params?.verdict) q.set('verdict', params.verdict);
-  if (params?.concurrent_group_id) q.set('concurrent_group_id', params.concurrent_group_id);
-  return request<RunList>(`/api/runs?${q}`);
-};
-export const getActiveEmployees = () => request<ActiveEmployeeData[]>('/api/runs/active-employees');
-export const getLatestRun = () => request<Run>('/api/runs/latest');
-export const getRun = (runId: string) => request<Run>(`/api/runs/${runId}`);
-export const triggerRun = () => request<{ status: string; detail: string }>('/api/runs/trigger', { method: 'POST' });
-export const getRunDiff = (runId: string) => request<DiffResult>(`/api/runs/${runId}/diff`);
-export const getRunFullContext = (runId: string) => request<RunFullContext>(`/api/runs/${runId}/full`);
-export const rescanRuns = () => request<{ status: string; imported: number }>('/api/runs/rescan', { method: 'POST' });
+  for (const [key, val] of Object.entries(params)) {
+    if (val != null && val !== '' && val !== false) {
+      q.set(key, String(val));
+    }
+  }
+  const str = q.toString();
+  return str ? `?${str}` : '';
+}
 
-// Config
-export const getConfig = () => request<Record<string, unknown>>('/api/config');
-export const getUsage = () => request<UsageData>('/api/config/usage');
-export const getTokenUsage = () => request<TokenUsageData>('/api/config/token-usage');
-export const getPlanUsage = () => request<PlanUsageData>('/api/plan-usage');
+// --- Health ---
+
+export const getHealth = () =>
+  request<{ status: string }>('/api/health');
+
+// --- Projects ---
+
+export const listProjects = () =>
+  request<Project[]>('/api/projects');
+
+export const getProject = (id: number) =>
+  request<Project>(`/api/projects/${id}`);
+
+export const createProject = (data: ProjectCreate) =>
+  requestWithToast<Project>('/api/projects', {
+    method: 'POST', body: JSON.stringify(data),
+  });
+
+export const updateProject = (id: number, data: Partial<Project>) =>
+  requestWithToast<Project>(`/api/projects/${id}`, {
+    method: 'PUT', body: JSON.stringify(data),
+  });
+
+export const deleteProject = (id: number) =>
+  requestWithToast<void>(`/api/projects/${id}`, { method: 'DELETE' });
+
+// --- Runs ---
+
+export const listRuns = (params?: {
+  limit?: number; offset?: number; project_id?: number;
+  status?: string; verdict?: string; concurrent_group_id?: string;
+}) =>
+  request<RunList>(`/api/runs${qs(params ?? {})}`);
+
+export const getActiveEmployees = () =>
+  request<ActiveEmployee[]>('/api/runs/active-employees');
+
+export const getActiveTeammates = () =>
+  request<ActiveEmployee[]>('/api/runs/active-teammates');
+
+export const getLatestRun = () =>
+  request<Run>('/api/runs/latest');
+
+export const getRun = (runId: string) =>
+  request<Run>(`/api/runs/${runId}`);
+
+export const getRunFullContext = (runId: string) =>
+  request<RunFullContext>(`/api/runs/${runId}/full`);
+
+export const getRunDiff = (runId: string) =>
+  request<DiffResult>(`/api/runs/${runId}/diff`);
+
+export const triggerRun = () =>
+  requestWithToast<{ status: string; detail: string }>('/api/runs/trigger', { method: 'POST' });
+
+export const rescanRuns = () =>
+  requestWithToast<{ status: string; imported: number }>('/api/runs/rescan', { method: 'POST' });
+
+// --- Config ---
+
+export const getConfig = () =>
+  request<StationConfig>('/api/config');
+
 export const updateConfig = (data: Record<string, unknown>) =>
-  request<Record<string, unknown>>('/api/config', { method: 'PUT', body: JSON.stringify(data) });
-export const testNotification = () =>
-  request<{ success: boolean; message?: string }>('/api/config/test-notification', { method: 'POST' });
+  requestWithToast<StationConfig>('/api/config', {
+    method: 'PUT', body: JSON.stringify(data),
+  });
 
-// System
-export const getSystemStatus = () => request<SystemStatus>('/api/system/status');
+export const getUsage = () =>
+  request<Record<string, unknown>>('/api/config/usage');
+
+export const getTokenUsage = () =>
+  request<TokenUsage>('/api/config/token-usage');
+
+export const getPlanUsage = () =>
+  request<PlanUsage>('/api/plan-usage');
+
+export const testNotification = () =>
+  requestWithToast<{ success: boolean; message?: string }>('/api/config/test-notification', { method: 'POST' });
+
+// --- System ---
+
+export const getSystemStatus = () =>
+  request<SystemStatus>('/api/system/status');
+
 export const serviceAction = (action: string, unit?: string) => {
   const q = unit ? `?unit=${encodeURIComponent(unit)}` : '';
-  return request<Record<string, unknown>>(`/api/system/service/${action}${q}`, { method: 'POST' });
+  return requestWithToast<Record<string, unknown>>(`/api/system/service/${action}${q}`, { method: 'POST' });
 };
-export const getAuthStatus = () => request<AuthStatus>('/api/system/auth');
 
-// OAuth (Claude)
+export const getAuthStatus = () =>
+  request<AuthStatus>('/api/system/auth');
+
+// --- OAuth (Claude) ---
+
 export const startOAuthLogin = () =>
-  request<OAuthStartResponse>('/api/oauth/start', { method: 'POST' });
+  request<{ url: string; state: string }>('/api/oauth/start', { method: 'POST' });
+
 export const submitOAuthCode = (code: string, state: string) =>
-  request<OAuthCallbackResponse>('/api/oauth/callback', {
-    method: 'POST',
-    body: JSON.stringify({ code, state }),
+  request<{ success: boolean; error?: string }>('/api/oauth/callback', {
+    method: 'POST', body: JSON.stringify({ code, state }),
   });
 
-// OAuth (GitHub) - Device Authorization Flow
-export const getGitHubOAuthStatus = () =>
-  request<GitHubOAuthStatusResponse>('/api/oauth/github/status');
-export const startGitHubDeviceFlow = () =>
-  request<GitHubDeviceStartResponse>('/api/oauth/github/device/start', { method: 'POST' });
-export const pollGitHubDeviceFlow = (flowId: string) =>
-  request<GitHubDevicePollResponse>('/api/oauth/github/device/poll', {
-    method: 'POST',
-    body: JSON.stringify({ flow_id: flowId }),
-  });
-export const disconnectGitHub = () =>
-  request<{ success: boolean; message: string }>('/api/oauth/github', { method: 'DELETE' });
-
-// Plans
-export const listPlans = (params?: { limit?: number; offset?: number; project_id?: number; status?: string }) => {
-  const q = new URLSearchParams();
-  if (params?.limit) q.set('limit', String(params.limit));
-  if (params?.offset) q.set('offset', String(params.offset));
-  if (params?.project_id) q.set('project_id', String(params.project_id));
-  if (params?.status) q.set('status', params.status);
-  return request<PlanList>(`/api/plans?${q}`);
-};
-export const getPlan = (id: number) => request<Plan>(`/api/plans/${id}`);
-export const deletePlan = (id: number) =>
-  request<void>(`/api/plans/${id}`, { method: 'DELETE' });
-export const approvePlan = (id: number) =>
-  request<Plan>(`/api/plans/${id}/approve`, { method: 'POST' });
-export const rejectPlan = (id: number) =>
-  request<Plan>(`/api/plans/${id}/reject`, { method: 'POST' });
-export const implementPlan = (id: number) =>
-  request<Plan>(`/api/plans/${id}/implement`, { method: 'POST' });
-
-// Logs
-export const searchLogs = (q: string, runId?: string, limit?: number) => {
-  const params = new URLSearchParams({ q });
-  if (runId) params.set('run_id', runId);
-  if (limit) params.set('limit', String(limit));
-  return request<{ results: LogSearchResult[]; total: number }>(`/api/logs/search?${params}`);
-};
-export const getRunLogs = (runId: string, limit?: number, offset?: number) => {
-  const params = new URLSearchParams();
-  if (limit) params.set('limit', String(limit));
-  if (offset) params.set('offset', String(offset));
-  return request<RunLogs>(`/api/logs/${runId}?${params}`);
-};
-
-// Analytics
-export const getAnalytics = (params?: { days?: number; project_id?: number }) => {
-  const q = new URLSearchParams();
-  if (params?.days) q.set('days', String(params.days));
-  if (params?.project_id) q.set('project_id', String(params.project_id));
-  return request<AnalyticsData>(`/api/analytics?${q}`);
-};
-
-// Prompts
-export interface PromptData {
-  role: string;
-  label: string;
-  description: string;
-  default_content: string;
-  custom_content: string | null;
-  has_override: boolean;
-}
-export const listPrompts = () => request<PromptData[]>('/api/prompts');
-export const getPrompt = (role: string) => request<PromptData>(`/api/prompts/${role}`);
-export const updatePrompt = (role: string, content: string) =>
-  request<PromptData>(`/api/prompts/${role}`, { method: 'PUT', body: JSON.stringify({ content }) });
-export const resetPrompt = (role: string) =>
-  request<PromptData>(`/api/prompts/${role}`, { method: 'DELETE' });
-
-// Queue
-export const listQueue = (params?: { state?: string; project_repo?: string; run_id?: string; limit?: number; offset?: number }) => {
-  const q = new URLSearchParams();
-  if (params?.state) q.set('state', params.state);
-  if (params?.project_repo) q.set('project_repo', params.project_repo);
-  if (params?.run_id) q.set('run_id', params.run_id);
-  if (params?.limit) q.set('limit', String(params.limit));
-  if (params?.offset) q.set('offset', String(params.offset));
-  return request<QueueItemList>(`/api/queue?${q}`);
-};
-export const getQueueItem = (id: number) => request<QueueItem>(`/api/queue/${id}`);
-export const getQueueStats = () => request<QueueStats>('/api/queue/stats');
-export const createQueueItem = (data: Record<string, unknown>) =>
-  request<QueueItem>('/api/queue', { method: 'POST', body: JSON.stringify(data) });
-export const updateQueueItem = (id: number, data: Record<string, unknown>) =>
-  request<QueueItem>(`/api/queue/${id}`, { method: 'PUT', body: JSON.stringify(data) });
-export const deleteQueueItem = (id: number) =>
-  request<void>(`/api/queue/${id}`, { method: 'DELETE' });
-
-// Coordinator
-export const getCoordinatorTasks = (runId?: string) => {
-  const q = new URLSearchParams();
-  if (runId) q.set('run_id', runId);
-  return request<CoordinatorTask[]>(`/api/coordinator/tasks?${q}`);
-};
-export const getCoordinatorDAG = (runId: string) =>
-  request<CoordinatorDAG>(`/api/coordinator/dag/${runId}`);
-export const getCoordinatorTaskDetails = (taskId: string) =>
-  request<CoordinatorTaskDetail>(`/api/coordinator/tasks/${taskId}/details`);
-export const getCoordinatorMessages = (runId?: string) => {
-  const q = new URLSearchParams();
-  if (runId) q.set('run_id', runId);
-  return request<CoordinatorMessage[]>(`/api/coordinator/messages?${q}`);
-};
-export const sendGuidance = (data: { run_id: string; employee_index: number; guidance_type: string; content: string }) =>
-  request<{ status: string }>('/api/coordinator/guidance', {
-    method: 'POST',
-    body: JSON.stringify(data),
-  });
-
-// Intelligence
-export const getIntelligenceInsights = () => request<IntelligenceInsights>('/api/intelligence/insights');
-export const getIntelligenceDecisions = (params?: { run_id?: string; limit?: number }) => {
-  const q = new URLSearchParams();
-  if (params?.run_id) q.set('run_id', params.run_id);
-  if (params?.limit) q.set('limit', String(params.limit));
-  return request<IntelligenceDecision[]>(`/api/intelligence/decisions?${q}`);
-};
-export const getBackpressure = () => request<BackpressureStatus>('/api/queue/pressure');
-
-// Brainstorm
-export const listBrainstormSessions = () => request<BrainstormSession[]>('/api/brainstorm/sessions');
-export const createBrainstormSession = (data: { title?: string; project_id?: number; persona?: string }) =>
-  request<BrainstormSession>('/api/brainstorm/sessions', { method: 'POST', body: JSON.stringify(data) });
-export const getBrainstormSession = (id: string) => request<BrainstormSessionDetail>(`/api/brainstorm/sessions/${id}`);
-export const deleteBrainstormSession = (id: string) =>
-  request<void>(`/api/brainstorm/sessions/${id}`, { method: 'DELETE' });
-
-/**
- * Send a message in a brainstorm session and return an EventSource-like reader
- * that yields SSE data events for streaming the AI response.
- */
-export function streamBrainstormMessage(
-  sessionId: string,
-  content: string,
-  onDelta: (text: string) => void,
-  onDone: (fullContent: string, messageId: string) => void,
-  onError: (error: string) => void,
-): AbortController {
-  const controller = new AbortController();
-  const apiKey = getStoredApiKey();
-
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
-
-  fetch(`${BASE}/api/brainstorm/sessions/${sessionId}/messages`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({ content }),
-    signal: controller.signal,
-  })
-    .then(async (res) => {
-      if (!res.ok) {
-        const text = await res.text();
-        onError(`${res.status}: ${text}`);
-        return;
-      }
-      const reader = res.body?.getReader();
-      if (!reader) { onError('No response body'); return; }
-
-      const decoder = new TextDecoder();
-      let buffer = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-
-        // Parse SSE lines
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue;
-          try {
-            const data = JSON.parse(line.slice(6));
-            if (data.type === 'delta') {
-              onDelta(data.text);
-            } else if (data.type === 'done') {
-              onDone(data.full_content, data.message_id);
-            } else if (data.type === 'error') {
-              onError(data.message);
-            }
-          } catch {
-            // skip malformed lines
-          }
-        }
-      }
-    })
-    .catch((err) => {
-      if (err.name !== 'AbortError') {
-        onError(err.message || 'Stream failed');
-      }
-    });
-
-  return controller;
-}
-
-// Queue management
-export const purgeQueue = (maxAgeDays?: number) => {
-  const q = new URLSearchParams();
-  if (maxAgeDays) q.set('max_age_days', String(maxAgeDays));
-  return request<{ purged: number }>(`/api/queue/purge?${q}`, { method: 'POST' });
-};
-export const batchPauseQueue = (runId: string) =>
-  request<{ status: string; paused: number }>('/api/queue/batch-pause', {
-    method: 'POST', body: JSON.stringify({ run_id: runId }),
-  });
-
-// Active teammates
-export const getActiveTeammates = () => request<ActiveEmployeeData[]>('/api/runs/active-teammates');
-
-// Agent events
-export const getAgentEvents = (params?: { event_type?: string; agent_id?: string; run_id?: string; limit?: number }) => {
-  const q = new URLSearchParams();
-  if (params?.event_type) q.set('event_type', params.event_type);
-  if (params?.agent_id) q.set('agent_id', params.agent_id);
-  if (params?.run_id) q.set('run_id', params.run_id);
-  if (params?.limit) q.set('limit', String(params.limit));
-  return request<AgentEvent[]>(`/api/agent-events?${q}`);
-};
-export const getAgentEventStats = () =>
-  request<{ by_type: Record<string, number>; total: number }>('/api/agent-events/stats/summary');
-
-// OAuth refresh
 export const refreshOAuthToken = () =>
   request<{ refreshed: boolean; error?: string; expires_at?: string }>('/api/oauth/refresh', { method: 'POST' });
 
-// Integration Branch
-export const getIntegrationStatus = (repo: string) =>
-  request<IntegrationStatus>(`/api/integration/status/${encodeURIComponent(repo)}`);
-export const getIntegrationFeatures = (params?: { project_repo?: string; state?: string; limit?: number; offset?: number }) => {
-  const q = new URLSearchParams();
-  if (params?.project_repo) q.set('project_repo', params.project_repo);
-  if (params?.state) q.set('state', params.state);
-  if (params?.limit) q.set('limit', String(params.limit));
-  if (params?.offset) q.set('offset', String(params.offset));
-  return request<IntegrationFeatureList>(`/api/integration/features?${q}`);
-};
-export const getIntegrationFeature = (id: number) =>
-  request<IntegrationFeature>(`/api/integration/features/${id}`);
-export const promoteToMain = (repo: string, featureIds?: number[], strategy?: string) =>
-  request<{ status: string; message: string }>('/api/integration/promote', {
-    method: 'POST',
-    body: JSON.stringify({ project_repo: repo, feature_ids: featureIds, strategy }),
-  });
-export const syncDevWithMain = (repo: string) =>
-  request<{ status: string; message: string }>(`/api/integration/sync/${encodeURIComponent(repo)}`, { method: 'POST' });
-export const validateDev = (repo: string) =>
-  request<{ status: string; message: string }>(`/api/integration/validate/${encodeURIComponent(repo)}`, { method: 'POST' });
-export const excludeFeature = (id: number, reason: string) =>
-  request<IntegrationFeature>(`/api/integration/exclude/${id}`, {
-    method: 'POST',
-    body: JSON.stringify({ reason }),
-  });
-export const includeFeature = (id: number) =>
-  request<IntegrationFeature>(`/api/integration/exclude/${id}`, { method: 'DELETE' });
+// --- OAuth (GitHub) - Device Authorization Flow ---
 
-// Sprint
-export const getSprintStatus = (repo: string) =>
-  request<SprintStatus>(`/api/sprint/status/${encodeURIComponent(repo)}`);
-export const getSprintFindings = (sprintId: string, role?: string) => {
-  const url = role
-    ? `/api/sprint/findings/${sprintId}/${role}`
-    : `/api/sprint/findings/${sprintId}`;
-  return request<SprintFindings[]>(url);
-};
-export const getSprintHistory = (repo: string) =>
-  request<SprintSummary[]>(`/api/sprint/history/${encodeURIComponent(repo)}`);
+export const getGitHubOAuthStatus = () =>
+  request<{ connected: boolean; username?: string; scopes?: string[] }>('/api/oauth/github/status');
+
+export const startGitHubDeviceFlow = () =>
+  request<{ flow_id: string; user_code: string; verification_uri: string; expires_in: number }>('/api/oauth/github/device/start', { method: 'POST' });
+
+export const pollGitHubDeviceFlow = (flowId: string) =>
+  request<{ status: string; error?: string }>('/api/oauth/github/device/poll', {
+    method: 'POST', body: JSON.stringify({ flow_id: flowId }),
+  });
+
+export const disconnectGitHub = () =>
+  requestWithToast<{ success: boolean; message: string }>('/api/oauth/github', { method: 'DELETE' });
+
+// --- Plans ---
+
+export const listPlans = (params?: {
+  limit?: number; offset?: number; project_id?: number; status?: string;
+}) =>
+  request<PlanList>(`/api/plans${qs(params ?? {})}`);
+
+export const getPlan = (id: number) =>
+  request<Plan>(`/api/plans/${id}`);
+
+export const deletePlan = (id: number) =>
+  requestWithToast<void>(`/api/plans/${id}`, { method: 'DELETE' });
+
+export const approvePlan = (id: number) =>
+  requestWithToast<Plan>(`/api/plans/${id}/approve`, { method: 'POST' });
+
+export const rejectPlan = (id: number) =>
+  requestWithToast<Plan>(`/api/plans/${id}/reject`, { method: 'POST' });
+
+export const implementPlan = (id: number) =>
+  requestWithToast<Plan>(`/api/plans/${id}/implement`, { method: 'POST' });
+
+// --- Logs ---
+
+export const searchLogs = (q: string, runId?: string, limit?: number) =>
+  request<{ results: Record<string, unknown>[]; total: number }>(
+    `/api/logs/search${qs({ q, run_id: runId, limit })}`
+  );
+
+export const getRunLogs = (runId: string, limit?: number, offset?: number) =>
+  request<{ lines: string[]; total: number; run_id: string }>(
+    `/api/logs/${runId}${qs({ limit, offset })}`
+  );
+
+// --- Analytics ---
+
+export const getAnalytics = (params?: { days?: number; project_id?: number }) =>
+  request<AnalyticsResponse>(`/api/analytics${qs(params ?? {})}`);
+
+// --- Prompts ---
+
+export const listPrompts = () =>
+  request<PromptInfo[]>('/api/prompts');
+
+export const getPrompt = (role: string) =>
+  request<PromptInfo>(`/api/prompts/${role}`);
+
+export const updatePrompt = (role: string, content: string) =>
+  requestWithToast<PromptInfo>(`/api/prompts/${role}`, {
+    method: 'PUT', body: JSON.stringify({ content }),
+  });
+
+export const resetPrompt = (role: string) =>
+  requestWithToast<PromptInfo>(`/api/prompts/${role}`, { method: 'DELETE' });
+
+// --- Queue ---
+
+export const listQueue = (params?: {
+  state?: string; project_repo?: string; run_id?: string;
+  limit?: number; offset?: number;
+}) =>
+  request<QueueItemList>(`/api/queue${qs(params ?? {})}`);
+
+export const getQueueItem = (id: number) =>
+  request<QueueItem>(`/api/queue/${id}`);
+
+export const getQueueStats = () =>
+  request<QueueStats>('/api/queue/stats');
+
+export const createQueueItem = (data: Record<string, unknown>) =>
+  requestWithToast<QueueItem>('/api/queue', {
+    method: 'POST', body: JSON.stringify(data),
+  });
+
+export const updateQueueItem = (id: number, data: Record<string, unknown>) =>
+  requestWithToast<QueueItem>(`/api/queue/${id}`, {
+    method: 'PUT', body: JSON.stringify(data),
+  });
+
+export const deleteQueueItem = (id: number) =>
+  requestWithToast<void>(`/api/queue/${id}`, { method: 'DELETE' });
+
+export const purgeQueue = (maxAgeDays?: number) =>
+  requestWithToast<{ purged: number }>(`/api/queue/purge${qs({ max_age_days: maxAgeDays })}`, { method: 'POST' });
+
+export const batchPauseQueue = (runId: string) =>
+  requestWithToast<{ status: string; paused: number }>('/api/queue/batch-pause', {
+    method: 'POST', body: JSON.stringify({ run_id: runId }),
+  });
+
+export const getBackpressure = () =>
+  request<BackpressureStatus>('/api/queue/pressure');
+
+// --- Coordinator ---
+
+export const getCoordinatorTasks = (runId?: string) =>
+  request<CoordinatorTask[]>(`/api/coordinator/tasks${qs({ run_id: runId })}`);
+
+export const getCoordinatorDAG = (runId: string) =>
+  request<CoordinatorDAG>(`/api/coordinator/dag/${runId}`);
+
+export const getCoordinatorTaskDetails = (taskId: string) =>
+  request<CoordinatorTask>(`/api/coordinator/tasks/${taskId}/details`);
+
+export const getCoordinatorMessages = (runId?: string) =>
+  request<CoordinatorMessage[]>(`/api/coordinator/messages${qs({ run_id: runId })}`);
+
+export const sendGuidance = (data: GuidanceSend) =>
+  requestWithToast<{ status: string }>('/api/coordinator/guidance', {
+    method: 'POST', body: JSON.stringify(data),
+  });
+
+// --- Agent Events ---
+
+export const getAgentEvents = (params?: {
+  event_type?: string; agent_id?: string; run_id?: string; limit?: number;
+}) =>
+  request<AgentEvent[]>(`/api/agent-events${qs(params ?? {})}`);
+
+export const getAgentEventStats = () =>
+  request<{ by_type: Record<string, number>; total: number }>('/api/agent-events/stats/summary');
+
+// --- Notifications ---
+
+export const getNotifications = (params?: { unread_only?: boolean; limit?: number }) =>
+  request<Notification[]>(`/api/events/subscribers${qs(params ?? {})}`);

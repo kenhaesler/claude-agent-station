@@ -32,8 +32,8 @@
 <div class="flex items-center gap-4 px-4 py-2 glass rounded-lg text-xs">
   <!-- Total -->
   <div class="flex items-center gap-1.5">
-    <span class="text-text-muted">Total:</span>
-    <span class="text-text font-medium data-readout">{stats?.total ?? 0}</span>
+    <span class="text-tertiary">Total:</span>
+    <span class="text-primary font-medium font-mono">{stats?.total ?? 0}</span>
   </div>
 
   <!-- State distribution -->
@@ -43,8 +43,8 @@
         {#if count > 0}
           <div class="flex items-center gap-1">
             <span class="w-1.5 h-1.5 rounded-full" style="background: {stateColors[state] ?? 'var(--color-text-muted)'}"></span>
-            <span class="text-text-muted">{state}:</span>
-            <span class="text-text-dim data-readout">{count}</span>
+            <span class="text-tertiary">{state}:</span>
+            <span class="text-secondary font-mono">{count}</span>
           </div>
         {/if}
       {/each}
@@ -56,8 +56,8 @@
   <!-- Avg completion time -->
   {#if stats?.avg_time_to_complete_ms}
     <div class="flex items-center gap-1">
-      <span class="text-text-muted">Avg:</span>
-      <span class="text-text-dim data-readout">{formatDuration(stats.avg_time_to_complete_ms)}</span>
+      <span class="text-tertiary">Avg:</span>
+      <span class="text-secondary font-mono">{formatDuration(stats.avg_time_to_complete_ms)}</span>
     </div>
   {/if}
 

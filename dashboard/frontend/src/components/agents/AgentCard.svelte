@@ -43,9 +43,9 @@
   <div class="flex items-center gap-2 mb-2">
     <AgentAvatar {name} {color} {status} size={compact ? 'sm' : 'md'} />
     <div class="min-w-0 flex-1">
-      <div class="text-sm font-medium text-text truncate">{name}</div>
+      <div class="text-sm font-medium text-primary truncate">{name}</div>
       {#if role}
-        <div class="text-[10px] text-text-muted uppercase tracking-wider">{role}</div>
+        <div class="text-[10px] text-tertiary uppercase tracking-wider">{role}</div>
       {/if}
     </div>
     {#if status === 'active'}
@@ -56,8 +56,8 @@
   {#if !compact}
     <!-- Current tool -->
     {#if currentTool}
-      <div class="text-xs text-text-dim truncate mb-2 font-data">
-        <span class="text-text-muted">{currentTool.name}:</span> {currentTool.summary}
+      <div class="text-xs text-secondary truncate mb-2 font-mono">
+        <span class="text-tertiary">{currentTool.name}:</span> {currentTool.summary}
       </div>
     {:else if status === 'thinking'}
       <div class="text-xs text-status-thinking mb-2">Thinking...</div>
@@ -65,18 +65,18 @@
 
     <!-- Issue context -->
     {#if issueNumber || projectRepo}
-      <div class="flex items-center gap-2 text-[10px] text-text-muted mb-2">
+      <div class="flex items-center gap-2 text-[10px] text-tertiary mb-2">
         {#if projectRepo}
           <span class="truncate">{projectRepo}</span>
         {/if}
         {#if issueNumber}
-          <span class="text-info">#{issueNumber}</span>
+          <span class="text-indigo">#{issueNumber}</span>
         {/if}
       </div>
     {/if}
 
     <!-- Metrics -->
-    <div class="flex items-center gap-3 text-[10px] text-text-muted data-readout">
+    <div class="flex items-center gap-3 text-[10px] text-tertiary font-mono">
       <span title="Turns">{turns} turns</span>
       <span title="Tokens">{formatCompact(tokens)} tok</span>
       {#if elapsed > 0}

@@ -1,128 +1,147 @@
 <script lang="ts">
   import { listRuns } from '../lib/api';
   import { navigate } from '../lib/router.svelte';
-  import { formatCompact, formatDuration } from '../lib/chart-utils';
+  import { formatTokens, formatDuration, timeAgo } from '../lib/format';
   import type { Run } from '../lib/types';
 
   let runs = $state<Run[]>([]);
   let total = $state(0);
-  let offset = $state(0);
   let loading = $state(true);
-  let statusFilter = $state('');
-  let verdictFilter = $state('');
-  const limit = 30;
+  let offset = $state(0);
+  const limit = 25;
+
+  // Filters
+  let statusFilter = $state<string>('');
+  let verdictFilter = $state<string>('');
 
   async function loadRuns() {
     loading = true;
     try {
-      const params: any = { limit, offset };
+      const params: Record<string, unknown> = { limit, offset };
       if (statusFilter) params.status = statusFilter;
       if (verdictFilter) params.verdict = verdictFilter;
       const res = await listRuns(params);
       runs = res.runs;
       total = res.total;
-    } catch { /* silent */ }
-    loading = false;
+    } catch (e) {
+      console.error('Failed to load runs:', e);
+    } finally {
+      loading = false;
+    }
   }
 
   $effect(() => {
+    statusFilter; verdictFilter; offset;
     loadRuns();
   });
 
-  // Reload when filters change
-  $effect(() => {
-    statusFilter; verdictFilter;
-    offset = 0;
-    loadRuns();
-  });
+  let totalPages = $derived(Math.ceil(total / limit));
+  let currentPage = $derived(Math.floor(offset / limit) + 1);
 
-  const verdictStyles: Record<string, string> = {
-    APPROVE: 'bg-approve/20 text-approve',
-    PR: 'bg-pr/20 text-pr',
-    REJECT: 'bg-reject/20 text-reject',
-    SKIP: 'bg-surface-2 text-text-muted',
-  };
+  function getVerdictBadge(verdict: string | null): string {
+    const map: Record<string, string> = { 'APPROVE': 'badge-approve', 'PR': 'badge-pr', 'REJECT': 'badge-reject' };
+    return verdict ? map[verdict] ?? '' : '';
+  }
+
+  function getModeBadge(mode: string | null): string {
+    return mode ? `badge-${mode}` : '';
+  }
+
+  function getStatusDot(run: Run): string {
+    if (run.status === 'started') return 'running';
+    if (run.verdict === 'APPROVE' || run.verdict === 'PR') return 'online';
+    if (run.verdict === 'REJECT') return 'error';
+    return 'offline';
+  }
+
+  const statuses = ['', 'started', 'finished', 'employee_done', 'reviewing'];
+  const verdicts = ['', 'APPROVE', 'PR', 'REJECT'];
 </script>
 
-<div class="space-y-4 animate-fade-in-up">
+<div class="space-y-4 animate-fade-in">
   <div class="flex items-center justify-between">
-    <h1 class="text-lg font-semibold text-text">Runs</h1>
-    <div class="flex items-center gap-2">
-      <select bind:value={statusFilter} class="bg-surface text-text-dim text-xs px-2 py-1.5 rounded border border-border-subtle focus:border-focus outline-none">
-        <option value="">All statuses</option>
-        <option value="running">Running</option>
-        <option value="success">Success</option>
-        <option value="failed">Failed</option>
-      </select>
-      <select bind:value={verdictFilter} class="bg-surface text-text-dim text-xs px-2 py-1.5 rounded border border-border-subtle focus:border-focus outline-none">
-        <option value="">All verdicts</option>
-        <option value="APPROVE">Approve</option>
-        <option value="PR">PR</option>
-        <option value="REJECT">Reject</option>
-      </select>
-    </div>
+    <h1 class="font-heading text-xl">Runs</h1>
+    <span class="text-xs font-mono text-tertiary">{total} total</span>
   </div>
 
-  <!-- Runs table -->
-  <div class="glass rounded-lg overflow-hidden">
+  <!-- Filter Bar -->
+  <div class="flex items-center gap-3 flex-wrap">
+    <select bind:value={statusFilter} class="input w-auto text-xs">
+      <option value="">All Statuses</option>
+      {#each statuses.slice(1) as s}<option value={s}>{s}</option>{/each}
+    </select>
+    <select bind:value={verdictFilter} class="input w-auto text-xs">
+      <option value="">All Verdicts</option>
+      {#each verdicts.slice(1) as v}<option value={v}>{v}</option>{/each}
+    </select>
+    <button onclick={() => { statusFilter = ''; verdictFilter = ''; offset = 0; }} class="btn btn-ghost btn-sm text-xs">Clear</button>
+  </div>
+
+  <!-- Run Table -->
+  <div class="card overflow-hidden">
     <table class="w-full text-sm">
       <thead>
-        <tr class="border-b border-border-subtle text-xs text-text-muted">
-          <th class="px-4 py-2 text-left font-medium">Run ID</th>
-          <th class="px-4 py-2 text-left font-medium">Mode</th>
-          <th class="px-4 py-2 text-left font-medium">Status</th>
-          <th class="px-4 py-2 text-left font-medium">Verdict</th>
-          <th class="px-4 py-2 text-right font-medium">Tokens</th>
-          <th class="px-4 py-2 text-right font-medium">Turns</th>
-          <th class="px-4 py-2 text-right font-medium">Duration</th>
+        <tr class="border-b border-border text-[10px] font-mono uppercase tracking-widest text-tertiary">
+          <th class="text-left p-3 w-8"></th>
+          <th class="text-left p-3">Run ID</th>
+          <th class="text-left p-3">Issue</th>
+          <th class="text-left p-3">Mode</th>
+          <th class="text-left p-3">Model</th>
+          <th class="text-left p-3">Verdict</th>
+          <th class="text-right p-3">Tokens</th>
+          <th class="text-right p-3">Duration</th>
+          <th class="text-right p-3">Started</th>
         </tr>
       </thead>
       <tbody>
-        {#each runs as run (run.id)}
-          <tr
-            class="border-b border-border-subtle/50 hover:bg-surface-2/30 cursor-pointer transition-colors"
-            onclick={() => navigate(`/runs/${run.run_id}`)}
-          >
-            <td class="px-4 py-2 text-text font-mono text-xs">{run.run_id}</td>
-            <td class="px-4 py-2 text-text-dim capitalize">{run.mode ?? '-'}</td>
-            <td class="px-4 py-2">
-              <span class="text-xs {run.status === 'running' ? 'text-status-active' : run.status === 'failed' ? 'text-reject' : 'text-text-dim'}">
-                {run.status ?? '-'}
-              </span>
-            </td>
-            <td class="px-4 py-2">
-              {#if run.verdict}
-                <span class="text-[10px] px-1.5 py-0.5 rounded font-medium {verdictStyles[run.verdict] ?? ''}">
-                  {run.verdict}
-                </span>
-              {:else}
-                <span class="text-text-muted">-</span>
-              {/if}
-            </td>
-            <td class="px-4 py-2 text-right text-text-dim data-readout text-xs">{run.tokens_total ? formatCompact(run.tokens_total) : '-'}</td>
-            <td class="px-4 py-2 text-right text-text-dim data-readout text-xs">{run.turns ?? '-'}</td>
-            <td class="px-4 py-2 text-right text-text-dim data-readout text-xs">{run.duration_ms ? formatDuration(run.duration_ms) : '-'}</td>
-          </tr>
-        {/each}
+        {#if loading}
+          {#each Array(5) as _}
+            <tr class="border-b border-border/50">
+              {#each Array(9) as __}<td class="p-3"><div class="skeleton h-4 w-full"></div></td>{/each}
+            </tr>
+          {/each}
+        {:else}
+          {#each runs as run, i (run.id)}
+            <tr
+              class="border-b border-border/50 hover:bg-surface-1/50 cursor-pointer transition-colors animate-slide-up stagger-{Math.min(i + 1, 6)}"
+              onclick={() => navigate(`/runs/${run.run_id}`)}
+              role="button"
+              tabindex="0"
+              onkeydown={(e) => e.key === 'Enter' && navigate(`/runs/${run.run_id}`)}
+            >
+              <td class="p-3"><span class="status-dot {getStatusDot(run)}"></span></td>
+              <td class="p-3"><span class="font-mono text-xs text-secondary">{run.run_id?.slice(0, 16)}</span></td>
+              <td class="p-3">
+                {#if run.issue_number}<span class="text-xs text-primary">#{run.issue_number}</span>
+                {:else}<span class="text-xs text-ghost">-</span>{/if}
+              </td>
+              <td class="p-3">{#if run.mode}<span class="badge {getModeBadge(run.mode)}">{run.mode}</span>{/if}</td>
+              <td class="p-3"><span class="text-xs font-mono text-tertiary">{run.model?.split('-').pop() ?? '-'}</span></td>
+              <td class="p-3">
+                {#if run.verdict}<span class="badge {getVerdictBadge(run.verdict)}">{run.verdict}</span>
+                {:else if run.status === 'started'}<span class="badge badge-running">LIVE</span>
+                {:else}<span class="text-xs text-ghost">{run.status}</span>{/if}
+              </td>
+              <td class="p-3 text-right"><span class="font-mono text-xs text-secondary">{run.tokens_total ? formatTokens(run.tokens_total) : '-'}</span></td>
+              <td class="p-3 text-right"><span class="font-mono text-xs text-secondary">{run.duration_ms ? formatDuration(run.duration_ms) : '-'}</span></td>
+              <td class="p-3 text-right"><span class="font-mono text-xs text-tertiary">{timeAgo(run.started_at)}</span></td>
+            </tr>
+          {/each}
+        {/if}
+        {#if !loading && runs.length === 0}
+          <tr><td colspan="9" class="p-12 text-center text-secondary">No runs found</td></tr>
+        {/if}
       </tbody>
     </table>
   </div>
 
   <!-- Pagination -->
-  {#if total > limit}
-    <div class="flex items-center justify-between text-xs text-text-muted">
-      <span>Showing {offset + 1}-{Math.min(offset + limit, total)} of {total}</span>
-      <div class="flex gap-2">
-        <button
-          disabled={offset === 0}
-          onclick={() => { offset = Math.max(0, offset - limit); loadRuns(); }}
-          class="px-3 py-1 rounded bg-surface hover:bg-surface-2 disabled:opacity-30 transition-colors"
-        >← Prev</button>
-        <button
-          disabled={offset + limit >= total}
-          onclick={() => { offset += limit; loadRuns(); }}
-          class="px-3 py-1 rounded bg-surface hover:bg-surface-2 disabled:opacity-30 transition-colors"
-        >Next →</button>
+  {#if totalPages > 1}
+    <div class="flex items-center justify-between">
+      <span class="text-xs font-mono text-tertiary">Page {currentPage} of {totalPages}</span>
+      <div class="flex items-center gap-2">
+        <button onclick={() => offset = Math.max(0, offset - limit)} disabled={offset === 0} class="btn btn-ghost btn-sm text-xs disabled:opacity-30">Previous</button>
+        <button onclick={() => offset = offset + limit} disabled={currentPage >= totalPages} class="btn btn-ghost btn-sm text-xs disabled:opacity-30">Next</button>
       </div>
     </div>
   {/if}

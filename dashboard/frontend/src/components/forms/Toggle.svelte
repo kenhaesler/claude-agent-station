@@ -26,6 +26,6 @@
     ></span>
   </button>
   {#if label}
-    <span class="text-sm text-text-dim">{label}</span>
+    <span class="text-sm text-secondary">{label}</span>
   {/if}
 </label>

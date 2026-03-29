@@ -49,16 +49,16 @@
 <div
   bind:this={feedEl}
   onscroll={handleScroll}
-  class="flex flex-col gap-0.5 overflow-y-auto h-full text-xs font-data"
+  class="flex flex-col gap-0.5 overflow-y-auto h-full text-xs font-mono"
 >
   {#each entries as entry (entry.id)}
-    <div class="flex gap-2 px-2 py-1 rounded hover:bg-surface/40 activity-enter
+    <div class="flex gap-2 px-2 py-1 rounded hover:bg-surface-0/40 activity-enter
                 {entry.isError ? 'bg-reject/5' : ''}">
-      <span class="text-text-muted shrink-0 w-4 text-center">{typeIcons[entry.type] ?? '·'}</span>
+      <span class="text-tertiary shrink-0 w-4 text-center">{typeIcons[entry.type] ?? '·'}</span>
       <span class="shrink-0 w-16 truncate" style="color: {entry.agentColor}">{entry.agentName}</span>
-      <span class="text-text-dim flex-1 break-words min-w-0">
+      <span class="text-secondary flex-1 break-words min-w-0">
         {#if entry.toolName}
-          <span class="text-text-muted">{entry.toolName}:</span>
+          <span class="text-tertiary">{entry.toolName}:</span>
         {/if}
         {entry.content}
       </span>
@@ -66,7 +66,7 @@
   {/each}
 
   {#if entries.length === 0}
-    <div class="flex items-center justify-center h-full text-text-muted text-sm">
+    <div class="flex items-center justify-center h-full text-tertiary text-sm">
       No activity yet
     </div>
   {/if}
@@ -75,7 +75,7 @@
 {#if !autoScroll}
   <button
     onclick={() => { autoScroll = true; feedEl?.scrollTo({ top: feedEl.scrollHeight, behavior: 'smooth' }); }}
-    class="absolute bottom-2 right-4 px-2 py-1 rounded bg-surface-2 text-text-muted text-[10px] hover:text-text transition-colors"
+    class="absolute bottom-2 right-4 px-2 py-1 rounded bg-surface-2 text-tertiary text-[10px] hover:text-primary transition-colors"
   >
     ↓ Auto-scroll
   </button>

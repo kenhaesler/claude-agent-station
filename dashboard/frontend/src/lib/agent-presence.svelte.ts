@@ -8,7 +8,7 @@ import { LogWebSocket } from './ws';
 import { parseLogLine, formatToolInput, truncate } from './log-parser';
 import type { ParsedLogEvent } from './log-parser';
 import { getActiveEmployees, getLatestRun, listPlans, listRuns, getStoredApiKey } from './api';
-import type { ActiveEmployeeData, Run } from './types';
+import type { ActiveEmployee, Run } from './types';
 import { AgentEventStream } from './event-stream';
 
 // --- Agent Identity ---
@@ -84,7 +84,7 @@ export function getAgentName(employeeIndex: number | null, mode?: string | null)
 
 interface AgentPresenceState {
   // Active run state
-  activeRuns: ActiveEmployeeData[];
+  activeRuns: ActiveEmployee[];
   latestRun: Run | null;
   latestRunId: string | null;
   phase: RunPhase;
@@ -160,7 +160,7 @@ function addConversationEntry(entry: Omit<ConversationEntry, 'id' | 'timestamp'>
   }
 }
 
-function derivePhase(runs: ActiveEmployeeData[]): RunPhase {
+function derivePhase(runs: ActiveEmployee[]): RunPhase {
   if (runs.length === 0) return 'idle';
   const hasPlanReview = runs.some(r => r.status === 'plan_reviewing');
   if (hasPlanReview) return 'plan_review';
@@ -170,19 +170,23 @@ function derivePhase(runs: ActiveEmployeeData[]): RunPhase {
   return 'employee';
 }
 
-function deriveAgents(runs: ActiveEmployeeData[]): AgentIdentity[] {
+function deriveAgents(runs: ActiveEmployee[]): AgentIdentity[] {
   if (runs.length === 0) return [];
   const agents: AgentIdentity[] = [];
 
-  // Always show manager when there are active runs
-  agents.push({
-    role: 'manager',
-    name: 'Manager',
-    color: getRoleColors().manager,
-    employeeIndex: null,
-    status: runs.some(r => r.mode === 'manager' || r.status === 'reviewing' || r.status === 'plan_reviewing') ? 'active' : 'idle',
-    currentAction: null,
-  });
+  // In agent-teams mode, the lead IS the coordinator — don't add a phantom Manager
+  const hasAgentTeams = runs.some(r => r.mode === 'agent-teams');
+  if (!hasAgentTeams) {
+    // Traditional mode: always show manager when there are active runs
+    agents.push({
+      role: 'manager',
+      name: 'Manager',
+      color: getRoleColors().manager,
+      employeeIndex: null,
+      status: runs.some(r => r.mode === 'manager' || r.status === 'reviewing' || r.status === 'plan_reviewing') ? 'active' : 'idle',
+      currentAction: null,
+    });
+  }
 
   for (const run of runs) {
     if (run.mode === 'manager') continue; // Already added above
@@ -223,12 +227,16 @@ function handleWsMessage(data: string) {
 
   const events = Array.isArray(parsed) ? parsed : [parsed];
   // Determine current agent name from active agents.
-  // During manager phases the WS log stream is the manager's CLI output.
   const isManagerPhase = agentPresence.phase === 'plan_review' || agentPresence.phase === 'manager_review' || agentPresence.phase === 'executing_verdict';
   const activeAgent = isManagerPhase
     ? agentPresence.agents.find(a => a.role === 'manager')
     : (agentPresence.agents.find(a => a.status === 'active' && a.role !== 'manager')
-       ?? agentPresence.agents.find(a => a.status === 'active'));
+       ?? agentPresence.agents.find(a => a.status === 'active')
+       ?? agentPresence.agents[0]); // fallback to first agent if none active
+  // Debug: log first few messages to understand mapping
+  if (agentPresence.conversationLog.length < 3) {
+    console.log('[AgentPresence] WS msg:', { agents: agentPresence.agents.map(a => a.name), activeAgent: activeAgent?.name, phase: agentPresence.phase, eventTypes: events.map(e => e.type) });
+  }
   const agentName = activeAgent?.name ?? 'Lead';
   const agentColor = activeAgent?.color ?? getRoleColors()['dev-0'];
 
@@ -314,7 +322,7 @@ function handleWsMessage(data: string) {
 function connectSSE() {
   sse = new AgentEventStream({
     onEvent: (event) => handleSSEEvent(event),
-    onStatusChange: (connected) => { agentPresence.sseConnected = connected; },
+    onStatusChange: (state) => { agentPresence.sseConnected = state === 'connected'; },
   });
   sse.connect();
 }
@@ -464,7 +472,7 @@ async function refreshActiveRuns() {
       getLatestRun(),
     ]);
 
-    let activeEmployees: ActiveEmployeeData[] = [];
+    let activeEmployees: ActiveEmployee[] = [];
     if (employees.status === 'fulfilled') {
       activeEmployees = employees.value;
     }
@@ -491,6 +499,9 @@ async function refreshActiveRuns() {
             issue_number: r.issue_number,
             turns: r.turns,
             employee_index: r.employee_index ?? idx,
+            concurrent_group_id: r.concurrent_group_id ?? null,
+            model: r.model ?? null,
+            branch: r.branch ?? null,
           }));
         }
       } catch {
@@ -507,6 +518,10 @@ async function refreshActiveRuns() {
           status: latestRun.status ?? 'running',
           issue_number: latestRun.issue_number,
           turns: latestRun.turns,
+          employee_index: latestRun.employee_index ?? null,
+          concurrent_group_id: latestRun.concurrent_group_id ?? null,
+          model: latestRun.model ?? null,
+          branch: latestRun.branch ?? null,
         }];
       }
     }

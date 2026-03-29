@@ -62,7 +62,7 @@
     text-anchor="middle"
     dominant-baseline="central"
     fill="var(--color-text)"
-    class="font-data"
+    class="font-mono"
     font-size="{size * 0.2}px"
   >{pctText}</text>
   <!-- Label -->
