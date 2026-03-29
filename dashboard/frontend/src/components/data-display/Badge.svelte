@@ -8,11 +8,11 @@
   } = $props();
 
   const variantClasses: Record<string, string> = {
-    default: 'bg-surface-2 text-text-dim',
+    default: 'bg-surface-2 text-secondary',
     success: 'bg-approve/15 text-approve',
     error: 'bg-reject/15 text-reject',
     warning: 'bg-warning/15 text-warning',
-    info: 'bg-info/15 text-info',
+    info: 'bg-info/15 text-indigo',
     pr: 'bg-pr/15 text-pr',
   };
 </script>

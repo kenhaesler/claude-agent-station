@@ -49,7 +49,7 @@
 
     <!-- Center text -->
     {#if centerValue}
-      <text x={cx} y={cy - 4} fill="var(--color-text)" font-size="18" font-weight="600" text-anchor="middle" class="font-data">{centerValue}</text>
+      <text x={cx} y={cy - 4} fill="var(--color-text)" font-size="18" font-weight="600" text-anchor="middle" class="font-mono">{centerValue}</text>
     {/if}
     {#if centerLabel}
       <text x={cx} y={cy + 14} fill="var(--color-text-muted)" font-size="10" text-anchor="middle">{centerLabel}</text>
@@ -60,10 +60,10 @@
   {#if segments.length > 0}
     <div class="flex flex-wrap gap-x-3 gap-y-1 justify-center">
       {#each arcs as arc}
-        <div class="flex items-center gap-1 text-xs text-text-dim">
+        <div class="flex items-center gap-1 text-xs text-secondary">
           <span class="w-2 h-2 rounded-full" style="background:{arc.color}"></span>
           <span>{arc.label}</span>
-          <span class="text-text-muted data-readout">{arc.percent}%</span>
+          <span class="text-tertiary font-mono">{arc.percent}%</span>
         </div>
       {/each}
     </div>

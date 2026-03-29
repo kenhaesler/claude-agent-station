@@ -42,4 +42,4 @@
   let text = $derived(format ? format(displayed) : Math.round(displayed).toString());
 </script>
 
-<span class="data-readout">{text}</span>
+<span class="font-mono">{text}</span>

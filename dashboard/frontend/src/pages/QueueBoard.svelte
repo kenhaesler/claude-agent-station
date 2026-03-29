@@ -53,7 +53,7 @@
 
 <div class="space-y-4 animate-fade-in-up">
   <div class="flex items-center justify-between">
-    <h1 class="text-lg font-semibold text-text">Queue Board</h1>
+    <h1 class="text-lg font-semibold text-primary">Queue Board</h1>
   </div>
 
   <!-- Stats bar -->
@@ -78,50 +78,50 @@
     {@const item = selectedItem}
     <div class="space-y-4 text-sm">
       <div>
-        <div class="text-text-muted text-xs mb-1">Issue</div>
-        <div class="text-text font-medium">
-          {#if item.issue_number}<span class="text-info">#{item.issue_number}</span>{/if}
+        <div class="text-tertiary text-xs mb-1">Issue</div>
+        <div class="text-primary font-medium">
+          {#if item.issue_number}<span class="text-indigo">#{item.issue_number}</span>{/if}
           {item.issue_title ?? 'Untitled'}
         </div>
       </div>
       <div class="grid grid-cols-2 gap-3">
         <div>
-          <div class="text-text-muted text-xs mb-1">State</div>
-          <div class="text-text-dim capitalize">{item.state}</div>
+          <div class="text-tertiary text-xs mb-1">State</div>
+          <div class="text-secondary capitalize">{item.state}</div>
         </div>
         <div>
-          <div class="text-text-muted text-xs mb-1">Priority</div>
-          <div class="text-text-dim data-readout">{item.priority}</div>
+          <div class="text-tertiary text-xs mb-1">Priority</div>
+          <div class="text-secondary font-mono">{item.priority}</div>
         </div>
         <div>
-          <div class="text-text-muted text-xs mb-1">Mode</div>
-          <div class="text-text-dim">{item.mode ?? '-'}</div>
+          <div class="text-tertiary text-xs mb-1">Mode</div>
+          <div class="text-secondary">{item.mode ?? '-'}</div>
         </div>
         <div>
-          <div class="text-text-muted text-xs mb-1">Retries</div>
-          <div class="text-text-dim data-readout">{item.retry_count}/{item.max_retries}</div>
+          <div class="text-tertiary text-xs mb-1">Retries</div>
+          <div class="text-secondary font-mono">{item.retry_count}/{item.max_retries}</div>
         </div>
       </div>
       <div>
-        <div class="text-text-muted text-xs mb-1">Project</div>
-        <div class="text-text-dim">{item.project_repo}</div>
+        <div class="text-tertiary text-xs mb-1">Project</div>
+        <div class="text-secondary">{item.project_repo}</div>
       </div>
       {#if item.run_id}
         <div>
-          <div class="text-text-muted text-xs mb-1">Run</div>
-          <a href="/runs/{item.run_id}" class="text-info hover:underline">{item.run_id}</a>
+          <div class="text-tertiary text-xs mb-1">Run</div>
+          <a href="/runs/{item.run_id}" class="text-indigo hover:underline">{item.run_id}</a>
         </div>
       {/if}
       {#if item.error_message}
         <div>
-          <div class="text-text-muted text-xs mb-1">Error</div>
+          <div class="text-tertiary text-xs mb-1">Error</div>
           <div class="text-reject text-xs">{item.error_message}</div>
         </div>
       {/if}
       {#if item.confidence != null}
         <div>
-          <div class="text-text-muted text-xs mb-1">Confidence</div>
-          <div class="text-text-dim data-readout">{(item.confidence * 100).toFixed(0)}%</div>
+          <div class="text-tertiary text-xs mb-1">Confidence</div>
+          <div class="text-secondary font-mono">{(item.confidence * 100).toFixed(0)}%</div>
         </div>
       {/if}
     </div>

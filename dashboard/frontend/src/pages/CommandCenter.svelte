@@ -1,14 +1,14 @@
 <script lang="ts">
-  import { agentPresence, getAgentColor } from '../lib/agent-presence.svelte';
-  import { intelligenceCache } from '../lib/intelligence-cache.svelte';
-  import { listRuns, getQueueStats, getTokenUsage, getSystemStatus, getAnalytics, getBackpressure } from '../lib/api';
+  import { listRuns, getQueueStats, getTokenUsage, getSystemStatus, getAnalytics, getBackpressure, getActiveEmployees, listQueue } from '../lib/api';
   import { navigate } from '../lib/router.svelte';
-  import { formatCompact, formatDuration } from '../lib/chart-utils';
-  import type { Run, QueueStats, TokenUsageData, SystemStatus, AnalyticsData, BackpressureStatus } from '../lib/types';
-  import AgentCard from '../components/agents/AgentCard.svelte';
-  import BackpressureGauge from '../components/queue/BackpressureGauge.svelte';
-  import BurndownChart from '../components/charts/BurndownChart.svelte';
-  import LineChart from '../components/charts/LineChart.svelte';
+  import { agentPresence } from '../lib/agent-presence.svelte';
+  import { formatTokens, formatDuration, timeAgo, formatPercent } from '../lib/format';
+  import type { Run, QueueStats, TokenUsage, SystemStatus, AnalyticsResponse, BackpressureStatus, ActiveEmployee, QueueItem } from '../lib/types';
+  import AgentPresenceStrip from '../components/data-display/AgentPresenceStrip.svelte';
+  import AgentLiveCard from '../components/agents/AgentLiveCard.svelte';
+  import LiveActivityFeed from '../components/data-display/LiveActivityFeed.svelte';
+  import CompactKanban from '../components/data-display/CompactKanban.svelte';
+  import StatusBar from '../components/data-display/StatusBar.svelte';
 
   let {
     triggering = false,
@@ -20,15 +20,34 @@
 
   // Data state
   let recentRuns = $state<Run[]>([]);
+  let activeEmployees = $state<ActiveEmployee[]>([]);
   let queueStats = $state<QueueStats | null>(null);
-  let tokenUsage = $state<TokenUsageData | null>(null);
+  let queueItems = $state<QueueItem[]>([]);
+  let tokenUsage = $state<TokenUsage | null>(null);
   let systemStatus = $state<SystemStatus | null>(null);
-  let analyticsData = $state<AnalyticsData | null>(null);
+  let analyticsData = $state<AnalyticsResponse | null>(null);
   let backpressure = $state<BackpressureStatus | null>(null);
+  let loading = $state(true);
 
   // Derived
-  let activeAgents = $derived(agentPresence.agents.filter(a => a.status === 'active' || a.status === 'thinking'));
-  let phase = $derived(agentPresence.phase);
+  let stationPhase = $derived<'idle' | 'working' | 'attention'>(
+    activeEmployees.length > 0 ? 'working' :
+    (queueStats?.by_state?.review ?? 0) > 0 ? 'attention' : 'idle'
+  );
+
+  let stationSummary = $derived.by(() => {
+    if (activeEmployees.length > 0) {
+      const projects = new Set(activeEmployees.map(e => e.project_id)).size;
+      return `${activeEmployees.length} agent${activeEmployees.length > 1 ? 's' : ''} working across ${projects} project${projects > 1 ? 's' : ''}`;
+    }
+    if ((queueStats?.by_state?.review ?? 0) > 0) {
+      return `${queueStats!.by_state.review} item${queueStats!.by_state.review > 1 ? 's' : ''} need review`;
+    }
+    if (systemStatus?.timer?.next) {
+      return `All quiet. Next run ${timeAgo(systemStatus.timer.next)}`;
+    }
+    return 'All systems nominal';
+  });
 
   let verdictCounts = $derived.by(() => {
     if (!analyticsData?.verdict_distribution) return { approve: 0, pr: 0, reject: 0, total: 0 };
@@ -47,25 +66,27 @@
       : 0
   );
 
-  let dailyTokens = $derived(analyticsData?.daily_token_usage?.map(d => d.tokens_total) ?? []);
-  let dailyLabels = $derived(analyticsData?.daily_token_usage?.map(d => d.date.slice(5)) ?? []);
-
   // Fetch data
   async function loadData() {
-    const [runsRes, qRes, tRes, sRes, aRes, bRes] = await Promise.allSettled([
-      listRuns({ limit: 20 }),
+    const [runsRes, empRes, qRes, tRes, sRes, aRes, bRes, qiRes] = await Promise.allSettled([
+      listRuns({ limit: 15 }),
+      getActiveEmployees(),
       getQueueStats(),
       getTokenUsage(),
       getSystemStatus(),
       getAnalytics({ days: 7 }),
       getBackpressure(),
+      listQueue({ limit: 50 }),
     ]);
     if (runsRes.status === 'fulfilled') recentRuns = runsRes.value.runs;
+    if (empRes.status === 'fulfilled') activeEmployees = empRes.value;
     if (qRes.status === 'fulfilled') queueStats = qRes.value;
     if (tRes.status === 'fulfilled') tokenUsage = tRes.value;
     if (sRes.status === 'fulfilled') systemStatus = sRes.value;
     if (aRes.status === 'fulfilled') analyticsData = aRes.value;
     if (bRes.status === 'fulfilled') backpressure = bRes.value;
+    if (qiRes.status === 'fulfilled') queueItems = qiRes.value.items;
+    loading = false;
   }
 
   $effect(() => {
@@ -73,235 +94,198 @@
     const interval = setInterval(loadData, 30_000);
     return () => clearInterval(interval);
   });
+
+  function getVerdictBadge(verdict: string | null): string {
+    if (!verdict) return '';
+    const map: Record<string, string> = { 'APPROVE': 'badge-approve', 'PR': 'badge-pr', 'REJECT': 'badge-reject' };
+    return map[verdict] ?? '';
+  }
+
+  function getModeBadge(mode: string | null): string {
+    if (!mode) return '';
+    return `badge-${mode}`;
+  }
 </script>
 
-<div class="space-y-4 animate-fade-in-up">
-  <!-- Metric Strip -->
-  <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-    <!-- Active Agents -->
-    <div class="glass rounded-lg px-4 py-3">
-      <div class="text-[10px] text-text-muted uppercase tracking-wider mb-1">Active Agents</div>
-      <div class="text-2xl font-semibold text-text data-readout">{agentPresence.activeRuns.length}</div>
-      <div class="text-[10px] text-text-muted capitalize">{phase}</div>
-    </div>
-
-    <!-- Queue Depth -->
-    <div class="glass rounded-lg px-4 py-3">
-      <div class="text-[10px] text-text-muted uppercase tracking-wider mb-1">Queue</div>
-      <div class="text-2xl font-semibold text-text data-readout">{queueStats?.total ?? 0}</div>
-      <div class="text-[10px] text-text-muted">
-        {queueStats?.by_state?.in_progress ?? 0} active
-      </div>
-    </div>
-
-    <!-- Token Budget -->
-    <div class="glass rounded-lg px-4 py-3">
-      <div class="text-[10px] text-text-muted uppercase tracking-wider mb-1">Tokens Today</div>
-      <div class="text-2xl font-semibold text-text data-readout">
-        {tokenUsage ? formatCompact(tokenUsage.daily.tokens_total) : '-'}
-      </div>
-      <div class="text-[10px] text-text-muted">
-        {tokenUsage ? formatCompact(tokenUsage.monthly.tokens_total) + ' this month' : ''}
-      </div>
-    </div>
-
-    <!-- Success Rate -->
-    <div class="glass rounded-lg px-4 py-3">
-      <div class="text-[10px] text-text-muted uppercase tracking-wider mb-1">Success Rate</div>
-      <div class="text-2xl font-semibold data-readout {successRate >= 70 ? 'text-approve' : successRate >= 40 ? 'text-warning' : 'text-reject'}">
-        {successRate}%
-      </div>
-      <div class="text-[10px] text-text-muted">{verdictCounts.total} verdicts (7d)</div>
-    </div>
-
-    <!-- Backpressure -->
-    <div class="glass rounded-lg px-4 py-3 flex items-center gap-3">
-      {#if backpressure}
-        <BackpressureGauge level={backpressure.level} usagePercent={backpressure.usage_percent} compact />
-        <div>
-          <div class="text-[10px] text-text-muted uppercase tracking-wider">Load</div>
-          <div class="text-sm font-medium text-text-dim">{backpressure.level}</div>
-        </div>
-      {:else}
-        <div class="text-[10px] text-text-muted">No data</div>
-      {/if}
-    </div>
-
-    <!-- System -->
-    <div class="glass rounded-lg px-4 py-3">
-      <div class="text-[10px] text-text-muted uppercase tracking-wider mb-1">System</div>
-      <div class="flex items-center gap-2">
-        <span class="w-2 h-2 rounded-full {systemStatus?.service.active ? 'bg-status-active' : 'bg-status-inactive'}"></span>
-        <span class="text-sm text-text-dim">{systemStatus?.service.active ? 'Running' : 'Stopped'}</span>
-      </div>
-      {#if systemStatus?.timer.next_trigger}
-        <div class="text-[10px] text-text-muted mt-0.5">
-          Next: {new Date(systemStatus.timer.next_trigger).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-        </div>
-      {/if}
-    </div>
-  </div>
-
-  <!-- Main Grid: 3 columns -->
-  <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
-    <!-- Left: Live Agents -->
+<div class="space-y-6 animate-fade-in">
+  <!-- ==================== AGENT STAGE (HERO) ==================== -->
+  {#if agentPresence.agents.length > 0}
     <div class="space-y-3">
       <div class="flex items-center justify-between">
-        <h2 class="text-sm font-semibold text-text-dim">Live Agents</h2>
-        <button
-          onclick={() => navigate('/theater')}
-          class="text-[10px] text-info hover:text-text transition-colors"
-        >
-          Theater →
+        <div class="flex items-center gap-3">
+          <span class="status-dot running"></span>
+          <h2 class="font-heading text-lg text-primary">{agentPresence.agents.length} Agent{agentPresence.agents.length > 1 ? 's' : ''} Working</h2>
+        </div>
+        <button onclick={() => navigate('/agents')} class="text-xs text-violet hover:text-primary transition-colors font-mono cursor-pointer">
+          Watch Team →
         </button>
       </div>
-
-      {#if agentPresence.agents.length > 0}
-        {#each agentPresence.agents as agent (agent.name)}
-          <AgentCard
-            name={agent.name}
-            role={agent.role}
-            color={agent.color}
-            status={agent.status}
-            currentTool={agent.currentAction ? { name: '', summary: agent.currentAction } : null}
-            turns={agentPresence.turnCount}
-            tokens={agentPresence.tokensBurned}
-            compact
-            onclick={() => navigate('/theater')}
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+        {#each agentPresence.agents as agent}
+          <AgentLiveCard
+            {agent}
+            entries={agentPresence.conversationLog.filter(e => e.agentName === agent.name)}
+            onclick={() => navigate('/agents')}
           />
         {/each}
-      {:else}
-        <div class="glass rounded-lg p-6 text-center">
-          <div class="text-2xl mb-2 opacity-30">◉</div>
-          <div class="text-sm text-text-muted">No agents active</div>
-          {#if onTrigger}
-            <button
-              onclick={onTrigger}
-              disabled={triggering}
-              class="mt-3 px-4 py-1.5 rounded-lg text-xs font-medium bg-accent-blue/20 text-accent-blue hover:bg-accent-blue/30 transition-colors"
-            >
-              {triggering ? 'Triggering...' : 'Trigger Run'}
-            </button>
+      </div>
+    </div>
+  {:else}
+    <!-- Idle State -->
+    <div class="card p-8 text-center" style="background: rgba(14,14,22,0.35);">
+      <div class="flex items-center justify-center gap-3 mb-3">
+        <span class="status-dot online"></span>
+        <span class="font-heading text-lg text-primary">Station Idle</span>
+      </div>
+      <p class="text-sm text-secondary font-mono mb-5">{stationSummary}</p>
+      {#if onTrigger}
+        <button onclick={onTrigger} disabled={triggering} class="btn btn-primary cursor-pointer">
+          {#if triggering}
+            <span class="animate-spin-slow inline-block">↻</span> Triggering...
+          {:else}
+            ▶ Trigger Agent Run
           {/if}
-        </div>
+        </button>
       {/if}
     </div>
+    <AgentPresenceStrip
+      agents={agentPresence.agents}
+      activeRuns={activeEmployees}
+      onAgentClick={() => navigate('/agents')}
+    />
+  {/if}
 
-    <!-- Center: Recent Activity -->
-    <div class="space-y-3">
-      <h2 class="text-sm font-semibold text-text-dim">Recent Runs</h2>
+  <!-- ==================== MAIN CONTENT: Activity + Kanban ==================== -->
+  <div class="grid grid-cols-1 lg:grid-cols-5 gap-6">
 
-      <div class="space-y-2 max-h-[400px] overflow-y-auto">
-        {#each recentRuns.slice(0, 12) as run (run.id)}
+    <!-- Left: Live Activity Feed (3 cols) -->
+    <div class="lg:col-span-3 space-y-4">
+      <div class="flex items-center justify-between">
+        <h3 class="text-xs font-mono uppercase tracking-widest text-tertiary">Live Activity</h3>
+        <button
+          onclick={() => navigate('/agents')}
+          class="text-xs text-violet hover:text-primary transition-colors font-mono cursor-pointer"
+        >
+          View All Comms →
+        </button>
+      </div>
+      <LiveActivityFeed
+        entries={agentPresence.conversationLog}
+        maxHeight="420px"
+      />
+
+      <!-- Recent Outcomes (compact) -->
+      <div class="space-y-2">
+        <div class="flex items-center justify-between">
+          <h3 class="text-xs font-mono uppercase tracking-widest text-tertiary">Recent Runs</h3>
           <button
-            class="glass rounded-lg px-3 py-2 w-full text-left hover:bg-surface-2/50 transition-colors"
-            onclick={() => navigate(`/runs/${run.run_id}`)}
+            onclick={() => navigate('/runs')}
+            class="text-xs text-violet hover:text-primary transition-colors font-mono cursor-pointer"
           >
-            <div class="flex items-center justify-between mb-1">
-              <span class="text-xs font-medium text-text truncate">
-                {run.run_id}
-              </span>
+            View All →
+          </button>
+        </div>
+        <div class="space-y-1">
+          {#each recentRuns.slice(0, 6) as run, i (run.id)}
+            <button
+              class="w-full flex items-center gap-4 px-4 py-2.5 rounded-xl
+                     border border-transparent
+                     hover:border-border transition-all duration-200
+                     text-left cursor-pointer"
+              style="background: rgba(14,14,22,0.3); backdrop-filter: blur(12px);"
+              onclick={() => navigate(`/runs/${run.run_id}`)}
+            >
+              <span class="status-dot {run.verdict === 'APPROVE' ? 'online' : run.verdict === 'PR' ? 'online' : run.verdict === 'REJECT' ? 'error' : run.status === 'started' ? 'running' : 'offline'}"></span>
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2">
+                  <span class="text-xs font-mono text-secondary truncate">{run.run_id?.slice(0, 16)}</span>
+                  {#if run.issue_number}
+                    <span class="text-xs text-tertiary">#{run.issue_number}</span>
+                  {/if}
+                </div>
+              </div>
+              {#if run.mode}
+                <span class="badge {getModeBadge(run.mode)}">{run.mode}</span>
+              {/if}
               {#if run.verdict}
-                <span class="text-[10px] px-1.5 py-0.5 rounded font-medium
-                  {run.verdict === 'APPROVE' ? 'bg-approve/20 text-approve' :
-                   run.verdict === 'PR' ? 'bg-pr/20 text-pr' :
-                   run.verdict === 'REJECT' ? 'bg-reject/20 text-reject' :
-                   'bg-surface-2 text-text-muted'}">
-                  {run.verdict}
-                </span>
-              {:else if run.status === 'running'}
-                <span class="text-[10px] px-1.5 py-0.5 rounded bg-status-active/20 text-status-active animate-pulse">LIVE</span>
-              {:else}
-                <span class="text-[10px] text-text-muted">{run.status}</span>
+                <span class="badge {getVerdictBadge(run.verdict)}">{run.verdict}</span>
+              {:else if run.status === 'started'}
+                <span class="badge badge-running">LIVE</span>
+              {/if}
+              <div class="flex items-center gap-3 text-[11px] font-mono text-tertiary">
+                {#if run.tokens_total}
+                  <span>{formatTokens(run.tokens_total)}</span>
+                {/if}
+                <span class="w-14 text-right">{timeAgo(run.started_at)}</span>
+              </div>
+            </button>
+          {/each}
+          {#if recentRuns.length === 0 && !loading}
+            <div class="card p-8 text-center">
+              <p class="text-secondary text-sm mb-3">No runs yet</p>
+              {#if onTrigger}
+                <button onclick={onTrigger} disabled={triggering} class="btn btn-primary cursor-pointer">
+                  {triggering ? 'Triggering...' : 'Trigger First Run'}
+                </button>
               {/if}
             </div>
-            <div class="flex items-center gap-3 text-[10px] text-text-muted data-readout">
-              {#if run.mode}<span>{run.mode}</span>{/if}
-              {#if run.turns}<span>{run.turns} turns</span>{/if}
-              {#if run.tokens_total}<span>{formatCompact(run.tokens_total)} tok</span>{/if}
-              {#if run.duration_ms}<span>{formatDuration(run.duration_ms)}</span>{/if}
-            </div>
-          </button>
-        {/each}
-
-        {#if recentRuns.length === 0}
-          <div class="text-center py-6 text-sm text-text-muted">No runs yet</div>
-        {/if}
-      </div>
-    </div>
-
-    <!-- Right: Token Burndown + System Health -->
-    <div class="space-y-4">
-      <div>
-        <h2 class="text-sm font-semibold text-text-dim mb-2">Token Usage (7 days)</h2>
-        <div class="glass rounded-lg p-3">
-          {#if dailyTokens.length > 0}
-            <BurndownChart
-              used={dailyTokens}
-              labels={dailyLabels}
-              width={340}
-              height={160}
-            />
-          {:else}
-            <div class="text-center py-8 text-sm text-text-muted">No data</div>
           {/if}
         </div>
       </div>
+    </div>
+
+    <!-- Right: Project Board + Widgets (2 cols) -->
+    <div class="lg:col-span-2 space-y-4">
+      <!-- Compact Kanban -->
+      <CompactKanban
+        items={queueItems}
+        onItemClick={(item) => navigate(`/queue/${item.id}`)}
+      />
 
       <!-- Verdict Distribution -->
-      {#if analyticsData?.verdict_distribution}
-        <div>
-          <h2 class="text-sm font-semibold text-text-dim mb-2">Verdicts (7 days)</h2>
-          <div class="glass rounded-lg p-3 space-y-2">
+      {#if analyticsData?.verdict_distribution && analyticsData.verdict_distribution.length > 0}
+        <div class="card p-4 space-y-3">
+          <h3 class="text-xs font-mono uppercase tracking-widest text-tertiary">Verdicts (7d)</h3>
+          <div class="space-y-2">
             {#each analyticsData.verdict_distribution as v}
               {@const pct = (v.count / verdictCounts.total) * 100}
-              <div class="flex items-center gap-2 text-xs">
-                <span class="w-14 text-text-muted">{v.verdict}</span>
-                <div class="flex-1 h-2 rounded-full bg-surface-2 overflow-hidden">
+              <div class="flex items-center gap-3 text-xs">
+                <span class="w-16 font-mono text-secondary">{v.verdict}</span>
+                <div class="flex-1 h-1.5 rounded-full bg-surface-2 overflow-hidden">
                   <div
-                    class="h-full rounded-full transition-all duration-slow"
-                    style="width: {pct}%; background: {v.verdict === 'APPROVE' ? 'var(--color-approve)' : v.verdict === 'PR' ? 'var(--color-pr)' : v.verdict === 'REJECT' ? 'var(--color-reject)' : 'var(--color-text-muted)'}"
+                    class="h-full rounded-full transition-all duration-500"
+                    style="width: {pct}%; background: {v.verdict === 'APPROVE' ? 'var(--color-emerald)' : v.verdict === 'PR' ? 'var(--color-indigo)' : v.verdict === 'REJECT' ? 'var(--color-rose)' : 'var(--color-tertiary)'}"
                   ></div>
                 </div>
-                <span class="w-8 text-right text-text-dim data-readout">{v.count}</span>
+                <span class="w-8 text-right font-mono text-primary font-medium">{v.count}</span>
               </div>
             {/each}
           </div>
         </div>
       {/if}
 
-      <!-- System Resources -->
-      {#if systemStatus?.resources}
-        <div>
-          <h2 class="text-sm font-semibold text-text-dim mb-2">Resources</h2>
-          <div class="glass rounded-lg p-3 space-y-2 text-xs">
-            {#if systemStatus.resources.memory_used_mb && systemStatus.resources.memory_total_mb}
-              <div class="flex items-center gap-2">
-                <span class="w-14 text-text-muted">Memory</span>
-                <div class="flex-1 h-1.5 rounded-full bg-surface-2">
-                  <div class="h-full rounded-full bg-info" style="width: {(systemStatus.resources.memory_used_mb / systemStatus.resources.memory_total_mb) * 100}%"></div>
-                </div>
-                <span class="text-text-dim data-readout">{Math.round(systemStatus.resources.memory_used_mb)}M</span>
-              </div>
-            {/if}
-            {#if systemStatus.resources.disk_used_gb && systemStatus.resources.disk_total_gb}
-              <div class="flex items-center gap-2">
-                <span class="w-14 text-text-muted">Disk</span>
-                <div class="flex-1 h-1.5 rounded-full bg-surface-2">
-                  <div class="h-full rounded-full bg-accent-purple" style="width: {(systemStatus.resources.disk_used_gb / systemStatus.resources.disk_total_gb) * 100}%"></div>
-                </div>
-                <span class="text-text-dim data-readout">{Math.round(systemStatus.resources.disk_used_gb)}G</span>
-              </div>
-            {/if}
-            {#if systemStatus.resources.load_avg}
-              <div class="flex items-center gap-2">
-                <span class="w-14 text-text-muted">Load</span>
-                <span class="text-text-dim data-readout">{systemStatus.resources.load_avg.map((l: number) => l.toFixed(1)).join(' / ')}</span>
-              </div>
-            {/if}
-          </div>
-        </div>
+      <!-- Trigger Run (when idle) -->
+      {#if activeEmployees.length === 0 && onTrigger}
+        <button
+          onclick={onTrigger}
+          disabled={triggering}
+          class="w-full card card-interactive p-5 text-center group cursor-pointer"
+        >
+          <div class="text-violet text-lg mb-1 group-hover:glow-violet transition-shadow">▶</div>
+          <div class="text-sm font-medium text-primary">{triggering ? 'Triggering...' : 'Trigger Agent Run'}</div>
+          <div class="text-[11px] text-tertiary mt-1">Start the autonomous agent cycle</div>
+        </button>
       {/if}
     </div>
   </div>
+
+  <!-- ==================== STATUS BAR ==================== -->
+  <StatusBar
+    activeCount={activeEmployees.length}
+    {tokenUsage}
+    {backpressure}
+    {systemStatus}
+    sseConnected={agentPresence.sseConnected}
+    {successRate}
+  />
 </div>

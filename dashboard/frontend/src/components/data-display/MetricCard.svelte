@@ -2,44 +2,34 @@
   let {
     label,
     value,
-    trend,
-    trendLabel,
-    icon,
+    sublabel = '',
+    accent = 'default',
   }: {
     label: string;
     value: string | number;
-    trend?: 'up' | 'down' | 'flat';
-    trendLabel?: string;
-    icon?: string;
+    sublabel?: string;
+    accent?: 'default' | 'cyan' | 'violet' | 'amber' | 'emerald' | 'rose' | 'indigo';
   } = $props();
 
-  const trendArrows: Record<string, string> = {
-    up: '\u2191',
-    down: '\u2193',
-    flat: '\u2192',
+  const accentStyles: Record<string, string> = {
+    default: '',
+    cyan: 'border-cyan/20 text-cyan',
+    violet: 'border-violet/20 text-violet',
+    amber: 'border-amber/20 text-amber',
+    emerald: 'border-emerald/20 text-emerald',
+    rose: 'border-rose/20 text-rose',
+    indigo: 'border-indigo/20 text-indigo',
   };
 
-  const trendColors: Record<string, string> = {
-    up: 'text-approve',
-    down: 'text-reject',
-    flat: 'text-text-muted',
-  };
+  let valueColor = $derived(
+    accent !== 'default' ? `text-${accent}` : 'text-primary'
+  );
 </script>
 
-<div class="glass rounded-lg px-4 py-3 flex flex-col gap-1 min-w-0">
-  <div class="flex items-center gap-1.5 text-text-muted text-xs">
-    {#if icon}
-      <span class="text-sm">{icon}</span>
-    {/if}
-    <span class="truncate">{label}</span>
-  </div>
-  <div class="data-readout text-xl text-text font-medium truncate">{value}</div>
-  {#if trend}
-    <div class="flex items-center gap-1 text-xs {trendColors[trend] ?? 'text-text-muted'}">
-      <span>{trendArrows[trend] ?? ''}</span>
-      {#if trendLabel}
-        <span>{trendLabel}</span>
-      {/if}
-    </div>
+<div class="card px-4 py-3 flex flex-col gap-1 min-w-0 {accentStyles[accent]}">
+  <div class="text-[10px] font-mono uppercase tracking-widest text-tertiary truncate">{label}</div>
+  <div class="text-xl font-heading font-semibold {valueColor} truncate font-mono">{value}</div>
+  {#if sublabel}
+    <div class="text-[10px] text-tertiary font-mono truncate">{sublabel}</div>
   {/if}
 </div>

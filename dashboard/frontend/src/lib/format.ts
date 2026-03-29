@@ -1,8 +1,15 @@
+// ============================================
+// Formatting Utilities
+// ============================================
+
+/** Relative time string from a date string or null */
 export function timeAgo(dateStr: string | null): string {
   if (!dateStr) return 'never';
   const date = new Date(dateStr);
   const now = Date.now();
   const diff = now - date.getTime();
+
+  if (diff < 0) return 'just now';
 
   const seconds = Math.floor(diff / 1000);
   if (seconds < 60) return `${seconds}s ago`;
@@ -15,6 +22,15 @@ export function timeAgo(dateStr: string | null): string {
   return date.toLocaleDateString();
 }
 
+/** Format token counts as "1.2M", "45K", etc. */
+export function formatTokens(n: number | null): string {
+  if (n == null || n === 0) return '-';
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return `${n}`;
+}
+
+/** Format milliseconds as "4m 32s", "2h 15m", etc. */
 export function formatDuration(ms: number | null): string {
   if (ms == null) return '-';
   const seconds = Math.floor(ms / 1000);
@@ -27,27 +43,40 @@ export function formatDuration(ms: number | null): string {
   return `${hours}h ${remainMin}m`;
 }
 
-/** @deprecated Use formatTokens instead. Kept for historical data display. */
-export function formatCost(usd: number | null): string {
-  if (usd == null) return '-';
-  if (usd < 0.01) return `$${usd.toFixed(4)}`;
-  return `$${usd.toFixed(2)}`;
+/** Format megabytes as "1.2 GB", "450 MB", etc. Matches backend memory_mb fields. */
+export function formatBytes(mb: number | null): string {
+  if (mb == null) return '-';
+  if (mb >= 1_024) return `${(mb / 1_024).toFixed(1)} GB`;
+  return `${Math.round(mb)} MB`;
 }
 
-export function formatTokens(tokens: number | null): string {
-  if (tokens == null || tokens === 0) return '-';
-  if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`;
-  if (tokens >= 1_000) return `${(tokens / 1_000).toFixed(1)}K`;
-  return `${tokens}`;
+/** "owner/name" -> "name" */
+export function shortRepo(repo: string): string {
+  const parts = repo.split('/');
+  return parts.length > 1 ? parts[parts.length - 1] : repo;
 }
 
+/** Truncate run ID to 8 characters */
+export function shortRunId(id: string | null): string {
+  if (!id) return '-';
+  return id.slice(0, 8);
+}
+
+/** Format a number as a percentage string */
+export function formatPercent(n: number | null): string {
+  if (n == null) return '-';
+  return `${Math.round(n)}%`;
+}
+
+/** Format a date string to locale string */
 export function formatDate(dateStr: string | null): string {
   if (!dateStr) return '-';
   return new Date(dateStr).toLocaleString();
 }
 
-export function formatBytes(mb: number | null): string {
-  if (mb == null) return '-';
-  if (mb > 1024) return `${(mb / 1024).toFixed(1)} GB`;
-  return `${mb.toFixed(0)} MB`;
+/** @deprecated Use formatTokens instead. Kept for historical data display. */
+export function formatCost(usd: number | null): string {
+  if (usd == null) return '-';
+  if (usd < 0.01) return `$${usd.toFixed(4)}`;
+  return `$${usd.toFixed(2)}`;
 }

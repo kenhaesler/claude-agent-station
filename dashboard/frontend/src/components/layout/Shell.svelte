@@ -3,18 +3,40 @@
   import HeaderBar from './HeaderBar.svelte';
   import type { Snippet } from 'svelte';
 
-  let { children }: { children: Snippet } = $props();
+  let {
+    children,
+    onTrigger,
+    triggering = false,
+    sseConnected = false,
+    activeCount = 0,
+  }: {
+    children: Snippet;
+    onTrigger?: () => void;
+    triggering?: boolean;
+    sseConnected?: boolean;
+    activeCount?: number;
+  } = $props();
 </script>
 
 <div class="flex h-screen overflow-hidden">
-  <!-- Nav Rail -->
+  <!-- Navigation Rail -->
   <NavRail />
 
   <!-- Main content area -->
   <div class="flex flex-1 flex-col min-w-0">
-    <HeaderBar />
-    <main id="main-content" class="flex-1 overflow-y-auto overflow-x-hidden p-4 lg:p-6">
-      {@render children()}
+    <HeaderBar
+      {onTrigger}
+      {triggering}
+      {sseConnected}
+      {activeCount}
+    />
+    <main
+      id="main-content"
+      class="flex-1 overflow-y-auto overflow-x-hidden"
+    >
+      <div class="p-6 max-w-[1600px] mx-auto">
+        {@render children()}
+      </div>
     </main>
   </div>
 </div>

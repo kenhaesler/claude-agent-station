@@ -45,7 +45,7 @@
   <text x={x + 10} y={y + 20} fill="var(--color-text)" font-size="11" font-weight="500">
     {label.length > 22 ? label.slice(0, 20) + '...' : label}
   </text>
-  <text x={x + 10} y={y + 36} fill={colors.text} font-size="9" text-transform="uppercase" class="font-data">
+  <text x={x + 10} y={y + 36} fill={colors.text} font-size="9" style="text-transform: uppercase" class="font-mono">
     {status}
   </text>
 </g>

@@ -15,7 +15,7 @@
       class="px-3 py-1.5 text-xs font-medium transition-colors
              {value === opt.value
                ? 'bg-accent-blue/20 text-accent-blue'
-               : 'bg-surface text-text-muted hover:text-text-dim hover:bg-surface-2'}
+               : 'bg-surface-0 text-tertiary hover:text-secondary hover:bg-surface-2'}
              {i > 0 ? 'border-l border-border' : ''}"
       onclick={() => value = opt.value}
     >

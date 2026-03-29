@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
 # --- Projects ---
 
@@ -243,6 +243,13 @@ class WebhookRunEvent(BaseModel):
     status: str | None = None
     verdict: str | None = None
     issue_number: int | None = None
+
+    @field_validator("issue_number", mode="before")
+    @classmethod
+    def coerce_issue_number(cls, v: object) -> int | None:
+        if v is None or v == "None" or v == "null" or v == "":
+            return None
+        return int(v)
     branch: str | None = None
     cost_usd: float | None = None  # Deprecated: kept for backward compat
     tokens_input: int | None = None
@@ -254,6 +261,7 @@ class WebhookRunEvent(BaseModel):
     timestamp: str | None = None
     employee_index: int | None = None
     concurrent_group_id: str | None = None
+    log_file: str | None = None
     # Coordinator task fields
     task_id: str | None = None
     task_title: str | None = None

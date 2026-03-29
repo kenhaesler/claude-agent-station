@@ -14,8 +14,8 @@
   {#if icon}
     <span class="text-4xl opacity-40">{icon}</span>
   {/if}
-  <h3 class="text-text-dim text-base font-medium">{title}</h3>
+  <h3 class="text-secondary text-base font-medium">{title}</h3>
   {#if description}
-    <p class="text-text-muted text-sm max-w-xs">{description}</p>
+    <p class="text-tertiary text-sm max-w-xs">{description}</p>
   {/if}
 </div>

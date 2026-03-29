@@ -158,16 +158,18 @@ async def get_plan_usage(
             usage_percent=round(pct, 2),
         ))
 
-    # Session usage (current running runs)
+    # Session usage (last 4 hours -- Claude's actual session window)
+    session_cutoff = now - timedelta(hours=4)
     session_result = await db.execute(
         select(
             func.coalesce(func.sum(Run.tokens_input), 0).label("input_tokens"),
             func.coalesce(func.sum(Run.tokens_output), 0).label("output_tokens"),
-        ).where(Run.status == "running")
+        ).where(Run.started_at >= session_cutoff.isoformat())
     )
     session_row = session_result.one()
     session_tokens = session_row.input_tokens + session_row.output_tokens
-    session_limit = default_limit // 7  # Daily-equivalent
+    # Session limit: proportional share of weekly limit for a 4-hour window
+    session_limit = default_limit // (7 * 6)  # 42 four-hour windows per week
     session_pct = (session_tokens / session_limit * 100.0) if session_limit > 0 else 0.0
 
     # Throttle decision

@@ -27,7 +27,7 @@
   {/each}
 
   {#if displayAgents.length === 0}
-    <div class="col-span-full text-center py-8 text-sm text-text-muted">
+    <div class="col-span-full text-center py-8 text-sm text-tertiary">
       No active agents
     </div>
   {/if}

@@ -35,11 +35,11 @@
   >
     <div class="glass rounded-xl {maxWidth} w-full shadow-2xl" role="dialog" aria-modal="true" aria-label={title}>
       {#if title}
-        <div class="flex items-center justify-between px-5 py-3 border-b border-border-subtle">
-          <h2 class="text-sm font-semibold text-text">{title}</h2>
+        <div class="flex items-center justify-between px-5 py-3 border-b border-border">
+          <h2 class="text-sm font-semibold text-primary">{title}</h2>
           <button
             onclick={onClose}
-            class="text-text-muted hover:text-text transition-colors text-lg leading-none"
+            class="text-tertiary hover:text-primary transition-colors text-lg leading-none"
             aria-label="Close"
           >
             ×

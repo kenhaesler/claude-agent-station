@@ -20,8 +20,8 @@
   <!-- Column header -->
   <div class="flex items-center gap-2 px-3 py-2 mb-2">
     <span class="w-2 h-2 rounded-full" style="background: {color}"></span>
-    <span class="text-xs font-medium text-text-dim uppercase tracking-wider">{title}</span>
-    <span class="text-[10px] text-text-muted data-readout ml-auto">{items.length}</span>
+    <span class="text-xs font-medium text-secondary uppercase tracking-wider">{title}</span>
+    <span class="text-[10px] text-tertiary font-mono ml-auto">{items.length}</span>
   </div>
 
   <!-- Cards -->
@@ -31,7 +31,7 @@
     {/each}
 
     {#if items.length === 0}
-      <div class="text-center text-xs text-text-muted py-6 opacity-50">Empty</div>
+      <div class="text-center text-xs text-tertiary py-6 opacity-50">Empty</div>
     {/if}
   </div>
 </div>

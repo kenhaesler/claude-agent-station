@@ -27,7 +27,7 @@
 </script>
 
 {#if layout.nodes.length === 0}
-  <div class="flex items-center justify-center h-full text-sm text-text-muted">
+  <div class="flex items-center justify-center h-full text-sm text-tertiary">
     No task graph available
   </div>
 {:else}

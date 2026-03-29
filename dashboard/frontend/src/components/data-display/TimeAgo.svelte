@@ -33,7 +33,7 @@
 </script>
 
 <time
-  class="text-text-muted text-xs whitespace-nowrap"
+  class="text-tertiary text-xs whitespace-nowrap"
   datetime={timestamp ?? undefined}
   title={timestamp ?? undefined}
 >{display}</time>

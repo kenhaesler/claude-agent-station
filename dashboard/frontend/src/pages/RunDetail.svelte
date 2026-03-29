@@ -1,190 +1,458 @@
 <script lang="ts">
-  import { getRunFullContext, getRunDiff } from '../lib/api';
-  import { formatCompact, formatDuration } from '../lib/chart-utils';
-  import type { RunFullContext, DiffResult, CoordinatorTask } from '../lib/types';
-  import DAGCanvas from '../components/dag/DAGCanvas.svelte';
+  import { getRunFullContext, getRunDiff, getCoordinatorMessages } from '../lib/api';
+  import { formatTokens, formatDuration, timeAgo } from '../lib/format';
+  import { getAgentName, getAgentColor } from '../lib/agent-presence.svelte';
+  import type { RunFullContext, DiffResult, CoordinatorMessage } from '../lib/types';
+  import { navigate } from '../lib/router.svelte';
+  import LogViewer from '../components/data-display/LogViewer.svelte';
 
-  let { runId = '' }: { runId: string } = $props();
+  let { runId }: { runId: string } = $props();
 
-  let context = $state<RunFullContext | null>(null);
+  let ctx = $state<RunFullContext | null>(null);
   let diff = $state<DiffResult | null>(null);
+  let allMessages = $state<CoordinatorMessage[]>([]);
   let loading = $state(true);
-  let activeTab = $state<'overview' | 'dag' | 'diff' | 'report'>('overview');
+  let activeTab = $state<'overview' | 'dag' | 'team' | 'conversation' | 'diff' | 'logs' | 'intelligence'>('overview');
+  let error = $state<string | null>(null);
 
-  $effect(() => {
-    if (!runId) return;
-    load();
-  });
-
-  async function load() {
+  async function loadRun() {
     loading = true;
+    error = null;
     try {
-      const [ctxRes, diffRes] = await Promise.allSettled([
-        getRunFullContext(runId),
-        getRunDiff(runId),
-      ]);
-      if (ctxRes.status === 'fulfilled') context = ctxRes.value;
-      if (diffRes.status === 'fulfilled') diff = diffRes.value;
-    } catch { /* silent */ }
-    loading = false;
+      ctx = await getRunFullContext(runId);
+      // Load diff and messages in background
+      getRunDiff(runId).then(d => diff = d).catch(() => {});
+      getCoordinatorMessages(runId).then(m => allMessages = m).catch(() => {});
+    } catch (e: any) {
+      error = e.message ?? 'Failed to load run';
+    } finally {
+      loading = false;
+    }
   }
 
-  let run = $derived(context?.run);
-  let tasks = $derived(context?.coordinator_tasks ?? []);
-  let teamSummary = $derived(context?.team_summary);
-
-  let report = $derived.by(() => {
-    if (!run?.employee_report) return null;
-    try { return JSON.parse(run.employee_report); } catch { return null; }
+  $effect(() => {
+    runId;
+    loadRun();
   });
 
-  let verdictDetail = $derived.by(() => {
-    if (!run?.verdict_detail) return null;
-    try { return JSON.parse(run.verdict_detail); } catch { return null; }
+  let run = $derived(ctx?.run);
+  let hasDag = $derived((ctx?.coordinator_tasks?.length ?? 0) > 0);
+  let hasTeam = $derived(ctx?.team_summary !== null);
+  let hasIntelligence = $derived((ctx?.intelligence_decisions?.length ?? 0) > 0);
+  let hasConversation = $derived(allMessages.length > 0 || (ctx?.coordinator_messages?.length ?? 0) > 0);
+  let conversationMessages = $derived(allMessages.length > 0 ? allMessages : (ctx?.coordinator_messages ?? []));
+
+  let hasDiff = $derived((diff?.files?.length ?? 0) > 0 || !!run?.branch);
+  let hasLogs = $derived(!!run?.log_file);
+
+  let tabs = $derived.by(() => {
+    const t: { id: string; label: string }[] = [{ id: 'overview', label: 'Overview' }];
+    if (hasDag) t.push({ id: 'dag', label: 'DAG' });
+    if (hasTeam) t.push({ id: 'team', label: 'Team' });
+    if (hasConversation) t.push({ id: 'conversation', label: 'Conversation' });
+    if (hasDiff) t.push({ id: 'diff', label: 'Diff' });
+    if (hasLogs) t.push({ id: 'logs', label: 'Logs' });
+    if (hasIntelligence) t.push({ id: 'intelligence', label: 'Intelligence' });
+    return t;
   });
 
-  const verdictStyles: Record<string, string> = {
-    APPROVE: 'bg-approve/20 text-approve',
-    PR: 'bg-pr/20 text-pr',
-    REJECT: 'bg-reject/20 text-reject',
-  };
+  function getInitials(name: string): string {
+    return name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
+  }
+
+  function getMsgBorderColor(type: string): string {
+    const map: Record<string, string> = { guidance: 'var(--color-cyan)', conflict: 'var(--color-amber)', progress: 'var(--color-emerald)', error: 'var(--color-rose)' };
+    return map[type] ?? 'var(--color-tertiary)';
+  }
+
+  function getVerdictBadge(verdict: string | null): string {
+    const map: Record<string, string> = { 'APPROVE': 'badge-approve', 'PR': 'badge-pr', 'REJECT': 'badge-reject' };
+    return verdict ? map[verdict] ?? '' : '';
+  }
+
+  function parseReport(report: string | null): Record<string, unknown> | null {
+    if (!report) return null;
+    try { return JSON.parse(report); } catch { return null; }
+  }
 </script>
 
-<div class="space-y-4 animate-fade-in-up">
-  {#if loading}
-    <div class="text-sm text-text-muted">Loading run {runId}...</div>
-  {:else if !run}
-    <div class="text-sm text-text-muted">Run not found</div>
-  {:else}
-    <!-- Header -->
-    <div class="flex items-center justify-between">
+{#if loading}
+  <div class="space-y-4 animate-fade-in">
+    <div class="skeleton h-8 w-64"></div>
+    <div class="skeleton h-48 w-full"></div>
+  </div>
+{:else if error}
+  <div class="card p-12 text-center">
+    <p class="text-rose text-sm mb-4">{error}</p>
+    <button onclick={() => navigate('/runs')} class="btn btn-secondary">Back to Runs</button>
+  </div>
+{:else if run}
+  <div class="space-y-6 animate-fade-in">
+    <!-- ===== HEADER ===== -->
+    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
       <div>
-        <h1 class="text-lg font-semibold text-text font-mono">{run.run_id}</h1>
-        <div class="flex items-center gap-3 text-xs text-text-muted mt-1">
-          {#if run.mode}<span class="capitalize">{run.mode}</span>{/if}
-          {#if run.model}<span>{run.model}</span>{/if}
-          {#if context?.project_repo}<span>{context.project_repo}</span>{/if}
+        <div class="flex items-center gap-3 mb-2">
+          <span class="status-dot {run.status === 'started' ? 'running' : run.verdict === 'REJECT' ? 'error' : run.verdict ? 'online' : 'offline'}"></span>
+          <h1 class="font-heading text-xl">{run.run_id?.slice(0, 20)}</h1>
+          {#if run.verdict}
+            <span class="badge {getVerdictBadge(run.verdict)}">{run.verdict}</span>
+          {:else if run.status === 'started'}
+            <span class="badge badge-running">LIVE</span>
+          {/if}
+        </div>
+        <div class="flex items-center gap-4 text-xs text-tertiary font-mono">
+          {#if ctx?.project_repo}
+            <span>{ctx.project_repo}</span>
+          {/if}
+          {#if run.issue_number}
+            <span>#{run.issue_number}</span>
+          {/if}
+          {#if run.mode}
+            <span class="badge badge-{run.mode}">{run.mode}</span>
+          {/if}
+          {#if run.model}
+            <span>{run.model}</span>
+          {/if}
         </div>
       </div>
-      <div class="flex items-center gap-2">
-        {#if run.status === 'running'}
-          <span class="text-xs px-2 py-1 rounded bg-status-active/20 text-status-active animate-pulse">LIVE</span>
+
+      <!-- Stats chips -->
+      <div class="flex items-center gap-3">
+        {#if run.tokens_total}
+          <div class="card px-3 py-1.5">
+            <span class="text-[10px] text-tertiary font-mono">TOKENS</span>
+            <span class="block font-mono text-sm text-primary font-medium">{formatTokens(run.tokens_total)}</span>
+          </div>
         {/if}
-        {#if run.verdict}
-          <span class="text-xs px-2 py-1 rounded font-medium {verdictStyles[run.verdict] ?? 'bg-surface-2 text-text-muted'}">
-            {run.verdict}
-          </span>
+        {#if run.duration_ms}
+          <div class="card px-3 py-1.5">
+            <span class="text-[10px] text-tertiary font-mono">DURATION</span>
+            <span class="block font-mono text-sm text-primary font-medium">{formatDuration(run.duration_ms)}</span>
+          </div>
+        {/if}
+        {#if run.turns}
+          <div class="card px-3 py-1.5">
+            <span class="text-[10px] text-tertiary font-mono">TURNS</span>
+            <span class="block font-mono text-sm text-primary font-medium">{run.turns}</span>
+          </div>
         {/if}
       </div>
     </div>
 
-    <!-- Metrics strip -->
-    <div class="flex items-center gap-6 text-xs text-text-dim data-readout">
-      {#if run.tokens_total}<span>{formatCompact(run.tokens_total)} tokens</span>{/if}
-      {#if run.turns}<span>{run.turns} turns</span>{/if}
-      {#if run.duration_ms}<span>{formatDuration(run.duration_ms)}</span>{/if}
-      {#if run.issue_number}<span class="text-info">Issue #{run.issue_number}</span>{/if}
-    </div>
-
-    <!-- Tabs -->
-    <div class="flex gap-1 border-b border-border-subtle">
-      {#each ['overview', 'dag', 'diff', 'report'] as tab}
+    <!-- ===== TABS ===== -->
+    <div class="flex items-center gap-1 border-b border-border">
+      {#each tabs as tab}
         <button
-          class="px-3 py-2 text-xs font-medium transition-colors
-                 {activeTab === tab ? 'text-text border-b-2 border-accent-blue' : 'text-text-muted hover:text-text-dim'}"
-          onclick={() => activeTab = tab as any}
+          onclick={() => activeTab = tab.id as typeof activeTab}
+          class="px-4 py-2.5 text-sm font-medium transition-colors relative
+                 {activeTab === tab.id ? 'text-cyan' : 'text-secondary hover:text-primary'}"
         >
-          {tab.charAt(0).toUpperCase() + tab.slice(1)}
-          {#if tab === 'dag' && tasks.length > 0}
-            <span class="ml-1 text-text-muted">({tasks.length})</span>
-          {/if}
-          {#if tab === 'diff' && diff}
-            <span class="ml-1 text-text-muted">({diff.total_files})</span>
+          {tab.label}
+          {#if activeTab === tab.id}
+            <span class="absolute bottom-0 left-2 right-2 h-0.5 bg-cyan rounded-full"></span>
           {/if}
         </button>
       {/each}
     </div>
 
-    <!-- Tab content -->
+    <!-- ===== TAB CONTENT ===== -->
     {#if activeTab === 'overview'}
-      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <!-- Team summary -->
-        {#if teamSummary}
-          <div class="glass rounded-lg p-4">
-            <h3 class="text-xs font-semibold text-text-dim mb-3 uppercase tracking-wider">Team: {teamSummary.team_name}</h3>
-            <div class="space-y-2">
-              {#each teamSummary.teammates as mate}
-                <div class="flex items-center justify-between text-xs">
-                  <span class="text-text">{mate.name}</span>
-                  <span class="text-text-muted capitalize">{mate.status}</span>
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <!-- Employee Report -->
+        <div class="card p-5 space-y-3">
+          <h3 class="text-xs font-mono uppercase tracking-widest text-tertiary">Employee Report</h3>
+          {#if parseReport(run.employee_report)}
+            {@const report = parseReport(run.employee_report)!}
+            <div class="space-y-3 text-sm">
+              {#each Object.entries(report) as [key, val]}
+                <div>
+                  <span class="text-[10px] font-mono uppercase text-tertiary">{key.replace(/_/g, ' ')}</span>
+                  <div class="text-secondary mt-0.5">
+                    {#if typeof val === 'string'}
+                      <p class="whitespace-pre-wrap">{val}</p>
+                    {:else if Array.isArray(val)}
+                      <ul class="list-disc list-inside space-y-0.5">
+                        {#each val as item}<li>{typeof item === 'string' ? item : JSON.stringify(item)}</li>{/each}
+                      </ul>
+                    {:else}
+                      <pre class="text-xs font-mono bg-surface-1 rounded p-2 overflow-x-auto">{JSON.stringify(val, null, 2)}</pre>
+                    {/if}
+                  </div>
                 </div>
               {/each}
             </div>
-            <div class="mt-3 text-xs text-text-muted">
-              {teamSummary.tasks_completed}/{teamSummary.tasks_total} tasks done
-            </div>
-          </div>
-        {/if}
+          {:else if run.employee_report}
+            <p class="text-sm text-secondary whitespace-pre-wrap">{run.employee_report}</p>
+          {:else}
+            <p class="text-sm text-tertiary">
+              {#if run.status === 'started' || run.status === 'running'}
+                Report will be available after the employee finishes
+              {:else if run.status === 'reviewing'}
+                Employee finished — report pending review
+              {:else}
+                Employee did not produce a report
+              {/if}
+            </p>
+          {/if}
+        </div>
 
-        <!-- Verdict detail -->
-        {#if verdictDetail}
-          <div class="glass rounded-lg p-4">
-            <h3 class="text-xs font-semibold text-text-dim mb-3 uppercase tracking-wider">Verdict Detail</h3>
-            <pre class="text-xs text-text-dim whitespace-pre-wrap overflow-auto max-h-64 font-data">{JSON.stringify(verdictDetail, null, 2)}</pre>
-          </div>
-        {/if}
+        <!-- Verdict & Context -->
+        <div class="space-y-4">
+          {#if run.verdict_detail}
+            <div class="card p-5 space-y-2">
+              <h3 class="text-xs font-mono uppercase tracking-widest text-tertiary">Verdict Detail</h3>
+              <p class="text-sm text-secondary whitespace-pre-wrap">{run.verdict_detail}</p>
+            </div>
+          {/if}
+
+          {#if ctx?.queue_item}
+            <div class="card p-5 space-y-2">
+              <h3 class="text-xs font-mono uppercase tracking-widest text-tertiary">Queue Item</h3>
+              <div class="text-xs space-y-1 text-secondary font-mono">
+                <div>State: <span class="badge badge-{ctx.queue_item.state}">{ctx.queue_item.state}</span></div>
+                <div>Priority: {ctx.queue_item.priority}</div>
+                {#if ctx.queue_item.issue_title}
+                  <div>Issue: {ctx.queue_item.issue_title}</div>
+                {/if}
+              </div>
+            </div>
+          {/if}
+
+          {#if ctx?.plan}
+            <div class="card p-5 space-y-2">
+              <h3 class="text-xs font-mono uppercase tracking-widest text-tertiary">Plan</h3>
+              <div class="text-sm text-primary font-medium">{ctx.plan.title}</div>
+              <div class="text-xs text-tertiary font-mono">Status: {ctx.plan.status}</div>
+            </div>
+          {/if}
+
+          <!-- Token Breakdown -->
+          {#if run.tokens_input || run.tokens_output}
+            <div class="card p-5 space-y-2">
+              <h3 class="text-xs font-mono uppercase tracking-widest text-tertiary">Token Breakdown</h3>
+              <div class="flex items-center gap-2 h-4 rounded-full overflow-hidden bg-surface-2">
+                {#if run.tokens_input && run.tokens_total}
+                  <div class="h-full bg-cyan/40 rounded-l-full" style="width: {(run.tokens_input / run.tokens_total) * 100}%"></div>
+                {/if}
+                {#if run.tokens_output && run.tokens_total}
+                  <div class="h-full bg-violet/40 rounded-r-full" style="width: {(run.tokens_output / run.tokens_total) * 100}%"></div>
+                {/if}
+              </div>
+              <div class="flex justify-between text-[10px] font-mono text-tertiary">
+                <span>Input: {formatTokens(run.tokens_input ?? 0)}</span>
+                <span>Output: {formatTokens(run.tokens_output ?? 0)}</span>
+              </div>
+            </div>
+          {/if}
+        </div>
       </div>
 
-    {:else if activeTab === 'dag'}
-      <div class="glass rounded-lg h-96">
-        <DAGCanvas {tasks} />
+    {:else if activeTab === 'dag' && ctx?.coordinator_tasks}
+      <div class="card p-5">
+        <h3 class="text-xs font-mono uppercase tracking-widest text-tertiary mb-4">Task DAG</h3>
+        <div class="space-y-2">
+          {#each ctx.coordinator_tasks as task}
+            <div class="flex items-center gap-3 px-3 py-2 rounded-lg bg-surface-1 border border-border">
+              <span class="status-dot {task.status === 'completed' ? 'online' : task.status === 'running' ? 'running' : task.status === 'failed' ? 'error' : 'offline'}"></span>
+              <div class="flex-1 min-w-0">
+                <div class="text-sm text-primary truncate">{task.title ?? task.id}</div>
+                {#if task.description}
+                  <div class="text-xs text-tertiary truncate">{task.description}</div>
+                {/if}
+              </div>
+              <span class="badge badge-{task.status === 'completed' ? 'completed' : task.status === 'running' ? 'running' : task.status === 'failed' ? 'failed' : 'pending'}">
+                {task.status}
+              </span>
+            </div>
+          {/each}
+        </div>
+      </div>
+
+    {:else if activeTab === 'team' && ctx?.team_summary}
+      <div class="space-y-4">
+        <!-- Team Summary Bar -->
+        <div class="card p-4 flex items-center gap-6">
+          <div>
+            <span class="text-xs text-tertiary font-mono">Team</span>
+            <div class="text-sm font-heading font-semibold text-primary">{ctx.team_summary.team_name}</div>
+          </div>
+          <div class="flex-1 h-2 rounded-full bg-surface-2 overflow-hidden">
+            <div class="h-full bg-emerald/60 rounded-full transition-all duration-500" style="width: {ctx.team_summary.tasks_total > 0 ? (ctx.team_summary.tasks_completed / ctx.team_summary.tasks_total) * 100 : 0}%"></div>
+          </div>
+          <div class="flex items-center gap-4 text-xs font-mono">
+            <span class="text-emerald">{ctx.team_summary.tasks_completed} done</span>
+            <span class="text-violet">{ctx.team_summary.tasks_in_progress} active</span>
+            {#if ctx.team_summary.conflicts > 0}
+              <span class="text-amber">{ctx.team_summary.conflicts} conflicts</span>
+            {/if}
+          </div>
+        </div>
+
+        <!-- Team Members Grid -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {#each ctx.team_summary.teammates as member}
+            {@const memberColor = getAgentColor(member.name.toLowerCase())}
+            <div class="card p-4 space-y-3">
+              <div class="flex items-center gap-3">
+                <div
+                  class="w-10 h-10 rounded-full flex items-center justify-center text-xs font-bold"
+                  style="background: {memberColor}15; color: {memberColor}; border: 2px solid {memberColor};"
+                >
+                  {getInitials(member.name)}
+                </div>
+                <div class="flex-1 min-w-0">
+                  <div class="text-sm font-medium text-primary">{member.name}</div>
+                  <div class="flex items-center gap-1.5">
+                    <span class="status-dot {member.status === 'completed' ? 'online' : member.status === 'stuck' ? 'error' : 'running'}"></span>
+                    <span class="text-xs text-tertiary capitalize">{member.status}</span>
+                  </div>
+                </div>
+              </div>
+              <div class="flex items-center gap-3 text-[10px] font-mono text-tertiary">
+                {#if member.turns_used}<span>{member.turns_used} turns</span>{/if}
+                {#if member.tokens_used}<span>{formatTokens(member.tokens_used)} tokens</span>{/if}
+              </div>
+              {#if member.files_touched && member.files_touched.length > 0}
+                <div class="space-y-1">
+                  <span class="text-[10px] font-mono text-tertiary">Files touched:</span>
+                  {#each member.files_touched.slice(0, 3) as file}
+                    <div class="text-[10px] font-mono text-secondary truncate">{file}</div>
+                  {/each}
+                  {#if member.files_touched.length > 3}
+                    <div class="text-[10px] font-mono text-ghost">+{member.files_touched.length - 3} more</div>
+                  {/if}
+                </div>
+              {/if}
+            </div>
+          {/each}
+        </div>
+      </div>
+
+    {:else if activeTab === 'conversation'}
+      <div class="card p-5 space-y-4">
+        <h3 class="text-xs font-mono uppercase tracking-widest text-tertiary">Agent Conversation</h3>
+        {#if conversationMessages.length === 0}
+          <p class="text-sm text-tertiary text-center py-8">No conversation data for this run</p>
+        {:else}
+          <div class="space-y-3 max-h-[600px] overflow-y-auto">
+            {#each conversationMessages as msg}
+              {@const agentName = getAgentName(msg.employee_index, msg.direction === 'system' ? 'coordinator' : null)}
+              {@const color = getAgentColor(agentName.toLowerCase())}
+              <div class="flex items-start gap-3 py-2 pl-3 border-l-2 rounded-r-lg hover:bg-surface-1/30 transition-colors"
+                style="border-color: {getMsgBorderColor(msg.message_type)};">
+                <!-- Avatar -->
+                <div
+                  class="w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0"
+                  style="background: {color}20; color: {color};"
+                >
+                  {getInitials(agentName)}
+                </div>
+                <!-- Content -->
+                <div class="flex-1 min-w-0">
+                  <div class="flex items-center gap-2 mb-0.5">
+                    <span class="text-xs font-semibold" style="color: {color};">{agentName}</span>
+                    <span class="px-1.5 py-0.5 rounded text-[9px] font-mono bg-surface-2 text-tertiary">{msg.message_type}</span>
+                    <span class="px-1.5 py-0.5 rounded text-[9px] font-mono bg-surface-2 text-ghost">{msg.direction.replace('_', ' ')}</span>
+                    <span class="text-[10px] text-ghost font-mono ml-auto shrink-0">{timeAgo(msg.created_at)}</span>
+                  </div>
+                  <p class="text-sm text-secondary whitespace-pre-wrap break-words">{msg.content ?? ''}</p>
+                </div>
+              </div>
+            {/each}
+          </div>
+        {/if}
       </div>
 
     {:else if activeTab === 'diff'}
-      {#if diff && diff.files.length > 0}
-        <div class="space-y-3">
-          <div class="text-xs text-text-muted">
-            {diff.total_files} files, <span class="text-approve">+{diff.total_additions}</span> <span class="text-reject">-{diff.total_deletions}</span>
-          </div>
-          {#each diff.files as file}
-            <div class="glass rounded-lg overflow-hidden">
-              <div class="flex items-center justify-between px-3 py-2 bg-surface-2/50 border-b border-border-subtle text-xs">
-                <span class="text-text font-mono">{file.filename}</span>
-                <span>
-                  <span class="text-approve">+{file.additions}</span>
-                  <span class="text-reject ml-1">-{file.deletions}</span>
-                </span>
-              </div>
-              <div class="overflow-x-auto text-xs font-data">
-                {#each file.hunks as hunk}
-                  <div class="text-text-muted px-3 py-0.5 bg-surface-2/30">{hunk.header}</div>
-                  {#each hunk.lines as line}
-                    <div class="px-3 py-0 whitespace-pre
-                      {line.type === 'add' ? 'bg-approve/5 text-approve' :
-                       line.type === 'remove' ? 'bg-reject/5 text-reject' :
-                       'text-text-dim'}">
-                      <span class="text-text-muted w-8 inline-block text-right mr-2 select-none">{line.old_line ?? ''}</span>
-                      <span class="text-text-muted w-8 inline-block text-right mr-2 select-none">{line.new_line ?? ''}</span>
-                      {line.content}
-                    </div>
+      <div class="card p-5">
+        <h3 class="text-xs font-mono uppercase tracking-widest text-tertiary mb-4">Code Changes</h3>
+        {#if diff?.files && diff.files.length > 0}
+          <div class="space-y-4">
+            <div class="text-xs font-mono text-secondary">
+              {diff.files.length} file{diff.files.length > 1 ? 's' : ''} changed,
+              <span class="text-emerald">+{diff.total_additions}</span>
+              <span class="text-rose">-{diff.total_deletions}</span>
+            </div>
+            {#each diff.files as file}
+              <div class="border border-border rounded-lg overflow-hidden">
+                <div class="px-3 py-2 bg-surface-1 border-b border-border flex items-center justify-between">
+                  <span class="text-xs font-mono text-primary">{file.path}</span>
+                  <span class="text-[10px] font-mono text-tertiary">
+                    <span class="text-emerald">+{file.additions}</span>
+                    <span class="text-rose ml-1">-{file.deletions}</span>
+                  </span>
+                </div>
+                <div class="overflow-x-auto">
+                  {#each file.hunks as hunk}
+                    {#each hunk.lines as line}
+                      <div class="px-3 py-0 text-xs font-mono whitespace-pre leading-5
+                                  {line.type === 'add' ? 'bg-emerald/5 text-emerald' :
+                                   line.type === 'delete' ? 'bg-rose/5 text-rose' :
+                                   'text-secondary'}">
+                        <span class="inline-block w-4 text-ghost mr-2 select-none">
+                          {line.type === 'add' ? '+' : line.type === 'delete' ? '-' : ' '}
+                        </span>{line.content}
+                      </div>
+                    {/each}
                   {/each}
-                {/each}
+                </div>
+              </div>
+            {/each}
+          </div>
+        {:else}
+          <p class="text-sm text-tertiary text-center py-8">
+            {#if run.status === 'started' || run.status === 'running'}
+              Diff will be available after the run completes
+            {:else if !run.branch}
+              No branch recorded for this run
+            {:else}
+              No code changes detected
+            {/if}
+          </p>
+        {/if}
+      </div>
+
+    {:else if activeTab === 'logs'}
+      <div class="card p-5">
+        <h3 class="text-xs font-mono uppercase tracking-widest text-tertiary mb-4">Logs</h3>
+        <LogViewer runId={run.run_id} logFile={run.log_file ?? null} />
+      </div>
+
+    {:else if activeTab === 'intelligence' && ctx?.intelligence_decisions}
+      <div class="card p-5">
+        <h3 class="text-xs font-mono uppercase tracking-widest text-tertiary mb-4">Intelligence Decisions</h3>
+        <div class="space-y-2">
+          {#each ctx.intelligence_decisions as event}
+            <div class="px-3 py-2 rounded-lg bg-surface-1 border border-border">
+              <div class="flex items-center justify-between mb-1">
+                <span class="text-xs font-mono text-cyan">{event.event_type}</span>
+                <span class="text-[10px] font-mono text-ghost">{timeAgo(event.created_at)}</span>
+              </div>
+              <pre class="text-[11px] font-mono text-tertiary overflow-x-auto">{JSON.stringify(event.event_data, null, 2)}</pre>
+            </div>
+          {/each}
+        </div>
+      </div>
+    {/if}
+
+    <!-- Messages (always visible below tabs if present) -->
+    {#if ctx?.coordinator_messages && ctx.coordinator_messages.length > 0}
+      <div class="card p-5">
+        <h3 class="text-xs font-mono uppercase tracking-widest text-tertiary mb-4">Messages</h3>
+        <div class="space-y-2">
+          {#each ctx.coordinator_messages as msg}
+            <div class="flex items-start gap-3 px-3 py-2 rounded-lg bg-surface-1">
+              <span class="badge badge-{msg.message_type === 'guidance' ? 'pr' : msg.message_type === 'conflict' ? 'reject' : msg.message_type === 'error' ? 'reject' : 'pending'}">
+                {msg.message_type}
+              </span>
+              <div class="flex-1">
+                <span class="text-xs text-secondary">{msg.content}</span>
+                <span class="text-[10px] text-ghost ml-2">{timeAgo(msg.created_at)}</span>
               </div>
             </div>
           {/each}
         </div>
-      {:else}
-        <div class="text-sm text-text-muted text-center py-8">No diff available</div>
-      {/if}
-
-    {:else if activeTab === 'report'}
-      {#if report}
-        <div class="glass rounded-lg p-4">
-          <pre class="text-xs text-text-dim whitespace-pre-wrap overflow-auto font-data">{JSON.stringify(report, null, 2)}</pre>
-        </div>
-      {:else}
-        <div class="text-sm text-text-muted text-center py-8">No report available</div>
-      {/if}
+      </div>
     {/if}
-  {/if}
-</div>
+  </div>
+{/if}

@@ -1,0 +1,290 @@
+"""Run lifecycle state management -- extracted from webhook.py.
+
+Handles run creation, status transitions, token updates, employee reports,
+and verdict recording. Each handler receives the DB session, event, project_id,
+and existing run (if any), and returns the updated/created Run.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from datetime import datetime, timezone
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models import Notification, Run
+from app.schemas import WebhookRunEvent
+from app.services.log_parser import parse_employee_report
+
+logger = logging.getLogger(__name__)
+
+
+async def handle_started(
+    db: AsyncSession, event: WebhookRunEvent, project_id: int | None, run: Run | None
+) -> Run:
+    if not run:
+        run = Run(
+            run_id=event.run_id,
+            project_id=project_id,
+            mode=event.mode,
+            model=event.model,
+            status="running",
+            started_at=datetime.now(timezone.utc),
+            employee_index=event.employee_index,
+            concurrent_group_id=event.concurrent_group_id,
+            trace_id=event.trace_id,
+            log_file=event.log_file,
+        )
+        db.add(run)
+    else:
+        run.status = "running"
+        run.project_id = project_id or run.project_id
+        run.mode = event.mode or run.mode
+        run.model = event.model or run.model
+        run.trace_id = event.trace_id or run.trace_id
+        if event.log_file:
+            run.log_file = event.log_file
+        if event.employee_index is not None:
+            run.employee_index = event.employee_index
+        if event.concurrent_group_id:
+            run.concurrent_group_id = event.concurrent_group_id
+    return run
+
+
+async def handle_finished(
+    db: AsyncSession, event: WebhookRunEvent, project_id: int | None, run: Run | None
+) -> Run:
+    raw_status = event.status or "finished"
+    status_map = {
+        "success": "completed",
+        "finished": "completed",
+        "no_reports": "completed",
+        "completed": "completed",
+        "rate_limited": "completed",
+        "error": "failed",
+        "interrupted": "interrupted",
+    }
+    final_status = status_map.get(raw_status, raw_status)
+
+    if not run:
+        run = Run(
+            run_id=event.run_id,
+            project_id=project_id,
+            status=final_status,
+            trace_id=event.trace_id,
+        )
+        db.add(run)
+
+    run.status = final_status
+    run.trace_id = event.trace_id or run.trace_id
+    run.cost_usd = event.cost_usd
+    run.tokens_input = event.tokens_input
+    run.tokens_output = event.tokens_output
+    run.tokens_total = event.tokens_total
+    run.turns = event.turns
+    run.duration_ms = event.duration_ms
+    run.finished_at = datetime.now(timezone.utc)
+    run.model = event.model or run.model
+
+    if not run.employee_report and event.project:
+        repo_short = event.project.split("/")[-1] if "/" in event.project else event.project
+        report = parse_employee_report(repo_short)
+        if report:
+            run.employee_report = json.dumps(report)
+
+    return run
+
+
+async def handle_employee_done(
+    db: AsyncSession, event: WebhookRunEvent, project_id: int | None, run: Run | None
+) -> Run:
+    if not run:
+        run = Run(
+            run_id=event.run_id,
+            project_id=project_id,
+            status="running",
+            started_at=datetime.now(timezone.utc),
+            trace_id=event.trace_id,
+        )
+        db.add(run)
+    if event.mode:
+        run.mode = event.mode
+    if event.model:
+        run.model = event.model
+    if project_id:
+        run.project_id = project_id
+    run.trace_id = event.trace_id or run.trace_id
+    return run
+
+
+async def handle_reviewing(
+    db: AsyncSession, event: WebhookRunEvent, project_id: int | None, run: Run | None
+) -> Run:
+    if not run:
+        run = Run(
+            run_id=event.run_id,
+            project_id=project_id,
+            status="reviewing",
+            started_at=datetime.now(timezone.utc),
+            trace_id=event.trace_id,
+        )
+        db.add(run)
+    else:
+        run.status = "reviewing"
+        run.trace_id = event.trace_id or run.trace_id
+    return run
+
+
+async def handle_verdict(
+    db: AsyncSession, event: WebhookRunEvent, project_id: int | None, run: Run | None
+) -> tuple[Run, Notification]:
+    if not run:
+        run = Run(
+            run_id=event.run_id,
+            project_id=project_id,
+            trace_id=event.trace_id,
+        )
+        db.add(run)
+
+    run.verdict = event.verdict
+    run.trace_id = event.trace_id or run.trace_id
+    run.issue_number = event.issue_number
+    run.branch = event.branch or run.branch
+    run.verdict_detail = json.dumps({
+        "verdict": event.verdict,
+        "reasoning": event.reasoning or "",
+        "project": event.project,
+        "issue_number": event.issue_number,
+        "branch": event.branch,
+    })
+
+    if not run.employee_report and event.project:
+        repo_short = event.project.split("/")[-1] if "/" in event.project else event.project
+        report = parse_employee_report(repo_short)
+        if report:
+            run.employee_report = json.dumps(report)
+
+    notification = Notification(
+        run_id=event.run_id,
+        type=event.verdict.lower() if event.verdict else "info",
+        message=build_notification_message(event),
+    )
+    db.add(notification)
+
+    return run, notification
+
+
+async def handle_plan_reviewing(
+    db: AsyncSession, event: WebhookRunEvent, project_id: int | None, run: Run | None
+) -> Run:
+    if not run:
+        run = Run(
+            run_id=event.run_id,
+            project_id=project_id,
+            status="plan_reviewing",
+            started_at=datetime.now(timezone.utc),
+            trace_id=event.trace_id,
+        )
+        db.add(run)
+    else:
+        run.status = "plan_reviewing"
+        run.trace_id = event.trace_id or run.trace_id
+    return run
+
+
+async def handle_plan_review_done(
+    db: AsyncSession, event: WebhookRunEvent, project_id: int | None, run: Run | None
+) -> Run:
+    if not run:
+        run = Run(
+            run_id=event.run_id,
+            project_id=project_id,
+            status="running",
+            started_at=datetime.now(timezone.utc),
+            trace_id=event.trace_id,
+        )
+        db.add(run)
+    else:
+        run.status = "running"
+        run.trace_id = event.trace_id or run.trace_id
+    return run
+
+
+async def handle_progress_update(run: Run, event: WebhookRunEvent) -> None:
+    """Update token/turn counts without changing run status."""
+    if event.tokens_input is not None:
+        run.tokens_input = event.tokens_input
+    if event.tokens_output is not None:
+        run.tokens_output = event.tokens_output
+    if event.tokens_total is not None:
+        run.tokens_total = event.tokens_total
+    if event.turns is not None:
+        run.turns = event.turns
+
+
+async def handle_teammate_completed(run: Run, event: WebhookRunEvent) -> None:
+    """Update team_members JSON when a teammate finishes."""
+    if not event.task_id:
+        return
+    members = json.loads(run.team_members) if run.team_members else []
+    for m in members:
+        if m.get("task_id") == event.task_id:
+            m["status"] = event.status or "completed"
+            m["tokens_used"] = event.tokens_total or 0
+            break
+    run.team_members = json.dumps(members)
+
+
+async def handle_team_member_spawn(run: Run, event: WebhookRunEvent) -> None:
+    """Accumulate team members as JSON array on team creation/spawn events."""
+    if event.team_name:
+        run.team_name = event.team_name
+    if event.agent_name and event.agent_id:
+        members = json.loads(run.team_members) if run.team_members else []
+        if not any(m.get("agent_id") == event.agent_id for m in members):
+            members.append({
+                "agent_id": event.agent_id or "",
+                "name": event.agent_name or "",
+                "status": "spawned",
+            })
+            run.team_members = json.dumps(members)
+
+
+async def handle_unknown(
+    db: AsyncSession, event: WebhookRunEvent, project_id: int | None, run: Run | None
+) -> Run:
+    """Handle unknown event types -- still create/update run record."""
+    if not run:
+        run = Run(
+            run_id=event.run_id,
+            project_id=project_id,
+            status=event.status or "running",
+            started_at=datetime.now(timezone.utc),
+            trace_id=event.trace_id,
+        )
+        db.add(run)
+    if event.mode:
+        run.mode = event.mode
+    if event.model:
+        run.model = event.model
+    if event.status:
+        run.status = event.status
+    if project_id:
+        run.project_id = project_id
+    run.trace_id = event.trace_id or run.trace_id
+    return run
+
+
+def build_notification_message(event: WebhookRunEvent) -> str:
+    """Build a human-readable notification message."""
+    project = event.project or "unknown"
+    if event.verdict == "APPROVE":
+        return f"[{project}] Changes approved and pushed"
+    elif event.verdict == "PR":
+        return f"[{project}] PR created for issue #{event.issue_number}"
+    elif event.verdict == "REJECT":
+        reason = (event.reasoning or "")[:100]
+        return f"[{project}] Changes rejected: {reason}"
+    else:
+        return f"[{project}] {event.event}: {event.verdict or event.status or ''}"

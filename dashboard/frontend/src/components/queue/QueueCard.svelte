@@ -37,15 +37,15 @@
   {onclick}
 >
   <!-- Title -->
-  <div class="text-sm text-text font-medium mb-1 line-clamp-2">
+  <div class="text-sm text-primary font-medium mb-1 line-clamp-2">
     {#if item.issue_number}
-      <span class="text-info">#{item.issue_number}</span>
+      <span class="text-indigo">#{item.issue_number}</span>
     {/if}
     {item.issue_title ?? 'Untitled'}
   </div>
 
   <!-- Meta row -->
-  <div class="flex items-center gap-2 text-[10px] text-text-muted">
+  <div class="flex items-center gap-2 text-[10px] text-tertiary">
     {#if repoShort}
       <span class="truncate max-w-[100px]">{repoShort}</span>
     {/if}

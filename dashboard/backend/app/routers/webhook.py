@@ -1,4 +1,9 @@
-"""Webhook endpoint for receiving live run events from run-manager.sh."""
+"""Webhook endpoint for receiving live run events from run-manager.sh.
+
+This is a thin routing layer. Business logic is in:
+  - services/run_lifecycle.py (run state management)
+  - services/coordinator_service.py (task/message handling)
+"""
 
 from __future__ import annotations
 
@@ -6,7 +11,6 @@ import json
 import logging
 import secrets
 import uuid
-from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy import select
@@ -14,16 +18,32 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.dependencies import get_db
-from app.models import CoordinatorMessage, CoordinatorTask, Notification, Project, Run
+from app.models import Project, Run
 from app.schemas import WebhookRunEvent
 from app.services.event_bus import publish as event_bus_publish
 from app.services.idempotency import is_duplicate
-from app.services.log_parser import parse_employee_report
 from app.services.notifier import send_notification
+from app.services import run_lifecycle, coordinator_service
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/webhook", tags=["webhook"])
+
+
+# Event name -> handler function mapping
+_RUN_HANDLERS = {
+    "started": run_lifecycle.handle_started,
+    "finished": run_lifecycle.handle_finished,
+    "employee_done": run_lifecycle.handle_employee_done,
+    "reviewing": run_lifecycle.handle_reviewing,
+    "plan_reviewing": run_lifecycle.handle_plan_reviewing,
+    "plan_review_done": run_lifecycle.handle_plan_review_done,
+}
+
+_TASK_EVENTS = {"task_started", "task_completed", "task_failed", "task_ready", "task_blocked"}
+_MESSAGE_EVENTS = {"conflict_detected", "guidance_sent"}
+_DAG_EVENTS = {"dag_created", "dag_completed"}
+_TEAM_SPAWN_EVENTS = {"teammate_spawned", "team_created"}
 
 
 @router.post("/run-event")
@@ -32,351 +52,73 @@ async def receive_run_event(
     db: AsyncSession = Depends(get_db),
     x_webhook_token: str | None = Header(None, alias="X-Webhook-Token"),
 ):
-    """Receive a run event from the agent's run-manager.sh script.
-
-    Events from run-manager.sh:
-      run_start, employee_start, employee_complete, manager_review,
-      verdict_execute, run_complete
-    Also accepts legacy short names:
-      started, finished, verdict
-    """
-    # Authenticate if a shared secret is configured
+    """Receive a run event from the agent's run-manager.sh script."""
+    # Auth
     if settings.webhook_secret and (
         not x_webhook_token
         or not secrets.compare_digest(x_webhook_token, settings.webhook_secret)
     ):
         raise HTTPException(status_code=401, detail="Invalid or missing webhook token")
 
-    # Auto-generate trace and event IDs if not provided
+    # Auto-generate trace and event IDs
     if not event.event_id:
         event.event_id = f"evt-{uuid.uuid4().hex[:12]}"
     if not event.trace_id:
         event.trace_id = f"trace-{event.run_id}"
 
-    # Check for duplicate events
+    # Deduplicate
     if is_duplicate(event.event_id):
         logger.info("Skipping duplicate event: %s", event.event_id)
         return {"status": "duplicate", "run_id": event.run_id, "event_id": event.event_id}
 
-    # Normalize event names from run-manager.sh to internal names
     event_name = _normalize_event_name(event.event)
 
-    # Find or create Run record
+    # Find existing run
     result = await db.execute(select(Run).where(Run.run_id == event.run_id))
     run = result.scalar_one_or_none()
 
-    # Try to match project
-    project_id = None
-    if event.project:
-        proj_result = await db.execute(
-            select(Project).where(Project.repo == event.project)
-        )
-        proj = proj_result.scalar_one_or_none()
-        if not proj:
-            # Try matching by short name
-            short = event.project.split("/")[-1] if "/" in event.project else event.project
-            proj_result = await db.execute(select(Project))
-            for p in proj_result.scalars().all():
-                p_short = p.repo.split("/")[-1] if "/" in p.repo else p.repo
-                if p_short == short:
-                    proj = p
-                    break
-        if proj:
-            project_id = proj.id
+    # Resolve project
+    project_id = await _resolve_project_id(db, event.project)
 
-    if event_name == "started":
-        if not run:
-            run = Run(
-                run_id=event.run_id,
-                project_id=project_id,
-                mode=event.mode,
-                model=event.model,
-                status="running",
-                started_at=datetime.now(timezone.utc),
-                employee_index=event.employee_index,
-                concurrent_group_id=event.concurrent_group_id,
-                trace_id=event.trace_id,
-            )
-            db.add(run)
-        else:
-            run.status = "running"
-            run.project_id = project_id or run.project_id
-            run.mode = event.mode or run.mode
-            run.model = event.model or run.model
-            run.trace_id = event.trace_id or run.trace_id
-            if event.employee_index is not None:
-                run.employee_index = event.employee_index
-            if event.concurrent_group_id:
-                run.concurrent_group_id = event.concurrent_group_id
+    # ---- Dispatch to appropriate handler ----
 
-    elif event_name == "finished":
-        # Normalize status: run-manager.sh sends "success"/"no_reports",
-        # but the frontend expects "completed"/"failed" for styling.
-        raw_status = event.status or "finished"
-        status_map = {
-            "success": "completed",
-            "finished": "completed",
-            "no_reports": "completed",
-            "completed": "completed",
-            "rate_limited": "completed",
-            "error": "failed",
-            "interrupted": "interrupted",
-        }
-        final_status = status_map.get(raw_status, raw_status)
+    if event_name == "verdict":
+        run, _ = await run_lifecycle.handle_verdict(db, event, project_id, run)
 
-        if not run:
-            run = Run(
-                run_id=event.run_id,
-                project_id=project_id,
-                status=final_status,
-                trace_id=event.trace_id,
-            )
-            db.add(run)
+    elif event_name in _RUN_HANDLERS:
+        run = await _RUN_HANDLERS[event_name](db, event, project_id, run)
 
-        run.status = final_status
-        run.trace_id = event.trace_id or run.trace_id
-        run.cost_usd = event.cost_usd
-        run.tokens_input = event.tokens_input
-        run.tokens_output = event.tokens_output
-        run.tokens_total = event.tokens_total
-        run.turns = event.turns
-        run.duration_ms = event.duration_ms
-        run.finished_at = datetime.now(timezone.utc)
-        run.model = event.model or run.model
+    elif event_name in _TASK_EVENTS:
+        await coordinator_service.handle_task_event(db, event, event_name)
 
-        # Read employee report from disk if not already populated
-        if not run.employee_report and event.project:
-            repo_short = event.project.split("/")[-1] if "/" in event.project else event.project
-            report = parse_employee_report(repo_short)
-            if report:
-                run.employee_report = json.dumps(report)
+    elif event_name in _MESSAGE_EVENTS:
+        await coordinator_service.handle_coordinator_message(db, event, event_name)
 
-    elif event_name == "employee_done":
-        # Employee finished working — update employee-specific data but keep
-        # run status as "running" so the dashboard doesn't show it as complete
-        # before the manager review phase.
-        if not run:
-            run = Run(
-                run_id=event.run_id,
-                project_id=project_id,
-                status="running",
-                started_at=datetime.now(timezone.utc),
-                trace_id=event.trace_id,
-            )
-            db.add(run)
-        # Keep status as "running" — do NOT set to finished
-        if event.mode:
-            run.mode = event.mode
-        if event.model:
-            run.model = event.model
-        if project_id:
-            run.project_id = project_id
-        run.trace_id = event.trace_id or run.trace_id
-
-    elif event_name == "reviewing":
-        # Manager review phase — transition to a meaningful intermediate status
-        if not run:
-            run = Run(
-                run_id=event.run_id,
-                project_id=project_id,
-                status="reviewing",
-                started_at=datetime.now(timezone.utc),
-                trace_id=event.trace_id,
-            )
-            db.add(run)
-        else:
-            run.status = "reviewing"
-            run.trace_id = event.trace_id or run.trace_id
-
-    elif event_name == "verdict":
-        if not run:
-            run = Run(
-                run_id=event.run_id,
-                project_id=project_id,
-                trace_id=event.trace_id,
-            )
-            db.add(run)
-
-        run.verdict = event.verdict
-        run.trace_id = event.trace_id or run.trace_id
-        run.issue_number = event.issue_number
-        run.branch = event.branch or run.branch
-        run.verdict_detail = json.dumps({
-            "verdict": event.verdict,
-            "reasoning": event.reasoning or "",
-            "project": event.project,
-            "issue_number": event.issue_number,
-            "branch": event.branch,
-        })
-
-        # Read employee report from disk if not already populated
-        if not run.employee_report and event.project:
-            repo_short = event.project.split("/")[-1] if "/" in event.project else event.project
-            report = parse_employee_report(repo_short)
-            if report:
-                run.employee_report = json.dumps(report)
-
-        # Create notification
-        notification = Notification(
-            run_id=event.run_id,
-            type=event.verdict.lower() if event.verdict else "info",
-            message=_build_notification_message(event),
-        )
-        db.add(notification)
-
-    elif event_name == "plan_reviewing":
-        # Manager plan review phase — set status so dashboard attributes to Manager
-        if not run:
-            run = Run(
-                run_id=event.run_id,
-                project_id=project_id,
-                status="plan_reviewing",
-                started_at=datetime.now(timezone.utc),
-                trace_id=event.trace_id,
-            )
-            db.add(run)
-        else:
-            run.status = "plan_reviewing"
-            run.trace_id = event.trace_id or run.trace_id
-
-    elif event_name == "plan_review_done":
-        # Manager finished plan review — transition back to running
-        if not run:
-            run = Run(
-                run_id=event.run_id,
-                project_id=project_id,
-                status="running",
-                started_at=datetime.now(timezone.utc),
-                trace_id=event.trace_id,
-            )
-            db.add(run)
-        else:
-            run.status = "running"
-            # Do NOT set run.verdict here — plan review results like
-            # APPROVE_PLAN are not final verdicts (APPROVE/REJECT/PR).
-            run.trace_id = event.trace_id or run.trace_id
-
-    elif event_name in ("task_started", "task_completed", "task_failed", "task_ready", "task_blocked"):
-        # Coordinator task events — upsert CoordinatorTask records.
-        # With the DB-backed coordinator, these rows may already exist
-        # (coordinator writes directly). The upsert is idempotent.
-        if event.task_id:
-            result2 = await db.execute(
-                select(CoordinatorTask).where(CoordinatorTask.id == event.task_id)
-            )
-            ctask = result2.scalar_one_or_none()
-            if not ctask:
-                ctask = CoordinatorTask(
-                    id=event.task_id,
-                    run_id=event.run_id,
-                    project_repo=event.project or "",
-                    title=event.task_title or "",
-                    depends_on=event.depends_on,
-                    employee_index=event.employee_index,
-                )
-                db.add(ctask)
-
-            status_map = {
-                "task_started": "running",
-                "task_completed": "completed",
-                "task_failed": "failed",
-                "task_ready": "ready",
-                "task_blocked": "blocked",
-            }
-            ctask.status = status_map.get(event_name, ctask.status)
-            if event_name == "task_started":
-                ctask.started_at = datetime.now(timezone.utc)
-                ctask.employee_index = event.employee_index
-            elif event_name in ("task_completed", "task_failed"):
-                ctask.finished_at = datetime.now(timezone.utc)
-
-    elif event_name in ("conflict_detected", "guidance_sent"):
-        # Coordinator messages — log them
-        msg = CoordinatorMessage(
-            run_id=event.run_id,
-            task_id=event.task_id,
-            direction="from_monitor" if event_name == "conflict_detected" else "to_employee",
-            message_type="conflict" if event_name == "conflict_detected" else "guidance",
-            content=json.dumps({
-                "file_path": event.file_path,
-                "employee_a": event.employee_a,
-                "employee_b": event.employee_b,
-                "guidance_type": event.guidance_type,
-                "guidance_content": event.guidance_content,
-            }),
-            employee_index=event.employee_index,
-        )
-        db.add(msg)
-
-    elif event_name in ("dag_created", "dag_completed"):
-        # DAG lifecycle events — store DAG JSON on the first task
-        if event.task_count and event.task_count > 0:
-            # Just log — the actual DAG is saved as a file by the coordinator
-            pass
+    elif event_name in _DAG_EVENTS:
+        pass  # DAG is saved as a file by the coordinator
 
     else:
-        # Unknown event — still log it, but create/update the run record
-        if not run:
-            run = Run(
-                run_id=event.run_id,
-                project_id=project_id,
-                status=event.status or "running",
-                started_at=datetime.now(timezone.utc),
-                trace_id=event.trace_id,
-            )
-            db.add(run)
-        # Update fields if provided
-        if event.mode:
-            run.mode = event.mode
-        if event.model:
-            run.model = event.model
-        if event.status:
-            run.status = event.status
-        if project_id:
-            run.project_id = project_id
-        run.trace_id = event.trace_id or run.trace_id
+        run = await run_lifecycle.handle_unknown(db, event, project_id, run)
 
-    # Agent Teams: progress updates (tokens/turns only, no status change)
+    # ---- Post-dispatch: Agent Teams updates ----
+
     if run and event_name == "progress_update":
-        if event.tokens_input is not None:
-            run.tokens_input = event.tokens_input
-        if event.tokens_output is not None:
-            run.tokens_output = event.tokens_output
-        if event.tokens_total is not None:
-            run.tokens_total = event.tokens_total
-        if event.turns is not None:
-            run.turns = event.turns
+        await run_lifecycle.handle_progress_update(run, event)
 
-    # Agent Teams: teammate completed — update team_members JSON
-    if run and event_name == "teammate_completed" and event.task_id:
-        import json as _json2
-        members = _json2.loads(run.team_members) if run.team_members else []
-        for m in members:
-            if m.get("task_id") == event.task_id:
-                m["status"] = event.status or "completed"
-                m["tokens_used"] = event.tokens_total or 0
-                break
-        run.team_members = _json2.dumps(members)
+    if run and event_name == "teammate_completed":
+        await run_lifecycle.handle_teammate_completed(run, event)
 
-    # Agent Teams: update team fields on run if present
+    if run and event_name in _TEAM_SPAWN_EVENTS:
+        await run_lifecycle.handle_team_member_spawn(run, event)
+
+    # Agent Teams: update team name
     if run and event.team_name:
         run.team_name = event.team_name
-    if run and event.agent_name and event_name in ("teammate_spawned", "team_created"):
-        # Accumulate team members as JSON array
-        import json as _json
-        members = _json.loads(run.team_members) if run.team_members else []
-        if event.agent_id and not any(m.get("agent_id") == event.agent_id for m in members):
-            members.append({
-                "agent_id": event.agent_id or "",
-                "name": event.agent_name or "",
-                "status": "spawned",
-            })
-            run.team_members = _json.dumps(members)
 
     await db.commit()
     logger.info("Processed webhook event: %s (normalized: %s) for %s", event.event, event_name, event.run_id)
 
-    # Broadcast to SSE subscribers for real-time dashboard updates
+    # ---- SSE broadcast ----
     await event_bus_publish({
         "type": event.event,
         "event_id": event.event_id,
@@ -405,9 +147,8 @@ async def receive_run_event(
         },
     })
 
-    # Send webhook notifications for verdict and completion events
+    # ---- External notifications ----
     if event_name == "verdict" and event.verdict:
-        # Extract issue title from employee report if available
         issue_title = None
         if run and run.employee_report:
             try:
@@ -438,18 +179,28 @@ async def receive_run_event(
     return {"status": "ok", "run_id": event.run_id, "event": event.event, "event_id": event.event_id}
 
 
+async def _resolve_project_id(db: AsyncSession, project_name: str | None) -> int | None:
+    """Try to match a project by full repo name or short name."""
+    if not project_name:
+        return None
+
+    proj_result = await db.execute(
+        select(Project).where(Project.repo == project_name)
+    )
+    proj = proj_result.scalar_one_or_none()
+    if not proj:
+        short = project_name.split("/")[-1] if "/" in project_name else project_name
+        proj_result = await db.execute(select(Project))
+        for p in proj_result.scalars().all():
+            p_short = p.repo.split("/")[-1] if "/" in p.repo else p.repo
+            if p_short == short:
+                proj = p
+                break
+    return proj.id if proj else None
+
+
 def _normalize_event_name(event_name: str) -> str:
-    """Map run-manager.sh event names to internal handler names.
-
-    run-manager.sh sends: run_start, employee_start, employee_complete,
-    manager_review, verdict_execute, run_complete.
-
-    The handler expects: started, employee_done, reviewing, verdict, finished.
-
-    Previously employee_complete mapped to "finished" which prematurely marked
-    runs as done before the manager review phase. Now only run_complete triggers
-    the "finished" handler.
-    """
+    """Map run-manager.sh event names to internal handler names."""
     mapping = {
         "run_start": "started",
         "employee_start": "started",
@@ -457,14 +208,11 @@ def _normalize_event_name(event_name: str) -> str:
         "manager_review": "reviewing",
         "run_complete": "finished",
         "verdict_execute": "verdict",
-        # Plan review events (coordinator emits these)
         "plan_review_start": "plan_reviewing",
         "plan_review_complete": "plan_review_done",
-        # Legacy / direct names pass through
         "started": "started",
         "finished": "finished",
         "verdict": "verdict",
-        # Coordinator events pass through
         "task_started": "task_started",
         "task_completed": "task_completed",
         "task_failed": "task_failed",
@@ -474,14 +222,12 @@ def _normalize_event_name(event_name: str) -> str:
         "guidance_sent": "guidance_sent",
         "dag_created": "dag_created",
         "dag_completed": "dag_completed",
-        # Queue events pass through
         "queue_assigned": "queue_assigned",
         "queue_in_progress": "queue_in_progress",
         "queue_review": "queue_review",
         "queue_completed": "queue_completed",
         "queue_paused": "queue_paused",
         "queue_failed": "queue_failed",
-        # Agent Teams orchestrator events
         "orchestrator_start": "started",
         "orchestrator_complete": "finished",
         "orchestrator_error": "finished",
@@ -493,17 +239,3 @@ def _normalize_event_name(event_name: str) -> str:
         "progress_update": "progress_update",
     }
     return mapping.get(event_name, event_name)
-
-
-def _build_notification_message(event: WebhookRunEvent) -> str:
-    """Build a human-readable notification message."""
-    project = event.project or "unknown"
-    if event.verdict == "APPROVE":
-        return f"[{project}] Changes approved and pushed"
-    elif event.verdict == "PR":
-        return f"[{project}] PR created for issue #{event.issue_number}"
-    elif event.verdict == "REJECT":
-        reason = (event.reasoning or "")[:100]
-        return f"[{project}] Changes rejected: {reason}"
-    else:
-        return f"[{project}] {event.event}: {event.verdict or event.status or ''}"
