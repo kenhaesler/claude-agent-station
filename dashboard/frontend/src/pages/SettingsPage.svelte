@@ -71,75 +71,80 @@
   }
 </script>
 
-<div class="space-y-4 animate-fade-in-up max-w-4xl">
-  <h1 class="text-lg font-semibold text-primary">Settings</h1>
+<div class="space-y-4 animate-fade-in max-w-4xl">
+  <h1 class="font-heading text-xl">Settings</h1>
 
   <!-- Tabs -->
-  <div class="flex gap-1 border-b border-border">
+  <div class="flex gap-1" style="border-bottom: 1px solid rgba(255,255,255,0.10);">
     {#each ['general', 'models', 'services', 'auth', 'prompts'] as t}
       <button
-        class="px-3 py-2 text-xs font-medium capitalize transition-colors
-               {activeTab === t ? 'text-primary border-b-2 border-violet' : 'text-tertiary hover:text-secondary'}"
+        class="px-4 py-2.5 text-xs font-medium capitalize transition-colors cursor-pointer
+               {activeTab === t ? 'text-primary border-b-2 border-violet' : 'text-tertiary hover:text-secondary border-b-2 border-transparent'}"
         onclick={() => activeTab = t}
       >{t}</button>
     {/each}
   </div>
 
   {#if activeTab === 'general'}
-    <div class="glass rounded-lg p-4 space-y-4">
-      <h2 class="text-xs font-semibold text-secondary uppercase tracking-wider">Limits</h2>
-      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+    <div class="card p-5 space-y-5">
+      <h2 class="section-header">Limits</h2>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-5 text-sm">
         <div>
-          <label class="text-xs text-tertiary mb-1 block">Max Usage %</label>
+          <label class="text-xs text-secondary mb-1.5 block font-medium">Max Usage %</label>
           <input
             type="number" min="10" max="100"
             value={config.limits?.max_usage_percent ?? 80}
             onchange={(e) => saveConfig('limits', { ...config.limits, max_usage_percent: parseInt((e.target as HTMLInputElement).value) })}
-            class="w-full px-3 py-2 rounded-lg bg-void text-primary text-sm border border-border focus:border-border-focus outline-none"
+            class="input"
           />
+          <p class="text-[10px] text-tertiary mt-1">API budget threshold before throttling</p>
         </div>
         <div>
-          <label class="text-xs text-tertiary mb-1 block">Max Concurrent Employees</label>
+          <label class="text-xs text-secondary mb-1.5 block font-medium">Max Concurrent Employees</label>
           <input
             type="number" min="1" max="20"
             value={config.limits?.max_concurrent_employees ?? 2}
             onchange={(e) => saveConfig('limits', { ...config.limits, max_concurrent_employees: parseInt((e.target as HTMLInputElement).value) })}
-            class="w-full px-3 py-2 rounded-lg bg-void text-primary text-sm border border-border focus:border-border-focus outline-none"
+            class="input"
           />
+          <p class="text-[10px] text-tertiary mt-1">Number of agents that can run in parallel</p>
         </div>
         <div>
-          <label class="text-xs text-tertiary mb-1 block">Max Employee Turns</label>
+          <label class="text-xs text-secondary mb-1.5 block font-medium">Max Employee Turns</label>
           <input
             type="number" min="10" max="500"
             value={config.limits?.max_employee_turns ?? 200}
             onchange={(e) => saveConfig('limits', { ...config.limits, max_employee_turns: parseInt((e.target as HTMLInputElement).value) })}
-            class="w-full px-3 py-2 rounded-lg bg-void text-primary text-sm border border-border focus:border-border-focus outline-none"
+            class="input"
           />
+          <p class="text-[10px] text-tertiary mt-1">Maximum tool calls per agent before auto-stop</p>
         </div>
         <div>
-          <label class="text-xs text-tertiary mb-1 block">Schedule (cron)</label>
+          <label class="text-xs text-secondary mb-1.5 block font-medium">Schedule (cron)</label>
           <input
             type="text"
             value={config.schedule ?? ''}
             onchange={(e) => saveConfig('schedule', (e.target as HTMLInputElement).value)}
-            class="w-full px-3 py-2 rounded-lg bg-void text-primary text-sm border border-border focus:border-border-focus outline-none font-mono"
+            class="input font-mono"
             placeholder="0 * * * *"
           />
+          <p class="text-[10px] text-tertiary mt-1">How often to trigger autonomous agent runs</p>
         </div>
       </div>
     </div>
 
   {:else if activeTab === 'models'}
-    <div class="glass rounded-lg p-4 space-y-4">
-      <h2 class="text-xs font-semibold text-secondary uppercase tracking-wider">Model Assignments</h2>
+    <div class="card p-5 space-y-4">
+      <h2 class="section-header">Model Assignments</h2>
+      <p class="text-xs text-tertiary">Configure which Claude model each agent role uses</p>
       {#each ['employee', 'manager', 'analyst', 'planner'] as role}
-        <div class="flex items-center justify-between">
-          <span class="text-sm text-secondary capitalize">{role}</span>
+        <div class="flex items-center justify-between gap-4">
+          <span class="text-sm text-secondary capitalize font-medium w-24">{role}</span>
           <input
             type="text"
             value={config.models?.[role] ?? ''}
             onchange={(e) => saveConfig('models', { ...config.models, [role]: (e.target as HTMLInputElement).value })}
-            class="w-64 px-3 py-1.5 rounded bg-void text-primary text-xs border border-border focus:border-border-focus outline-none font-mono"
+            class="input font-mono text-xs flex-1"
             placeholder="claude-opus-4-6"
           />
         </div>
@@ -147,17 +152,17 @@
     </div>
 
   {:else if activeTab === 'services'}
-    <div class="glass rounded-lg p-4 space-y-4">
-      <h2 class="text-xs font-semibold text-secondary uppercase tracking-wider">System Services</h2>
+    <div class="card p-5 space-y-4">
+      <h2 class="section-header">System Services</h2>
       <div class="flex items-center justify-between">
         <div>
           <div class="text-sm text-primary">Agent Service</div>
           <div class="text-xs text-tertiary">{systemStatus?.service.active ? 'Active' : 'Inactive'}</div>
         </div>
         <div class="flex gap-2">
-          <button onclick={() => handleServiceAction('start')} class="px-3 py-1.5 rounded text-xs bg-approve/20 text-approve hover:bg-approve/30 transition-colors">Start</button>
-          <button onclick={() => handleServiceAction('stop')} class="px-3 py-1.5 rounded text-xs bg-reject/20 text-reject hover:bg-reject/30 transition-colors">Stop</button>
-          <button onclick={() => handleServiceAction('restart')} class="px-3 py-1.5 rounded text-xs bg-warning/20 text-warning hover:bg-warning/30 transition-colors">Restart</button>
+          <button onclick={() => handleServiceAction('start')} class="btn btn-sm" style="background: rgba(16,185,129,0.12); color: var(--color-emerald);">Start</button>
+          <button onclick={() => handleServiceAction('stop')} class="btn btn-sm" style="background: rgba(244,63,94,0.12); color: var(--color-rose);">Stop</button>
+          <button onclick={() => handleServiceAction('restart')} class="btn btn-sm" style="background: rgba(245,158,11,0.12); color: var(--color-amber);">Restart</button>
         </div>
       </div>
       {#if systemStatus?.timer}
@@ -173,8 +178,8 @@
 
   {:else if activeTab === 'auth'}
     <div class="space-y-4">
-      <div class="glass rounded-lg p-4">
-        <h2 class="text-xs font-semibold text-secondary uppercase tracking-wider mb-3">Claude Auth</h2>
+      <div class="card p-5">
+        <h2 class="section-header mb-3">Claude Auth</h2>
         <div class="flex items-center gap-2 text-sm">
           <span class="w-2 h-2 rounded-full {authStatus?.logged_in && !authStatus?.expired ? 'bg-status-active' : 'bg-status-inactive'}"></span>
           <span class="text-secondary">{authStatus?.logged_in ? (authStatus?.expired ? 'Expired' : 'Authenticated') : 'Not logged in'}</span>
@@ -184,8 +189,8 @@
         {/if}
       </div>
 
-      <div class="glass rounded-lg p-4">
-        <h2 class="text-xs font-semibold text-secondary uppercase tracking-wider mb-3">GitHub</h2>
+      <div class="card p-5">
+        <h2 class="section-header mb-3">GitHub</h2>
         <div class="flex items-center gap-2 text-sm">
           <span class="w-2 h-2 rounded-full {githubStatus?.connected ? 'bg-status-active' : 'bg-status-inactive'}"></span>
           <span class="text-secondary">{githubStatus?.connected ? `Connected as ${githubStatus.username}` : 'Not connected'}</span>
@@ -214,19 +219,18 @@
       <!-- Prompt editor -->
       <div class="flex-1">
         {#if selectedPrompt}
-          <div class="glass rounded-lg p-4">
+          <div class="card p-5">
             <div class="flex items-center justify-between mb-3">
               <h3 class="text-sm font-semibold text-primary capitalize">{selectedPrompt}</h3>
               <div class="flex gap-2">
-                <button onclick={handleResetPrompt} class="text-xs text-tertiary hover:text-primary transition-colors">Reset</button>
-                <button onclick={savePrompt} class="px-3 py-1 rounded text-xs bg-accent-blue/20 text-accent-blue hover:bg-accent-blue/30 transition-colors">Save</button>
+                <button onclick={handleResetPrompt} class="btn btn-ghost btn-sm text-xs">Reset</button>
+                <button onclick={savePrompt} class="btn btn-primary btn-sm text-xs">Save</button>
               </div>
             </div>
             <textarea
               bind:value={promptContent}
               rows={20}
-              class="w-full px-3 py-2 rounded-lg bg-void text-primary text-xs border border-border
-                     focus:border-border-focus outline-none resize-y font-mono leading-relaxed"
+              class="input resize-y font-mono text-xs leading-relaxed"
             ></textarea>
           </div>
         {:else}

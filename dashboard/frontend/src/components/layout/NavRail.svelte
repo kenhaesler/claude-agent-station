@@ -1,10 +1,13 @@
 <script lang="ts">
   import { route, navigate } from '../../lib/router.svelte';
   import { agentPresence } from '../../lib/agent-presence.svelte';
+  import Icon from '../ui/Icon.svelte';
+
+  type IconName = 'home' | 'agents' | 'runs' | 'queue' | 'projects' | 'settings';
 
   interface NavItem {
     id: string;
-    icon: string;
+    icon: IconName;
     label: string;
     path: string;
     pages: string[];
@@ -13,15 +16,15 @@
   }
 
   const items: NavItem[] = [
-    { id: 'home', icon: '⌂', label: 'Dashboard', path: '/', pages: ['command-center'], shortcut: '1' },
-    { id: 'agents', icon: '◉', label: 'Agents', path: '/agents', pages: ['theater', 'agents'], shortcut: '2', badge: () => agentPresence.activeRuns.length },
-    { id: 'runs', icon: '▷', label: 'Runs', path: '/runs', pages: ['runs', 'run-detail'], shortcut: '3' },
-    { id: 'queue', icon: '☰', label: 'Queue', path: '/queue', pages: ['queue'], shortcut: '4' },
-    { id: 'projects', icon: '▤', label: 'Projects', path: '/projects', pages: ['projects', 'project-detail'], shortcut: '5' },
+    { id: 'home', icon: 'home', label: 'Dashboard', path: '/', pages: ['command-center'], shortcut: '1' },
+    { id: 'agents', icon: 'agents', label: 'Agents', path: '/agents', pages: ['theater', 'agents'], shortcut: '2', badge: () => agentPresence.activeRuns.length },
+    { id: 'runs', icon: 'runs', label: 'Runs', path: '/runs', pages: ['runs', 'run-detail'], shortcut: '3' },
+    { id: 'queue', icon: 'queue', label: 'Queue', path: '/queue', pages: ['queue'], shortcut: '4' },
+    { id: 'projects', icon: 'projects', label: 'Projects', path: '/projects', pages: ['projects', 'project-detail'], shortcut: '5' },
   ];
 
   const bottomItems: NavItem[] = [
-    { id: 'settings', icon: '⚙', label: 'Settings', path: '/settings', pages: ['settings'], shortcut: '6' },
+    { id: 'settings', icon: 'settings', label: 'Settings', path: '/settings', pages: ['settings'], shortcut: '6' },
   ];
 
   let expanded = $state(false);
@@ -80,9 +83,9 @@
         {/if}
 
         <!-- Icon -->
-        <span class="relative flex items-center justify-center w-5 h-5 text-base shrink-0"
+        <span class="relative flex items-center justify-center w-5 h-5 shrink-0"
               style="{active ? 'color: var(--color-violet);' : ''}">
-          {item.icon}
+          <Icon name={item.icon} size={18} />
           {#if item.badge && item.badge() > 0 && !expanded}
             <span class="absolute -top-1 -right-1.5 w-3.5 h-3.5 rounded-full text-[8px] font-mono font-bold text-white flex items-center justify-center"
                   style="background: var(--color-violet); box-shadow: 0 0 8px rgba(139,92,246,0.4);">
@@ -127,8 +130,8 @@
         {#if active}
           <span class="absolute left-0 top-2.5 bottom-2.5 w-0.5 rounded-r-full" style="background: var(--color-violet); box-shadow: 0 0 12px rgba(139,92,246,0.5);"></span>
         {/if}
-        <span class="flex items-center justify-center w-5 h-5 text-base shrink-0" style="{active ? 'color: var(--color-violet);' : ''}">
-          {item.icon}
+        <span class="flex items-center justify-center w-5 h-5 shrink-0" style="{active ? 'color: var(--color-violet);' : ''}">
+          <Icon name={item.icon} size={18} />
         </span>
         {#if expanded}
           <span class="flex-1 text-left whitespace-nowrap font-medium animate-fade-in">{item.label}</span>

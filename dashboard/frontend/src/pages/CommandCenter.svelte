@@ -9,6 +9,9 @@
   import LiveActivityFeed from '../components/data-display/LiveActivityFeed.svelte';
   import CompactKanban from '../components/data-display/CompactKanban.svelte';
   import StatusBar from '../components/data-display/StatusBar.svelte';
+  import MetricCard from '../components/data-display/MetricCard.svelte';
+  import DonutChart from '../components/charts/DonutChart.svelte';
+  import SkeletonLoader from '../components/data-display/SkeletonLoader.svelte';
 
   let {
     triggering = false,
@@ -44,18 +47,19 @@
       return `${queueStats!.by_state.review} item${queueStats!.by_state.review > 1 ? 's' : ''} need review`;
     }
     if (systemStatus?.timer?.next) {
-      return `All quiet. Next run ${timeAgo(systemStatus.timer.next)}`;
+      return `Next run ${timeAgo(systemStatus.timer.next)}`;
     }
     return 'All systems nominal';
   });
 
   let verdictCounts = $derived.by(() => {
-    if (!analyticsData?.verdict_distribution) return { approve: 0, pr: 0, reject: 0, total: 0 };
+    if (!analyticsData?.verdict_distribution) return { approve: 0, pr: 0, reject: 0, skip: 0, total: 0 };
     const dist = analyticsData.verdict_distribution;
     return {
       approve: dist.find(v => v.verdict === 'APPROVE')?.count ?? 0,
       pr: dist.find(v => v.verdict === 'PR')?.count ?? 0,
       reject: dist.find(v => v.verdict === 'REJECT')?.count ?? 0,
+      skip: dist.find(v => v.verdict === 'SKIP')?.count ?? 0,
       total: dist.reduce((s, v) => s + v.count, 0) || 1,
     };
   });
@@ -64,6 +68,29 @@
     verdictCounts.total > 0
       ? Math.round(((verdictCounts.approve + verdictCounts.pr) / verdictCounts.total) * 100)
       : 0
+  );
+
+  // Donut chart segments (exclude "none" — it's not a meaningful verdict)
+  let donutSegments = $derived.by(() => {
+    if (!analyticsData?.verdict_distribution) return [];
+    return analyticsData.verdict_distribution
+      .filter(v => v.verdict !== 'none' && v.count > 0)
+      .map(v => ({
+        value: v.count,
+        color: v.verdict === 'APPROVE' ? 'var(--color-emerald)'
+             : v.verdict === 'PR' ? 'var(--color-indigo)'
+             : v.verdict === 'REJECT' ? 'var(--color-rose)'
+             : v.verdict === 'SKIP' ? 'var(--color-tertiary)'
+             : 'var(--color-ghost)',
+        label: v.verdict,
+      }));
+  });
+
+  let queuePending = $derived(
+    (queueStats?.by_state?.pending ?? 0) +
+    (queueStats?.by_state?.assigned ?? 0) +
+    (queueStats?.by_state?.claimed ?? 0) +
+    (queueStats?.by_state?.planning ?? 0)
   );
 
   // Fetch data
@@ -105,11 +132,43 @@
     if (!mode) return '';
     return `badge-${mode}`;
   }
+
+  function getRunLabel(run: Run): string {
+    if (run.issue_number) return `#${run.issue_number}`;
+    return run.run_id?.slice(0, 20) ?? `Run #${run.id}`;
+  }
+
+  function getRowTint(run: Run): string {
+    if (run.verdict === 'APPROVE' || run.verdict === 'PR') return 'background: rgba(16,185,129,0.03);';
+    if (run.verdict === 'REJECT') return 'background: rgba(244,63,94,0.03);';
+    if (run.status === 'started') return 'background: rgba(139,92,246,0.03);';
+    return '';
+  }
+
+  function getStatusBadge(run: Run): { label: string; cls: string } {
+    if (run.verdict) return { label: run.verdict, cls: getVerdictBadge(run.verdict) };
+    if (run.status === 'started') return { label: 'RUNNING', cls: 'badge-running' };
+    if (run.status === 'finished') return { label: 'DONE', cls: 'badge-completed' };
+    return { label: 'PENDING', cls: 'badge-pending' };
+  }
 </script>
 
 <div class="space-y-6 animate-fade-in">
-  <!-- ==================== AGENT STAGE (HERO) ==================== -->
-  {#if agentPresence.agents.length > 0}
+
+  <!-- ==================== LOADING STATE ==================== -->
+  {#if loading}
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      {#each Array(4) as _}
+        <div class="card px-4 py-3"><SkeletonLoader lines={2} /></div>
+      {/each}
+    </div>
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div class="lg:col-span-2 card p-4"><SkeletonLoader lines={8} /></div>
+      <div class="card p-4"><SkeletonLoader lines={6} /></div>
+    </div>
+
+  <!-- ==================== AGENT STAGE (WORKING) ==================== -->
+  {:else if stationPhase !== 'idle'}
     <div class="space-y-3">
       <div class="flex items-center justify-between">
         <div class="flex items-center gap-3">
@@ -130,54 +189,66 @@
         {/each}
       </div>
     </div>
-  {:else}
-    <!-- Idle State -->
-    <div class="card p-8 text-center" style="background: rgba(14,14,22,0.35);">
-      <div class="flex items-center justify-center gap-3 mb-3">
-        <span class="status-dot online"></span>
-        <span class="font-heading text-lg text-primary">Station Idle</span>
+
+    <!-- Live Activity + Runs + Kanban when working -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div class="lg:col-span-2 space-y-4">
+        <div class="flex items-center justify-between">
+          <h3 class="section-header">Live Activity</h3>
+          <button onclick={() => navigate('/agents')} class="text-xs text-violet hover:text-primary transition-colors font-mono cursor-pointer">
+            View All Comms →
+          </button>
+        </div>
+        <LiveActivityFeed entries={agentPresence.conversationLog} maxHeight="420px" />
       </div>
-      <p class="text-sm text-secondary font-mono mb-5">{stationSummary}</p>
-      {#if onTrigger}
-        <button onclick={onTrigger} disabled={triggering} class="btn btn-primary cursor-pointer">
-          {#if triggering}
-            <span class="animate-spin-slow inline-block">↻</span> Triggering...
-          {:else}
-            ▶ Trigger Agent Run
-          {/if}
-        </button>
-      {/if}
+      <div class="space-y-4">
+        <CompactKanban items={queueItems} onItemClick={(item) => navigate(`/queue/${item.id}`)} />
+      </div>
     </div>
-    <AgentPresenceStrip
-      agents={agentPresence.agents}
-      activeRuns={activeEmployees}
-      onAgentClick={() => navigate('/agents')}
-    />
+
+  <!-- ==================== IDLE STATE (MOST COMMON) ==================== -->
+  {:else}
+
+    <!-- Metrics Row -->
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <MetricCard
+        label="Runs (7d)"
+        value={analyticsData?.total_runs ?? 0}
+        sublabel={stationSummary}
+        accent="violet"
+      />
+      <MetricCard
+        label="Success Rate"
+        value="{successRate}%"
+        sublabel="{verdictCounts.approve + verdictCounts.pr} approved of {verdictCounts.total}"
+        accent={successRate >= 80 ? 'emerald' : successRate >= 50 ? 'amber' : 'rose'}
+      />
+      <MetricCard
+        label="Tokens Today"
+        value={formatTokens(tokenUsage?.daily?.tokens_total ?? null)}
+        sublabel="{formatPercent(tokenUsage?.max_usage_percent ?? 0)} of budget"
+        accent={
+          (tokenUsage?.max_usage_percent ?? 0) > 90 ? 'rose' :
+          (tokenUsage?.max_usage_percent ?? 0) > 70 ? 'amber' : 'cyan'
+        }
+      />
+      <MetricCard
+        label="Queue"
+        value={queuePending}
+        sublabel="{queueStats?.total ?? 0} total · {queueStats?.by_state?.review ?? 0} in review"
+        accent={queuePending > 0 ? 'amber' : 'default'}
+      />
+    </div>
   {/if}
 
-  <!-- ==================== MAIN CONTENT: Activity + Kanban ==================== -->
-  <div class="grid grid-cols-1 lg:grid-cols-5 gap-6">
+  <!-- ==================== MAIN CONTENT ==================== -->
+  {#if !loading}
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
-    <!-- Left: Live Activity Feed (3 cols) -->
-    <div class="lg:col-span-3 space-y-4">
-      <div class="flex items-center justify-between">
-        <h3 class="text-xs font-mono uppercase tracking-widest text-tertiary">Live Activity</h3>
-        <button
-          onclick={() => navigate('/agents')}
-          class="text-xs text-violet hover:text-primary transition-colors font-mono cursor-pointer"
-        >
-          View All Comms →
-        </button>
-      </div>
-      <LiveActivityFeed
-        entries={agentPresence.conversationLog}
-        maxHeight="420px"
-      />
-
-      <!-- Recent Outcomes (compact) -->
-      <div class="space-y-2">
+      <!-- Left: Recent Runs -->
+      <div class="lg:col-span-2 space-y-3">
         <div class="flex items-center justify-between">
-          <h3 class="text-xs font-mono uppercase tracking-widest text-tertiary">Recent Runs</h3>
+          <h3 class="section-header">Recent Runs</h3>
           <button
             onclick={() => navigate('/runs')}
             class="text-xs text-violet hover:text-primary transition-colors font-mono cursor-pointer"
@@ -186,98 +257,72 @@
           </button>
         </div>
         <div class="space-y-1">
-          {#each recentRuns.slice(0, 6) as run, i (run.id)}
+          {#each recentRuns.slice(0, stationPhase === 'idle' ? 10 : 6) as run, i (run.id)}
+            {@const status = getStatusBadge(run)}
             <button
               class="w-full flex items-center gap-4 px-4 py-2.5 rounded-xl
                      border border-transparent
-                     hover:border-border transition-all duration-200
+                     hover:border-border-hover transition-all duration-200
                      text-left cursor-pointer"
-              style="background: rgba(14,14,22,0.3); backdrop-filter: blur(12px);"
+              style="{getRowTint(run)} backdrop-filter: blur(12px);"
               onclick={() => navigate(`/runs/${run.run_id}`)}
             >
-              <span class="status-dot {run.verdict === 'APPROVE' ? 'online' : run.verdict === 'PR' ? 'online' : run.verdict === 'REJECT' ? 'error' : run.status === 'started' ? 'running' : 'offline'}"></span>
+              <span class="status-dot {run.verdict === 'APPROVE' || run.verdict === 'PR' ? 'online' : run.verdict === 'REJECT' ? 'error' : run.status === 'started' ? 'running' : 'offline'}"></span>
               <div class="flex-1 min-w-0">
                 <div class="flex items-center gap-2">
-                  <span class="text-xs font-mono text-secondary truncate">{run.run_id?.slice(0, 16)}</span>
-                  {#if run.issue_number}
-                    <span class="text-xs text-tertiary">#{run.issue_number}</span>
-                  {/if}
+                  <span class="text-sm text-primary truncate">{getRunLabel(run)}</span>
                 </div>
               </div>
               {#if run.mode}
                 <span class="badge {getModeBadge(run.mode)}">{run.mode}</span>
               {/if}
-              {#if run.verdict}
-                <span class="badge {getVerdictBadge(run.verdict)}">{run.verdict}</span>
-              {:else if run.status === 'started'}
-                <span class="badge badge-running">LIVE</span>
-              {/if}
+              <span class="badge {status.cls}">{status.label}</span>
               <div class="flex items-center gap-3 text-[11px] font-mono text-tertiary">
                 {#if run.tokens_total}
                   <span>{formatTokens(run.tokens_total)}</span>
+                {/if}
+                {#if run.duration_ms}
+                  <span>{formatDuration(run.duration_ms)}</span>
                 {/if}
                 <span class="w-14 text-right">{timeAgo(run.started_at)}</span>
               </div>
             </button>
           {/each}
-          {#if recentRuns.length === 0 && !loading}
-            <div class="card p-8 text-center">
-              <p class="text-secondary text-sm mb-3">No runs yet</p>
-              {#if onTrigger}
-                <button onclick={onTrigger} disabled={triggering} class="btn btn-primary cursor-pointer">
-                  {triggering ? 'Triggering...' : 'Trigger First Run'}
-                </button>
-              {/if}
+          {#if recentRuns.length === 0}
+            <div class="card p-12 text-center">
+              <div class="text-3xl opacity-30 mb-3">▶</div>
+              <p class="text-secondary text-sm mb-1">No runs yet</p>
+              <p class="text-tertiary text-xs">Trigger your first agent run to see results here</p>
             </div>
           {/if}
         </div>
       </div>
-    </div>
 
-    <!-- Right: Project Board + Widgets (2 cols) -->
-    <div class="lg:col-span-2 space-y-4">
-      <!-- Compact Kanban -->
-      <CompactKanban
-        items={queueItems}
-        onItemClick={(item) => navigate(`/queue/${item.id}`)}
-      />
+      <!-- Right: Kanban + Verdicts -->
+      <div class="space-y-4">
+        <CompactKanban
+          items={queueItems}
+          onItemClick={(item) => navigate(`/queue/${item.id}`)}
+        />
 
-      <!-- Verdict Distribution -->
-      {#if analyticsData?.verdict_distribution && analyticsData.verdict_distribution.length > 0}
-        <div class="card p-4 space-y-3">
-          <h3 class="text-xs font-mono uppercase tracking-widest text-tertiary">Verdicts (7d)</h3>
-          <div class="space-y-2">
-            {#each analyticsData.verdict_distribution as v}
-              {@const pct = (v.count / verdictCounts.total) * 100}
-              <div class="flex items-center gap-3 text-xs">
-                <span class="w-16 font-mono text-secondary">{v.verdict}</span>
-                <div class="flex-1 h-1.5 rounded-full bg-surface-2 overflow-hidden">
-                  <div
-                    class="h-full rounded-full transition-all duration-500"
-                    style="width: {pct}%; background: {v.verdict === 'APPROVE' ? 'var(--color-emerald)' : v.verdict === 'PR' ? 'var(--color-indigo)' : v.verdict === 'REJECT' ? 'var(--color-rose)' : 'var(--color-tertiary)'}"
-                  ></div>
-                </div>
-                <span class="w-8 text-right font-mono text-primary font-medium">{v.count}</span>
-              </div>
-            {/each}
+        <!-- Verdict Distribution (DonutChart) -->
+        {#if donutSegments.length > 0}
+          <div class="card p-4 space-y-3">
+            <h3 class="section-header">Verdicts (7d)</h3>
+            <div class="flex justify-center">
+              <DonutChart
+                segments={donutSegments}
+                size={130}
+                thickness={16}
+                centerValue="{successRate}%"
+                centerLabel="success"
+              />
+            </div>
           </div>
-        </div>
-      {/if}
-
-      <!-- Trigger Run (when idle) -->
-      {#if activeEmployees.length === 0 && onTrigger}
-        <button
-          onclick={onTrigger}
-          disabled={triggering}
-          class="w-full card card-interactive p-5 text-center group cursor-pointer"
-        >
-          <div class="text-violet text-lg mb-1 group-hover:glow-violet transition-shadow">▶</div>
-          <div class="text-sm font-medium text-primary">{triggering ? 'Triggering...' : 'Trigger Agent Run'}</div>
-          <div class="text-[11px] text-tertiary mt-1">Start the autonomous agent cycle</div>
-        </button>
-      {/if}
+        {/if}
+      </div>
     </div>
-  </div>
+  {/if}
 
   <!-- ==================== STATUS BAR ==================== -->
   <StatusBar

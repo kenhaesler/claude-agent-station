@@ -31,15 +31,16 @@
   let serviceOnline = $derived(systemStatus?.service?.active ?? false);
 </script>
 
-<div class="h-10 bg-surface-0 border-t border-border flex items-center px-4 gap-6 text-xs font-mono text-secondary">
+<div class="h-10 bg-surface-0 flex items-center px-4 gap-6 text-xs font-mono text-secondary"
+  style="border-top: 1px solid rgba(255,255,255,0.10);">
   <!-- Agents -->
-  <div class="flex items-center gap-2 pr-6 border-r border-border">
+  <div class="flex items-center gap-2 pr-6" style="border-right: 1px solid rgba(255,255,255,0.10);">
     <div class={activeCount > 0 ? 'status-dot running' : 'status-dot offline'}></div>
     <span class={activeCount > 0 ? 'text-violet' : ''}>{activeCount} active</span>
   </div>
 
   <!-- Tokens -->
-  <div class="flex items-center gap-2 pr-6 border-r border-border">
+  <div class="flex items-center gap-2 pr-6" style="border-right: 1px solid rgba(255,255,255,0.10);">
     <span class="text-tertiary">Tokens:</span>
     <span>{formatTokens(tokenUsage?.daily?.tokens_total ?? null)}</span>
     {#if tokenUsage?.max_usage_percent != null}
@@ -48,21 +49,23 @@
   </div>
 
   <!-- Backpressure -->
-  <div class="flex items-center gap-2 pr-6 border-r border-border">
+  <div class="flex items-center gap-2 pr-6" style="border-right: 1px solid rgba(255,255,255,0.10);">
     <div class={getBackpressureDotClass(backpressure?.level)}></div>
+    <span class="text-tertiary">Pressure:</span>
     <span>{backpressure?.level ?? 'N/A'}</span>
   </div>
 
   <!-- Success rate -->
-  <div class="flex items-center gap-2 pr-6 border-r border-border">
+  <div class="flex items-center gap-2 pr-6" style="border-right: 1px solid rgba(255,255,255,0.10);">
+    <span class="text-tertiary">Success:</span>
     <span class={successRate >= 80 ? 'text-emerald' : successRate >= 50 ? 'text-amber' : 'text-rose'}>
       {formatPercent(successRate)}
     </span>
-    <span class="text-tertiary">7d</span>
+    <span class="text-tertiary">(7d)</span>
   </div>
 
   <!-- System status -->
-  <div class="flex items-center gap-2 pr-6 border-r border-border">
+  <div class="flex items-center gap-2 pr-6" style="border-right: 1px solid rgba(255,255,255,0.10);">
     <div class={serviceOnline ? 'status-dot online' : 'status-dot error'}></div>
     <span>{serviceOnline ? 'Online' : 'Offline'}</span>
   </div>

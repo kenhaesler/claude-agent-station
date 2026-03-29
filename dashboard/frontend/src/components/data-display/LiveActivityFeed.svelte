@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { ConversationEntry } from '../../lib/agent-presence.svelte';
+  import EmptyState from './EmptyState.svelte';
 
   let {
     entries,
@@ -75,9 +76,12 @@
     style="max-height: {maxHeight};"
   >
     {#if entries.length === 0}
-      <div class="flex items-center justify-center py-8 text-sm text-tertiary font-mono">
-        Waiting for agent activity...
-      </div>
+      <EmptyState
+        compact
+        title="No activity yet"
+        description="Activity will appear here when agents start working"
+        icon="◉"
+      />
     {:else}
       <div class="flex flex-col">
         {#each entries as entry (entry.id)}

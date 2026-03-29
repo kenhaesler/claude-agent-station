@@ -25,20 +25,20 @@
   });
 </script>
 
-<nav class="flex items-center gap-1.5 text-xs font-mono" aria-label="Breadcrumb">
+<nav class="flex items-center gap-2 text-sm font-mono" aria-label="Breadcrumb">
   {#each crumbs as crumb, i}
     {#if i > 0}
-      <span class="text-ghost">/</span>
+      <span class="text-ghost text-xs">/</span>
     {/if}
     {#if crumb.path && i < crumbs.length - 1}
       <button
         onclick={() => crumb.path && navigate(crumb.path)}
-        class="text-tertiary hover:text-secondary transition-colors duration-150"
+        class="text-tertiary hover:text-secondary transition-colors duration-150 cursor-pointer"
       >
         {crumb.label}
       </button>
     {:else}
-      <span class="text-secondary font-medium">{crumb.label}</span>
+      <span class="text-primary font-semibold">{crumb.label}</span>
     {/if}
   {/each}
 </nav>

@@ -2,6 +2,7 @@
   import { route, getPageTitle, navigate } from '../../lib/router.svelte';
   import { agentPresence, getAgentColor, getAgentName } from '../../lib/agent-presence.svelte';
   import Breadcrumbs from './Breadcrumbs.svelte';
+  import Icon from '../ui/Icon.svelte';
 
   let {
     onTrigger,
@@ -72,10 +73,10 @@
         class="btn btn-primary btn-sm"
       >
         {#if triggering}
-          <span class="animate-spin-slow inline-block">↻</span>
+          <span class="animate-spin-slow inline-block"><Icon name="spinner" size={14} /></span>
           <span>Triggering...</span>
         {:else}
-          <span>▶</span>
+          <Icon name="play" size={14} />
           <span>Run</span>
         {/if}
       </button>
