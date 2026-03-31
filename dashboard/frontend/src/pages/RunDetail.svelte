@@ -232,10 +232,10 @@
               <h3 class="text-xs font-mono uppercase tracking-widest text-tertiary">Token Breakdown</h3>
               <div class="flex items-center gap-2 h-4 rounded-full overflow-hidden bg-surface-2">
                 {#if run.tokens_input && run.tokens_total}
-                  <div class="h-full bg-cyan/40 rounded-l-full" style="width: {(run.tokens_input / run.tokens_total) * 100}%"></div>
+                  <div class="h-full rounded-l-full" style="width: {(run.tokens_input / run.tokens_total) * 100}%; background: rgba(99,102,180,0.4)"></div>
                 {/if}
                 {#if run.tokens_output && run.tokens_total}
-                  <div class="h-full bg-violet/40 rounded-r-full" style="width: {(run.tokens_output / run.tokens_total) * 100}%"></div>
+                  <div class="h-full rounded-r-full" style="width: {(run.tokens_output / run.tokens_total) * 100}%; background: rgba(176,96,48,0.4)"></div>
                 {/if}
               </div>
               <div class="flex justify-between text-[10px] font-mono text-tertiary">
@@ -281,7 +281,7 @@
           </div>
           <div class="flex items-center gap-4 text-xs font-mono">
             <span class="text-emerald">{ctx.team_summary.tasks_completed} done</span>
-            <span class="text-violet">{ctx.team_summary.tasks_in_progress} active</span>
+            <span style="color: #B06030;">{ctx.team_summary.tasks_in_progress} active</span>
             {#if ctx.team_summary.conflicts > 0}
               <span class="text-amber">{ctx.team_summary.conflicts} conflicts</span>
             {/if}

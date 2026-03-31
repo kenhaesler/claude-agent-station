@@ -5,12 +5,15 @@
   import QueueColumn from '../components/queue/QueueColumn.svelte';
   import QueueStatsBar from '../components/queue/QueueStatsBar.svelte';
   import SlidePanel from '../components/overlays/SlidePanel.svelte';
+  import EmptyState from '../components/data-display/EmptyState.svelte';
+  import SkeletonLoader from '../components/data-display/SkeletonLoader.svelte';
 
   let items = $state<QueueItem[]>([]);
   let stats = $state<QueueStats | null>(null);
   let backpressure = $state<BackpressureStatus | null>(null);
   let selectedItem = $state<QueueItem | null>(null);
   let panelOpen = $state(false);
+  let loading = $state(true);
 
   // Group items into kanban columns
   const columnDefs = [
@@ -28,6 +31,8 @@
     }))
   );
 
+  let allEmpty = $derived(columns.every(c => c.items.length === 0));
+
   async function loadData() {
     const [qRes, sRes, bRes] = await Promise.allSettled([
       listQueue({ limit: 200 }),
@@ -37,6 +42,7 @@
     if (qRes.status === 'fulfilled') items = qRes.value.items;
     if (sRes.status === 'fulfilled') stats = sRes.value;
     if (bRes.status === 'fulfilled') backpressure = bRes.value;
+    loading = false;
   }
 
   $effect(() => {
@@ -60,16 +66,28 @@
   <QueueStatsBar {stats} {backpressure} />
 
   <!-- Kanban columns -->
-  <div class="flex gap-3 overflow-x-auto pb-4 h-[calc(100vh-14rem)]">
-    {#each columns as col}
-      <QueueColumn
-        title={col.title}
-        color={col.color}
-        items={col.items}
-        onItemClick={handleItemClick}
+  {#if loading}
+    <div class="card p-8"><SkeletonLoader lines={6} /></div>
+  {:else if allEmpty}
+    <div class="card">
+      <EmptyState
+        title="Queue is empty"
+        description="Issues will appear here when the agent picks them up"
+        icon="☰"
       />
-    {/each}
-  </div>
+    </div>
+  {:else}
+    <div class="flex gap-3 overflow-x-auto pb-4" style="min-height: 300px;">
+      {#each columns as col}
+        <QueueColumn
+          title={col.title}
+          color={col.color}
+          items={col.items}
+          onItemClick={handleItemClick}
+        />
+      {/each}
+    </div>
+  {/if}
 </div>
 
 <!-- Item detail panel -->

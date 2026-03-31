@@ -4,12 +4,12 @@
  */
 
 const ROLE_COLORS: Record<string, string> = {
-  manager: '#F59E0B',
-  'dev-0': '#6366F1',
-  'dev-1': '#8B5CF6',
+  manager: '#B06030',
+  'dev-0': '#2E7D32',
+  'dev-1': 'rgba(99,102,180,1)',
   'dev-2': '#06B6D4',
-  coordinator: '#A855F7',
-  analyst: '#7C3AED',
+  coordinator: '#4A3728',
+  analyst: '#B06030',
 };
 
 export const themeStore = {
@@ -19,12 +19,12 @@ export const themeStore = {
 
   getStatusColor(status: 'active' | 'inactive' | 'thinking' | 'error' | 'idle'): string {
     const map: Record<string, string> = {
-      active: '#10B981',
-      inactive: '#606078',
-      thinking: '#8B5CF6',
-      error: '#F43F5E',
-      idle: '#606078',
+      active: '#2E7D32',
+      inactive: '#8C7A66',
+      thinking: '#B06030',
+      error: '#D06050',
+      idle: '#8C7A66',
     };
-    return map[status] ?? '#606078';
+    return map[status] ?? '#8C7A66';
   },
 };

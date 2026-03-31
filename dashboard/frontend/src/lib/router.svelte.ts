@@ -6,6 +6,7 @@ export type Page =
   | 'command-center'
   | 'theater'
   | 'team-comms'
+  | 'agent-teams'
   | 'runs'
   | 'run-detail'
   | 'queue'
@@ -77,9 +78,10 @@ function parsePath(): Route {
 
   // Standard routes
   const routeMap: Record<string, Page> = {
-    theater: 'theater',
-    agents: 'theater',
-    'team-comms': 'theater',
+    theater: 'agent-teams',
+    agents: 'agent-teams',
+    'team-comms': 'agent-teams',
+    'agent-teams': 'agent-teams',
     runs: 'runs',
     queue: 'queue',
     projects: 'projects',

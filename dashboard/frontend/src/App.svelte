@@ -19,7 +19,7 @@
 
   // Pages
   import CommandCenter from './pages/CommandCenter.svelte';
-  import AgentTheater from './pages/AgentTheater.svelte';
+  import AgentTeamsCanvas from './pages/AgentTeamsCanvas.svelte';
   import RunsPage from './pages/RunsPage.svelte';
   import RunDetail from './pages/RunDetail.svelte';
   import QueueBoard from './pages/QueueBoard.svelte';
@@ -76,10 +76,10 @@
 
     // Number keys for navigation (matches NavRail order)
     if (e.key === '1') { navigate('/'); return; }
-    if (e.key === '2') { navigate('/agents'); return; }
-    if (e.key === '3') { navigate('/runs'); return; }
-    if (e.key === '4') { navigate('/queue'); return; }
-    if (e.key === '5') { navigate('/projects'); return; }
+    if (e.key === '2') { navigate('/runs'); return; }
+    if (e.key === '3') { navigate('/queue'); return; }
+    if (e.key === '4') { navigate('/projects'); return; }
+    if (e.key === '5') { navigate('/agent-teams'); return; }
     if (e.key === '6') { navigate('/settings'); return; }
   }
 </script>
@@ -104,8 +104,8 @@
   >
     {#if route.page === 'command-center'}
       <CommandCenter {triggering} onTrigger={handleTrigger} />
-    {:else if route.page === 'theater' || route.page === 'agents'}
-      <AgentTheater />
+    {:else if route.page === 'agent-teams'}
+      <AgentTeamsCanvas />
     {:else if route.page === 'runs'}
       <RunsPage />
     {:else if route.page === 'run-detail'}
