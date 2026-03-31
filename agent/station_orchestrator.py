@@ -624,8 +624,14 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
                     ["git", "worktree", "remove", "--force", wt_path],
                     cwd=workspace, capture_output=True,
                 )
+            wt_branch = f"worktree/{role}-{run_id[:8]}"
+            # Delete stale branch if it exists
+            subprocess.run(
+                ["git", "branch", "-D", wt_branch],
+                cwd=workspace, capture_output=True,
+            )
             result = subprocess.run(
-                ["git", "worktree", "add", wt_path, base_branch],
+                ["git", "worktree", "add", "-b", wt_branch, wt_path, base_branch],
                 cwd=workspace, capture_output=True, text=True,
             )
             if result.returncode == 0:
