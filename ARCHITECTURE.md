@@ -4,7 +4,7 @@
 
 A standalone, self-hosted autonomous Claude Code agent with a web dashboard. Runs on a Linux VM, manages multiple GitHub repositories, and provides full observability through a browser UI.
 
-**Core idea**: Manager/Employee/Analyst agent architecture with multi-employee coordination, a web dashboard for configuration, monitoring, and log viewing, plus an intelligent task queue for issue management.
+**Core idea**: Agent Teams architecture powered by Claude Agent SDK. A lead agent coordinates teammates (one per issue) working in isolated worktrees, with a manager review phase for verdicts. Web dashboard provides real-time visibility into team activity.
 
 ---
 
@@ -15,20 +15,20 @@ A standalone, self-hosted autonomous Claude Code agent with a web dashboard. Run
 │                     Claude Agent Station                          │
 │                                                                   │
 │  ┌──────────────────┐       ┌────────────────────────────────┐   │
-│  │   Agent Core      │       │        Web Dashboard            │   │
-│  │                   │       │                                 │   │
-│  │ ┌──────────────┐ │  wh   │  ┌─────────┐   ┌────────────┐ │   │
-│  │ │  Coordinator │ │──ok──▶│  │ FastAPI  │   │  Svelte 5  │ │   │
-│  │ │  (Scheduler) │ │       │  │ Backend  │   │  Frontend   │ │   │
+│  │   Agent Teams     │       │        Web Dashboard            │   │
+│  │                   │  wh   │                                 │   │
+│  │ ┌──────────────┐ │──ok──▶│  ┌─────────┐   ┌────────────┐ │   │
+│  │ │  Lead Agent  │ │       │  │ FastAPI  │   │  Svelte 5  │ │   │
+│  │ │  (Sonnet)    │ │       │  │ Backend  │   │  Frontend   │ │   │
 │  │ └──┬───┬───┬───┘ │       │  └────┬─────┘   └──────┬─────┘ │   │
 │  │    │   │   │      │       │       │                │       │   │
 │  │ ┌──▼┐ ┌▼──┐┌▼──┐ │       │       │          served by     │   │
-│  │ │E1 │ │E2 ││E3 │ │       │       │           FastAPI      │   │
+│  │ │T1 │ │T2 ││T3 │ │       │       │           FastAPI      │   │
 │  │ │   │ │   ││   │ │       │       │                │       │   │
 │  │ └───┘ └───┘└───┘ │       │  ┌────▼────────────────▼────┐  │   │
-│  │  Multi-Employee   │       │  │       SQLite DB (WAL)     │  │   │
+│  │  Teammates (Opus) │       │  │       SQLite DB (WAL)     │  │   │
 │  │  + Manager Review │       │  │  projects, runs, queue,   │  │   │
-│  │  + Analyst Mode   │       │  │  plans, tasks, config     │  │   │
+│  │                   │       │  │  plans, tasks, config     │  │   │
 │  │                   │       │  └──────────────────────────┘  │   │
 │  └─────┬─────────────┘       │                                 │   │
 │        │                     │  ┌──────────────────────────┐  │   │
@@ -46,29 +46,17 @@ A standalone, self-hosted autonomous Claude Code agent with a web dashboard. Run
 ```
 claude-agent-station/
 ├── agent/                          # Autonomous agent core
+│   ├── agents/                     # Agent Teams definitions
+│   │   └── issue-worker.md         # Teammate: implements a single issue
 │   ├── prompts/                    # System prompts (markdown)
 │   │   ├── manager.md              # Manager: reviews work, issues verdicts
-│   │   ├── employee.md             # Employee: implements features/fixes
-│   │   ├── analyst.md              # Analyst: code analysis mode
-│   │   ├── planner.md              # Planner: creates implementation plans
-│   │   ├── assigner.md             # Assigner: distributes issues
 │   │   └── custom/                 # User overrides (dashboard-managed)
 │   ├── scripts/
-│   │   ├── run-manager.sh          # Main orchestrator (2200+ lines)
+│   │   ├── run-manager.sh          # Entry point + manager review phase
 │   │   ├── circuit-breaker.sh      # Failure tracking (3-strike rule)
 │   │   ├── detect_plan_usage.py    # Claude plan usage detection
 │   │   └── refresh-token.py        # OAuth token refresh
-│   ├── coordinator/                # Multi-employee coordinator (Python)
-│   │   ├── __main__.py             # Coordinator entry point
-│   │   ├── config.py               # Coordinator config dataclass
-│   │   ├── dag.py                  # Task DAG and dependency graph
-│   │   ├── decomposer.py           # Issue → task decomposition (Haiku)
-│   │   ├── employee_runner.py      # Async subprocess employee spawning
-│   │   ├── guidance.py             # Manager → employee guidance channel
-│   │   ├── manager.py              # Plan usage + rate limit awareness
-│   │   ├── reporter.py             # Webhook event posting
-│   │   ├── scheduler.py            # DAG-based concurrent scheduler
-│   │   └── stream_monitor.py       # Real-time stream file monitoring
+│   ├── station_orchestrator.py     # Agent Teams orchestrator (Claude Agent SDK)
 │   ├── systemd/                    # Service definitions
 │   ├── selinux/                    # SELinux policy
 │   └── config/                     # Default configuration template

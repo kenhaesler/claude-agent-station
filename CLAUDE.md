@@ -1,10 +1,12 @@
 # Claude Agent Station
 
 ## Project Overview
-Self-hosted autonomous Claude Code agent with web dashboard. Manager/Employee architecture for multi-project GitHub automation.
+Self-hosted autonomous Claude Code agent with web dashboard. Uses **Agent Teams mode** (Claude Agent SDK) for multi-project GitHub automation. A lead agent coordinates teammates that each work on a single issue in isolated worktrees.
 
 ## Tech Stack
-- **Agent Core**: Bash scripts + Claude CLI (manager/employee/analyst prompts)
+- **Agent Core**: Claude Agent SDK (Python) + bash run-manager
+- **Lead Agent**: Sonnet 4.6 — coordinates teammates, reviews plans, monitors progress
+- **Teammates**: Opus 4.6 — implement issues via `issue-worker` agent definition
 - **Backend**: Python 3.11+ / FastAPI / SQLite / uvicorn
 - **Frontend**: Svelte 5 + Vite + TailwindCSS
 - **Deployment**: systemd (Rocky Linux 9 / RHEL-based)
@@ -12,11 +14,15 @@ Self-hosted autonomous Claude Code agent with web dashboard. Manager/Employee ar
 ## Architecture
 See `ARCHITECTURE.md` for full system design.
 
+**Agent Teams flow**: run-manager.sh → station_orchestrator.py → Claude Agent SDK → Lead spawns teammates → each teammate works one issue → Lead reviews → Manager reviews all work → verdicts (APPROVE/PR/REJECT)
+
 ## Conventions
 - Backend code in `dashboard/backend/app/`
 - Frontend code in `dashboard/frontend/src/`
-- Agent prompts in `agent/prompts/`
+- Agent definitions in `agent/agents/` (Agent Teams worker definitions)
+- Agent prompts in `agent/prompts/` (manager review prompt)
 - Agent scripts in `agent/scripts/`
+- Orchestrator: `agent/station_orchestrator.py`
 - All Python code uses type hints
 - FastAPI routers in separate files per domain
 - Svelte components use TypeScript

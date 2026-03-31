@@ -2,38 +2,44 @@
 
 Self-hosted autonomous Claude Code agent with a web dashboard.
 
-**What it does**: Runs Claude Code agents on a schedule to work on your GitHub repositories — implementing features, fixing bugs, analyzing codebases, and creating issues. A web dashboard lets you monitor runs, configure projects, view logs, and manage the system.
+**What it does**: Runs Claude Code agent teams on a schedule to work on your GitHub repositories — implementing features, fixing bugs, and creating issues. A lead agent coordinates teammates that each tackle a single issue. A web dashboard provides real-time visibility into team activity.
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────┐
-│           Claude Agent Station           │
-│                                          │
-│   Agent Core          Web Dashboard      │
-│  ┌──────────┐      ┌──────────────┐     │
-│  │ Manager  │      │   FastAPI    │     │
-│  │ Employee │◄────►│   + Svelte   │     │
-│  │ Analyst  │      │   + SQLite   │     │
-│  └────┬─────┘      └──────┬───────┘     │
-│       │                   │              │
-│  systemd timer      :8420 (web UI)       │
-└───────┴───────────────────┴──────────────┘
+┌──────────────────────────────────────────────┐
+│             Claude Agent Station              │
+│                                               │
+│   Agent Teams             Web Dashboard       │
+│  ┌──────────────┐      ┌──────────────┐      │
+│  │  Lead Agent  │      │   FastAPI    │      │
+│  │  (Sonnet)    │◄────►│   + Svelte   │      │
+│  │    ├─ T1     │      │   + SQLite   │      │
+│  │    ├─ T2     │      └──────┬───────┘      │
+│  │    └─ T3     │             │               │
+│  │  (Opus)      │       :8420 (web UI)        │
+│  └──────┬───────┘                             │
+│         │                                     │
+│    systemd timer                              │
+└─────────┴─────────────────────────────────────┘
 ```
 
-### Manager/Employee Model
+### Agent Teams Model
 
-- **Employee** (Opus 4.6): Picks up GitHub issues, implements solutions, runs tests, commits locally
-- **Analyst** (Sonnet 4.6): Reads codebase, creates high-quality GitHub issues (cheaper, read-only)
-- **Manager** (Sonnet 4.6): Reviews employee work, issues verdicts: APPROVE (push+merge), PR (human review), REJECT (discard)
+- **Lead** (Sonnet 4.6): Fetches eligible issues, spawns one teammate per issue, reviews plans for conflicts, monitors until all work completes
+- **Teammates** (Opus 4.6): Each works on a single GitHub issue in an isolated git worktree — reads code, plans, implements, tests, commits locally
+- **Manager** (Sonnet 4.6): Reviews all teammate work post-completion, issues verdicts: APPROVE (push+merge), PR (human review), REJECT (discard)
+
+Powered by the [Claude Agent SDK](https://docs.anthropic.com/en/docs/claude-code/agent-sdk) with Agent Teams.
 
 ### Dashboard
 
-- **Projects**: Add/remove repos, set mode (full/analyze), priority, enable/disable
+- **Agent Teams Canvas**: Live view of teammates, their current tools, activity feed
+- **Command Center**: System overview, run history, token usage
+- **Projects**: Add/remove repos, set priority, enable/disable
 - **Runs**: View history, costs, verdicts, employee reports, git diffs
 - **Logs**: Live WebSocket log streaming, historical search
 - **Config**: Models, budgets, rate limits, schedule
-- **System**: VM health, systemd status, auth status, circuit breaker
 
 ## Quick Start
 
@@ -58,8 +64,8 @@ Add projects via the web dashboard or edit the config directly:
   "projects": [
     {
       "repo": "owner/repo",
-      "mode": "full",
-      "priority": "high"
+      "priority": "high",
+      "enabled": true
     }
   ]
 }
