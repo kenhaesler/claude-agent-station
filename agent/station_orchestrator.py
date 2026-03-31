@@ -366,9 +366,9 @@ def _message_to_dict(message) -> dict:
         result["last_tool_name"] = message.last_tool_name
         if message.usage:
             result["usage"] = {
-                "total_tokens": message.usage.total_tokens,
-                "tool_uses": message.usage.tool_uses,
-                "duration_ms": message.usage.duration_ms,
+                "total_tokens": _usage_val(message.usage, "total_tokens", 0),
+                "tool_uses": _usage_val(message.usage, "tool_uses", 0),
+                "duration_ms": _usage_val(message.usage, "duration_ms", 0),
             }
 
     elif isinstance(message, TaskNotificationMessage):
@@ -379,9 +379,9 @@ def _message_to_dict(message) -> dict:
         result["summary"] = message.summary
         if message.usage:
             result["usage"] = {
-                "total_tokens": message.usage.total_tokens,
-                "tool_uses": message.usage.tool_uses,
-                "duration_ms": message.usage.duration_ms,
+                "total_tokens": _usage_val(message.usage, "total_tokens", 0),
+                "tool_uses": _usage_val(message.usage, "tool_uses", 0),
+                "duration_ms": _usage_val(message.usage, "duration_ms", 0),
             }
 
     elif isinstance(message, SystemMessage):
@@ -420,6 +420,15 @@ def post_webhook(config: dict, event: str, data: dict | None = None) -> None:
             pass
     except Exception:
         pass  # Best-effort
+
+
+def _usage_val(usage, key: str, default=0):
+    """Safely get a usage field whether usage is a dict or object."""
+    if usage is None:
+        return default
+    if isinstance(usage, dict):
+        return usage.get(key, default)
+    return getattr(usage, key, default)
 
 
 def handle_stream_event(
@@ -475,19 +484,19 @@ def handle_stream_event(
 
     elif isinstance(message, TaskProgressMessage):
         if state and message.usage:
-            state.turns = message.usage.tool_uses
+            state.turns = _usage_val(message.usage, "tool_uses", 0)
         logger.info(
             "Teammate progress: task=%s tools=%s last=%s",
             message.task_id,
-            message.usage.tool_uses if message.usage else "?",
+            _usage_val(message.usage, "tool_uses", "?"),
             message.last_tool_name,
         )
         post_webhook(config, "teammate_progress", {
             "run_id": f"run-{run_id}",
             "task_id": message.task_id,
             "agent_name": message.last_tool_name or "",
-            "tokens_total": message.usage.total_tokens if message.usage else 0,
-            "turns": message.usage.tool_uses if message.usage else 0,
+            "tokens_total": _usage_val(message.usage, "total_tokens", 0) if message.usage else 0,
+            "turns": _usage_val(message.usage, "tool_uses", 0) if message.usage else 0,
         })
 
     elif isinstance(message, TaskNotificationMessage):
@@ -497,8 +506,8 @@ def handle_stream_event(
             "task_id": message.task_id,
             "status": message.status,
             "agent_name": message.summary[:100] if message.summary else "",
-            "tokens_total": message.usage.total_tokens if message.usage else 0,
-            "turns": message.usage.tool_uses if message.usage else 0,
+            "tokens_total": _usage_val(message.usage, "total_tokens", 0) if message.usage else 0,
+            "turns": _usage_val(message.usage, "tool_uses", 0) if message.usage else 0,
         })
 
     elif isinstance(message, ResultMessage):
