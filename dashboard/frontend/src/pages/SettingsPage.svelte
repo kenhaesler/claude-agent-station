@@ -75,11 +75,11 @@
   <h1 class="font-heading text-xl">Settings</h1>
 
   <!-- Tabs -->
-  <div class="flex gap-1" style="border-bottom: 1px solid rgba(255,255,255,0.10);">
+  <div class="flex gap-1" style="border-bottom: 1px solid rgba(240,220,200,0.20);">
     {#each ['general', 'models', 'services', 'auth', 'prompts'] as t}
       <button
-        class="px-4 py-2.5 text-xs font-medium capitalize transition-colors cursor-pointer
-               {activeTab === t ? 'text-primary border-b-2 border-violet' : 'text-tertiary hover:text-secondary border-b-2 border-transparent'}"
+        class="px-4 py-2.5 text-xs font-medium capitalize transition-colors cursor-pointer"
+        style="{activeTab === t ? 'color: #3D2A1A; border-bottom: 2px solid #B06030;' : 'color: #8C7A66; border-bottom: 2px solid transparent;'}"
         onclick={() => activeTab = t}
       >{t}</button>
     {/each}
@@ -160,9 +160,9 @@
           <div class="text-xs text-tertiary">{systemStatus?.service.active ? 'Active' : 'Inactive'}</div>
         </div>
         <div class="flex gap-2">
-          <button onclick={() => handleServiceAction('start')} class="btn btn-sm" style="background: rgba(16,185,129,0.12); color: var(--color-emerald);">Start</button>
-          <button onclick={() => handleServiceAction('stop')} class="btn btn-sm" style="background: rgba(244,63,94,0.12); color: var(--color-rose);">Stop</button>
-          <button onclick={() => handleServiceAction('restart')} class="btn btn-sm" style="background: rgba(245,158,11,0.12); color: var(--color-amber);">Restart</button>
+          <button onclick={() => handleServiceAction('start')} class="btn btn-sm" style="background: rgba(46,125,50,0.10); color: #2E7D32;">Start</button>
+          <button onclick={() => handleServiceAction('stop')} class="btn btn-sm" style="background: rgba(208,96,80,0.10); color: #D06050;">Stop</button>
+          <button onclick={() => handleServiceAction('restart')} class="btn btn-sm" style="background: rgba(176,96,48,0.10); color: #B06030;">Restart</button>
         </div>
       </div>
       {#if systemStatus?.timer}

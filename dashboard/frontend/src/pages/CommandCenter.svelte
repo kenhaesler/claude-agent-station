@@ -4,13 +4,8 @@
   import { agentPresence } from '../lib/agent-presence.svelte';
   import { formatTokens, formatDuration, timeAgo, formatPercent } from '../lib/format';
   import type { Run, QueueStats, TokenUsage, SystemStatus, AnalyticsResponse, BackpressureStatus, ActiveEmployee, QueueItem } from '../lib/types';
-  import AgentPresenceStrip from '../components/data-display/AgentPresenceStrip.svelte';
-  import AgentLiveCard from '../components/agents/AgentLiveCard.svelte';
-  import LiveActivityFeed from '../components/data-display/LiveActivityFeed.svelte';
-  import CompactKanban from '../components/data-display/CompactKanban.svelte';
-  import StatusBar from '../components/data-display/StatusBar.svelte';
-  import MetricCard from '../components/data-display/MetricCard.svelte';
-  import DonutChart from '../components/charts/DonutChart.svelte';
+  import VaporCard from '../components/vapor/VaporCard.svelte';
+  import VaporBadge from '../components/vapor/VaporBadge.svelte';
   import SkeletonLoader from '../components/data-display/SkeletonLoader.svelte';
 
   let {
@@ -70,22 +65,6 @@
       : 0
   );
 
-  // Donut chart segments (exclude "none" — it's not a meaningful verdict)
-  let donutSegments = $derived.by(() => {
-    if (!analyticsData?.verdict_distribution) return [];
-    return analyticsData.verdict_distribution
-      .filter(v => v.verdict !== 'none' && v.count > 0)
-      .map(v => ({
-        value: v.count,
-        color: v.verdict === 'APPROVE' ? 'var(--color-emerald)'
-             : v.verdict === 'PR' ? 'var(--color-indigo)'
-             : v.verdict === 'REJECT' ? 'var(--color-rose)'
-             : v.verdict === 'SKIP' ? 'var(--color-tertiary)'
-             : 'var(--color-ghost)',
-        label: v.verdict,
-      }));
-  });
-
   let queuePending = $derived(
     (queueStats?.by_state?.pending ?? 0) +
     (queueStats?.by_state?.assigned ?? 0) +
@@ -122,15 +101,11 @@
     return () => clearInterval(interval);
   });
 
-  function getVerdictBadge(verdict: string | null): string {
-    if (!verdict) return '';
-    const map: Record<string, string> = { 'APPROVE': 'badge-approve', 'PR': 'badge-pr', 'REJECT': 'badge-reject' };
-    return map[verdict] ?? '';
-  }
-
-  function getModeBadge(mode: string | null): string {
-    if (!mode) return '';
-    return `badge-${mode}`;
+  function getGreeting(): string {
+    const h = new Date().getHours();
+    if (h < 12) return 'Good morning';
+    if (h < 18) return 'Good afternoon';
+    return 'Good evening';
   }
 
   function getRunLabel(run: Run): string {
@@ -139,10 +114,16 @@
   }
 
   function getRowTint(run: Run): string {
-    if (run.verdict === 'APPROVE' || run.verdict === 'PR') return 'background: rgba(16,185,129,0.03);';
-    if (run.verdict === 'REJECT') return 'background: rgba(244,63,94,0.03);';
-    if (run.status === 'started') return 'background: rgba(139,92,246,0.03);';
+    if (run.verdict === 'APPROVE' || run.verdict === 'PR') return 'background: rgba(46,125,50,0.03);';
+    if (run.verdict === 'REJECT') return 'background: rgba(208,96,80,0.03);';
+    if (run.status === 'started') return 'background: rgba(46,125,50,0.02);';
     return '';
+  }
+
+  function getVerdictBadge(verdict: string | null): string {
+    if (!verdict) return '';
+    const map: Record<string, string> = { 'APPROVE': 'badge-approve', 'PR': 'badge-pr', 'REJECT': 'badge-reject' };
+    return map[verdict] ?? '';
   }
 
   function getStatusBadge(run: Run): { label: string; cls: string } {
@@ -153,184 +134,161 @@
   }
 </script>
 
-<div class="space-y-6 animate-fade-in">
+<div style="animation: greeting-in 0.8s cubic-bezier(0.16, 1, 0.3, 1) both;">
 
-  <!-- ==================== LOADING STATE ==================== -->
   {#if loading}
-    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 28px;">
       {#each Array(4) as _}
-        <div class="card px-4 py-3"><SkeletonLoader lines={2} /></div>
+        <div class="card" style="padding: 24px;"><SkeletonLoader lines={2} /></div>
       {/each}
     </div>
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-      <div class="lg:col-span-2 card p-4"><SkeletonLoader lines={8} /></div>
-      <div class="card p-4"><SkeletonLoader lines={6} /></div>
-    </div>
+    <div class="card" style="padding: 24px;"><SkeletonLoader lines={8} /></div>
 
-  <!-- ==================== AGENT STAGE (WORKING) ==================== -->
-  {:else if stationPhase !== 'idle'}
-    <div class="space-y-3">
-      <div class="flex items-center justify-between">
-        <div class="flex items-center gap-3">
-          <span class="status-dot running"></span>
-          <h2 class="font-heading text-lg text-primary">{agentPresence.agents.length} Agent{agentPresence.agents.length > 1 ? 's' : ''} Working</h2>
-        </div>
-        <button onclick={() => navigate('/agents')} class="text-xs text-violet hover:text-primary transition-colors font-mono cursor-pointer">
-          Watch Team →
-        </button>
-      </div>
-      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-        {#each agentPresence.agents as agent}
-          <AgentLiveCard
-            {agent}
-            entries={agentPresence.conversationLog.filter(e => e.agentName === agent.name)}
-            onclick={() => navigate('/agents')}
-          />
-        {/each}
-      </div>
-    </div>
-
-    <!-- Live Activity + Runs + Kanban when working -->
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-      <div class="lg:col-span-2 space-y-4">
-        <div class="flex items-center justify-between">
-          <h3 class="section-header">Live Activity</h3>
-          <button onclick={() => navigate('/agents')} class="text-xs text-violet hover:text-primary transition-colors font-mono cursor-pointer">
-            View All Comms →
-          </button>
-        </div>
-        <LiveActivityFeed entries={agentPresence.conversationLog} maxHeight="420px" />
-      </div>
-      <div class="space-y-4">
-        <CompactKanban items={queueItems} onItemClick={(item) => navigate(`/queue/${item.id}`)} />
-      </div>
-    </div>
-
-  <!-- ==================== IDLE STATE (MOST COMMON) ==================== -->
   {:else}
-
-    <!-- Metrics Row -->
-    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
-      <MetricCard
-        label="Runs (7d)"
-        value={analyticsData?.total_runs ?? 0}
-        sublabel={stationSummary}
-        accent="violet"
-      />
-      <MetricCard
-        label="Success Rate"
-        value="{successRate}%"
-        sublabel="{verdictCounts.approve + verdictCounts.pr} approved of {verdictCounts.total}"
-        accent={successRate >= 80 ? 'emerald' : successRate >= 50 ? 'amber' : 'rose'}
-      />
-      <MetricCard
-        label="Tokens Today"
-        value={formatTokens(tokenUsage?.daily?.tokens_total ?? null)}
-        sublabel="{formatPercent(tokenUsage?.max_usage_percent ?? 0)} of budget"
-        accent={
-          (tokenUsage?.max_usage_percent ?? 0) > 90 ? 'rose' :
-          (tokenUsage?.max_usage_percent ?? 0) > 70 ? 'amber' : 'cyan'
-        }
-      />
-      <MetricCard
-        label="Queue"
-        value={queuePending}
-        sublabel="{queueStats?.total ?? 0} total · {queueStats?.by_state?.review ?? 0} in review"
-        accent={queuePending > 0 ? 'amber' : 'default'}
-      />
-    </div>
-  {/if}
-
-  <!-- ==================== MAIN CONTENT ==================== -->
-  {#if !loading}
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-
-      <!-- Left: Recent Runs -->
-      <div class="lg:col-span-2 space-y-3">
-        <div class="flex items-center justify-between">
-          <h3 class="section-header">Recent Runs</h3>
-          <button
-            onclick={() => navigate('/runs')}
-            class="text-xs text-violet hover:text-primary transition-colors font-mono cursor-pointer"
-          >
-            View All →
-          </button>
-        </div>
-        <div class="space-y-1">
-          {#each recentRuns.slice(0, stationPhase === 'idle' ? 10 : 6) as run, i (run.id)}
-            {@const status = getStatusBadge(run)}
-            <button
-              class="w-full flex items-center gap-4 px-4 py-2.5 rounded-xl
-                     border border-transparent
-                     hover:border-border-hover transition-all duration-200
-                     text-left cursor-pointer"
-              style="{getRowTint(run)} backdrop-filter: blur(12px);"
-              onclick={() => navigate(`/runs/${run.run_id}`)}
-            >
-              <span class="status-dot {run.verdict === 'APPROVE' || run.verdict === 'PR' ? 'online' : run.verdict === 'REJECT' ? 'error' : run.status === 'started' ? 'running' : 'offline'}"></span>
-              <div class="flex-1 min-w-0">
-                <div class="flex items-center gap-2">
-                  <span class="text-sm text-primary truncate">{getRunLabel(run)}</span>
-                </div>
-              </div>
-              {#if run.mode}
-                <span class="badge {getModeBadge(run.mode)}">{run.mode}</span>
-              {/if}
-              <span class="badge {status.cls}">{status.label}</span>
-              <div class="flex items-center gap-3 text-[11px] font-mono text-tertiary">
-                {#if run.tokens_total}
-                  <span>{formatTokens(run.tokens_total)}</span>
-                {/if}
-                {#if run.duration_ms}
-                  <span>{formatDuration(run.duration_ms)}</span>
-                {/if}
-                <span class="w-14 text-right">{timeAgo(run.started_at)}</span>
-              </div>
-            </button>
-          {/each}
-          {#if recentRuns.length === 0}
-            <div class="card p-12 text-center">
-              <div class="text-3xl opacity-30 mb-3">▶</div>
-              <p class="text-secondary text-sm mb-1">No runs yet</p>
-              <p class="text-tertiary text-xs">Trigger your first agent run to see results here</p>
-            </div>
-          {/if}
-        </div>
-      </div>
-
-      <!-- Right: Kanban + Verdicts -->
-      <div class="space-y-4">
-        <CompactKanban
-          items={queueItems}
-          onItemClick={(item) => navigate(`/queue/${item.id}`)}
-        />
-
-        <!-- Verdict Distribution (DonutChart) -->
-        {#if donutSegments.length > 0}
-          <div class="card p-4 space-y-3">
-            <h3 class="section-header">Verdicts (7d)</h3>
-            <div class="flex justify-center">
-              <DonutChart
-                segments={donutSegments}
-                size={130}
-                thickness={16}
-                centerValue="{successRate}%"
-                centerLabel="success"
-              />
-            </div>
-          </div>
+    <!-- Greeting -->
+    <div style="margin-bottom: 24px;">
+      <div style="font-size: 24px; font-weight: 800; color: #3D2A1A; letter-spacing: -0.03em;">{getGreeting()}</div>
+      <div style="font-size: 14px; color: #8C7A66; margin-top: 4px;">
+        {#if stationPhase === 'working'}
+          <span style="color: #2E7D32; font-weight: 600;">{stationSummary}</span>
+          <span> · </span>
+          <button onclick={() => navigate('/agent-teams')} style="color: #B06030; font-weight: 600; cursor: pointer; border: none; background: none; font-family: inherit; font-size: inherit; text-decoration: underline; text-underline-offset: 2px;">Watch Team →</button>
+        {:else}
+          {stationSummary}
         {/if}
       </div>
     </div>
-  {/if}
 
-  <!-- ==================== STATUS BAR ==================== -->
-  <StatusBar
-    activeCount={activeEmployees.length}
-    {tokenUsage}
-    {backpressure}
-    {systemStatus}
-    sseConnected={agentPresence.sseConnected}
-    {successRate}
-  />
+    <!-- 4 Metric Cards -->
+    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 28px;">
+      <VaporCard stagger={0.05}>
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <div style="font-size: 14px; color: #7A6652; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;">Runs (7d)</div>
+          <div style="width: 32px; height: 32px; background: rgba(59,130,246,0.08); border-radius: 9px; display: flex; align-items: center; justify-content: center;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#3B82F6" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          </div>
+        </div>
+        <div style="font-size: 48px; font-weight: 800; letter-spacing: -0.05em; margin-top: 10px; line-height: 1; color: #3D2A1A;">{analyticsData?.total_runs ?? 0}</div>
+        <div style="font-size: 13px; color: #2E7D32; font-weight: 600; margin-top: 8px;">{stationSummary}</div>
+      </VaporCard>
+
+      <VaporCard stagger={0.12}>
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <div style="font-size: 14px; color: #7A6652; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;">Success</div>
+          <div style="width: 32px; height: 32px; background: rgba(234,88,12,0.08); border-radius: 9px; display: flex; align-items: center; justify-content: center;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#EA580C" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+          </div>
+        </div>
+        <div style="font-size: 48px; font-weight: 800; letter-spacing: -0.05em; margin-top: 10px; line-height: 1; color: #D84315;">{successRate}%</div>
+        <div style="width: 100%; height: 4px; background: rgba(0,0,0,0.05); border-radius: 999px; margin-top: 12px; overflow: hidden;">
+          <div class="progress-fill" style="width: {successRate}%; height: 100%; background: #D84315; border-radius: 999px;"></div>
+        </div>
+      </VaporCard>
+
+      <VaporCard stagger={0.19}>
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <div style="font-size: 14px; color: #7A6652; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;">Tokens</div>
+          <div style="width: 32px; height: 32px; background: rgba(99,102,241,0.08); border-radius: 9px; display: flex; align-items: center; justify-content: center;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6366F1" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+          </div>
+        </div>
+        <div style="font-size: 48px; font-weight: 800; letter-spacing: -0.05em; margin-top: 10px; line-height: 1; color: #3D2A1A;">{formatTokens(tokenUsage?.daily?.tokens_total ?? null)}</div>
+        <div style="font-size: 13px; color: #8C7A66; margin-top: 8px;">{formatPercent(tokenUsage?.max_usage_percent ?? 0)} of budget</div>
+      </VaporCard>
+
+      <VaporCard stagger={0.26}>
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <div style="font-size: 14px; color: #7A6652; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;">Queue</div>
+          <div style="width: 32px; height: 32px; background: rgba(176,96,48,0.08); border-radius: 9px; display: flex; align-items: center; justify-content: center;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#B06030" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+          </div>
+        </div>
+        <div style="font-size: 48px; font-weight: 800; letter-spacing: -0.05em; margin-top: 10px; line-height: 1; color: #B06030;">{queuePending}</div>
+        <div style="font-size: 13px; color: #8C7A66; margin-top: 8px;">{queueStats?.by_state?.review ?? 0} in review</div>
+      </VaporCard>
+    </div>
+
+    <!-- Recent Runs Table -->
+    <div style="background: rgba(255,251,247,0.65); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border: 1px solid rgba(240,220,200,0.6); border-radius: 18px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.04), 0 12px 32px rgba(0,0,0,0.07); animation: card-in 0.6s cubic-bezier(0.16, 1, 0.3, 1) 0.35s both; margin-bottom: 28px;">
+      <div style="padding: 16px 24px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(0,0,0,0.04);">
+        <span style="font-size: 15px; font-weight: 700; color: #3D2A1A;">Recent Runs</span>
+        <button onclick={() => navigate('/runs')} style="font-size: 14px; color: #7A6652; cursor: pointer; border: none; background: none; font-family: inherit;">View all →</button>
+      </div>
+      {#each recentRuns.slice(0, 10) as run (run.id)}
+        {@const status = getStatusBadge(run)}
+        <button
+          onclick={() => navigate(`/runs/${run.run_id}`)}
+          style="display: flex; align-items: center; padding: 16px 24px; border-bottom: 1px solid rgba(0,0,0,0.03); transition: background 0.2s ease; cursor: pointer; width: 100%; text-align: left; border: none; font-family: inherit; {getRowTint(run)}"
+        >
+          <div style="width: 8px; height: 8px; border-radius: 50%; margin-right: 14px; flex-shrink: 0; {run.verdict === 'APPROVE' || run.verdict === 'PR' ? 'background: #2E7D32; box-shadow: 0 0 6px rgba(46,125,50,0.35);' : run.verdict === 'REJECT' ? 'background: #D06050;' : run.status === 'started' ? 'background: #2E7D32; box-shadow: 0 0 6px rgba(46,125,50,0.35);' : 'background: #C4AA90;'}"></div>
+          <span style="font-size: 15px; font-weight: 600; flex: 1; color: {run.verdict === 'APPROVE' || run.verdict === 'PR' || run.status === 'started' ? '#3D2A1A' : '#8C7A66'};">{getRunLabel(run)}</span>
+          <span class="badge {status.cls}">{status.label}</span>
+          <span style="font-size: 13px; color: #8C7A66; margin-left: 16px;">{run.tokens_total ? formatTokens(run.tokens_total) : '—'}</span>
+          <span style="font-size: 13px; color: #8C7A66; margin-left: 16px; min-width: 54px; text-align: right;">{timeAgo(run.started_at)}</span>
+        </button>
+      {/each}
+      {#if recentRuns.length === 0}
+        <div style="padding: 48px 24px; text-align: center;">
+          <div style="font-size: 32px; opacity: 0.2; margin-bottom: 12px;">▶</div>
+          <p style="font-size: 14px; color: #7A6652; margin-bottom: 4px;">No runs yet</p>
+          <p style="font-size: 13px; color: #8C7A66;">Trigger your first agent run to see results here</p>
+        </div>
+      {/if}
+    </div>
+
+    <!-- 3 Secondary Cards -->
+    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; animation: card-in 0.6s cubic-bezier(0.16, 1, 0.3, 1) 0.85s both;">
+      <VaporCard>
+        <div style="font-size: 14px; color: #7A6652; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 14px;">Active Projects</div>
+        <div style="display: flex; flex-direction: column; gap: 12px;">
+          {#each (queueItems.reduce((acc, item) => { if (!acc.find(a => a.repo === item.project_repo)) acc.push({ repo: item.project_repo, active: ['in_progress', 'assigned', 'claimed', 'planning'].includes(item.state) }); return acc; }, [] as { repo: string; active: boolean }[]).slice(0, 4)) as project}
+            <div style="display: flex; align-items: center; justify-content: space-between;">
+              <span style="font-size: 14px; {project.active ? 'font-weight: 600; color: #3D2A1A;' : 'color: #8C7A66;'}">{project.repo.split('/').pop()}</span>
+              <VaporBadge variant={project.active ? 'active' : 'disabled'}>{project.active ? 'Active' : 'Idle'}</VaporBadge>
+            </div>
+          {/each}
+          {#if queueItems.length === 0}
+            <div style="font-size: 13px; color: #8C7A66;">No projects in queue</div>
+          {/if}
+        </div>
+      </VaporCard>
+
+      <VaporCard>
+        <div style="font-size: 14px; color: #7A6652; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 14px;">Queue Preview</div>
+        <div style="display: flex; flex-direction: column; gap: 10px;">
+          {#each queueItems.filter(i => i.state === 'pending' || i.state === 'assigned').slice(0, 3) as item}
+            <div style="font-size: 13px; color: #3D2A1A; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{item.issue_title || `#${item.issue_number}`}</div>
+          {/each}
+          {#if queuePending > 3}
+            <div style="font-size: 12px; color: #8C7A66; margin-top: 2px;">+{queuePending - 3} more in queue</div>
+          {/if}
+          {#if queuePending === 0}
+            <div style="font-size: 13px; color: #8C7A66;">Queue empty</div>
+          {/if}
+        </div>
+      </VaporCard>
+
+      <VaporCard>
+        <div style="font-size: 14px; color: #7A6652; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 14px;">System Health</div>
+        <div style="display: flex; flex-direction: column; gap: 12px;">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <span style="font-size: 14px; color: #3D2A1A;">Service</span>
+            <span style="font-size: 13px; color: {systemStatus?.service?.active ? '#2E7D32' : '#D06050'}; font-weight: 600;">{systemStatus?.service?.active ? 'Online' : 'Offline'}</span>
+          </div>
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <span style="font-size: 14px; color: #3D2A1A;">Backpressure</span>
+            <span style="font-size: 13px; color: {backpressure?.level === 'GREEN' ? '#2E7D32' : backpressure?.level === 'YELLOW' ? '#B06030' : '#D06050'}; font-weight: 600;">{backpressure?.level ?? '—'}</span>
+          </div>
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <span style="font-size: 14px; color: #3D2A1A;">Memory</span>
+            <span style="font-size: 13px; color: #8C7A66;">{systemStatus?.resources?.memory ?? '—'}</span>
+          </div>
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <span style="font-size: 14px; color: #3D2A1A;">Uptime</span>
+            <span style="font-size: 13px; color: #8C7A66;">{systemStatus?.resources?.uptime ?? '—'}</span>
+          </div>
+        </div>
+      </VaporCard>
+    </div>
+  {/if}
 </div>

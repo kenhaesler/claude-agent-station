@@ -1,6 +1,6 @@
 <script lang="ts">
-  import NavRail from './NavRail.svelte';
-  import HeaderBar from './HeaderBar.svelte';
+  import VaporBackground from '../background/VaporBackground.svelte';
+  import TopNav from './TopNav.svelte';
   import type { Snippet } from 'svelte';
 
   let {
@@ -18,25 +18,19 @@
   } = $props();
 </script>
 
-<div class="flex h-screen overflow-hidden">
-  <!-- Navigation Rail -->
-  <NavRail />
+<VaporBackground />
 
-  <!-- Main content area -->
-  <div class="flex flex-1 flex-col min-w-0">
-    <HeaderBar
-      {onTrigger}
-      {triggering}
-      {sseConnected}
-      {activeCount}
-    />
-    <main
-      id="main-content"
-      class="flex-1 overflow-y-auto overflow-x-hidden"
-    >
-      <div class="p-6 max-w-[1600px] mx-auto">
-        {@render children()}
-      </div>
-    </main>
-  </div>
-</div>
+<TopNav
+  {onTrigger}
+  {triggering}
+  {sseConnected}
+  {activeCount}
+/>
+
+<main
+  id="main-content"
+  class="relative overflow-x-hidden"
+  style="z-index: 1; padding: 28px 32px 48px; min-height: calc(100vh - 54px); max-width: 1600px; margin: 0 auto;"
+>
+  {@render children()}
+</main>

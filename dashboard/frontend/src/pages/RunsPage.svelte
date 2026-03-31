@@ -57,9 +57,9 @@
   }
 
   function getRowTint(run: Run): string {
-    if (run.verdict === 'APPROVE' || run.verdict === 'PR') return 'background: rgba(16,185,129,0.03);';
-    if (run.verdict === 'REJECT') return 'background: rgba(244,63,94,0.03);';
-    if (run.status === 'started') return 'background: rgba(139,92,246,0.03);';
+    if (run.verdict === 'APPROVE' || run.verdict === 'PR') return 'background: rgba(46,125,50,0.03);';
+    if (run.verdict === 'REJECT') return 'background: rgba(208,96,80,0.03);';
+    if (run.status === 'started') return 'background: rgba(46,125,50,0.02);';
     return '';
   }
 
@@ -87,12 +87,12 @@
     <div class="flex items-center gap-1">
       <button
         class="badge cursor-pointer transition-opacity {verdictFilter === '' ? 'opacity-100' : 'opacity-40 hover:opacity-70'}"
-        style="background: rgba(255,255,255,0.06); color: var(--color-secondary);"
+        style="background: rgba(240,220,200,0.15); color: var(--color-secondary);"
         onclick={() => { verdictFilter = ''; offset = 0; }}
       >All</button>
       {#each verdicts.slice(1) as v}
         <button
-          class="badge {getVerdictBadge(v)} cursor-pointer transition-opacity {verdictFilter === v ? 'opacity-100 ring-1 ring-white/20' : 'opacity-50 hover:opacity-80'}"
+          class="badge {getVerdictBadge(v)} cursor-pointer transition-opacity {verdictFilter === v ? 'opacity-100 ring-1 ring-[rgba(176,96,48,0.3)]' : 'opacity-50 hover:opacity-80'}"
           onclick={() => { verdictFilter = verdictFilter === v ? '' : v; offset = 0; }}
         >{v}</button>
       {/each}
@@ -109,7 +109,7 @@
   <div class="card overflow-hidden">
     <table class="w-full text-sm">
       <thead>
-        <tr class="text-[10px] font-mono uppercase tracking-widest text-tertiary" style="border-bottom: 1px solid rgba(255,255,255,0.08);">
+        <tr class="text-[10px] font-mono uppercase tracking-widest text-tertiary" style="border-bottom: 1px solid rgba(240,220,200,0.20);">
           <th class="text-left p-3 w-8"></th>
           <th class="text-left p-3">Run ID</th>
           <th class="text-left p-3">Issue</th>
@@ -124,7 +124,7 @@
       <tbody>
         {#if loading}
           {#each Array(5) as _}
-            <tr style="border-bottom: 1px solid rgba(255,255,255,0.04);">
+            <tr style="border-bottom: 1px solid rgba(240,220,200,0.10);">
               {#each Array(9) as __}<td class="p-3"><div class="skeleton h-4 w-full"></div></td>{/each}
             </tr>
           {/each}
@@ -132,7 +132,7 @@
           {#each runs as run, i (run.id)}
             <tr
               class="hover:bg-surface-1/50 cursor-pointer transition-colors animate-slide-up stagger-{Math.min(i + 1, 6)}"
-              style="{getRowTint(run)} border-bottom: 1px solid rgba(255,255,255,0.04);"
+              style="{getRowTint(run)} border-bottom: 1px solid rgba(240,220,200,0.10);"
               onclick={() => navigate(`/runs/${run.run_id}`)}
               role="button"
               tabindex="0"
