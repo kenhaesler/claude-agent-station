@@ -177,12 +177,16 @@ def fetch_eligible_issues(repo: str, limit: int, workspace: str | None = None) -
 
 # ── Team Prompt Construction ──────────────────────────────────
 
+TEAMMATE_ROLES = ["backend", "frontend", "qa"]
+
+
 def build_team_prompt(
     repo: str,
     issues: list[dict],
     config: dict,
     run_id: str,
     workspace: str = "",
+    worktree_paths: dict[str, str] | None = None,
 ) -> str:
     """Build the lead agent prompt that creates and manages the team."""
     issue_entries = []
@@ -201,30 +205,59 @@ def build_team_prompt(
     integration = config.get("integration", {})
     base_branch = integration.get("dev_branch", "autonomous/dev")
 
+    # Build worktree assignment section
+    wt_section = ""
+    if worktree_paths:
+        wt_lines = [f"- **{role}** specialist → `{path}`" for role, path in worktree_paths.items()]
+        wt_section = "\n".join(wt_lines)
+
     return f"""You are the lead of an agent team implementing GitHub issues for **{repo}**.
 
-## Your Tasks
+## Your Workflow
 
 1. **Create a team** called "{repo.split('/')[-1]}-{run_id[:8]}"
-2. **Create one Task per issue** listed below (use TaskCreate for each)
-3. **Spawn one teammate per task** using the `issue-worker` agent type
-4. Each teammate works on exactly ONE issue — no duplicates
+2. **Analyze all issues** and decompose them into granular tasks (research, implement, test, review)
+3. **Create tasks** on the shared task list with dependencies and specialization tags
+4. **Spawn 3 specialized teammates** using the `issue-worker` agent type:
+   - **Backend specialist** — Python/FastAPI, database, API changes
+   - **Frontend specialist** — Svelte/TypeScript, UI components, CSS
+   - **QA specialist** — writes tests, validates implementations, runs linters
 5. **Require plan approval** before any teammate starts implementation
-6. Review each plan — reject if it conflicts with another teammate's work
-7. **Actively monitor** teammates until ALL have completed (see monitoring rules below)
-8. After all teammates complete, **synthesize a final JSON summary**
+6. Review plans — reject if they conflict with another teammate's work
+7. **Actively monitor** teammates until ALL tasks are completed (see monitoring rules)
+8. After all work is done, **synthesize a final JSON summary**
 
-## Issues to Implement ({len(issues)} total)
+## Issues to Work On ({len(issues)} total)
 
 {issue_list}
+
+Decompose these into specific tasks. A single issue may require tasks from multiple specialists.
+For example, a bug fix might need: "research the bug" (any), "implement backend fix" (backend),
+"update UI error handling" (frontend), "write regression test" (qa).
+
+## Teammate Worktrees (ISOLATED — one per specialist)
+
+Each teammate MUST work in their assigned worktree. Tell each teammate their path at spawn time.
+
+{wt_section}
+
+When spawning a teammate, include in their prompt:
+"Your worktree is at <path>. Run `cd <path>` as your FIRST action before doing anything else."
 
 ## Teammate Configuration
 
 - Agent type: `issue-worker`
 - Model: `{teammate_model}`
 - Max turns: {max_turns}
-- Each teammate works in an isolated git worktree (automatic)
-- Teammates must commit locally — NEVER push
+- Teammates must commit locally and push their branch — NEVER push to main
+- Each teammate works in their own isolated git worktree (paths above)
+
+## Communication Rules
+
+- Teammates can and SHOULD message each other directly for coordination
+- If a teammate reports a blocker, help them or reassign to another specialist
+- When one teammate completes work another depends on, ensure they notify each other
+- If a task turns out to need a different specialty, create a sub-task and message the right teammate
 
 ## CRITICAL: Active Monitoring Rules
 
@@ -233,24 +266,25 @@ After spawning teammates, you MUST actively monitor their progress using tool ca
 
 Follow this monitoring loop:
 1. After spawning all teammates, run: `sleep 60` (Bash tool)
-2. Check for completed reports: `find {workspace} -name ".claude-employee-report.json" -type f 2>/dev/null`
+2. Check for completed reports: `find {workspace} -name ".claude-employee-report*.json" -type f 2>/dev/null`
 3. For each report found, read it and record the status
 4. If any teammate has not yet reported, **go back to step 1**
 5. Only end your turn and provide the final JSON summary AFTER:
-   - All teammates have written their `.claude-employee-report.json`, OR
-   - 20 minutes have elapsed since spawning (report timeout for remaining)
+   - All tasks on the shared task list are completed, OR
+   - 20 minutes have elapsed since spawning (timeout for remaining)
 
 **Why this matters**: If you say "I'm waiting" and end your turn, the session terminates
 and your teammates lose their work. You must keep making tool calls to stay alive.
 
 ## Rules
 
-- Spawn exactly {len(issues)} teammates
-- One teammate per issue — verify no two teammates claim the same issue
-- If a teammate's plan modifies the same files as another, coordinate or reject
+- Spawn exactly 3 teammates (backend, frontend, qa)
+- Multiple teammates may contribute to the same issue — that's expected
+- If two teammates need to modify the same file, coordinate via task dependencies
 - After all work is done, provide a JSON summary with:
   - issues_completed: list of issue numbers
   - issues_failed: list of issue numbers with reasons
+  - tasks_completed: count of tasks completed
   - total_turns: sum across all teammates
   - conflicts_detected: any file conflicts found
 
@@ -551,6 +585,55 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
             len(issues), repo, [f"#{i['number']}" for i in issues],
         )
 
+        # Determine base branch for worktrees
+        integration = config.get("integration", {})
+        base_branch = integration.get("dev_branch", "autonomous/dev")
+
+        # Ensure base branch exists locally
+        subprocess.run(
+            ["git", "fetch", "origin"],
+            cwd=workspace, capture_output=True, timeout=30,
+        )
+        # Try checking out base branch; create if missing
+        result = subprocess.run(
+            ["git", "rev-parse", "--verify", f"origin/{base_branch}"],
+            cwd=workspace, capture_output=True,
+        )
+        if result.returncode != 0:
+            subprocess.run(
+                ["git", "checkout", "-b", base_branch],
+                cwd=workspace, capture_output=True,
+            )
+        else:
+            subprocess.run(
+                ["git", "checkout", base_branch],
+                cwd=workspace, capture_output=True,
+            )
+            subprocess.run(
+                ["git", "pull", "origin", base_branch],
+                cwd=workspace, capture_output=True,
+            )
+
+        # Create one worktree per teammate role
+        worktree_paths: dict[str, str] = {}
+        for role in TEAMMATE_ROLES:
+            wt_path = os.path.join(workspaces_dir, f"{repo_name}-{role}")
+            if os.path.isdir(wt_path):
+                # Clean up stale worktree
+                subprocess.run(
+                    ["git", "worktree", "remove", "--force", wt_path],
+                    cwd=workspace, capture_output=True,
+                )
+            result = subprocess.run(
+                ["git", "worktree", "add", wt_path, base_branch],
+                cwd=workspace, capture_output=True, text=True,
+            )
+            if result.returncode == 0:
+                worktree_paths[role] = wt_path
+                logger.info("Created worktree for %s: %s", role, wt_path)
+            else:
+                logger.warning("Failed to create worktree for %s: %s", role, result.stderr.strip())
+
         # Notify dashboard
         post_webhook(config, "run_start", {
             "run_id": f"run-{run_id}",
@@ -592,7 +675,7 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
                             iteration + 1, max_reentries, session_id,
                         )
                     else:
-                        prompt = build_team_prompt(repo, issues, config, run_id, workspace)
+                        prompt = build_team_prompt(repo, issues, config, run_id, workspace, worktree_paths)
 
                     # Build options — use resume for follow-up iterations
                     options = ClaudeAgentOptions(
@@ -654,6 +737,18 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
                 "error": str(e)[:500],
             })
             exit_code = 1
+        finally:
+            # Clean up worktrees
+            for role, wt_path in worktree_paths.items():
+                if os.path.isdir(wt_path):
+                    result = subprocess.run(
+                        ["git", "worktree", "remove", "--force", wt_path],
+                        cwd=workspace, capture_output=True, text=True,
+                    )
+                    if result.returncode == 0:
+                        logger.info("Cleaned up worktree for %s: %s", role, wt_path)
+                    else:
+                        logger.warning("Failed to clean up worktree %s: %s", wt_path, result.stderr.strip())
 
     return exit_code
 
