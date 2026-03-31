@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import desc, select
@@ -19,7 +18,6 @@ from app.schemas import (
     CoordinatorTaskOut,
     GuidanceSend,
 )
-from app.services.event_bus import publish as event_bus_publish
 
 logger = logging.getLogger(__name__)
 
@@ -154,80 +152,9 @@ async def send_guidance_api(
     db: AsyncSession = Depends(get_db),
 ):
     """Send guidance to an employee from the dashboard UI."""
-    from agent.coordinator.guidance import send_guidance
-
-    # Determine workspace: either from payload or from the task's workspace
-    workspace = payload.workspace
-    if not workspace:
-        # Try to find workspace from active tasks (running, planning, or ready)
-        result = await db.execute(
-            select(CoordinatorTask)
-            .where(
-                CoordinatorTask.run_id == payload.run_id,
-                CoordinatorTask.employee_index == payload.employee_index,
-                CoordinatorTask.status.in_(["running", "planning", "ready"]),
-            )
-            .order_by(desc(CoordinatorTask.created_at))
-        )
-        task = result.scalars().first()
-        if task and task.workspace:
-            workspace = task.workspace
-        else:
-            raise HTTPException(
-                status_code=422,
-                detail="Cannot determine workspace. Provide workspace or ensure employee is running.",
-            )
-
-    # Validate workspace path exists and is a directory
-    workspace_path = Path(workspace)
-    if not workspace_path.is_dir():
-        raise HTTPException(
-            status_code=422,
-            detail="Employee workspace not ready yet — try again in a few seconds.",
-        )
-
-    try:
-        send_guidance(workspace, payload.employee_index, payload.guidance_type, payload.content)
-    except FileNotFoundError as e:
-        raise HTTPException(
-            status_code=422,
-            detail="Employee workspace disappeared — the agent may have finished.",
-        ) from e
-    except PermissionError as e:
-        raise HTTPException(
-            status_code=403,
-            detail="Permission denied writing to employee workspace.",
-        ) from e
-    except OSError as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"OS error writing guidance file: {e}",
-        ) from e
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to send guidance: {e}") from e
-
-    # Record the message
-    msg = CoordinatorMessage(
-        run_id=payload.run_id,
-        direction="to_employee",
-        message_type="guidance",
-        content=json.dumps({
-            "type": payload.guidance_type,
-            "content": payload.content,
-        }),
-        employee_index=payload.employee_index,
+    raise HTTPException(
+        status_code=501,
+        detail="Legacy guidance not available. Agent Teams mode uses SDK messaging.",
     )
-    db.add(msg)
-    await db.commit()
-
-    # Broadcast via SSE
-    await event_bus_publish({
-        "type": "guidance_sent",
-        "data": {
-            "run_id": payload.run_id,
-            "employee_index": payload.employee_index,
-            "guidance_type": payload.guidance_type,
-        },
-    })
 
     return {"status": "ok", "message": "Guidance sent"}

@@ -107,9 +107,19 @@ async def receive_run_event(
 
     if run and event_name == "teammate_completed":
         await run_lifecycle.handle_teammate_completed(run, event)
+        if event.task_id:
+            mapped = "task_completed" if event.status != "error" else "task_failed"
+            await coordinator_service.handle_task_event(db, event, mapped)
 
     if run and event_name in _TEAM_SPAWN_EVENTS:
         await run_lifecycle.handle_team_member_spawn(run, event)
+        if event_name == "teammate_spawned" and event.task_id:
+            event_copy = event.model_copy()
+            event_copy.task_title = event.agent_name or f"Teammate {event.task_id}"
+            await coordinator_service.handle_task_event(db, event_copy, "task_started")
+
+    if run and event_name == "teammate_progress" and event.task_id:
+        await coordinator_service.handle_teammate_progress(db, event)
 
     # Agent Teams: update team name
     if run and event.team_name:
@@ -235,6 +245,7 @@ def _normalize_event_name(event_name: str) -> str:
         "teammate_spawned": "teammate_spawned",
         "task_claimed": "task_claimed",
         "teammate_completed": "teammate_completed",
+        "teammate_progress": "teammate_progress",
         "team_cleanup": "team_cleanup",
         "progress_update": "progress_update",
     }

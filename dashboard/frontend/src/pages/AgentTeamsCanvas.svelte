@@ -64,23 +64,41 @@
         t.status === 'completed' ? 'working' : 'idle';
 
       const taskMessages = messages.filter(m => m.task_id === t.id).slice(-1);
-      const latestMsg = taskMessages.length > 0 ? {
-        sender: taskMessages[0].direction === 'to_employee' ? 'Lead' : (t.claimed_by ?? 'Teammate'),
-        message: typeof taskMessages[0].content === 'string' ? taskMessages[0].content : JSON.stringify(taskMessages[0].content).slice(0, 80),
-        time: timeAgo(taskMessages[0].created_at),
-        type: (taskMessages[0].direction === 'to_employee' ? 'lead' : 'peer') as 'peer' | 'lead',
-      } : undefined;
+      const latestMsg = taskMessages.length > 0 ? (() => {
+        const raw = taskMessages[0].content;
+        let displayMsg: string;
+        if (typeof raw === 'string') {
+          try {
+            const parsed = JSON.parse(raw);
+            displayMsg = parsed.tool ? `Using ${parsed.tool}` : raw.slice(0, 80);
+          } catch { displayMsg = raw.slice(0, 80); }
+        } else {
+          displayMsg = (raw as any)?.tool ? `Using ${(raw as any).tool}` : JSON.stringify(raw).slice(0, 80);
+        }
+        return {
+          sender: taskMessages[0].direction === 'to_employee' ? 'Lead' : (t.claimed_by ?? 'Teammate'),
+          message: displayMsg,
+          time: timeAgo(taskMessages[0].created_at),
+          type: (taskMessages[0].direction === 'to_employee' ? 'lead' : 'peer') as 'peer' | 'lead',
+        };
+      })() : undefined;
 
       return {
         name: t.claimed_by ?? `Task ${t.id?.split('-').pop()?.slice(0, 4) ?? '?'}`,
         model: 'claude-sonnet-4-6',
         task: t.title ?? 'Untitled task',
-        status: t.status === 'running' ? 'Working...' :
+        status: t.status === 'running' ? (t.result_summary || 'Working...') :
                 t.status === 'completed' ? 'Completed' :
                 t.status === 'blocked' ? `Blocked` :
                 t.status === 'pending' ? 'Pending' : t.status ?? '',
         statusType,
-        detail: t.touched_files?.length ? `${t.touched_files.length} files changed` : '',
+        detail: (() => {
+          if (typeof t.touched_files === 'string') {
+            try { const p = JSON.parse(t.touched_files); return p.turns ? `${p.turns} tool calls` : ''; }
+            catch { return ''; }
+          }
+          return t.touched_files?.length ? `${t.touched_files.length} files changed` : '';
+        })(),
         latestMessage: latestMsg,
         connections: [] as { direction: 'in' | 'out' | 'both'; target: string; type: 'peer' | 'lead' }[],
       };
@@ -106,7 +124,14 @@
       type: (m.direction === 'to_employee' ? 'lead' : 'peer') as 'peer' | 'lead' | 'system',
       sender: m.direction === 'to_employee' ? 'Lead' : (m.task_id ?? 'Teammate'),
       target: m.direction === 'to_employee' ? (m.task_id ?? 'Teammate') : 'Lead',
-      message: typeof m.content === 'string' ? m.content.slice(0, 100) : JSON.stringify(m.content).slice(0, 100),
+      message: (() => {
+        const raw = m.content;
+        if (typeof raw === 'string') {
+          try { const p = JSON.parse(raw); return p.tool ? `Using ${p.tool}` : raw.slice(0, 100); }
+          catch { return raw.slice(0, 100); }
+        }
+        return (raw as any)?.tool ? `Using ${(raw as any).tool}` : JSON.stringify(raw).slice(0, 100);
+      })(),
       time: timeAgo(m.created_at),
     }))
   );

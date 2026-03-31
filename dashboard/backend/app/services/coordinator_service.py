@@ -55,7 +55,47 @@ async def handle_task_event(
     elif event_name in ("task_completed", "task_failed"):
         ctask.finished_at = datetime.now(timezone.utc)
 
+    # Populate Agent Teams identity fields
+    if event.agent_name:
+        ctask.claimed_by = event.agent_name
+    if event.agent_id:
+        ctask.teammate_agent_id = event.agent_id
+
     return ctask
+
+
+async def handle_teammate_progress(
+    db: AsyncSession, event: WebhookRunEvent
+) -> None:
+    """Update CoordinatorTask with latest tool activity and log a progress message."""
+    if not event.task_id:
+        return
+
+    # Update task's result_summary with latest tool name
+    result = await db.execute(
+        select(CoordinatorTask).where(CoordinatorTask.id == event.task_id)
+    )
+    ctask = result.scalar_one_or_none()
+    if ctask:
+        tool_name = event.agent_name or "unknown"
+        ctask.result_summary = f"Using {tool_name}"
+        if event.tokens_total:
+            # Store token count in touched_files as a lightweight progress indicator
+            ctask.touched_files = json.dumps({"tokens": event.tokens_total, "turns": event.turns})
+
+    # Create a progress message for the activity feed
+    msg = CoordinatorMessage(
+        run_id=event.run_id,
+        task_id=event.task_id,
+        direction="from_employee",
+        message_type="progress",
+        content=json.dumps({
+            "tool": event.agent_name or "unknown",
+            "turns": event.turns,
+            "tokens": event.tokens_total,
+        }),
+    )
+    db.add(msg)
 
 
 async def handle_coordinator_message(
