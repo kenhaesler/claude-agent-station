@@ -55,7 +55,6 @@ class _StreamState:
 SKIP_LABELS = frozenset({
     "autonomous-agent/in-progress",
     "autonomous-agent/needs-help",
-    "autonomous-agent/refined",
     "NO AI",
     "backlog",
     "wontfix",
@@ -449,6 +448,13 @@ def handle_stream_event(
             message.usage.tool_uses if message.usage else "?",
             message.last_tool_name,
         )
+        post_webhook(config, "teammate_progress", {
+            "run_id": f"run-{run_id}",
+            "task_id": message.task_id,
+            "agent_name": message.last_tool_name or "",
+            "tokens_total": message.usage.total_tokens if message.usage else 0,
+            "turns": message.usage.tool_uses if message.usage else 0,
+        })
 
     elif isinstance(message, TaskNotificationMessage):
         logger.info("Teammate finished: task=%s status=%s", message.task_id, message.status)
