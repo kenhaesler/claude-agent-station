@@ -26,6 +26,9 @@ class Project(Base):
     custom_instructions = Column(Text, nullable=True, default=None)
     setup_script = Column(Text, nullable=True, default=None)
     security_review_enabled = Column(Boolean, default=False)
+    # ADR-0001: autonomy level (manual/assisted/auto); default budget ceiling
+    autonomy_level = Column(Text, default="assisted")
+    max_budget_usd = Column(Float, nullable=True, default=None)
     created_at = Column(DateTime, default=_utcnow)
     updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
 
@@ -65,6 +68,9 @@ class Run(Base):
     # Agent Teams fields
     team_name = Column(Text, nullable=True)
     team_members = Column(Text, nullable=True)  # JSON: [{agent_id, name, status}]
+    # ADR-0001: autonomy snapshot at trigger time; per-run budget override
+    autonomy_level = Column(Text, nullable=True, default="assisted")
+    max_budget_usd = Column(Float, nullable=True, default=None)
 
 
 class ConfigEntry(Base):

@@ -18,6 +18,9 @@ class ProjectCreate(BaseModel):
     custom_instructions: str | None = None
     setup_script: str | None = None
     security_review_enabled: bool = False
+    # ADR-0001
+    autonomy_level: str = "assisted"
+    max_budget_usd: float | None = None
 
 
 class ProjectUpdate(BaseModel):
@@ -28,6 +31,9 @@ class ProjectUpdate(BaseModel):
     custom_instructions: str | None = None
     setup_script: str | None = None
     security_review_enabled: bool | None = None
+    # ADR-0001
+    autonomy_level: str | None = None
+    max_budget_usd: float | None = None
 
 
 class ProjectOut(BaseModel):
@@ -40,6 +46,9 @@ class ProjectOut(BaseModel):
     custom_instructions: str | None = None
     setup_script: str | None = None
     security_review_enabled: bool = False
+    # ADR-0001
+    autonomy_level: str = "assisted"
+    max_budget_usd: float | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -75,6 +84,9 @@ class RunOut(BaseModel):
     # Agent Teams fields
     team_name: str | None = None
     team_members: str | None = None  # JSON
+    # ADR-0001
+    autonomy_level: str | None = None
+    max_budget_usd: float | None = None
 
     model_config = ConfigDict(from_attributes=True)
 

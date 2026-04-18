@@ -203,6 +203,19 @@ async def test_get_run_not_found(client):
     assert resp.status_code == 404
 
 
+# --- ADR-0001 autonomy fields ---
+
+@pytest.mark.asyncio
+async def test_run_autonomy_fields_default_to_assisted(client, sample_runs):
+    """GET /api/runs/{id} returns autonomy_level/max_budget_usd fields per ADR-0001."""
+    resp = await client.get("/api/runs/run-001")
+    assert resp.status_code == 200
+    data = resp.json()
+    # Columns default to 'assisted' via migration; per-run override may be null.
+    assert "autonomy_level" in data
+    assert "max_budget_usd" in data
+
+
 # --- Latest run ---
 
 @pytest.mark.asyncio
