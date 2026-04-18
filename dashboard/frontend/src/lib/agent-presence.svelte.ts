@@ -211,7 +211,13 @@ function deriveAgents(runs: ActiveEmployee[]): AgentIdentity[] {
       name: agentName,
       color: getAgentColor(agentName.toLowerCase()),
       employeeIndex: idx,
-      status: run.status === 'running' ? 'active' : 'idle',
+      status: (
+        run.status === 'running' ||
+        run.status === 'started' ||
+        run.status === 'reviewing' ||
+        run.status === 'plan_reviewing' ||
+        run.status === 'employee_done'
+      ) ? 'active' : 'idle',
       currentAction: null,
     });
   }

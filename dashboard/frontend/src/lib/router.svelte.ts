@@ -4,8 +4,6 @@
 
 export type Page =
   | 'command-center'
-  | 'theater'
-  | 'team-comms'
   | 'agent-teams'
   | 'runs'
   | 'run-detail'
@@ -20,7 +18,11 @@ export interface Route {
   param: string | null;
 }
 
-/** Map legacy routes to new equivalents */
+/** Map legacy routes to new equivalents.
+ *
+ * `/theater`, `/team-comms`, `/observatory`, `/workspace` are historic names
+ * for the Agent Teams canvas — they are kept here so old bookmarks still
+ * resolve, but they no longer appear in the Page enum. */
 const REDIRECTS: Record<string, string> = {
   '/ops': '/',
   '/command': '/',
@@ -33,8 +35,10 @@ const REDIRECTS: Record<string, string> = {
   '/config': '/settings',
   '/prompts': '/settings',
   '/system': '/settings',
-  '/observatory': '/theater',
-  '/workspace': '/theater',
+  '/observatory': '/agent-teams',
+  '/workspace': '/agent-teams',
+  '/theater': '/agent-teams',
+  '/team-comms': '/agent-teams',
 };
 
 function parsePath(): Route {
@@ -76,7 +80,9 @@ function parsePath(): Route {
     return { page: rParts[0] as Page, param: null };
   }
 
-  // Standard routes
+  // Standard routes. `theater` / `team-comms` are kept here solely so a bare
+  // URL hit renders the Agent Teams canvas without a redirect flash; the Page
+  // enum no longer contains those names.
   const routeMap: Record<string, Page> = {
     theater: 'agent-teams',
     agents: 'agent-teams',
@@ -159,8 +165,7 @@ export function handleLinkClick(e: MouseEvent): void {
 export function getPageTitle(page: Page): string {
   const titles: Record<Page, string> = {
     'command-center': 'Command Center',
-    'theater': 'Workspace',
-    'team-comms': 'Team Comms',
+    'agent-teams': 'Agent Teams',
     'runs': 'Runs',
     'run-detail': 'Run Detail',
     'queue': 'Queue Board',

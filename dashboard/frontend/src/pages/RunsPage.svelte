@@ -50,7 +50,14 @@
   }
 
   function getStatusDot(run: Run): string {
-    if (run.status === 'started') return 'running';
+    // Any active sub-state of a live run should render green, not offline.
+    if (
+      run.status === 'started' ||
+      run.status === 'running' ||
+      run.status === 'reviewing' ||
+      run.status === 'plan_reviewing' ||
+      run.status === 'employee_done'
+    ) return 'running';
     if (run.verdict === 'APPROVE' || run.verdict === 'PR') return 'online';
     if (run.verdict === 'REJECT') return 'error';
     return 'offline';
