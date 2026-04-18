@@ -169,7 +169,7 @@
         <div class="flex items-center justify-between text-sm">
           <div>
             <div class="text-primary">Timer</div>
-            <div class="text-xs text-tertiary">Next: {systemStatus.timer.next ?? 'N/A'}</div>
+            <div class="text-xs text-tertiary">Next: {systemStatus.timer.next_trigger ?? 'N/A'}</div>
           </div>
           <span class="w-2 h-2 rounded-full {systemStatus.timer.active ? 'bg-status-active' : 'bg-status-inactive'}"></span>
         </div>

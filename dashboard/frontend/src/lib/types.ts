@@ -334,7 +334,7 @@ export interface TokenUsage {
 // --- System ---
 export interface SystemStatus {
   service: { active: boolean; status: string };
-  timer: { active: boolean; next: string | null };
+  timer: { active: boolean; next_trigger: string | null };
   resources: {
     memory_total_mb?: number;
     memory_available_mb?: number;
