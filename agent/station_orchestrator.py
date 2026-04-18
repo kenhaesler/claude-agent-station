@@ -38,6 +38,9 @@ from claude_agent_sdk.types import (
     TaskStartedMessage,
 )
 
+from agent.audit_hook import make_audited_policy
+from agent.auto_mode import AutonomyLevel, _coerce_level
+
 logger = logging.getLogger(__name__)
 
 
@@ -581,7 +584,22 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
         repo_name = repo.split("/")[-1] if "/" in repo else repo
         workspace = os.path.join(workspaces_dir, repo_name)
 
-        logger.info("Processing project: %s", repo)
+        # Resolve autonomy per ADR-0001. Level comes from project config
+        # (falls back to config-level default, then to 'assisted'). The
+        # policy engine is enforced via can_use_tool on ClaudeAgentOptions;
+        # every decision is appended to agent_events by the audit hook.
+        #
+        # We intentionally leave permission_mode='default' at every level
+        # so can_use_tool is always consulted — that's what keeps the
+        # ALWAYS_DENY list and the audit trail in force even under 'auto'.
+        default_level = config.get("autonomy", {}).get("default_level", "assisted")
+        autonomy_level = _coerce_level(project.get("autonomy_level") or default_level)
+        max_budget_usd = project.get("max_budget_usd")
+
+        logger.info(
+            "Processing project: %s (autonomy=%s, budget=%s)",
+            repo, autonomy_level.value, max_budget_usd,
+        )
 
         # Fetch and filter issues
         issues = fetch_eligible_issues(repo, max_per_project, workspace)
@@ -692,7 +710,10 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
                     else:
                         prompt = build_team_prompt(repo, issues, config, run_id, workspace, worktree_paths)
 
-                    # Build options — use resume for follow-up iterations
+                    # Build options — use resume for follow-up iterations.
+                    # Auto Mode (ADR-0001) is wired here: can_use_tool runs
+                    # the policy engine and records every decision to
+                    # agent_events (event_type='auto_mode_decision').
                     options = ClaudeAgentOptions(
                         cwd=workspace,
                         env={
@@ -703,6 +724,12 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
                         max_turns=manager_turns,
                         model=manager_model,
                         agents=agents_dict,
+                        can_use_tool=make_audited_policy(
+                            run_id=f"run-{run_id}",
+                            level=autonomy_level,
+                            agent_id="lead",
+                        ),
+                        max_budget_usd=max_budget_usd,
                     )
                     if is_followup and session_id:
                         options.resume = session_id
