@@ -98,6 +98,8 @@ class ActiveEmployeeOut(BaseModel):
     concurrent_group_id: str | None = None
     model: str | None = None
     branch: str | None = None
+    tokens_total: int | None = None
+    started_at: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
