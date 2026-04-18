@@ -489,7 +489,7 @@ async function refreshActiveRuns() {
     // project_id is NULL on newly created runs), then fall back to latestRun.
     if (activeEmployees.length === 0) {
       try {
-        const runningRuns = await listRuns({ status: 'running', limit: 10 });
+        const runningRuns = await listRuns({ status: 'started', limit: 10 });
         if (runningRuns.runs && runningRuns.runs.length > 0) {
           activeEmployees = runningRuns.runs.map((r: Run, idx: number) => ({
             run_id: r.run_id,
