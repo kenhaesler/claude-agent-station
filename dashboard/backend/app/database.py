@@ -78,6 +78,11 @@ async def _migrate_add_columns(conn) -> None:
         ("coordinator_tasks", "claimed_by", "ALTER TABLE coordinator_tasks ADD COLUMN claimed_by TEXT"),
         ("coordinator_tasks", "claimed_at", "ALTER TABLE coordinator_tasks ADD COLUMN claimed_at DATETIME"),
         ("agent_events", "team_name", "ALTER TABLE agent_events ADD COLUMN team_name TEXT"),
+        # ADR-0001: autonomy level + per-run/project budget ceiling
+        ("projects", "autonomy_level", "ALTER TABLE projects ADD COLUMN autonomy_level TEXT DEFAULT 'assisted'"),
+        ("projects", "max_budget_usd", "ALTER TABLE projects ADD COLUMN max_budget_usd REAL"),
+        ("runs", "autonomy_level", "ALTER TABLE runs ADD COLUMN autonomy_level TEXT DEFAULT 'assisted'"),
+        ("runs", "max_budget_usd", "ALTER TABLE runs ADD COLUMN max_budget_usd REAL"),
     ]
     for table, column, sql in migrations:
         try:
