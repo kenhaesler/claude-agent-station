@@ -83,6 +83,8 @@ export interface ActiveEmployee {
   concurrent_group_id: string | null;
   model: string | null;
   branch: string | null;
+  tokens_total?: number | null;
+  started_at?: string | null;
 }
 
 export interface TeammateStatus {
