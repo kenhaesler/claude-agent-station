@@ -5,6 +5,7 @@
   import type { RunFullContext, DiffResult, CoordinatorMessage } from '../lib/types';
   import { navigate } from '../lib/router.svelte';
   import LogViewer from '../components/data-display/LogViewer.svelte';
+  import AutonomyBadge from '../components/badges/AutonomyBadge.svelte';
 
   let { runId }: { runId: string } = $props();
 
@@ -91,13 +92,20 @@
     <!-- ===== HEADER ===== -->
     <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
       <div>
-        <div class="flex items-center gap-3 mb-2">
+        <div class="flex items-center gap-3 mb-2 flex-wrap">
           <span class="status-dot {run.status === 'started' ? 'running' : run.verdict === 'REJECT' ? 'error' : run.verdict ? 'online' : 'offline'}"></span>
           <h1 class="font-heading text-xl">{run.run_id?.slice(0, 20)}</h1>
           {#if run.verdict}
             <span class="badge {getVerdictBadge(run.verdict)}">{run.verdict}</span>
           {:else if run.status === 'started'}
             <span class="badge badge-running">LIVE</span>
+          {/if}
+          <AutonomyBadge level={run.autonomy_level} />
+          {#if run.max_budget_usd != null}
+            <span
+              class="text-xs font-mono text-tertiary"
+              title="Per-run budget cap"
+            >&le; ${run.max_budget_usd.toFixed(2)}</span>
           {/if}
         </div>
         <div class="flex items-center gap-4 text-xs text-tertiary font-mono">

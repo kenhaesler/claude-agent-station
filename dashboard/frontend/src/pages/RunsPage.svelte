@@ -5,6 +5,7 @@
   import type { Run } from '../lib/types';
   import SkeletonLoader from '../components/data-display/SkeletonLoader.svelte';
   import EmptyState from '../components/data-display/EmptyState.svelte';
+  import AutonomyBadge from '../components/badges/AutonomyBadge.svelte';
 
   let runs = $state<Run[]>([]);
   let total = $state(0);
@@ -115,6 +116,7 @@
           <th class="text-left p-3">Issue</th>
           <th class="text-left p-3">Mode</th>
           <th class="text-left p-3">Model</th>
+          <th class="text-left p-3">Autonomy</th>
           <th class="text-left p-3">Verdict</th>
           <th class="text-right p-3">Tokens</th>
           <th class="text-right p-3">Duration</th>
@@ -125,7 +127,7 @@
         {#if loading}
           {#each Array(5) as _}
             <tr style="border-bottom: 1px solid rgba(240,220,200,0.10);">
-              {#each Array(9) as __}<td class="p-3"><div class="skeleton h-4 w-full"></div></td>{/each}
+              {#each Array(10) as __}<td class="p-3"><div class="skeleton h-4 w-full"></div></td>{/each}
             </tr>
           {/each}
         {:else}
@@ -146,6 +148,7 @@
               </td>
               <td class="p-3">{#if run.mode}<span class="badge {getModeBadge(run.mode)}">{run.mode}</span>{:else}<span class="text-xs text-ghost">-</span>{/if}</td>
               <td class="p-3"><span class="text-xs font-mono text-tertiary">{run.model?.split('-').pop() ?? '-'}</span></td>
+              <td class="p-3"><AutonomyBadge level={run.autonomy_level} size="xs" /></td>
               <td class="p-3">
                 {#if run.verdict}<span class="badge {getVerdictBadge(run.verdict)}">{run.verdict}</span>
                 {:else if run.status === 'started'}<span class="badge badge-running">LIVE</span>
@@ -158,7 +161,7 @@
           {/each}
         {/if}
         {#if !loading && runs.length === 0}
-          <tr><td colspan="9">
+          <tr><td colspan="10">
             <EmptyState title="No runs found" description="Try adjusting your filters" icon="▷" />
           </td></tr>
         {/if}

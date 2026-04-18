@@ -13,6 +13,8 @@ export type CoordinatorTaskStatus = 'pending' | 'ready' | 'running' | 'completed
 export type BackpressureLevel = 'GREEN' | 'YELLOW' | 'RED' | 'BLACK';
 
 // --- Projects ---
+export type AutonomyLevel = 'manual' | 'assisted' | 'auto';
+
 export interface Project {
   id: number;
   repo: string;
@@ -23,6 +25,8 @@ export interface Project {
   custom_instructions: string | null;
   setup_script: string | null;
   security_review_enabled: boolean;
+  autonomy_level: AutonomyLevel;
+  max_budget_usd: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -65,6 +69,8 @@ export interface Run {
   concurrent_group_id: string | null;
   team_name: string | null;
   team_members: string | null;
+  autonomy_level: AutonomyLevel | null;
+  max_budget_usd: number | null;
 }
 
 export interface RunList {
