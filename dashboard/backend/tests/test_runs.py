@@ -85,6 +85,7 @@ async def sample_runs(setup_db):
                 project_id=project.id,
                 status="running",
                 issue_number=3,
+                tokens_total=15000,
                 started_at=now,
                 employee_index=1,
                 concurrent_group_id="group-A",
@@ -232,6 +233,10 @@ async def test_get_active_employees(client, sample_runs):
     assert data[0]["run_id"] == "run-003"
     assert data[0]["status"] == "running"
     assert data[0]["issue_number"] == 3
+    # tokens_total and started_at surface on the schema so the AgentTeams canvas
+    # can render real duration and token counts on the Lead card.
+    assert data[0]["tokens_total"] == 15000
+    assert data[0]["started_at"] is not None
 
 
 @pytest.mark.asyncio

@@ -3,6 +3,21 @@
   import { navigate } from '../lib/router.svelte';
   import { agentPresence } from '../lib/agent-presence.svelte';
   import { formatTokens, formatDuration, timeAgo, formatPercent } from '../lib/format';
+
+  function formatUptime(seconds: number | null | undefined): string {
+    if (seconds == null) return '—';
+    const d = Math.floor(seconds / 86400);
+    const h = Math.floor((seconds % 86400) / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    if (d > 0) return `${d}d ${h}h`;
+    if (h > 0) return `${h}h ${m}m`;
+    return `${m}m`;
+  }
+
+  function formatMemoryMB(usedMb: number | null | undefined, totalMb: number | null | undefined): string {
+    if (usedMb == null || totalMb == null) return '—';
+    return `${(usedMb / 1024).toFixed(1)} / ${(totalMb / 1024).toFixed(1)} GB`;
+  }
   import type { Run, QueueStats, TokenUsage, SystemStatus, AnalyticsResponse, BackpressureStatus, ActiveEmployee, QueueItem } from '../lib/types';
   import VaporCard from '../components/vapor/VaporCard.svelte';
   import VaporBadge from '../components/vapor/VaporBadge.svelte';
@@ -134,7 +149,7 @@
   }
 </script>
 
-<div style="animation: greeting-in 0.8s cubic-bezier(0.16, 1, 0.3, 1) both;">
+<div data-testid="command-center" style="animation: greeting-in 0.8s cubic-bezier(0.16, 1, 0.3, 1) both;">
 
   {#if loading}
     <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 28px;">
@@ -281,11 +296,11 @@
           </div>
           <div style="display: flex; justify-content: space-between; align-items: center;">
             <span style="font-size: 14px; color: #3D2A1A;">Memory</span>
-            <span style="font-size: 13px; color: #8C7A66;">{systemStatus?.resources?.memory ?? '—'}</span>
+            <span style="font-size: 13px; color: #8C7A66;">{formatMemoryMB(systemStatus?.resources?.memory_used_mb, systemStatus?.resources?.memory_total_mb)}</span>
           </div>
           <div style="display: flex; justify-content: space-between; align-items: center;">
             <span style="font-size: 14px; color: #3D2A1A;">Uptime</span>
-            <span style="font-size: 13px; color: #8C7A66;">{systemStatus?.resources?.uptime ?? '—'}</span>
+            <span style="font-size: 13px; color: #8C7A66;">{formatUptime(systemStatus?.resources?.uptime_seconds)}</span>
           </div>
         </div>
       </VaporCard>

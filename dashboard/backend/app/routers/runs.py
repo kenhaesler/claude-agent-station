@@ -97,6 +97,8 @@ async def get_active_employees(db: AsyncSession = Depends(get_db)):
             concurrent_group_id=r.concurrent_group_id,
             model=r.model,
             branch=r.branch,
+            tokens_total=r.tokens_total,
+            started_at=r.started_at,
         )
         for r in runs
     ]
@@ -126,6 +128,7 @@ async def get_active_employees(db: AsyncSession = Depends(get_db)):
                 proj = proj_result.scalar_one_or_none()
                 project_id = proj.id if proj else 0
 
+            parent_run = employees[0] if employees else None
             employees.append(ActiveEmployeeOut(
                 run_id=ct.run_id,
                 project_id=project_id,
@@ -137,6 +140,8 @@ async def get_active_employees(db: AsyncSession = Depends(get_db)):
                 concurrent_group_id=ct.run_id,
                 model=None,
                 branch=ct.branch,
+                tokens_total=parent_run.tokens_total if parent_run else None,
+                started_at=ct.started_at or (parent_run.started_at if parent_run else None),
             ))
 
     return employees
