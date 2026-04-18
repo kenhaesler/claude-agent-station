@@ -371,11 +371,18 @@ class TestStatusNormalization:
 # 3. Rate limit detection pattern tests
 # ===================================================================
 
+@pytest.mark.skip(
+    reason="legacy agent.coordinator.employee_runner removed; see TODO below",
+)
 class TestRateLimitPatterns:
     """Validate RATE_LIMIT_PATTERNS from employee_runner.py against
     realistic log lines — both true positives and false positives.
 
-    Imports the patterns and detection function directly.
+    TODO: `agent.coordinator.employee_runner` was removed when the legacy
+    coordinator was replaced by `agent.station_orchestrator`. Rewrite these
+    tests against whichever module now owns rate-limit pattern detection
+    under the Agent Teams flow (or drop them if that detection moved into
+    the SDK layer).
     """
 
     @pytest.fixture(autouse=True)

@@ -155,8 +155,17 @@ class TestPromptRouterSync:
         )
 
 
+@pytest.mark.skip(
+    reason="legacy agent.coordinator.modes removed; see TODO below",
+)
 class TestModeRegistryPromptSync:
-    """Verify MODE_REGISTRY prompt_file references point to real files."""
+    """Verify MODE_REGISTRY prompt_file references point to real files.
+
+    TODO: `agent.coordinator.modes.MODE_REGISTRY` was removed when the legacy
+    coordinator was replaced by `agent.station_orchestrator`. Rewrite these
+    tests against the current mode registry (or drop them if the registry
+    concept no longer applies under Agent Teams).
+    """
 
     def test_all_mode_prompt_files_exist(self):
         """Every mode's prompt_file must exist in agent/prompts/."""
