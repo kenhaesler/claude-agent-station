@@ -333,7 +333,16 @@ export interface TokenUsage {
 export interface SystemStatus {
   service: { active: boolean; status: string };
   timer: { active: boolean; next: string | null };
-  resources: { memory_mb: number; load_avg: number[]; disk_free_gb: number; uptime_seconds: number };
+  resources: {
+    memory_total_mb?: number;
+    memory_available_mb?: number;
+    memory_used_mb?: number;
+    load_avg?: number[];
+    disk_total_gb?: number;
+    disk_free_gb?: number;
+    disk_used_gb?: number;
+    uptime_seconds?: number;
+  };
 }
 
 export interface AuthStatus {
