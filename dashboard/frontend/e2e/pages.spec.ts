@@ -7,12 +7,15 @@ test('Dashboard page loads', async ({ page }) => {
   await page.screenshot({ path: 'screenshots/01-dashboard.png', fullPage: true });
 });
 
-test('Agents page (idle state)', async ({ page }) => {
+test('Agents page loads (idle or active)', async ({ page }) => {
   await page.goto('/agents');
-  // /agents redirects to /agent-teams. Idle copy is the off-duty heading.
-  const heading = page.getByRole('heading', { name: /off-duty|team/i });
-  await expect(heading).toBeVisible({ timeout: 5000 });
-  await page.screenshot({ path: 'screenshots/02-agents-idle.png', fullPage: true });
+  // /agents redirects to /agent-teams. Accept either state:
+  //   - idle: "The Team is Off-Duty" heading
+  //   - active: Team Lead card rendered
+  const idleHeading = page.getByRole('heading', { name: /off-duty/i });
+  const leadCard = page.getByText(/^Team Lead$/);
+  await expect(idleHeading.or(leadCard).first()).toBeVisible({ timeout: 5000 });
+  await page.screenshot({ path: 'screenshots/02-agents.png', fullPage: true });
 });
 
 test('Runs page loads', async ({ page }) => {
