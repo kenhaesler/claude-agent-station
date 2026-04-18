@@ -134,7 +134,7 @@
   }
 </script>
 
-<div style="animation: greeting-in 0.8s cubic-bezier(0.16, 1, 0.3, 1) both;">
+<div data-testid="command-center" style="animation: greeting-in 0.8s cubic-bezier(0.16, 1, 0.3, 1) both;">
 
   {#if loading}
     <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 28px;">
