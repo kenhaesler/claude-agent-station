@@ -2,10 +2,11 @@
   import { listProjects, createProject, deleteProject, updateProject } from '../lib/api';
   import { navigate } from '../lib/router.svelte';
   import { toastSuccess, toastError } from '../lib/toast.svelte';
-  import type { Project, AgentMode } from '../lib/types';
+  import type { Project, AgentMode, AutonomyLevel } from '../lib/types';
   import Modal from '../components/overlays/Modal.svelte';
   import EmptyState from '../components/data-display/EmptyState.svelte';
   import SkeletonLoader from '../components/data-display/SkeletonLoader.svelte';
+  import AutonomyBadge from '../components/badges/AutonomyBadge.svelte';
 
   let projects = $state<Project[]>([]);
   let loading = $state(true);
@@ -37,6 +38,19 @@
       await updateProject(p.id, { enabled: !p.enabled });
       p.enabled = !p.enabled;
     } catch (e: any) { toastError(e.message); }
+  }
+
+  async function setAutonomy(p: Project, next: AutonomyLevel) {
+    if (p.autonomy_level === next) return;
+    const prev = p.autonomy_level;
+    p.autonomy_level = next;   // optimistic
+    try {
+      await updateProject(p.id, { autonomy_level: next });
+      toastSuccess(`Autonomy: ${prev} \u2192 ${next}`);
+    } catch (e: any) {
+      p.autonomy_level = prev; // rollback
+      toastError(e.message ?? 'Failed to update autonomy');
+    }
   }
 
   function getStatusBorder(p: Project): string {
@@ -101,6 +115,28 @@
             <span class="text-[10px] font-mono text-tertiary">Priority: {project.priority}</span>
             <span class="text-[10px] font-mono text-tertiary">Branch: {project.branch}</span>
           </div>
+
+          <!-- Autonomy selector (ADR-0001) -->
+          <!-- svelte-ignore a11y_click_events_have_key_events -->
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div
+            class="mt-3 flex items-center gap-2"
+            onclick={(e) => e.stopPropagation()}
+          >
+            <span class="text-[10px] font-mono uppercase tracking-widest text-tertiary">Autonomy</span>
+            <AutonomyBadge level={project.autonomy_level} size="xs" />
+            <select
+              class="input text-xs py-1 px-2 ml-auto"
+              style="width: auto; min-width: 90px;"
+              value={project.autonomy_level ?? 'assisted'}
+              onchange={(e) => setAutonomy(project, (e.currentTarget as HTMLSelectElement).value as AutonomyLevel)}
+            >
+              <option value="manual">manual</option>
+              <option value="assisted">assisted</option>
+              <option value="auto">auto</option>
+            </select>
+          </div>
+
           {#if !project.enabled}
             <div class="mt-2">
               <span class="badge badge-failed">Disabled</span>

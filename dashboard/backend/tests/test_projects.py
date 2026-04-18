@@ -173,6 +173,32 @@ async def test_update_project_not_found(client):
     assert resp.status_code == 404
 
 
+@pytest.mark.asyncio
+@patch("app.routers.projects.sync_db_to_config", new_callable=AsyncMock)
+async def test_update_project_autonomy_level_and_budget(mock_sync, client, sample_project):
+    """PUT accepts autonomy_level + max_budget_usd per ADR-0001."""
+    resp = await client.put(f"/api/projects/{sample_project.id}", json={
+        "autonomy_level": "auto",
+        "max_budget_usd": 5.50,
+    })
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["autonomy_level"] == "auto"
+    assert data["max_budget_usd"] == 5.50
+    # Unchanged fields should remain
+    assert data["repo"] == "owner/test-repo"
+
+
+@pytest.mark.asyncio
+async def test_project_defaults_to_assisted(client, sample_project):
+    """Fresh projects default to autonomy_level='assisted' per migration."""
+    resp = await client.get(f"/api/projects/{sample_project.id}")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["autonomy_level"] == "assisted"
+    assert data["max_budget_usd"] is None
+
+
 # --- Delete project ---
 
 @pytest.mark.asyncio
