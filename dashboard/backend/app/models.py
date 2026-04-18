@@ -324,3 +324,31 @@ class PromptVersion(Base):
     success_rate = Column(Float, nullable=True)  # Calculated from task_outcomes
     sample_count = Column(Integer, default=0)
     created_at = Column(DateTime, default=_utcnow)
+
+
+class PermissionRequest(Base):
+    """Pending operator permission requests raised by the policy engine.
+
+    ADR-0001: under manual/assisted, destructive bash or edit calls can be
+    referred to the operator instead of being denied outright. The policy
+    engine writes a row here, an SSE event notifies the dashboard, the
+    operator clicks approve/deny, and the agent polls the row to unblock.
+
+    Auto-deny after 5 minutes if the operator doesn't respond — configurable
+    via STATION_PERMISSION_TRAY_TIMEOUT_SECONDS.
+    """
+    __tablename__ = "permission_requests"
+
+    id = Column(Integer, primary_key=True)
+    request_id = Column(Text, nullable=False, unique=True, index=True)
+    run_id = Column(Text, nullable=False, index=True)
+    agent_id = Column(Text, nullable=False)
+    tool_name = Column(Text, nullable=False)
+    tool_input = Column(Text, nullable=False)  # JSON
+    autonomy_level = Column(Text, nullable=False)
+    reason = Column(Text, nullable=True)  # Why the policy referred this to the operator
+    status = Column(Text, nullable=False, default="pending", index=True)
+    # pending | approved | denied | timed_out
+    resolution_note = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=_utcnow)
+    resolved_at = Column(DateTime, nullable=True)

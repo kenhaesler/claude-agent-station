@@ -27,6 +27,7 @@ from app.routers import (
     health,
     logs,
     oauth,
+    permissions,
     plan_usage,
     plans,
     projects,
@@ -186,6 +187,7 @@ app.include_router(plan_usage.router, dependencies=_auth)
 app.include_router(prompts.router, dependencies=_auth)
 app.include_router(queue.router, dependencies=_auth)
 app.include_router(agent_events.router, dependencies=_auth)
+app.include_router(permissions.router, dependencies=_auth)
 
 # GitHub webhook: has own auth via HMAC signature verification
 app.include_router(github_webhook.router)

@@ -107,6 +107,7 @@ async def init_db():
             CoordinatorTask,
             IntegrationFeature,
             Notification,
+            PermissionRequest,
             Plan,
             PlanUsageHistory,
             PromptVersion,
