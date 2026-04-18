@@ -22,10 +22,10 @@
     connections?: { direction: 'in' | 'out' | 'both'; target: string; type: 'peer' | 'lead' }[];
   } = $props();
 
-  const isActive = statusType === 'working';
-  const isReviewing = statusType === 'reviewing';
-  const isBlocked = statusType === 'blocked' || statusType === 'idle';
-  const statusColor = isActive ? '#2E7D32' : isReviewing ? '#B06030' : '#8C7A66';
+  let isActive = $derived(statusType === 'working');
+  let isReviewing = $derived(statusType === 'reviewing');
+  let isBlocked = $derived(statusType === 'blocked' || statusType === 'idle');
+  let statusColor = $derived(isActive ? '#2E7D32' : isReviewing ? '#B06030' : '#8C7A66');
 </script>
 
 <div
