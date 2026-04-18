@@ -4,7 +4,7 @@
 
   let {
     name,
-    model = 'claude-sonnet-4-6',
+    model = 'claude-opus-4-6',
     task = '',
     status = '',
     statusType = 'idle',
@@ -24,8 +24,14 @@
 
   let isActive = $derived(statusType === 'working');
   let isReviewing = $derived(statusType === 'reviewing');
-  let isBlocked = $derived(statusType === 'blocked' || statusType === 'idle');
-  let statusColor = $derived(isActive ? '#2E7D32' : isReviewing ? '#B06030' : '#8C7A66');
+  let isBlocked = $derived(statusType === 'blocked');
+  let isIdle = $derived(statusType === 'idle');
+  let statusColor = $derived(
+    isActive ? '#2E7D32' :
+    isReviewing ? '#B06030' :
+    isBlocked ? '#D06050' :
+    '#8C7A66'
+  );
 </script>
 
 <div
@@ -33,6 +39,7 @@
   class:active={isActive}
   class:plan-review={isReviewing}
   class:blocked={isBlocked}
+  class:idle={isIdle}
 >
   <!-- Header -->
   <div style="display: flex; align-items: center; gap: 12px;">
@@ -98,7 +105,8 @@
     box-shadow: 3px 3px 10px rgba(0,0,0,0.05), -3px -3px 10px rgba(255,255,255,0.45);
   }
   .tm-card.plan-review { border-color: rgba(176,96,48,0.25); }
-  .tm-card.blocked { opacity: 0.50; }
+  .tm-card.blocked { border-color: rgba(208,96,80,0.35); }
+  .tm-card.idle { opacity: 0.55; }
 
   .tm-card::before {
     content: ''; position: absolute; left: 0; top: 14px; bottom: 14px; width: 3px;
@@ -106,6 +114,7 @@
   }
   .tm-card.active::before { background: rgba(46,125,50,0.4); opacity: 1; }
   .tm-card.plan-review::before { background: rgba(176,96,48,0.4); opacity: 1; }
+  .tm-card.blocked::before { background: rgba(208,96,80,0.55); opacity: 1; }
 
   .tm-card.active { animation: card-breathe 4s ease-in-out infinite; }
   .tm-card.plan-review { animation: card-breathe-amber 4s ease-in-out infinite; }

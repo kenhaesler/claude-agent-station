@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { listRuns, getQueueStats, getTokenUsage, getSystemStatus, getAnalytics, getBackpressure, getActiveEmployees, listQueue } from '../lib/api';
+  import { listRuns, getQueueStats, getTokenUsage, getPlanUsage, getSystemStatus, getAnalytics, getBackpressure, getActiveEmployees, listQueue } from '../lib/api';
   import { navigate } from '../lib/router.svelte';
   import { agentPresence } from '../lib/agent-presence.svelte';
   import { formatTokens, formatDuration, timeAgo, formatPercent } from '../lib/format';
@@ -18,7 +18,7 @@
     if (usedMb == null || totalMb == null) return '—';
     return `${(usedMb / 1024).toFixed(1)} / ${(totalMb / 1024).toFixed(1)} GB`;
   }
-  import type { Run, QueueStats, TokenUsage, SystemStatus, AnalyticsResponse, BackpressureStatus, ActiveEmployee, QueueItem } from '../lib/types';
+  import type { Run, QueueStats, TokenUsage, PlanUsage, SystemStatus, AnalyticsResponse, BackpressureStatus, ActiveEmployee, QueueItem } from '../lib/types';
   import VaporCard from '../components/vapor/VaporCard.svelte';
   import VaporBadge from '../components/vapor/VaporBadge.svelte';
   import SkeletonLoader from '../components/data-display/SkeletonLoader.svelte';
@@ -37,6 +37,7 @@
   let queueStats = $state<QueueStats | null>(null);
   let queueItems = $state<QueueItem[]>([]);
   let tokenUsage = $state<TokenUsage | null>(null);
+  let planUsage = $state<PlanUsage | null>(null);
   let systemStatus = $state<SystemStatus | null>(null);
   let analyticsData = $state<AnalyticsResponse | null>(null);
   let backpressure = $state<BackpressureStatus | null>(null);
@@ -89,11 +90,12 @@
 
   // Fetch data
   async function loadData() {
-    const [runsRes, empRes, qRes, tRes, sRes, aRes, bRes, qiRes] = await Promise.allSettled([
+    const [runsRes, empRes, qRes, tRes, pRes, sRes, aRes, bRes, qiRes] = await Promise.allSettled([
       listRuns({ limit: 15 }),
       getActiveEmployees(),
       getQueueStats(),
       getTokenUsage(),
+      getPlanUsage(),
       getSystemStatus(),
       getAnalytics({ days: 7 }),
       getBackpressure(),
@@ -103,6 +105,7 @@
     if (empRes.status === 'fulfilled') activeEmployees = empRes.value;
     if (qRes.status === 'fulfilled') queueStats = qRes.value;
     if (tRes.status === 'fulfilled') tokenUsage = tRes.value;
+    if (pRes.status === 'fulfilled') planUsage = pRes.value;
     if (sRes.status === 'fulfilled') systemStatus = sRes.value;
     if (aRes.status === 'fulfilled') analyticsData = aRes.value;
     if (bRes.status === 'fulfilled') backpressure = bRes.value;
@@ -208,7 +211,13 @@
           </div>
         </div>
         <div style="font-size: 48px; font-weight: 800; letter-spacing: -0.05em; margin-top: 10px; line-height: 1; color: #3D2A1A;">{formatTokens(tokenUsage?.daily?.tokens_total ?? null)}</div>
-        <div style="font-size: 13px; color: #8C7A66; margin-top: 8px;">{formatPercent(tokenUsage?.max_usage_percent ?? 0)} of budget</div>
+        <div style="font-size: 13px; color: #8C7A66; margin-top: 8px;">
+          {#if planUsage?.weekly_tokens_percent != null}
+            {formatPercent(planUsage.weekly_tokens_percent)} of weekly plan
+          {:else}
+            this week
+          {/if}
+        </div>
       </VaporCard>
 
       <VaporCard stagger={0.26}>
@@ -292,7 +301,13 @@
           </div>
           <div style="display: flex; justify-content: space-between; align-items: center;">
             <span style="font-size: 14px; color: #3D2A1A;">Backpressure</span>
-            <span style="font-size: 13px; color: {backpressure?.level === 'GREEN' ? '#2E7D32' : backpressure?.level === 'YELLOW' ? '#B06030' : '#D06050'}; font-weight: 600;">{backpressure?.level ?? '—'}</span>
+            <span style="font-size: 13px; color: {
+              backpressure?.level === 'GREEN' ? '#2E7D32' :
+              backpressure?.level === 'YELLOW' ? '#B06030' :
+              backpressure?.level === 'RED' ? '#D06050' :
+              backpressure?.level === 'BLACK' ? '#111111' :
+              '#8C7A66'
+            }; font-weight: 600;">{backpressure?.level ?? '—'}</span>
           </div>
           <div style="display: flex; justify-content: space-between; align-items: center;">
             <span style="font-size: 14px; color: #3D2A1A;">Memory</span>

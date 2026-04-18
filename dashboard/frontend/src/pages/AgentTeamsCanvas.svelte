@@ -54,9 +54,10 @@
     }
   }
 
-  // Map tasks to teammate card data
+  // Map tasks to teammate card data — render every teammate, not just the
+  // first five; hiding the tail misrepresents team size.
   let teammateData = $derived.by(() => {
-    return tasks.slice(0, 5).map(t => {
+    return tasks.map(t => {
       const statusType: 'working' | 'reviewing' | 'idle' | 'blocked' =
         t.status === 'running' ? 'working' :
         t.status === 'pending' || t.status === 'ready' ? 'idle' :
@@ -85,7 +86,10 @@
 
       return {
         name: t.claimed_by ?? `Task ${t.id?.split('-').pop()?.slice(0, 4) ?? '?'}`,
-        model: 'claude-sonnet-4-6',
+        // Teammates run as Opus per CLAUDE.md; the lead (Sonnet) is the
+        // TeamLeadCard above. If a real model name arrives on the task it
+        // will override this default.
+        model: (t as { model?: string | null }).model ?? 'claude-opus-4-6',
         task: t.title ?? 'Untitled task',
         status: t.status === 'running' ? (t.result_summary || 'Working...') :
                 t.status === 'completed' ? 'Completed' :

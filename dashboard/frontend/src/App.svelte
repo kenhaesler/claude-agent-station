@@ -16,6 +16,7 @@
 
   // Overlays
   import Toast from './components/overlays/Toast.svelte';
+  import ShortcutsOverlay from './components/overlays/ShortcutsOverlay.svelte';
 
   // Pages
   import CommandCenter from './pages/CommandCenter.svelte';
@@ -30,6 +31,7 @@
   // --- App State ---
   let triggering = $state(false);
   let activeEmployees = $state<ActiveEmployee[]>([]);
+  let showShortcuts = $state(false);
 
   // SSE connected state from agentPresence
   let sseConnected = $derived(agentPresence.sseConnected);
@@ -73,6 +75,9 @@
   // --- Keyboard shortcuts ---
   function handleKeydown(e: KeyboardEvent) {
     if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) return;
+
+    // `?` toggles the shortcuts cheatsheet (on many keyboards `?` = Shift+/).
+    if (e.key === '?') { showShortcuts = !showShortcuts; e.preventDefault(); return; }
 
     // Number keys for navigation (matches NavRail order)
     if (e.key === '1') { navigate('/'); return; }
@@ -124,4 +129,5 @@
   </Shell>
 
   <Toast />
+  <ShortcutsOverlay show={showShortcuts} onClose={() => (showShortcuts = false)} />
 </div>
