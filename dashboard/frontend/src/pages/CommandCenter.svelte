@@ -41,8 +41,8 @@
     if ((queueStats?.by_state?.review ?? 0) > 0) {
       return `${queueStats!.by_state.review} item${queueStats!.by_state.review > 1 ? 's' : ''} need review`;
     }
-    if (systemStatus?.timer?.next) {
-      return `Next run ${timeAgo(systemStatus.timer.next)}`;
+    if (systemStatus?.timer?.next_trigger) {
+      return `Next run ${timeAgo(systemStatus.timer.next_trigger)}`;
     }
     return 'All systems nominal';
   });
