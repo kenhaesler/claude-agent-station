@@ -232,6 +232,65 @@ queue_fail_item() {
     queue_api PUT "/api/queue/$qid" "{\"state\":\"failed\",\"error_message\":\"$error_msg\"}" >/dev/null 2>&1
 }
 
+# --- Autonomy gate (ADR-0001) ---------------------------------------------
+# Fetches the per-project autonomy level from the dashboard API. Runs fall
+# back to 'assisted' when the project isn't registered or the API is
+# unreachable. Keeps us from auto-opening a PR against an unknown project.
+get_project_autonomy() {
+    local project="$1"
+    local all_projects
+    all_projects=$(queue_api GET "/api/projects")
+    if [ -z "$all_projects" ]; then
+        echo "assisted"
+        return 0
+    fi
+    python3 - "$project" "$all_projects" 2>/dev/null <<'PY' || echo "assisted"
+import json, sys
+target, payload = sys.argv[1], sys.argv[2]
+try:
+    for p in json.loads(payload):
+        if p.get("repo") == target:
+            level = p.get("autonomy_level") or "assisted"
+            print(level)
+            sys.exit(0)
+except Exception:
+    pass
+print("assisted")
+PY
+}
+
+# Per-project rate limit for auto-draft PRs. Writes the timestamp of the
+# most recent draft-PR attempt to a lock file; returns 0 (allow) if > 1h
+# since the last write, 1 (deny) otherwise.
+AUTO_DRAFT_RATE_LIMIT_DIR="${AUTO_DRAFT_RATE_LIMIT_DIR:-/var/lib/claude-agent-station/auto-draft}"
+AUTO_DRAFT_RATE_LIMIT_SECONDS="${AUTO_DRAFT_RATE_LIMIT_SECONDS:-3600}"
+
+auto_draft_rate_limit_allowed() {
+    local project="$1"
+    local slug
+    slug=$(echo "$project" | tr '/' '_' | tr -cd 'A-Za-z0-9_.-')
+    mkdir -p "$AUTO_DRAFT_RATE_LIMIT_DIR" 2>/dev/null || true
+    local lock="$AUTO_DRAFT_RATE_LIMIT_DIR/$slug.lock"
+    if [ ! -f "$lock" ]; then
+        return 0
+    fi
+    local last_epoch now_epoch
+    last_epoch=$(cat "$lock" 2>/dev/null || echo 0)
+    now_epoch=$(date +%s)
+    if [ $((now_epoch - last_epoch)) -ge "$AUTO_DRAFT_RATE_LIMIT_SECONDS" ]; then
+        return 0
+    fi
+    return 1
+}
+
+auto_draft_rate_limit_record() {
+    local project="$1"
+    local slug
+    slug=$(echo "$project" | tr '/' '_' | tr -cd 'A-Za-z0-9_.-')
+    mkdir -p "$AUTO_DRAFT_RATE_LIMIT_DIR" 2>/dev/null || true
+    date +%s > "$AUTO_DRAFT_RATE_LIMIT_DIR/$slug.lock" 2>/dev/null || true
+}
+
 usage() {
     cat << 'EOF'
 Manager/Employee Autonomous Agent Orchestrator
@@ -1853,25 +1912,65 @@ Run: $RUN_ID" 2>/dev/null || true
                     if [ "$push_ok" = true ]; then
                         log_ok "Pushed $branch"
 
-                        # Create PR and merge via GitHub API (works with protected branches)
-                        local pr_url
-                        pr_url=$(gh pr create --repo "$project" --base "$base_branch" --head "$branch" \
-                            --title "autonomous: $(git log -1 --format=%s)" \
-                            --body "Approved by autonomous manager.
+                        # ADR-0001: under 'auto' autonomy, open a DRAFT PR and
+                        # skip the auto-merge attempt. Under manual/assisted,
+                        # fall through to the existing open-PR-then-try-merge
+                        # path (branch protection on main rejects the merge
+                        # anyway; this just preserves existing logging).
+                        local project_autonomy
+                        project_autonomy=$(get_project_autonomy "$project")
+                        local autonomy_auto=false
+                        if [ "$project_autonomy" = "auto" ]; then
+                            autonomy_auto=true
+                        fi
+
+                        if [ "$autonomy_auto" = true ]; then
+                            if auto_draft_rate_limit_allowed "$project"; then
+                                log_info "Auto-draft PR (autonomy=auto, rate limit OK)"
+                                local pr_url
+                                pr_url=$(gh pr create --repo "$project" --base "$base_branch" --head "$branch" \
+                                    --draft \
+                                    --title "autonomous (draft): $(git log -1 --format=%s)" \
+                                    --body "Draft PR auto-opened under \`autonomy=auto\`.
+
+Run: $RUN_ID
+
+**Human review required before merge.** This PR stays as a draft — mark it ready for review when satisfied.
+
+---
+Rate limit: max 1 auto-draft PR per project per hour. Regenerated at $(date -u +%Y-%m-%dT%H:%M:%SZ)." 2>&1) || true
+
+                                if [ -n "$pr_url" ]; then
+                                    log_ok "Draft PR created: $pr_url"
+                                    auto_draft_rate_limit_record "$project"
+                                    webhook_event "auto_draft_pr_opened" "\"project\":\"$project\",\"branch\":\"$branch\",\"pr_url\":\"$pr_url\"" >&2
+                                else
+                                    log_error "Auto-draft PR creation failed for $branch"
+                                fi
+                            else
+                                log_warn "Auto-draft PR skipped (rate limit: 1/hour/project); branch $branch pushed for manual review"
+                            fi
+                        else
+                            # Create PR and merge via GitHub API (works with protected branches)
+                            local pr_url
+                            pr_url=$(gh pr create --repo "$project" --base "$base_branch" --head "$branch" \
+                                --title "autonomous: $(git log -1 --format=%s)" \
+                                --body "Approved by autonomous manager.
 
 Run: $RUN_ID" 2>&1) || true
 
-                        if [ -n "$pr_url" ]; then
-                            log_info "PR created: $pr_url"
-                            # Merge the PR
-                            if gh pr merge "$pr_url" --merge --delete-branch 2>&1 | while IFS= read -r line; do log_info "  $line"; done; then
-                                push_merge_ok=true
-                                log_ok "PR merged to $base_branch"
+                            if [ -n "$pr_url" ]; then
+                                log_info "PR created: $pr_url"
+                                # Merge the PR
+                                if gh pr merge "$pr_url" --merge --delete-branch 2>&1 | while IFS= read -r line; do log_info "  $line"; done; then
+                                    push_merge_ok=true
+                                    log_ok "PR merged to $base_branch"
+                                else
+                                    log_error "PR merge failed — left open for manual review: $pr_url"
+                                fi
                             else
-                                log_error "PR merge failed — left open for manual review: $pr_url"
+                                log_error "PR creation failed for $branch"
                             fi
-                        else
-                            log_error "PR creation failed for $branch"
                         fi
                     else
                         log_error "Push failed for $branch after 2 attempts"
@@ -2659,4 +2758,7 @@ print(json.dumps(result))
     _RUN_COMPLETE_SENT=1
 }
 
-main "$@"
+# Only run main when executed directly; allow `source` for helper testing.
+if [ "${BASH_SOURCE[0]}" = "${0}" ] || [ -z "${BASH_SOURCE[0]-}" ]; then
+    main "$@"
+fi
