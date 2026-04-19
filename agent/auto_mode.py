@@ -102,6 +102,9 @@ async def policy_decide(
     tool_input: dict[str, Any],
     ctx: ToolPermissionContext | None,
     level: AutonomyLevel,
+    *,
+    run_id: str | None = None,
+    agent_id: str = "lead",
 ) -> PermissionResult:
     """Decide whether `tool_name(tool_input)` is allowed at `level`.
 
@@ -117,12 +120,16 @@ async def policy_decide(
         call-site change.
     level
         The autonomy level for the calling run.
+    run_id, agent_id
+        Used when ``STATION_TRAY_REFERRAL=1`` to tag a tray referral row.
+        Without these, referral falls back to deny-return.
     """
     del ctx  # Reserved for future per-call context checks.
 
     as_text = _input_to_text(tool_input)
 
     # 1. Always-deny list — catches push-to-main etc. regardless of level.
+    #    These are never referred; the agent must never do them.
     for pattern, reason in ALWAYS_DENY:
         if pattern.search(as_text):
             return PermissionResultDeny(
@@ -138,11 +145,16 @@ async def policy_decide(
     if tool_name in SUBAGENT_TOOLS:
         return PermissionResultAllow()
 
-    # 4. Edit tools — manual defers, assisted+ allows.
+    # 4. Edit tools — manual refers / defers, assisted+ allows.
     if tool_name in EDIT_TOOLS:
         if level is AutonomyLevel.MANUAL:
-            return PermissionResultDeny(
-                message="edits require human approval at manual level",
+            return await _defer_or_deny(
+                level=level,
+                tool_name=tool_name,
+                tool_input=tool_input,
+                run_id=run_id,
+                agent_id=agent_id,
+                reason="edits require human approval at manual level",
             )
         return PermissionResultAllow()
 
@@ -157,14 +169,14 @@ async def policy_decide(
         if is_destructive:
             if level is AutonomyLevel.AUTO:
                 return PermissionResultAllow()
-            # Manual/assisted: defer via a deny. The Phase 2 permission tray
-            # will convert this into a tray prompt. Until then, deny is the
-            # safe default.
             snippet = cmd[:80].replace("\n", " ")
-            return PermissionResultDeny(
-                message=(
-                    f"destructive bash denied at {level.value}: {snippet}"
-                ),
+            return await _defer_or_deny(
+                level=level,
+                tool_name=tool_name,
+                tool_input=tool_input,
+                run_id=run_id,
+                agent_id=agent_id,
+                reason=f"destructive bash at {level.value}: {snippet}",
             )
         return PermissionResultAllow()
 
@@ -172,3 +184,35 @@ async def policy_decide(
     return PermissionResultDeny(
         message=f"unknown tool {tool_name!r}; denied by default policy",
     )
+
+
+async def _defer_or_deny(
+    *,
+    level: AutonomyLevel,
+    tool_name: str,
+    tool_input: dict[str, Any],
+    run_id: str | None,
+    agent_id: str,
+    reason: str,
+) -> PermissionResult:
+    """Route a policy-deferred call either to the tray (if enabled + run_id
+    available) or to a straight deny. Import is lazy so tests can exercise
+    the policy matrix without importing the urllib-touching referral module.
+    """
+    if run_id:
+        try:
+            from agent.tray_referral import referral_enabled, refer_to_operator
+        except Exception:
+            referral_enabled = lambda: False  # noqa: E731
+            refer_to_operator = None  # type: ignore[assignment]
+
+        if referral_enabled() and refer_to_operator is not None:
+            return await refer_to_operator(
+                run_id=run_id,
+                agent_id=agent_id,
+                level=level,
+                tool_name=tool_name,
+                tool_input=tool_input,
+                reason=reason,
+            )
+    return PermissionResultDeny(message=reason)

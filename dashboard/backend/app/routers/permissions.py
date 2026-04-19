@@ -28,7 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db
 from app.models import PermissionRequest
-from app.schemas import PermissionDecisionIn, PermissionRequestOut
+from app.schemas import PermissionCreateIn, PermissionDecisionIn, PermissionRequestOut
 from app.services import event_bus
 
 logger = logging.getLogger(__name__)
@@ -74,6 +74,33 @@ async def _timeout_expired_rows(db: AsyncSession) -> list[PermissionRequest]:
             },
         })
     return expired
+
+
+@router.post("", response_model=PermissionRequestOut, status_code=201)
+async def create_permission_request_endpoint(
+    payload: PermissionCreateIn,
+    db: AsyncSession = Depends(get_db),
+):
+    """Agent-facing: raise a new tray request. Idempotent on request_id — a
+    second POST with an existing id returns the current row so the agent can
+    safely retry after a transient network blip."""
+    existing = await db.execute(
+        select(PermissionRequest).where(PermissionRequest.request_id == payload.request_id)
+    )
+    row = existing.scalar_one_or_none()
+    if row is not None:
+        return row
+
+    return await create_permission_request(
+        db,
+        request_id=payload.request_id,
+        run_id=payload.run_id,
+        agent_id=payload.agent_id,
+        tool_name=payload.tool_name,
+        tool_input=payload.tool_input,
+        autonomy_level=payload.autonomy_level,
+        reason=payload.reason,
+    )
 
 
 @router.get("", response_model=list[PermissionRequestOut])

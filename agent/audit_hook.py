@@ -137,7 +137,10 @@ def make_audited_policy(
         tool_input: dict[str, Any],
         ctx: ToolPermissionContext | None,
     ) -> PermissionResultAllow | PermissionResultDeny:
-        decision = await policy_decide(tool_name, tool_input, ctx, level)
+        decision = await policy_decide(
+            tool_name, tool_input, ctx, level,
+            run_id=run_id, agent_id=agent_id,
+        )
         write_decision_event(
             run_id=run_id,
             agent_id=agent_id,

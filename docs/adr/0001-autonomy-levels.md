@@ -39,7 +39,7 @@ Introduce three autonomy levels — `manual`, `assisted`, `auto` — persisted p
 | Always-deny — critical       | `git push … main`, `git push --force`, `rm -rf /`, `DROP TABLE/DATABASE`, service stop/restart, secret echo | Deny | Deny | Deny |
 | Unknown tool                 | Anything not in the table above         | Deny      | Deny       | Deny   |
 
-"Defer" means the policy engine returns an `await-tray` decision: the agent pauses, a row is inserted into `permission_requests`, and the SSE bus notifies the dashboard tray (built in Phase 2). Default timeout: 5 minutes → auto-deny.
+"Defer" means the policy engine refers the call to the operator: a row is inserted into `permission_requests` (via `POST /api/permissions` in the backend), the SSE bus publishes `permission_request`, the dashboard tray surfaces the prompt, and the agent blocks on polling `permission_requests.status` until the row leaves `pending`. Default timeout: 5 minutes → auto-deny. The defer path is gated by `STATION_TRAY_REFERRAL=1`; when off, deferred calls deny-return (the Phase 1 posture). `ALWAYS_DENY` is never deferred — those calls always deny-return regardless of the flag.
 
 ### Human gates (always manual, regardless of level)
 
