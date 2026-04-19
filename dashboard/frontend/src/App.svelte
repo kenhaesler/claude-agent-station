@@ -21,6 +21,7 @@
 
   // Pages
   import CommandCenter from './pages/CommandCenter.svelte';
+  import MissionControl from './pages/MissionControl.svelte';
   import AgentTeamsCanvas from './pages/AgentTeamsCanvas.svelte';
   import RunsPage from './pages/RunsPage.svelte';
   import RunDetail from './pages/RunDetail.svelte';
@@ -111,6 +112,8 @@
   >
     {#if route.page === 'command-center'}
       <CommandCenter {triggering} onTrigger={handleTrigger} />
+    {:else if route.page === 'mission-control'}
+      <MissionControl />
     {:else if route.page === 'agent-teams'}
       <AgentTeamsCanvas />
     {:else if route.page === 'runs'}

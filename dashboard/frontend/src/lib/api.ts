@@ -205,6 +205,46 @@ export const triggerRun = () =>
 export const rescanRuns = () =>
   requestWithToast<{ status: string; imported: number }>('/api/runs/rescan', { method: 'POST' });
 
+// --- Mission Control: per-run intervention (Phase A) ---
+
+export interface RunControlAck {
+  run_id: string;
+  action: string;
+  control_id: number;
+  queued_at: string;
+}
+
+export const pauseRun = (runId: string) =>
+  requestWithToast<RunControlAck>(`/api/runs/${runId}/pause`, { method: 'POST' });
+
+export const resumeRun = (runId: string) =>
+  requestWithToast<RunControlAck>(`/api/runs/${runId}/resume`, { method: 'POST' });
+
+export const stopRun = (runId: string) =>
+  requestWithToast<RunControlAck>(`/api/runs/${runId}/stop`, { method: 'POST' });
+
+export const messageRun = (runId: string, text: string) =>
+  requestWithToast<RunControlAck>(`/api/runs/${runId}/message`, {
+    method: 'POST', body: JSON.stringify({ text }),
+  });
+
+// --- Mission Control: global pause kill-switch (Phase A) ---
+
+export interface GlobalPauseState {
+  global_pause: boolean;
+  updated_at: string | null;
+  updated_by: string | null;
+}
+
+export const getGlobalPause = () =>
+  request<GlobalPauseState>('/api/system/pause');
+
+export const pauseAll = () =>
+  requestWithToast<GlobalPauseState>('/api/system/pause', { method: 'POST' });
+
+export const resumeAll = () =>
+  requestWithToast<GlobalPauseState>('/api/system/resume', { method: 'POST' });
+
 // --- Config ---
 
 export const getConfig = () =>

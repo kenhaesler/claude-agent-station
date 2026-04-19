@@ -687,3 +687,33 @@ class PermissionCreateIn(BaseModel):
         if v not in ("manual", "assisted", "auto"):
             raise ValueError("autonomy_level must be manual/assisted/auto")
         return v
+
+
+# --- Mission Control: run intervention (Phase A) ---
+
+class RunMessage(BaseModel):
+    """Message the operator wants injected into the running agent's next turn."""
+    text: str
+
+    @field_validator("text")
+    @classmethod
+    def _non_empty(cls, v: str) -> str:
+        v = (v or "").strip()
+        if not v:
+            raise ValueError("text must not be empty")
+        if len(v) > 4000:
+            raise ValueError("text exceeds 4000 characters")
+        return v
+
+
+class RunControlAck(BaseModel):
+    run_id: str
+    action: str
+    control_id: int
+    queued_at: datetime
+
+
+class GlobalPauseState(BaseModel):
+    global_pause: bool
+    updated_at: datetime | None = None
+    updated_by: str | None = None

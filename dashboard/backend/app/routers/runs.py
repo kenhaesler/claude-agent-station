@@ -13,7 +13,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.dependencies import get_db
-from app.models import AgentEvent, CoordinatorMessage, CoordinatorTask, Plan, Project, QueueItem, Run
+from app.models import (
+    AgentEvent,
+    CoordinatorMessage,
+    CoordinatorTask,
+    Plan,
+    Project,
+    QueueItem,
+    Run,
+    RunControl,
+)
 from app.schemas import (
     ActiveEmployeeOut,
     ActiveTeammateOut,
@@ -22,13 +31,16 @@ from app.schemas import (
     CoordinatorTaskOut,
     PlanOut,
     QueueItemOut,
+    RunControlAck,
     RunFullContext,
     RunList,
+    RunMessage,
     RunOut,
     TeamSummary,
     TeammateStatus,
 )
 from app.services.diff_parser import DiffResult, parse_unified_diff
+from app.services.event_bus import publish
 from app.services.log_importer import import_historical_runs
 from app.services.systemd import systemctl
 
@@ -377,3 +389,90 @@ async def trigger_run():
             detail=result.get("error") or result.get("stderr", "Failed to trigger run"),
         )
     return {"status": "triggered", "detail": "claude-agent.service started"}
+
+
+# --- Mission Control: per-run intervention (Phase A) -----------------------
+# The orchestrator polls run_controls between SDK messages. These endpoints
+# just enqueue a row and broadcast an SSE event; the actual pause/stop/
+# message-injection happens agent-side in station_orchestrator.py.
+
+async def _run_exists(db: AsyncSession, run_id: str) -> None:
+    result = await db.execute(select(Run.id).where(Run.run_id == run_id))
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+
+async def _queue_control(
+    db: AsyncSession,
+    run_id: str,
+    action: str,
+    payload: dict | None = None,
+    requested_by: str = "api",
+) -> RunControlAck:
+    import json as _json
+
+    row = RunControl(
+        run_id=run_id,
+        action=action,
+        payload=_json.dumps(payload) if payload else None,
+        requested_by=requested_by,
+    )
+    db.add(row)
+    await db.commit()
+    await db.refresh(row)
+
+    # Broadcast so the UI updates without polling.
+    await publish({
+        "type": f"run_control_{action}",
+        "data": {
+            "run_id": run_id,
+            "control_id": row.id,
+            "requested_by": requested_by,
+            "payload": payload or {},
+        },
+    })
+    return RunControlAck(
+        run_id=run_id,
+        action=action,
+        control_id=row.id,
+        queued_at=row.requested_at,
+    )
+
+
+@router.post("/{run_id}/pause", response_model=RunControlAck)
+async def pause_run(run_id: str, db: AsyncSession = Depends(get_db)):
+    """Ask the orchestrator to route every subsequent tool call for this run
+    to the permission tray. Unblock with ``POST /api/runs/{run_id}/resume``
+    or individual tray approvals."""
+    await _run_exists(db, run_id)
+    return await _queue_control(db, run_id, "pause")
+
+
+@router.post("/{run_id}/resume", response_model=RunControlAck)
+async def resume_run(run_id: str, db: AsyncSession = Depends(get_db)):
+    """Clear the per-run pause flag so the policy engine goes back to the
+    configured autonomy level."""
+    await _run_exists(db, run_id)
+    return await _queue_control(db, run_id, "resume")
+
+
+@router.post("/{run_id}/stop", response_model=RunControlAck)
+async def stop_run(run_id: str, db: AsyncSession = Depends(get_db)):
+    """Cooperatively interrupt the run. The orchestrator checks the control
+    queue between SDK messages and raises a clean stop — the run finishes
+    with ``status='interrupted'``."""
+    await _run_exists(db, run_id)
+    return await _queue_control(db, run_id, "stop")
+
+
+@router.post("/{run_id}/message", response_model=RunControlAck)
+async def message_run(
+    run_id: str,
+    payload: RunMessage,
+    db: AsyncSession = Depends(get_db),
+):
+    """Inject a user message into the agent's next turn. The orchestrator
+    resumes the SDK session with this text prepended, so it behaves as
+    though the operator typed it in an interactive chat."""
+    await _run_exists(db, run_id)
+    return await _queue_control(db, run_id, "message", {"text": payload.text})

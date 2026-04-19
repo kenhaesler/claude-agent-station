@@ -15,6 +15,7 @@
 
   const navItems = [
     { label: 'Overview', page: 'command-center', path: '/' },
+    { label: 'Mission Control', page: 'mission-control', path: '/mission-control' },
     { label: 'Runs', page: 'runs', path: '/runs' },
     { label: 'Queue', page: 'queue', path: '/queue' },
     { label: 'Projects', page: 'projects', path: '/projects' },

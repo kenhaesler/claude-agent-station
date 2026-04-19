@@ -7,9 +7,15 @@ import logging
 import os
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.dependencies import get_db
+from app.models import StationControl
+from app.schemas import GlobalPauseState
+from app.services.event_bus import publish
 from app.services.systemd import (
     ALLOWED_ACTIONS,
     get_service_status,
@@ -115,3 +121,59 @@ async def auth_status():
         }
     except Exception as e:
         return {"logged_in": False, "expired": True, "error": str(e)}
+
+
+# --- Mission Control: global pause kill-switch (Phase A) -------------------
+
+
+async def _get_or_create_station_control(db: AsyncSession) -> StationControl:
+    row = await db.get(StationControl, 1)
+    if row is None:
+        row = StationControl(id=1, global_pause=False)
+        db.add(row)
+        await db.commit()
+        await db.refresh(row)
+    return row
+
+
+@router.get("/pause", response_model=GlobalPauseState)
+async def get_global_pause(db: AsyncSession = Depends(get_db)):
+    row = await _get_or_create_station_control(db)
+    return GlobalPauseState(
+        global_pause=bool(row.global_pause),
+        updated_at=row.updated_at,
+        updated_by=row.updated_by,
+    )
+
+
+@router.post("/pause", response_model=GlobalPauseState)
+async def set_global_pause(db: AsyncSession = Depends(get_db)):
+    """Set the global_pause flag so every tool call on every run defers to
+    the permission tray. Overrides autonomy level until resumed."""
+    row = await _get_or_create_station_control(db)
+    row.global_pause = True
+    row.updated_by = "api"
+    await db.commit()
+    await db.refresh(row)
+    await publish({"type": "global_pause_set", "data": {"by": "api"}})
+    return GlobalPauseState(
+        global_pause=True,
+        updated_at=row.updated_at,
+        updated_by=row.updated_by,
+    )
+
+
+@router.post("/resume", response_model=GlobalPauseState)
+async def clear_global_pause(db: AsyncSession = Depends(get_db)):
+    """Clear the global_pause flag; agents return to their per-run autonomy."""
+    row = await _get_or_create_station_control(db)
+    row.global_pause = False
+    row.updated_by = "api"
+    await db.commit()
+    await db.refresh(row)
+    await publish({"type": "global_pause_cleared", "data": {"by": "api"}})
+    return GlobalPauseState(
+        global_pause=False,
+        updated_at=row.updated_at,
+        updated_by=row.updated_by,
+    )

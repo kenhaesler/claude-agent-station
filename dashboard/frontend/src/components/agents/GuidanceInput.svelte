@@ -1,14 +1,10 @@
 <script lang="ts">
-  import { sendGuidance } from '../../lib/api';
+  import { messageRun, stopRun } from '../../lib/api';
   import { toastSuccess, toastError } from '../../lib/toast.svelte';
 
-  let {
-    runId = '',
-    employeeIndex = 0,
-  }: {
-    runId: string;
-    employeeIndex?: number;
-  } = $props();
+  // employeeIndex accepted for backwards compat but unused — Mission Control
+  // operates at the run level (the lead agent dispatches to teammates).
+  let { runId = '' }: { runId: string; employeeIndex?: number } = $props();
 
   let message = $state('');
   let sending = $state(false);
@@ -22,16 +18,18 @@
   ];
 
   async function send() {
-    if (!message.trim() || !runId) return;
+    if (!message.trim() && guidanceType !== 'stop') return;
+    if (!runId) return;
     sending = true;
     try {
-      await sendGuidance({
-        run_id: runId,
-        employee_index: employeeIndex,
-        guidance_type: guidanceType,
-        content: message.trim(),
-      });
-      toastSuccess('Guidance sent');
+      if (guidanceType === 'stop') {
+        await stopRun(runId);
+        toastSuccess('Stop requested');
+      } else {
+        const prefix = `[operator-${guidanceType}] `;
+        await messageRun(runId, prefix + message.trim());
+        toastSuccess('Message queued');
+      }
       message = '';
     } catch (e: any) {
       toastError(`Failed: ${e.message}`);

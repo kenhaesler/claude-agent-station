@@ -13,9 +13,12 @@ Design goals:
 
 from __future__ import annotations
 
+import logging
 import re
 from enum import Enum
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from claude_agent_sdk.types import (
     PermissionResultAllow,
@@ -144,6 +147,38 @@ async def policy_decide(
     # 3. Subagent spawn — lead may always fan out to teammates.
     if tool_name in SUBAGENT_TOOLS:
         return PermissionResultAllow()
+
+    # 3.5. Mission Control kill-switch: operator-requested pause forces every
+    #      non-readonly tool call to the permission tray, regardless of
+    #      autonomy level. Checked AFTER read-only / subagent so a pause
+    #      doesn't starve the UI of progress signals — Read/Grep still flow,
+    #      the agent just cannot change or execute anything until resumed.
+    #      Unlike the normal defer-or-deny path this ALWAYS tries to route
+    #      to the tray (bypasses STATION_TRAY_REFERRAL); the pause is
+    #      useless if the tray isn't wired.
+    try:
+        from agent.run_control import is_global_paused, is_run_paused
+        from agent.tray_referral import refer_to_operator
+        pause_reason: str | None = None
+        if is_run_paused(run_id):
+            pause_reason = "operator paused this run"
+        elif is_global_paused():
+            pause_reason = "operator triggered global pause"
+        if pause_reason and run_id:
+            return await refer_to_operator(
+                run_id=run_id,
+                agent_id=agent_id,
+                level=level,
+                tool_name=tool_name,
+                tool_input=tool_input,
+                reason=pause_reason,
+            )
+        if pause_reason:
+            # No run_id — can't raise a tray row, so deny to stay safe.
+            return PermissionResultDeny(message=pause_reason)
+    except Exception as exc:
+        # Never let a Mission Control read break the policy engine.
+        logger.debug("mission_control: pause check failed: %s", exc)
 
     # 4. Edit tools — manual refers / defers, assisted+ allows.
     if tool_name in EDIT_TOOLS:

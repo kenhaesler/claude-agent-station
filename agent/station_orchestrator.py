@@ -40,6 +40,11 @@ from claude_agent_sdk.types import (
 
 from agent.audit_hook import make_audited_policy
 from agent.auto_mode import AutonomyLevel, _coerce_level
+from agent.run_control import (
+    OrchestratorStopRequested,
+    drain_pending_controls,
+    set_run_paused,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -301,9 +306,26 @@ and your teammates lose their work. You must keep making tool calls to stay aliv
 """
 
 
-def build_followup_prompt(workspace: str) -> str:
-    """Build a follow-up prompt for re-entering the lead agent session."""
-    return (
+def build_followup_prompt(
+    workspace: str,
+    operator_messages: list[str] | None = None,
+) -> str:
+    """Build a follow-up prompt for re-entering the lead agent session.
+
+    When ``operator_messages`` is non-empty, they are prepended as high-priority
+    guidance from the human operator. Use this to inject Mission Control
+    messages captured while the previous iteration was running.
+    """
+    header = ""
+    if operator_messages:
+        joined = "\n\n".join(f"> {m}" for m in operator_messages if m.strip())
+        if joined:
+            header = (
+                "━━━ OPERATOR MESSAGES (received during your last turn) ━━━\n"
+                f"{joined}\n"
+                "━━━ Acknowledge these and adjust your plan if needed. ━━━\n\n"
+            )
+    return header + (
         "Your previous session ended but teammates may still be working.\n\n"
         "Check their status now:\n"
         f"1. Run: `find {workspace} -name '.claude-employee-report.json' -type f`\n"
@@ -395,6 +417,70 @@ def _message_to_dict(message) -> dict:
             result["session_id"] = sid
 
     return result
+
+
+def _apply_controls(
+    full_run_id: str,
+    config: dict,
+    pending_messages: list[str],
+    flags: dict[str, bool],
+) -> None:
+    """Drain the run_controls queue for this run and apply each action.
+
+    - pause/resume flip the per-run pause flag (the policy engine reads it).
+    - stop sets flags['stop']; the caller breaks out of the SDK stream.
+    - message accumulates operator text for the next followup prompt.
+
+    All actions emit a webhook so the dashboard timeline shows the
+    intervention alongside agent activity. Never raises.
+    """
+    rows = drain_pending_controls(full_run_id)
+    if not rows:
+        return
+    for row in rows:
+        action = row.action
+        if action == "pause":
+            set_run_paused(full_run_id, True)
+            logger.info("Mission Control: run paused by %s", row.requested_by or "operator")
+            post_webhook(config, "run_paused", {
+                "run_id": full_run_id,
+                "requested_by": row.requested_by,
+                "control_id": row.id,
+            })
+        elif action == "resume":
+            set_run_paused(full_run_id, False)
+            logger.info("Mission Control: run resumed by %s", row.requested_by or "operator")
+            post_webhook(config, "run_resumed", {
+                "run_id": full_run_id,
+                "requested_by": row.requested_by,
+                "control_id": row.id,
+            })
+        elif action == "stop":
+            flags["stop"] = True
+            logger.info("Mission Control: stop requested by %s", row.requested_by or "operator")
+            post_webhook(config, "run_stop_requested", {
+                "run_id": full_run_id,
+                "requested_by": row.requested_by,
+                "control_id": row.id,
+            })
+        elif action == "message":
+            text = ""
+            if isinstance(row.payload, dict):
+                text = str(row.payload.get("text") or "").strip()
+            if text:
+                pending_messages.append(text)
+                logger.info(
+                    "Mission Control: queued operator message (%d chars) from %s",
+                    len(text), row.requested_by or "operator",
+                )
+                post_webhook(config, "run_message_queued", {
+                    "run_id": full_run_id,
+                    "requested_by": row.requested_by,
+                    "control_id": row.id,
+                    "text": text[:500],
+                })
+        else:
+            logger.warning("Mission Control: unknown action %r (id=%d)", action, row.id)
 
 
 def post_webhook(config: dict, event: str, data: dict | None = None) -> None:
@@ -694,6 +780,12 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
         work_complete = False
         first_init_sent = False
         stream_state = _StreamState(last_webhook_time=time.monotonic())
+        # Mission Control: operator messages captured mid-stream, flushed
+        # into the followup prompt on the next iteration.
+        pending_operator_messages: list[str] = []
+        full_run_id = f"run-{run_id}"
+        # Mutable box so _apply_control can signal stop back to the loop.
+        control_flags = {"stop": False}
 
         try:
             logger.info("Starting Agent Teams lead for %s (%d issues, model=%s)", repo, len(issues), manager_model)
@@ -701,8 +793,22 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
                 for iteration in range(max_reentries):
                     is_followup = iteration > 0
 
+                    # Drain any intervention requests that arrived while we
+                    # were idle between iterations (or before we started).
+                    _apply_controls(
+                        full_run_id, config,
+                        pending_operator_messages, control_flags,
+                    )
+                    if control_flags["stop"]:
+                        logger.info("Stop requested before iteration %d", iteration + 1)
+                        break
+
                     if is_followup:
-                        prompt = build_followup_prompt(workspace)
+                        prompt = build_followup_prompt(
+                            workspace,
+                            operator_messages=pending_operator_messages,
+                        )
+                        pending_operator_messages.clear()
                         logger.info(
                             "Re-entering lead session (iteration %d/%d, session=%s)",
                             iteration + 1, max_reentries, session_id,
@@ -752,11 +858,26 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
 
                         handle_stream_event(message, config, run_id, log_file=log_file, state=stream_state)
 
+                        # Mission Control: check for operator interventions
+                        # between SDK messages. Stop is best-effort — we wait
+                        # for the next message before we can actually break
+                        # out, but that's at most one tool call.
+                        _apply_controls(
+                            full_run_id, config,
+                            pending_operator_messages, control_flags,
+                        )
+                        if control_flags["stop"]:
+                            logger.info("Stop requested; breaking SDK stream")
+                            break
+
                         # Check result for completion
                         if isinstance(message, ResultMessage):
                             result_text = getattr(message, "result", "")
                             if _is_work_complete(result_text):
                                 work_complete = True
+
+                    if control_flags["stop"]:
+                        raise OrchestratorStopRequested()
 
                     if work_complete:
                         logger.info("Agent Teams orchestration completed for %s", repo)
@@ -765,11 +886,24 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
                     # Brief pause before re-entry
                     await asyncio.sleep(15)
 
-            if not work_complete:
+            if not work_complete and not control_flags["stop"]:
                 logger.warning(
                     "Orchestrator exhausted %d re-entries for %s without completion",
                     max_reentries, repo,
                 )
+
+        except OrchestratorStopRequested:
+            logger.info("Agent Teams orchestration interrupted by operator for %s", repo)
+            post_webhook(config, "orchestrator_complete", {
+                "run_id": f"run-{run_id}",
+                "is_error": False,
+                "duration_ms": 0,
+                "num_turns": stream_state.turns,
+                "status": "interrupted",
+            })
+            # Ensure the run record flips to 'interrupted' via the webhook
+            # lifecycle handler; also clear any stale pause flag.
+            set_run_paused(f"run-{run_id}", False)
 
         except Exception as e:
             logger.exception("Agent Teams orchestration failed for %s: %s", repo, e)

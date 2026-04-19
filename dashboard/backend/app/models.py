@@ -352,3 +352,36 @@ class PermissionRequest(Base):
     resolution_note = Column(Text, nullable=True)
     created_at = Column(DateTime, default=_utcnow)
     resolved_at = Column(DateTime, nullable=True)
+
+
+class RunControl(Base):
+    """Queued operator intervention for a running agent (Mission Control, Phase A).
+
+    The dashboard writes rows here; the orchestrator polls for unconsumed rows
+    between SDK messages and applies them. One row per discrete action so
+    messages queue naturally. Consumed rows are kept for the audit trail.
+    """
+    __tablename__ = "run_controls"
+
+    id = Column(Integer, primary_key=True)
+    run_id = Column(Text, nullable=False, index=True)
+    action = Column(Text, nullable=False)  # 'pause' | 'resume' | 'stop' | 'message'
+    payload = Column(Text, nullable=True)  # JSON — e.g. {"text": "..."}
+    requested_by = Column(Text, nullable=True)  # operator id or 'api'
+    requested_at = Column(DateTime, default=_utcnow, index=True)
+    consumed_at = Column(DateTime, nullable=True, index=True)
+
+
+class StationControl(Base):
+    """Singleton table holding global intervention flags.
+
+    Only the row with id=1 is used. The orchestrator + policy engine read
+    ``global_pause`` to force every subsequent tool call (on any run) to the
+    permission tray regardless of autonomy level.
+    """
+    __tablename__ = "station_control"
+
+    id = Column(Integer, primary_key=True)  # always 1
+    global_pause = Column(Boolean, nullable=False, default=False)
+    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
+    updated_by = Column(Text, nullable=True)
