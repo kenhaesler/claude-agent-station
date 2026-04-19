@@ -167,11 +167,21 @@ async def send_guidance_api(
         raise HTTPException(status_code=400, detail="content must not be empty")
 
     # Verify the run exists and is still running — guidance on a completed
-    # run is a no-op and we want to surface that clearly.
+    # run is a no-op and we want to surface that clearly. Treat any terminal
+    # status (completed/failed/interrupted) or a non-null finished_at as
+    # "orchestrator has exited, queue will never drain" → 409.
     result = await db.execute(select(Run).where(Run.run_id == payload.run_id))
     run = result.scalar_one_or_none()
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
+    if (run.status or "") in {"completed", "failed", "interrupted"} or run.finished_at is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Run {payload.run_id} is no longer active "
+                f"(status={run.status or 'unknown'}) — guidance has no effect."
+            ),
+        )
 
     # Map legacy guidance_type → orchestrator control action. 'stop' maps
     # to the hard stop path; everything else becomes an injected message

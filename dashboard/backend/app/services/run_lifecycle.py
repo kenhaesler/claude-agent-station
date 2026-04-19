@@ -11,13 +11,81 @@ import json
 import logging
 from datetime import datetime, timezone
 
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Notification, Run
+from app.models import Notification, Run, RunControl
 from app.schemas import WebhookRunEvent
+from app.services.event_bus import publish as event_bus_publish
 from app.services.log_parser import parse_employee_report
 
 logger = logging.getLogger(__name__)
+
+
+# Sentinel value stored in ``RunControl.requested_by`` to mark rows that the
+# lifecycle expirer swept after a run terminated with no orchestrator pickup.
+# We avoid adding a new column so this is safe to deploy without a migration.
+SWEEPER_EXPIRED = "sweeper-expired"
+
+
+async def expire_orphan_controls(db: AsyncSession, run_id: str) -> list[dict]:
+    """Mark every unconsumed run_control for ``run_id`` as expired and emit
+    an SSE ``run_message_expired`` event per row.
+
+    Called from :func:`handle_finished` when a run transitions to any terminal
+    status so operators see their pending messages turn red instead of sitting
+    silently in the queue forever. Returns the list of SSE payloads that were
+    broadcast — useful for tests and debugging.
+
+    Idempotent: rows that are already consumed (``consumed_at IS NOT NULL``)
+    are ignored, so replaying a ``finished`` webhook won't double-fire.
+    """
+    now = datetime.now(timezone.utc)
+    result = await db.execute(
+        select(RunControl).where(
+            RunControl.run_id == run_id,
+            RunControl.consumed_at.is_(None),
+        )
+    )
+    orphans = list(result.scalars().all())
+    if not orphans:
+        return []
+
+    # Mark all in one UPDATE for atomicity.
+    await db.execute(
+        update(RunControl)
+        .where(
+            RunControl.run_id == run_id,
+            RunControl.consumed_at.is_(None),
+        )
+        .values(consumed_at=now, requested_by=SWEEPER_EXPIRED)
+    )
+
+    published: list[dict] = []
+    for row in orphans:
+        payload: dict = {}
+        if row.payload:
+            try:
+                payload = json.loads(row.payload)
+            except (json.JSONDecodeError, TypeError):
+                payload = {}
+        text_preview = str(payload.get("text") or "")[:500]
+        data = {
+            "run_id": run_id,
+            "control_id": row.id,
+            "action": row.action,
+            "original_requested_by": row.requested_by,
+            "text": text_preview,
+            "expired_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }
+        await event_bus_publish({"type": "run_message_expired", "data": data})
+        published.append(data)
+
+    logger.info(
+        "Mission Control: expired %d orphan control(s) for terminated run %s",
+        len(orphans), run_id,
+    )
+    return published
 
 
 async def handle_started(
@@ -92,6 +160,18 @@ async def handle_finished(
         report = parse_employee_report(repo_short)
         if report:
             run.employee_report = json.dumps(report)
+
+    # Mission Control: the orchestrator for this run has exited, so any
+    # pending run_control rows will never be drained. Mark them expired and
+    # broadcast so the UI can flip them from "queued" (blue) to "expired"
+    # (red) with a "Run ended before delivery" note.
+    try:
+        await expire_orphan_controls(db, run.run_id)
+    except Exception as exc:  # pragma: no cover — best-effort sweep
+        logger.warning(
+            "Mission Control: failed to expire orphan controls for %s: %s",
+            run.run_id, exc,
+        )
 
     return run
 
