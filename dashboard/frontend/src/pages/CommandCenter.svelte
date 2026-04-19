@@ -23,6 +23,27 @@
   import VaporBadge from '../components/vapor/VaporBadge.svelte';
   import SkeletonLoader from '../components/data-display/SkeletonLoader.svelte';
   import AgentActivityFeed from '../components/agents/AgentActivityFeed.svelte';
+  import { stopRun } from '../lib/api';
+  import { addToast } from '../lib/toast.svelte';
+
+  let stopping = $state(false);
+
+  async function handleStopActiveRun() {
+    const active = agentPresence.activeRuns[0];
+    if (!active?.run_id || stopping) return;
+    const ok = confirm(`Stop the agent NOW?\n\nThis will kill the claude-agent service and mark run ${active.run_id} as interrupted. All active work halts immediately.`);
+    if (!ok) return;
+    stopping = true;
+    try {
+      await stopRun(active.run_id);
+      addToast('success', 'Hard stop issued — service stopping, run interrupted');
+    } catch (e) {
+      const raw = e instanceof Error ? e.message : 'Stop failed';
+      addToast('error', raw.startsWith('409:') ? raw.slice(4).trim() : raw);
+    } finally {
+      stopping = false;
+    }
+  }
 
   let {
     triggering = false,
@@ -252,10 +273,21 @@
               <span style="font-size: 12px; color: #4E3A26; font-variant-numeric: tabular-nums;">· {formatTokens(agentPresence.tokensBurned)} tokens</span>
             {/if}
           </div>
-          <button
-            onclick={() => navigate('/mission-control')}
-            style="font-size: 13px; color: #B06030; font-weight: 600; cursor: pointer; border: none; background: none; font-family: inherit;"
-          >Open Mission Control →</button>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            {#if agentPresence.activeRuns.length > 0}
+              <button
+                onclick={handleStopActiveRun}
+                disabled={stopping}
+                data-testid="bridge-stop-btn"
+                title="Hard stop: kill the agent service and mark active runs interrupted"
+                style="font-size: 12px; font-weight: 700; color: #8B1A1A; background: rgba(208,80,80,0.10); border: 1px solid rgba(208,80,80,0.30); padding: 6px 12px; border-radius: 8px; cursor: pointer; font-family: inherit; transition: background 0.15s ease;"
+              >{stopping ? '…' : '⏹ Stop agent'}</button>
+            {/if}
+            <button
+              onclick={() => navigate('/mission-control')}
+              style="font-size: 13px; color: #B06030; font-weight: 600; cursor: pointer; border: none; background: none; font-family: inherit;"
+            >Open Mission Control →</button>
+          </div>
         </div>
         <div style="position: relative; height: 260px; padding: 6px 14px;">
           <AgentActivityFeed maxEntries={120} />

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -527,11 +528,60 @@ async def resume_run(run_id: str, db: AsyncSession = Depends(get_db)):
 
 @router.post("/{run_id}/stop", response_model=RunControlAck)
 async def stop_run(run_id: str, db: AsyncSession = Depends(get_db)):
-    """Cooperatively interrupt the run. The orchestrator checks the control
-    queue between SDK messages and raises a clean stop — the run finishes
-    with ``status='interrupted'``. Returns 409 if the run already ended."""
+    """Hard stop: kill claude-agent.service AND queue a cooperative unwind.
+
+    Why "hard": most runs today execute inside the bash ``run-manager.sh``
+    launched by ``claude-agent.service`` — that path does NOT poll the
+    ``run_controls`` queue, so cooperative-only stop silently failed and
+    the button looked broken. We now issue ``systemctl stop
+    claude-agent.service`` unconditionally so the agent actually dies,
+    then flip every currently-active run to ``interrupted`` so the UI
+    reflects the change within a second instead of minutes-later via the
+    stale-run reaper.
+
+    The cooperative-stop queue row is still written for Python SDK runs
+    that DO read it; when both mechanisms fire, whichever lands first
+    wins and the other is a no-op.
+    """
     await _require_live_run(db, run_id)
-    return await _queue_control(db, run_id, "stop")
+
+    ack = await _queue_control(db, run_id, "stop")
+
+    # Fire-and-forget — systemctl stop is bounded by the unit's own
+    # TimeoutStopSec (and our 10s subprocess timeout). We don't block the
+    # HTTP response on it; the status flip below is what the UI reads.
+    asyncio.create_task(systemctl("stop", "claude-agent.service"))
+
+    # Mark every active run terminated. claude-agent.service is the shared
+    # process so killing it ends all of them; reflecting that in the DB
+    # now avoids the "still running" ghost on the dashboard.
+    now = datetime.now(timezone.utc)
+    running = await db.execute(
+        select(Run).where(
+            Run.status.in_(("started", "running", "reviewing", "plan_reviewing"))
+        )
+    )
+    for active in running.scalars().all():
+        active.status = "interrupted"
+        if active.finished_at is None:
+            active.finished_at = now
+    await db.commit()
+
+    await publish({
+        "type": "run_interrupted",
+        "data": {
+            "run_id": run_id,
+            "reason": "operator_stop_hard",
+            "hard_kill": True,
+        },
+    })
+
+    logger.warning(
+        "Mission Control: hard stop issued for %s — systemctl stop claude-agent.service + mark interrupted",
+        run_id,
+    )
+
+    return ack
 
 
 @router.post("/{run_id}/message", response_model=RunControlAck)
