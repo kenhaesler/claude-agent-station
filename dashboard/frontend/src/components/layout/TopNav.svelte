@@ -81,11 +81,17 @@
     <button
       onclick={onTrigger}
       disabled={triggering}
+      class="trigger-btn"
       style="padding: 10px 22px; border: none; border-radius: 12px; font-size: 14px; font-weight: 700; font-family: inherit; cursor: pointer; background: linear-gradient(135deg, #4A3728 0%, #5C4435 100%); color: #FFF5EE; box-shadow: 0 2px 8px rgba(74,55,40,0.18); transition: transform 0.15s, box-shadow 0.2s; opacity: {triggering ? '0.7' : '1'};"
-      onmouseenter={(e) => { if (!triggering) { e.currentTarget.style.transform = 'scale(1.04)'; e.currentTarget.style.boxShadow = '0 4px 20px rgba(74,55,40,0.25)'; }}}
-      onmouseleave={(e) => { e.currentTarget.style.transform = 'scale(1)'; e.currentTarget.style.boxShadow = '0 2px 8px rgba(74,55,40,0.18)'; }}
     >
       {triggering ? '⏳ Triggering...' : '▶ Trigger Run'}
     </button>
   </div>
 </nav>
+
+<style>
+  .trigger-btn:not(:disabled):hover {
+    transform: scale(1.04);
+    box-shadow: 0 4px 20px rgba(74, 55, 40, 0.25);
+  }
+</style>
