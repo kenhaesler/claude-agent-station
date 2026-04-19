@@ -10,6 +10,7 @@ import type { ParsedLogEvent } from './log-parser';
 import { getActiveEmployees, getLatestRun, listPlans, listRuns, getStoredApiKey } from './api';
 import type { ActiveEmployee, Run } from './types';
 import { AgentEventStream } from './event-stream';
+import { handleStreamEvent as permissionTrayHandleEvent } from './permission-tray.svelte';
 
 // --- Agent Identity ---
 
@@ -327,7 +328,11 @@ function handleWsMessage(data: string) {
 
 function connectSSE() {
   sse = new AgentEventStream({
-    onEvent: (event) => handleSSEEvent(event),
+    onEvent: (event) => {
+      handleSSEEvent(event);
+      // Forward permission tray events to the tray store (ADR-0001 / P2.T10).
+      permissionTrayHandleEvent(event);
+    },
     onStatusChange: (state) => { agentPresence.sseConnected = state === 'connected'; },
   });
   sse.connect();

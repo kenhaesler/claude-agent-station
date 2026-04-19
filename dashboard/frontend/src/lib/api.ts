@@ -137,6 +137,42 @@ export const updateProject = (id: number, data: Partial<Project>) =>
 export const deleteProject = (id: number) =>
   requestWithToast<void>(`/api/projects/${id}`, { method: 'DELETE' });
 
+// --- Permissions (ADR-0001 tray) ---
+
+export interface PermissionRequest {
+  id: number;
+  request_id: string;
+  run_id: string;
+  agent_id: string;
+  tool_name: string;
+  tool_input: Record<string, unknown>;
+  autonomy_level: string;
+  reason: string | null;
+  status: 'pending' | 'approved' | 'denied' | 'timed_out';
+  resolution_note: string | null;
+  created_at: string | null;
+  resolved_at: string | null;
+}
+
+export const listPermissionRequests = (params?: { status?: string; run_id?: string; limit?: number }) => {
+  const q = new URLSearchParams();
+  if (params?.status) q.set('status', params.status);
+  if (params?.run_id) q.set('run_id', params.run_id);
+  if (params?.limit != null) q.set('limit', String(params.limit));
+  const qs = q.toString();
+  return request<PermissionRequest[]>(`/api/permissions${qs ? '?' + qs : ''}`);
+};
+
+export const resolvePermissionRequest = (
+  requestId: string,
+  decision: 'approve' | 'deny',
+  note?: string,
+) =>
+  request<PermissionRequest>(`/api/permissions/${encodeURIComponent(requestId)}`, {
+    method: 'POST',
+    body: JSON.stringify({ decision, note }),
+  });
+
 // --- Runs ---
 
 export const listRuns = (params?: {

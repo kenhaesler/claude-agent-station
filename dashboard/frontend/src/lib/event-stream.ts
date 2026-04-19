@@ -119,6 +119,7 @@ export class AgentEventStream {
       'queue_pending', 'queue_claimed', 'queue_assigned', 'queue_in_progress',
       'queue_review', 'queue_approved', 'queue_rejected', 'queue_completed', 'queue_failed',
       'intelligence_decision', 'notification',
+      'permission_request', 'permission_resolved',
     ];
 
     for (const eventType of knownTypes) {

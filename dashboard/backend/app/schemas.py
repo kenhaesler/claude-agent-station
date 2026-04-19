@@ -617,3 +617,49 @@ class EffortPrediction(BaseModel):
     predicted_tokens: float | None = None
     confidence: float | None = None
     sample_count: int = 0
+
+
+# --- Permission Tray (ADR-0001, P2.T10) ---
+
+class PermissionRequestOut(BaseModel):
+    """Payload for a pending operator permission prompt."""
+    id: int
+    request_id: str
+    run_id: str
+    agent_id: str
+    tool_name: str
+    tool_input: dict[str, Any]
+    autonomy_level: str
+    reason: str | None = None
+    status: str
+    resolution_note: str | None = None
+    created_at: datetime | None = None
+    resolved_at: datetime | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+    @field_validator("tool_input", mode="before")
+    @classmethod
+    def _parse_json_input(cls, v: Any) -> Any:
+        """tool_input is stored as a JSON string; unwrap for the API."""
+        if isinstance(v, str):
+            import json as _json
+            try:
+                return _json.loads(v)
+            except Exception:
+                return {"raw": v}
+        return v or {}
+
+
+class PermissionDecisionIn(BaseModel):
+    """Operator response to a pending permission request."""
+    decision: str  # 'approve' or 'deny'
+    note: str | None = None
+
+    @field_validator("decision")
+    @classmethod
+    def _validate_decision(cls, v: str) -> str:
+        v = (v or "").strip().lower()
+        if v not in ("approve", "deny"):
+            raise ValueError("decision must be 'approve' or 'deny'")
+        return v
