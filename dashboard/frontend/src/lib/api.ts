@@ -308,6 +308,51 @@ export const getRunLogs = (runId: string, limit?: number, offset?: number) =>
 export const getAnalytics = (params?: { days?: number; project_id?: number }) =>
   request<AnalyticsResponse>(`/api/analytics${qs(params ?? {})}`);
 
+export interface AutonomySummary {
+  days: number;
+  total_decisions: number;
+  by_level: Record<string, number>;
+  by_decision: Record<string, number>;
+  by_tool: Record<string, number>;
+  by_level_decision: Record<string, Record<string, number>>;
+  by_event_type: Record<string, number>;
+}
+
+export interface AutonomyAuditRow {
+  event_id: number;
+  event_type: 'auto_mode_decision' | 'auto_mode_referral';
+  workflow_id: string;
+  run_id: string | null;
+  agent_id: string;
+  created_at: string | null;
+  tool_name: string;
+  decision: string;
+  level: string | null;
+  reason: string | null;
+  request_id: string | null;
+  tool_input: Record<string, unknown>;
+}
+
+export interface AutonomyAuditResponse {
+  total: number;
+  limit: number;
+  offset: number;
+  items: AutonomyAuditRow[];
+}
+
+export const getAutonomySummary = (days = 30) =>
+  request<AutonomySummary>(`/api/analytics/autonomy${qs({ days })}`);
+
+export const getAutonomyAudit = (params?: {
+  run_id?: string;
+  tool_name?: string;
+  decision?: string;
+  event_type?: string;
+  limit?: number;
+  offset?: number;
+}) =>
+  request<AutonomyAuditResponse>(`/api/analytics/autonomy-audit${qs(params ?? {})}`);
+
 // --- Prompts ---
 
 export const listPrompts = () =>

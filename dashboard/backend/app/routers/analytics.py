@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import and_, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db
-from app.models import Project, Run
+from app.models import AgentEvent, Project, Run
 from app.schemas import (
     AnalyticsResponse,
     DailyRunCount,
@@ -17,6 +19,8 @@ from app.schemas import (
     ProjectTokenUsage,
     VerdictDistribution,
 )
+
+AUTONOMY_EVENT_TYPES = ("auto_mode_decision", "auto_mode_referral")
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 
@@ -170,3 +174,145 @@ async def get_analytics(
         project_token_usage=project_token_usage,
         daily_run_counts=daily_run_counts,
     )
+
+
+# --- Autonomy audit + analytics (P3.T8, P3.T9) -----------------------------
+
+
+def _parse_event_data(raw: str | None) -> dict[str, Any]:
+    if not raw:
+        return {}
+    try:
+        value = json.loads(raw)
+        return value if isinstance(value, dict) else {}
+    except (TypeError, ValueError):
+        return {}
+
+
+def _decision_from_event(event_type: str, data: dict[str, Any]) -> str:
+    """Normalise the decision outcome across both event types.
+
+    `auto_mode_decision` stores 'allow' / 'deny' directly.
+    `auto_mode_referral` stores `final_status` ∈ {approved, denied, timed_out,
+    post_failed}. Approved maps to 'allow'; anything else to 'deny'.
+    """
+    if event_type == "auto_mode_decision":
+        return str(data.get("decision", "unknown"))
+    final = str(data.get("final_status", ""))
+    return "allow" if final == "approved" else "deny"
+
+
+@router.get("/autonomy-audit")
+async def get_autonomy_audit(
+    run_id: str | None = Query(None, description="Filter to one run"),
+    tool_name: str | None = Query(None, description="Filter by tool name"),
+    decision: str | None = Query(None, description="Filter allow/deny"),
+    event_type: str | None = Query(None, description="Filter auto_mode_decision or auto_mode_referral"),
+    limit: int = Query(200, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Raw audit trail of policy-engine decisions.
+
+    Powers the Autonomy Audit subpage. Returns newest-first so operators
+    land on the latest decisions without pagination. The decision field is
+    normalised across `auto_mode_decision` and `auto_mode_referral` rows.
+    """
+    types = [event_type] if event_type in AUTONOMY_EVENT_TYPES else list(AUTONOMY_EVENT_TYPES)
+
+    stmt = select(AgentEvent).where(AgentEvent.event_type.in_(types))
+    if run_id:
+        stmt = stmt.where(AgentEvent.run_id == run_id)
+    stmt = stmt.order_by(AgentEvent.created_at.desc())
+
+    # We post-filter on event_data (JSON) because it's stored as TEXT — SQLite
+    # doesn't have native JSON ops pre-3.45 across all deployments. For
+    # pragmatic scale (audit rows are bounded by runs-per-day), over-fetch a
+    # window and filter in Python; if this ever pressures the DB we'll promote
+    # decision/tool_name to first-class columns.
+    result = await db.execute(stmt.limit(max(limit + offset, 1) * 4))
+    rows = list(result.scalars().all())
+
+    items: list[dict[str, Any]] = []
+    for row in rows:
+        data = _parse_event_data(row.event_data)
+        row_decision = _decision_from_event(row.event_type, data)
+        row_tool = str(data.get("tool_name", ""))
+        if tool_name and row_tool != tool_name:
+            continue
+        if decision and row_decision != decision:
+            continue
+        items.append({
+            "event_id": row.event_id,
+            "event_type": row.event_type,
+            "workflow_id": row.workflow_id,
+            "run_id": row.run_id,
+            "agent_id": row.agent_id,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+            "tool_name": row_tool,
+            "decision": row_decision,
+            "level": data.get("level"),
+            "reason": data.get("reason"),
+            "request_id": data.get("request_id"),
+            "tool_input": data.get("tool_input") or {},
+        })
+
+    total = len(items)
+    return {
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "items": items[offset : offset + limit],
+    }
+
+
+@router.get("/autonomy")
+async def get_autonomy_summary(
+    days: int = Query(30, ge=1, le=365, description="Window in days"),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Aggregated policy-engine decision counts for the donut chart.
+
+    Returns counts by autonomy level, by decision outcome, by tool, plus a
+    `by_level_decision` cross-tab used to drive the donut + legend.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    stmt = (
+        select(AgentEvent)
+        .where(
+            AgentEvent.event_type.in_(AUTONOMY_EVENT_TYPES),
+            AgentEvent.created_at >= cutoff,
+        )
+    )
+    result = await db.execute(stmt)
+    rows = list(result.scalars().all())
+
+    by_level: dict[str, int] = {}
+    by_decision: dict[str, int] = {}
+    by_tool: dict[str, int] = {}
+    by_level_decision: dict[str, dict[str, int]] = {}
+    by_event_type: dict[str, int] = {t: 0 for t in AUTONOMY_EVENT_TYPES}
+
+    for row in rows:
+        data = _parse_event_data(row.event_data)
+        level = str(data.get("level", "unknown"))
+        decision = _decision_from_event(row.event_type, data)
+        tool = str(data.get("tool_name", "unknown"))
+
+        by_level[level] = by_level.get(level, 0) + 1
+        by_decision[decision] = by_decision.get(decision, 0) + 1
+        by_tool[tool] = by_tool.get(tool, 0) + 1
+        by_event_type[row.event_type] = by_event_type.get(row.event_type, 0) + 1
+
+        bucket = by_level_decision.setdefault(level, {})
+        bucket[decision] = bucket.get(decision, 0) + 1
+
+    return {
+        "days": days,
+        "total_decisions": len(rows),
+        "by_level": by_level,
+        "by_decision": by_decision,
+        "by_tool": dict(sorted(by_tool.items(), key=lambda x: x[1], reverse=True)[:10]),
+        "by_level_decision": by_level_decision,
+        "by_event_type": by_event_type,
+    }
