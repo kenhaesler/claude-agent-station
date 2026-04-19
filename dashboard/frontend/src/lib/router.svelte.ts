@@ -18,29 +18,6 @@ export interface Route {
   param: string | null;
 }
 
-/** Map legacy routes to new equivalents.
- *
- * `/theater`, `/team-comms`, `/observatory`, `/workspace` are historic names
- * for the Agent Teams canvas — they are kept here so old bookmarks still
- * resolve, but they no longer appear in the Page enum. */
-const REDIRECTS: Record<string, string> = {
-  '/ops': '/',
-  '/command': '/',
-  '/dashboard': '/',
-  '/pulse': '/',
-  '/stream': '/runs',
-  '/coordinator': '/runs',
-  '/logs': '/runs',
-  '/decide': '/queue',
-  '/config': '/settings',
-  '/prompts': '/settings',
-  '/system': '/settings',
-  '/observatory': '/agent-teams',
-  '/workspace': '/agent-teams',
-  '/theater': '/agent-teams',
-  '/team-comms': '/agent-teams',
-};
-
 function parsePath(): Route {
   let path = window.location.pathname || '/';
 
@@ -59,34 +36,11 @@ function parsePath(): Route {
 
   // Parameterized routes
   if (raw === 'runs' && parts.length > 1) return { page: 'run-detail', param: parts[1] };
-  if (raw === 'stream' && parts.length > 1) {
-    navigate(`/runs/${parts[1]}`, true);
-    return { page: 'run-detail', param: parts[1] };
-  }
   if (raw === 'queue' && parts.length > 1) return { page: 'queue-detail', param: parts[1] };
-  if (raw === 'decide' && parts.length > 1) {
-    navigate(`/queue/${parts[1]}`, true);
-    return { page: 'queue-detail', param: parts[1] };
-  }
   if (raw === 'projects' && parts.length > 1) return { page: 'project-detail', param: parts[1] };
   if (raw === 'settings' && parts.length > 1) return { page: 'settings', param: parts[1] };
 
-  // Redirect old routes (without params)
-  const redirect = REDIRECTS[`/${raw}`];
-  if (redirect) {
-    navigate(redirect, true);
-    const rParts = redirect.split('/').filter(Boolean);
-    if (rParts.length === 0) return { page: 'command-center', param: null };
-    return { page: rParts[0] as Page, param: null };
-  }
-
-  // Standard routes. `theater` / `team-comms` are kept here solely so a bare
-  // URL hit renders the Agent Teams canvas without a redirect flash; the Page
-  // enum no longer contains those names.
   const routeMap: Record<string, Page> = {
-    theater: 'agent-teams',
-    agents: 'agent-teams',
-    'team-comms': 'agent-teams',
     'agent-teams': 'agent-teams',
     runs: 'runs',
     queue: 'queue',

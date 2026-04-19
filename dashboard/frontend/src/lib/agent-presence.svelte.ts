@@ -46,21 +46,25 @@ export interface ConversationEntry {
 
 import { themeStore } from './theme.svelte';
 
+// Mirrors theme.svelte.ts ROLE_COLORS so the first paint uses the same palette
+// as subsequent renders — prevents a cold-load colour flash when the theme
+// store is evaluated a few ms after the component mounts.
+const THEME_ROLE_COLORS: Record<string, string> = {
+  manager: '#B06030',
+  'dev-0': '#2E7D32',
+  'dev-1': 'rgba(99,102,180,1)',
+  'dev-2': '#06B6D4',
+  coordinator: '#4A3728',
+  analyst: '#B06030',
+  planner: '#2E7D32',
+  assigner: '#B06030',
+};
+
 function getRoleColors(): Record<string, string> {
   try {
     return themeStore.getRoleColors();
   } catch {
-    // Fallback if theme store isn't initialised yet (SSR, tests, etc.)
-    return {
-      manager: '#f59e0b',
-      'dev-0': '#3b82f6',
-      'dev-1': '#6366f1',
-      'dev-2': '#06b6d4',
-      coordinator: '#a855f7',
-      analyst: '#8b5cf6',
-      planner: '#10b981',
-      assigner: '#f43f5e',
-    };
+    return { ...THEME_ROLE_COLORS };
   }
 }
 
@@ -240,10 +244,6 @@ function handleWsMessage(data: string) {
     : (agentPresence.agents.find(a => a.status === 'active' && a.role !== 'manager')
        ?? agentPresence.agents.find(a => a.status === 'active')
        ?? agentPresence.agents[0]); // fallback to first agent if none active
-  // Debug: log first few messages to understand mapping
-  if (agentPresence.conversationLog.length < 3) {
-    console.log('[AgentPresence] WS msg:', { agents: agentPresence.agents.map(a => a.name), activeAgent: activeAgent?.name, phase: agentPresence.phase, eventTypes: events.map(e => e.type) });
-  }
   const agentName = activeAgent?.name ?? 'Lead';
   const agentColor = activeAgent?.color ?? getRoleColors()['dev-0'];
 

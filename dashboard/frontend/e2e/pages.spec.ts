@@ -7,9 +7,9 @@ test('Dashboard page loads', async ({ page }) => {
   await page.screenshot({ path: 'screenshots/01-dashboard.png', fullPage: true });
 });
 
-test('Agents page loads (idle or active)', async ({ page }) => {
-  await page.goto('/agents');
-  // /agents redirects to /agent-teams. Accept either state:
+test('Agent Teams page loads (idle or active)', async ({ page }) => {
+  await page.goto('/agent-teams');
+  // Accept either state:
   //   - idle: "The Team is Off-Duty" heading
   //   - active: Team Lead card rendered
   const idleHeading = page.getByRole('heading', { name: /off-duty/i });
