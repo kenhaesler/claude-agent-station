@@ -355,6 +355,38 @@ function handleSSEEvent(data: any) {
   const agentColor = getRoleColors().manager;
 
   switch (eventType) {
+    // Narration — Phase 1 of "The Bridge". The orchestrator emits these for
+    // every lead directive and teammate step so the operator always has a
+    // plain-English thread of what's happening. Shown on the Bridge landing
+    // and anywhere AgentActivityFeed renders.
+    case 'narration': {
+      const text = (data.narration ?? '').toString().trim();
+      if (!text) break;
+      const kind = (data.narration_kind ?? 'directive').toString();
+      const agentName = (data.agent_name ?? 'Lead').toString();
+      const color = getAgentColor(agentName.toLowerCase());
+      addConversationEntry({
+        agentName,
+        agentColor: color,
+        type: kind === 'system' ? 'phase' : 'text',
+        content: text,
+      });
+      break;
+    }
+    // Live token burn — fires ~every 15s from the orchestrator while a run
+    // is active. Feeds the always-visible token meter in TopNav so the
+    // operator can see cost accumulate without waiting for run completion.
+    case 'progress_update': {
+      const tokens = Number(data.tokens_total ?? 0);
+      if (tokens > 0) {
+        agentPresence.tokensBurned = tokens;
+      }
+      const turns = Number(data.turns ?? 0);
+      if (turns > 0) {
+        agentPresence.turnCount = turns;
+      }
+      break;
+    }
     case 'run_start':
       addConversationEntry({
         agentName: 'Manager',

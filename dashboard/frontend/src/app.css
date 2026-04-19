@@ -16,11 +16,13 @@
   --color-border-hover: rgba(220,215,208,0.45);
   --color-border-focus: rgba(176,96,48,0.30);
 
-  /* Text — warm browns */
-  --color-primary: #3D2A1A;
-  --color-secondary: #7A6652;
-  --color-tertiary: #8C7A66;
-  --color-ghost: #A08E7A;
+  /* Text — warm browns.
+     Darkened 2026-04-19 for WCAG AA on translucent surfaces. Previous
+     tertiary (#8C7A66) dropped below 3:1 contrast on glass panels. */
+  --color-primary: #2A1C0E;
+  --color-secondary: #4E3A26;
+  --color-tertiary: #6B5743;
+  --color-ghost: #8A7660;
 
   /* Accents — warm palette */
   --color-violet: #B06030;

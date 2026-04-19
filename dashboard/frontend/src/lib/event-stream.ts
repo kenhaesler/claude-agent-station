@@ -120,6 +120,9 @@ export class AgentEventStream {
       'queue_review', 'queue_approved', 'queue_rejected', 'queue_completed', 'queue_failed',
       'intelligence_decision', 'notification',
       'permission_request', 'permission_resolved',
+      'narration',
+      'teammate_spawned', 'teammate_progress', 'teammate_completed',
+      'progress_update',
     ];
 
     for (const eventType of knownTypes) {

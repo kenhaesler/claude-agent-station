@@ -323,6 +323,11 @@ class WebhookRunEvent(BaseModel):
     violated_section: str | None = None
     quote: str | None = None
     plan_excerpt: str | None = None
+    # Narration ("The Bridge" Phase 1): one-sentence present-tense intent
+    # statements the agent emits before tool calls so the operator never
+    # has to guess what's happening.
+    narration: str | None = None
+    narration_kind: str | None = None  # "directive" | "step" | "system"
 
 
 # --- Coordinator ---
