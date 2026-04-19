@@ -214,17 +214,22 @@ export interface RunControlAck {
   queued_at: string;
 }
 
+// Mission Control control calls use the raw `request` helper (no auto-toast)
+// so the caller can render its own precise feedback — especially on 409
+// (run has already terminated), where the detail string explains *why* the
+// intervention did nothing. The UI components below already handle both
+// success and error branches.
 export const pauseRun = (runId: string) =>
-  requestWithToast<RunControlAck>(`/api/runs/${runId}/pause`, { method: 'POST' });
+  request<RunControlAck>(`/api/runs/${runId}/pause`, { method: 'POST' });
 
 export const resumeRun = (runId: string) =>
-  requestWithToast<RunControlAck>(`/api/runs/${runId}/resume`, { method: 'POST' });
+  request<RunControlAck>(`/api/runs/${runId}/resume`, { method: 'POST' });
 
 export const stopRun = (runId: string) =>
-  requestWithToast<RunControlAck>(`/api/runs/${runId}/stop`, { method: 'POST' });
+  request<RunControlAck>(`/api/runs/${runId}/stop`, { method: 'POST' });
 
 export const messageRun = (runId: string, text: string) =>
-  requestWithToast<RunControlAck>(`/api/runs/${runId}/message`, {
+  request<RunControlAck>(`/api/runs/${runId}/message`, {
     method: 'POST', body: JSON.stringify({ text }),
   });
 

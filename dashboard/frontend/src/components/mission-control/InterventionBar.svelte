@@ -8,7 +8,7 @@
   let pausing = $state(false);
   let stopping = $state(false);
   let globalPausing = $state(false);
-  let runPaused = $derived(agentPresence.pausedRuns.has(runId));
+  let runPaused = $derived(!!agentPresence.pausedRuns[runId]);
   let globalPause = $derived(agentPresence.globalPause);
 
   // Load initial global pause state once.
@@ -21,6 +21,12 @@
     })();
   });
 
+  // Unwrap "409: ..." error strings from the api wrapper into a clean toast.
+  function friendly(e: unknown, fallback: string): string {
+    const raw = e instanceof Error ? e.message : fallback;
+    return raw.startsWith('409:') ? (raw.slice(4).trim() || fallback) : raw;
+  }
+
   async function onPauseRun() {
     if (!runId || pausing) return;
     pausing = true;
@@ -32,6 +38,8 @@
         await pauseRun(runId);
         addToast('success', `Pause requested for ${runId}`);
       }
+    } catch (e) {
+      addToast('error', friendly(e, 'Pause/resume failed'));
     } finally {
       pausing = false;
     }
@@ -45,6 +53,8 @@
     try {
       await stopRun(runId);
       addToast('success', `Stop requested for ${runId}`);
+    } catch (e) {
+      addToast('error', friendly(e, 'Stop failed'));
     } finally {
       stopping = false;
     }
@@ -74,7 +84,7 @@
 </script>
 
 <div class="flex flex-wrap items-center gap-2 p-3 border-b border-border bg-surface-1">
-  <div class="text-xs text-tertiary mr-2 uppercase tracking-wider">Intervene</div>
+  <div class="text-xs text-primary font-semibold mr-2 uppercase tracking-wider">Intervene</div>
 
   <button
     type="button"
@@ -130,11 +140,11 @@
   </button>
 
   {#if globalPause}
-    <span class="text-[10px] text-reject uppercase tracking-wider ml-2">
+    <span class="text-[11px] text-reject font-semibold uppercase tracking-wider ml-2">
       Global pause active — approve every call in the tray
     </span>
   {:else if runPaused}
-    <span class="text-[10px] text-accent-yellow uppercase tracking-wider ml-2">
+    <span class="text-[11px] text-accent-yellow font-semibold uppercase tracking-wider ml-2">
       Run paused — next tool call will wait for approval
     </span>
   {/if}
