@@ -663,3 +663,27 @@ class PermissionDecisionIn(BaseModel):
         if v not in ("approve", "deny"):
             raise ValueError("decision must be 'approve' or 'deny'")
         return v
+
+
+class PermissionCreateIn(BaseModel):
+    """Agent-side payload to raise a new permission request.
+
+    Used by the policy engine when it would otherwise deny-return at
+    manual/assisted — writes a row + emits the SSE event so the tray
+    can pop in real time.
+    """
+    request_id: str
+    run_id: str
+    agent_id: str
+    tool_name: str
+    tool_input: dict[str, Any]
+    autonomy_level: str
+    reason: str | None = None
+
+    @field_validator("autonomy_level")
+    @classmethod
+    def _validate_level(cls, v: str) -> str:
+        v = (v or "").strip().lower()
+        if v not in ("manual", "assisted", "auto"):
+            raise ValueError("autonomy_level must be manual/assisted/auto")
+        return v
