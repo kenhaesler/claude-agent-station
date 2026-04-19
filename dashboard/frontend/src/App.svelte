@@ -27,6 +27,7 @@
   import QueueBoard from './pages/QueueBoard.svelte';
   import ProjectsPage from './pages/ProjectsPage.svelte';
   import ProjectDetail from './pages/ProjectDetail.svelte';
+  import AutonomyAudit from './pages/AutonomyAudit.svelte';
   import SettingsPage from './pages/SettingsPage.svelte';
 
   // --- App State ---
@@ -122,6 +123,8 @@
       <ProjectsPage />
     {:else if route.page === 'project-detail'}
       <ProjectDetail projectId={route.param ?? ''} />
+    {:else if route.page === 'autonomy-audit'}
+      <AutonomyAudit />
     {:else if route.page === 'settings'}
       <SettingsPage tab={route.param} />
     {:else}

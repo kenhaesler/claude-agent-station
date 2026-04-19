@@ -11,6 +11,7 @@ export type Page =
   | 'queue-detail'
   | 'projects'
   | 'project-detail'
+  | 'autonomy-audit'
   | 'settings';
 
 export interface Route {
@@ -91,6 +92,7 @@ function parsePath(): Route {
     runs: 'runs',
     queue: 'queue',
     projects: 'projects',
+    'autonomy-audit': 'autonomy-audit',
     settings: 'settings',
   };
 
@@ -172,6 +174,7 @@ export function getPageTitle(page: Page): string {
     'queue-detail': 'Queue Item',
     'projects': 'Projects',
     'project-detail': 'Project',
+    'autonomy-audit': 'Autonomy Audit',
     'settings': 'Settings',
   };
   return titles[page] ?? 'Claude Station';
