@@ -253,21 +253,31 @@ export const submitOAuthCode = (code: string, state: string) =>
 export const refreshOAuthToken = () =>
   request<{ refreshed: boolean; error?: string; expires_at?: string }>('/api/oauth/refresh', { method: 'POST' });
 
-// --- OAuth (GitHub) - Device Authorization Flow ---
+// --- GitHub App ---
 
-export const getGitHubOAuthStatus = () =>
-  request<{ connected: boolean; username?: string; scopes?: string[] }>('/api/oauth/github/status');
+export interface GitHubAppStatus {
+  state: 'not_created' | 'created_not_installed' | 'installed';
+  slug?: string;
+  name?: string;
+  owner?: string;
+  installation_id?: number;
+  html_url?: string;
+}
 
-export const startGitHubDeviceFlow = () =>
-  request<{ flow_id: string; user_code: string; verification_uri: string; expires_in: number }>('/api/oauth/github/device/start', { method: 'POST' });
+export interface GitHubAppManifestStart {
+  state: string;
+  post_url: string;     // https://github.com/settings/apps/new?state=...
+  manifest: Record<string, unknown>;
+}
 
-export const pollGitHubDeviceFlow = (flowId: string) =>
-  request<{ status: string; error?: string }>('/api/oauth/github/device/poll', {
-    method: 'POST', body: JSON.stringify({ flow_id: flowId }),
-  });
+export const getGitHubAppStatus = () =>
+  request<GitHubAppStatus>('/api/github/app/status');
 
-export const disconnectGitHub = () =>
-  requestWithToast<{ success: boolean; message: string }>('/api/oauth/github', { method: 'DELETE' });
+export const startGitHubAppManifest = () =>
+  request<GitHubAppManifestStart>('/api/github/app/manifest/start', { method: 'POST' });
+
+export const disconnectGitHubApp = () =>
+  requestWithToast<{ status: string }>('/api/github/app', { method: 'DELETE' });
 
 // --- Plans ---
 
