@@ -37,6 +37,7 @@ from app.routers import (
     system,
     webhook,
 )
+from app.routers import github_app as github_app_router
 from app.services.config_sync import sync_config_to_db
 from app.services.log_importer import import_historical_runs
 from app.services.stale_run_reaper import reap_stale_runs
@@ -79,9 +80,9 @@ async def _periodic_token_refresh() -> None:
 
             result = await refresh_oauth_token()
             if result.refreshed:
-                logger.info("Periodic token refresh: new expiry %s", result.expires_at)
+                logger.info("Periodic OAuth refresh: new expiry %s", result.expires_at)
             elif result.error:
-                logger.warning("Periodic token refresh failed: %s", result.error)
+                logger.warning("Periodic OAuth refresh error: %s", result.error)
         except Exception:
             logger.exception("Error in periodic token refresh")
 
@@ -191,6 +192,11 @@ app.include_router(permissions.router, dependencies=_auth)
 
 # GitHub webhook: has own auth via HMAC signature verification
 app.include_router(github_webhook.router)
+
+# GitHub App lifecycle: unauth'd — manifest/exchange and install/callback
+# arrive via 302 redirect from github.com and cannot carry the dashboard API key.
+# Mirrors github_webhook above. Token endpoint (T9) has its own STATION_LAUNCHER_TOKEN gate.
+app.include_router(github_app_router.router)
 
 # Serve frontend static files (must be last, catches all non-API routes)
 _frontend_dist = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
