@@ -58,6 +58,27 @@ def status() -> dict:
     }
 
 
+@app.post("/stop")
+def stop(x_launcher_token: str | None = Header(default=None)) -> dict:
+    """Send SIGTERM to the running run-manager.sh, if any.
+
+    Returns 409 if no run is in flight. The dashboard's service_control
+    module calls this in compose mode where ``systemctl stop`` is unavailable.
+    """
+    global _current
+
+    if LAUNCHER_TOKEN and x_launcher_token != LAUNCHER_TOKEN:
+        raise HTTPException(status_code=401, detail="invalid or missing launcher token")
+
+    if _current is None or _current.poll() is not None:
+        raise HTTPException(status_code=409, detail="No run is currently running")
+
+    pid = _current.pid
+    _current.terminate()
+    logger.info("Sent SIGTERM to run-manager.sh pid=%s", pid)
+    return {"status": "stopping", "pid": pid}
+
+
 @app.post("/run")
 def trigger(x_launcher_token: str | None = Header(default=None)) -> dict:
     """Spawn run-manager.sh detached. Returns once the process is forked."""
