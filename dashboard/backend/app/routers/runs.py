@@ -4,11 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from pathlib import Path
 from typing import Optional
 
-import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -32,7 +30,6 @@ from app.schemas import (
 )
 from app.services.diff_parser import DiffResult, parse_unified_diff
 from app.services.log_importer import import_historical_runs
-from app.services.systemd import systemctl
 
 logger = logging.getLogger(__name__)
 
@@ -373,29 +370,41 @@ async def rescan_logs(db: AsyncSession = Depends(get_db)):
 async def trigger_run():
     """Trigger the agent service immediately.
 
-    When ``STATION_AGENT_LAUNCHER_URL`` is set (compose deployment), POST to
-    the agent container's HTTP launcher. Otherwise fall back to systemctl,
-    which is how the bare-metal systemd deployment runs.
+    Delegates to :mod:`app.services.service_control` which branches on
+    ``STATION_DEPLOY_MODE`` between ``sudo systemctl start`` (systemd
+    deployments) and ``POST /run`` on the agent launcher (compose).
     """
-    launcher_url = os.environ.get("STATION_AGENT_LAUNCHER_URL")
-    if launcher_url:
-        headers = {}
-        token = os.environ.get("STATION_LAUNCHER_TOKEN")
-        if token:
-            headers["X-Launcher-Token"] = token
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.post(launcher_url, headers=headers)
-        except httpx.HTTPError as exc:
-            raise HTTPException(status_code=502, detail=f"launcher unreachable: {exc}") from exc
-        if resp.status_code >= 400:
-            raise HTTPException(status_code=resp.status_code, detail=resp.text)
-        return {"status": "triggered", "detail": "agent launcher accepted run", **resp.json()}
+    from app.services import service_control
 
-    result = await systemctl("start", "claude-agent.service")
+    result = await service_control.start_agent_service()
     if not result.get("success"):
+        # Compose path may set status_code to a launcher 4xx (e.g. 409
+        # "already running") or 502 (unreachable); systemd path returns
+        # generic 500. Preserve the upstream status so the UI can show a
+        # precise message.
+        status = result.get("status_code") or 500
+        if status < 400:
+            status = 500
+        # Detail precedence: structured error fields first, then any
+        # JSON ``detail`` from the launcher response, then ``raw`` for
+        # plain-text 4xx bodies (the launcher's HTTPException emits JSON
+        # but tests and some clients exercise the text path), then a
+        # generic fallback.
         raise HTTPException(
-            status_code=500,
-            detail=result.get("error") or result.get("stderr", "Failed to trigger run"),
+            status_code=status,
+            detail=(
+                result.get("error")
+                or result.get("stderr")
+                or result.get("detail")
+                or result.get("raw")
+                or "Failed to trigger run"
+            ),
         )
-    return {"status": "triggered", "detail": "claude-agent.service started"}
+    detail = result.get("detail") or (
+        "agent launcher accepted run" if "pid" in result else "claude-agent.service started"
+    )
+    return {
+        "status": "triggered",
+        "detail": detail,
+        **{k: v for k, v in result.items() if k not in {"success", "status_code"}},
+    }

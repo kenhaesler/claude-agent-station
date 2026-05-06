@@ -1,10 +1,11 @@
 """Tests for POST /api/runs/trigger.
 
-The endpoint has two paths depending on environment:
+The endpoint has two paths depending on ``STATION_DEPLOY_MODE``:
 
-- ``STATION_AGENT_LAUNCHER_URL`` set → POST to the agent container's launcher
-  (compose deployment). Token forwarded as ``X-Launcher-Token`` when set.
-- env unset → fall back to ``systemctl start claude-agent.service``
+- ``compose`` → POST to the agent container's launcher at
+  ``STATION_AGENT_LAUNCHER_URL`` (the base URL, e.g. ``http://agent:8421``).
+  Token forwarded as ``X-Launcher-Token`` when set.
+- ``systemd`` (default) → ``systemctl start claude-agent.service``
   (bare-metal systemd deployment).
 
 Both paths are exercised here so the compose changes can't silently break
@@ -24,6 +25,8 @@ from httpx import ASGITransport, AsyncClient
 from app.database import Base, engine
 from app.main import app
 
+# The launcher base URL (env var) is ``http://agent:8421``; respx still
+# mocks the full ``/run`` URL because that's what the launcher exposes.
 LAUNCHER_URL = "http://agent:8421/run"
 
 
@@ -45,9 +48,10 @@ async def client(setup_db):
 
 @pytest.mark.asyncio
 async def test_trigger_uses_launcher_when_env_set(client, monkeypatch):
-    """When STATION_AGENT_LAUNCHER_URL is set, the dashboard should POST
-    there and propagate the launcher's response body."""
-    monkeypatch.setenv("STATION_AGENT_LAUNCHER_URL", LAUNCHER_URL)
+    """When deploy mode is compose, the dashboard should POST to the
+    launcher and propagate the launcher's response body."""
+    monkeypatch.setenv("STATION_DEPLOY_MODE", "compose")
+    monkeypatch.setenv("STATION_AGENT_LAUNCHER_URL", "http://agent:8421")
     monkeypatch.delenv("STATION_LAUNCHER_TOKEN", raising=False)
 
     launcher_body = {"status": "triggered", "pid": 1234, "log": "/var/log/claude-agent/launcher.out"}
@@ -65,7 +69,8 @@ async def test_trigger_uses_launcher_when_env_set(client, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_trigger_forwards_launcher_token_header(client, monkeypatch):
-    monkeypatch.setenv("STATION_AGENT_LAUNCHER_URL", LAUNCHER_URL)
+    monkeypatch.setenv("STATION_DEPLOY_MODE", "compose")
+    monkeypatch.setenv("STATION_AGENT_LAUNCHER_URL", "http://agent:8421")
     monkeypatch.setenv("STATION_LAUNCHER_TOKEN", "secret-abc")
 
     with respx.mock() as mock:
@@ -79,7 +84,8 @@ async def test_trigger_forwards_launcher_token_header(client, monkeypatch):
 async def test_trigger_propagates_launcher_4xx(client, monkeypatch):
     """A 409 from the launcher (run already in progress) should reach the
     operator with the same status code so the UI can show a clean message."""
-    monkeypatch.setenv("STATION_AGENT_LAUNCHER_URL", LAUNCHER_URL)
+    monkeypatch.setenv("STATION_DEPLOY_MODE", "compose")
+    monkeypatch.setenv("STATION_AGENT_LAUNCHER_URL", "http://agent:8421")
 
     with respx.mock() as mock:
         mock.post(LAUNCHER_URL).respond(409, text="A run is already in progress")
@@ -91,7 +97,8 @@ async def test_trigger_propagates_launcher_4xx(client, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_trigger_returns_502_when_launcher_unreachable(client, monkeypatch):
-    monkeypatch.setenv("STATION_AGENT_LAUNCHER_URL", LAUNCHER_URL)
+    monkeypatch.setenv("STATION_DEPLOY_MODE", "compose")
+    monkeypatch.setenv("STATION_AGENT_LAUNCHER_URL", "http://agent:8421")
 
     with respx.mock() as mock:
         mock.post(LAUNCHER_URL).mock(side_effect=httpx.ConnectError("connection refused"))
@@ -103,12 +110,13 @@ async def test_trigger_returns_502_when_launcher_unreachable(client, monkeypatch
 
 @pytest.mark.asyncio
 async def test_trigger_falls_back_to_systemctl_when_env_unset(client, monkeypatch):
-    """Bare-metal regression — no launcher env means the original systemctl
-    path runs unchanged."""
+    """Bare-metal regression — when deploy mode defaults to systemd,
+    the original systemctl path runs unchanged."""
+    monkeypatch.delenv("STATION_DEPLOY_MODE", raising=False)
     monkeypatch.delenv("STATION_AGENT_LAUNCHER_URL", raising=False)
 
     mock_systemctl = AsyncMock(return_value={"success": True, "stdout": "", "stderr": "", "returncode": 0})
-    with patch("app.routers.runs.systemctl", mock_systemctl):
+    with patch("app.services.service_control.systemctl", mock_systemctl):
         resp = await client.post("/api/runs/trigger")
 
     assert resp.status_code == 200
@@ -118,10 +126,11 @@ async def test_trigger_falls_back_to_systemctl_when_env_unset(client, monkeypatc
 
 @pytest.mark.asyncio
 async def test_trigger_returns_500_when_systemctl_fails(client, monkeypatch):
+    monkeypatch.delenv("STATION_DEPLOY_MODE", raising=False)
     monkeypatch.delenv("STATION_AGENT_LAUNCHER_URL", raising=False)
 
     mock_systemctl = AsyncMock(return_value={"success": False, "error": "permission denied"})
-    with patch("app.routers.runs.systemctl", mock_systemctl):
+    with patch("app.services.service_control.systemctl", mock_systemctl):
         resp = await client.post("/api/runs/trigger")
 
     assert resp.status_code == 500

@@ -55,7 +55,14 @@ async def _launcher_call(method: str, path: str) -> dict:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.request(method, url, headers=_launcher_headers())
     except httpx.HTTPError as exc:
-        return {"success": False, "error": f"launcher unreachable: {exc}"}
+        # 502 Bad Gateway is the right HTTP status for "upstream
+        # unreachable"; trigger_run preserves status_code so the dashboard
+        # response code matches the contract documented in the plan.
+        return {
+            "success": False,
+            "error": f"launcher unreachable: {exc}",
+            "status_code": 502,
+        }
 
     body: dict = {}
     try:
