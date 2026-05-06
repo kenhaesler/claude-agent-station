@@ -6,7 +6,8 @@ The launcher spawns ``run-manager.sh`` as a detached subprocess and returns
 immediately — same fire-and-forget shape as ``systemctl start``.
 
 On bare-metal systemd deployments this process is unused; ``trigger_run``
-falls back to systemctl when ``STATION_AGENT_LAUNCHER_URL`` is unset.
+falls back to systemctl when ``STATION_DEPLOY_MODE`` is ``systemd`` (the
+default) — see :mod:`app.services.service_control` for the dispatch.
 """
 
 from __future__ import annotations

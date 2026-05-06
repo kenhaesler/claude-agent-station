@@ -27,6 +27,11 @@ services:
       # Containerized run trigger — when set, /api/runs/trigger POSTs here
       # instead of calling systemctl (which doesn't exist in the container).
       STATION_AGENT_LAUNCHER_URL: http://agent:8421/run
+      # NOTE: the default token below is published in this repo and is
+      # intended only for single-host dev stacks. Override via the
+      # STATION_LAUNCHER_TOKEN env (e.g. ``STATION_LAUNCHER_TOKEN=$(openssl
+      # rand -hex 32) docker compose up -d``) before exposing the launcher
+      # to anything beyond localhost.
       STATION_LAUNCHER_TOKEN: ${STATION_LAUNCHER_TOKEN:-cas-dev-launcher-token}
     volumes:
       - station-data:/var/lib/claude-agent-station

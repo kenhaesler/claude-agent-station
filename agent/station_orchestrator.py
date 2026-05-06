@@ -25,6 +25,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+import httpx
+
 from claude_agent_sdk import query, ClaudeAgentOptions
 from claude_agent_sdk.types import (
     AgentDefinition,
@@ -425,11 +427,10 @@ def post_webhook(config: dict, event: str, data: dict | None = None) -> None:
     if webhook_secret:
         headers["X-Webhook-Token"] = webhook_secret
 
+    # httpx (vs. urllib.request) refuses file:// and other local schemes, so
+    # even without the explicit guard above we cannot be tricked into reading
+    # local files via a misconfigured webhook_url.
     try:
-        # httpx (vs. urllib.request) refuses file:// and other local schemes,
-        # so even with the explicit guard above we cannot be tricked into
-        # reading local files via a misconfigured webhook_url.
-        import httpx
         with httpx.Client(timeout=3.0) as client:
             client.post(webhook_url, content=json.dumps(payload), headers=headers)
     except Exception:
