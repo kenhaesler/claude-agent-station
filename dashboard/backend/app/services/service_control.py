@@ -24,8 +24,20 @@ logger = logging.getLogger(__name__)
 DEFAULT_AGENT_UNIT = "claude-agent.service"
 
 
-def _mode() -> str:
+def deploy_mode() -> str:
+    """Return the active deploy mode (``"systemd"`` or ``"compose"``).
+
+    Public API — other services that need to branch on the deploy shape
+    (e.g. the stale-run reaper) should call this instead of reading the
+    env var directly so the dispatch decision lives in one place.
+    """
     return os.environ.get("STATION_DEPLOY_MODE", "systemd").lower()
+
+
+# Alias retained for the existing internal call sites; new code should use
+# :func:`deploy_mode`. Removing this alias would force a wider patch in
+# this file's helpers; kept private to discourage external use.
+_mode = deploy_mode
 
 
 def _launcher_base_url() -> str | None:

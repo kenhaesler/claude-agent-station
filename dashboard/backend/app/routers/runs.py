@@ -399,8 +399,13 @@ async def trigger_run():
                 or "Failed to trigger run"
             ),
         )
+    # Choose the success message based on the actual deploy mode rather
+    # than sniffing for ``pid`` in the result. The previous heuristic would
+    # silently flip to the launcher message if a future systemd
+    # implementation surfaced MainPID.
+    is_compose = service_control.deploy_mode() == "compose"
     detail = result.get("detail") or (
-        "agent launcher accepted run" if "pid" in result else "claude-agent.service started"
+        "agent launcher accepted run" if is_compose else "claude-agent.service started"
     )
     return {
         "status": "triggered",

@@ -102,6 +102,28 @@ async def test_launcher_response_cannot_override_success_or_status_code(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_launcher_4xx_body_cannot_override_success_or_status_code(monkeypatch):
+    """Symmetric companion to the 200-path test: a launcher returning 4xx
+    with ``success: True`` in the body must still surface as failure with
+    the real status_code. Pins the override invariant on the failure path
+    so trigger_run's HTTPException raises with the correct upstream status."""
+    monkeypatch.setenv("STATION_DEPLOY_MODE", "compose")
+    monkeypatch.setenv("STATION_AGENT_LAUNCHER_URL", "http://agent:8421")
+    from app.services import service_control
+
+    with respx.mock() as mock:
+        mock.post("http://agent:8421/run").respond(
+            409,
+            json={"success": True, "status_code": 200, "detail": "already running"},
+        )
+        result = await service_control.start_agent_service()
+
+    assert result["success"] is False  # from HTTP 409, not body's True
+    assert result["status_code"] == 409
+    assert result["detail"] == "already running"
+
+
+@pytest.mark.asyncio
 async def test_stop_systemd_mode_calls_systemctl(monkeypatch):
     monkeypatch.setenv("STATION_DEPLOY_MODE", "systemd")
     from app.services import service_control

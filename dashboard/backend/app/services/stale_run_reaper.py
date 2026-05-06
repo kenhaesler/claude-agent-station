@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import CoordinatorTask, QueueItem, Run
 from app.services.event_bus import publish as event_bus_publish
 from app.services.notifier import send_notification
-from app.services.service_control import _mode, get_agent_status
+from app.services.service_control import deploy_mode, get_agent_status
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +52,7 @@ async def reap_stale_runs(db: AsyncSession) -> int:
     # noise in compose mode — the orchestrator runs in a sibling container
     # so pgrep here finds nothing, and the subprocess + 3s timeout adds
     # latency to every reaper tick. Skip it in compose.
-    if _mode() == "systemd" and _is_orchestrator_process_alive():
+    if deploy_mode() == "systemd" and _is_orchestrator_process_alive():
         return 0  # Orchestrator process is alive — nothing to reap
 
     # Service is inactive — find any runs still marked as 'running'
