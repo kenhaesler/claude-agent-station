@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import CoordinatorTask, QueueItem, Run
 from app.services.event_bus import publish as event_bus_publish
 from app.services.notifier import send_notification
-from app.services.systemd import get_service_status
+from app.services.service_control import _mode, get_agent_status
 
 logger = logging.getLogger(__name__)
 
@@ -41,12 +41,16 @@ async def reap_stale_runs(db: AsyncSession) -> int:
     Returns the number of runs reaped.
     """
     # Check if the agent service is actually running
-    svc = await get_service_status()
-    if svc["service_active"]:
-        return 0  # Service is alive — nothing to reap
+    svc = await get_agent_status()
+    if svc.get("service_active"):
+        return 0  # Agent is alive — nothing to reap
 
-    # Also check for manual orchestrator runs (not via systemd)
-    if _is_orchestrator_process_alive():
+    # pgrep is a useful tie-breaker for manual orchestrator invocations
+    # outside the systemd unit (developer testing on the host). It's
+    # noise in compose mode — the orchestrator runs in a sibling container
+    # so pgrep here finds nothing, and the subprocess + 3s timeout adds
+    # latency to every reaper tick. Skip it in compose.
+    if _mode() == "systemd" and _is_orchestrator_process_alive():
         return 0  # Orchestrator process is alive — nothing to reap
 
     # Service is inactive — find any runs still marked as 'running'
