@@ -99,3 +99,101 @@ async def test_launcher_response_cannot_override_success_or_status_code(monkeypa
     assert result["success"] is True   # from HTTP 200, not body's "no"
     assert result["status_code"] == 200
     assert result["pid"] == 7          # body fields still come through
+
+
+@pytest.mark.asyncio
+async def test_stop_systemd_mode_calls_systemctl(monkeypatch):
+    monkeypatch.setenv("STATION_DEPLOY_MODE", "systemd")
+    from app.services import service_control
+    mock_systemctl = AsyncMock(return_value={"success": True})
+    with patch("app.services.service_control.systemctl", mock_systemctl):
+        await service_control.stop_agent_service()
+    mock_systemctl.assert_awaited_once_with("stop", "claude-agent.service")
+
+
+@pytest.mark.asyncio
+async def test_stop_compose_mode_posts_to_launcher(monkeypatch):
+    monkeypatch.setenv("STATION_DEPLOY_MODE", "compose")
+    monkeypatch.setenv("STATION_AGENT_LAUNCHER_URL", "http://agent:8421")
+    monkeypatch.delenv("STATION_LAUNCHER_TOKEN", raising=False)
+    from app.services import service_control
+    with respx.mock() as mock:
+        mock.post("http://agent:8421/stop").respond(200, json={"status": "stopping", "pid": 7})
+        result = await service_control.stop_agent_service()
+    assert result["success"] is True
+    assert result["pid"] == 7
+
+
+@pytest.mark.asyncio
+async def test_status_systemd_uses_systemd_get_service_status(monkeypatch):
+    monkeypatch.setenv("STATION_DEPLOY_MODE", "systemd")
+    from app.services import service_control
+    mock = AsyncMock(return_value={"service_active": True, "timer_active": False})
+    with patch("app.services.service_control.systemd_get_status", mock):
+        result = await service_control.get_agent_status()
+    assert result["service_active"] is True
+
+
+@pytest.mark.asyncio
+async def test_status_compose_translates_launcher_status(monkeypatch):
+    """In compose mode, /status returns {running, pid, exit_code} — translate
+    to the systemd-shaped {service_active, ...} the dashboard already
+    consumes so existing UI code keeps working."""
+    monkeypatch.setenv("STATION_DEPLOY_MODE", "compose")
+    monkeypatch.setenv("STATION_AGENT_LAUNCHER_URL", "http://agent:8421")
+    monkeypatch.delenv("STATION_LAUNCHER_TOKEN", raising=False)
+    from app.services import service_control
+    with respx.mock() as mock:
+        mock.get("http://agent:8421/status").respond(200, json={"running": True, "pid": 99, "exit_code": None})
+        result = await service_control.get_agent_status()
+    assert result["service_active"] is True
+    assert result["pid"] == 99
+
+
+@pytest.mark.asyncio
+async def test_status_compose_when_unreachable_returns_inactive(monkeypatch):
+    import httpx
+    monkeypatch.setenv("STATION_DEPLOY_MODE", "compose")
+    monkeypatch.setenv("STATION_AGENT_LAUNCHER_URL", "http://agent:8421")
+    monkeypatch.delenv("STATION_LAUNCHER_TOKEN", raising=False)
+    from app.services import service_control
+    with respx.mock() as mock:
+        mock.get("http://agent:8421/status").mock(side_effect=httpx.ConnectError("refused"))
+        result = await service_control.get_agent_status()
+    assert result["service_active"] is False
+    assert result.get("error")
+
+
+@pytest.mark.asyncio
+async def test_status_returns_same_keys_in_both_modes(monkeypatch):
+    """Drop-in substitution: callers should be able to read any of the 7
+    keys without branching on deploy mode."""
+    expected_keys = {
+        "service_active", "timer_active", "timer_next",
+        "service_stdout", "timer_stdout", "pid", "error",
+    }
+
+    # Systemd mode
+    monkeypatch.setenv("STATION_DEPLOY_MODE", "systemd")
+    from app.services import service_control
+    systemd_mock = AsyncMock(return_value={
+        "service_active": True,
+        "timer_active": True,
+        "timer_next": "Mon 2026-03-16 04:00:00 UTC",
+        "service_stdout": "ok",
+        "timer_stdout": "ok",
+    })
+    with patch("app.services.service_control.systemd_get_status", systemd_mock):
+        systemd_result = await service_control.get_agent_status()
+    assert set(systemd_result.keys()) == expected_keys
+    assert systemd_result["pid"] is None
+    assert systemd_result["error"] is None
+
+    # Compose mode
+    monkeypatch.setenv("STATION_DEPLOY_MODE", "compose")
+    monkeypatch.setenv("STATION_AGENT_LAUNCHER_URL", "http://agent:8421")
+    monkeypatch.delenv("STATION_LAUNCHER_TOKEN", raising=False)
+    with respx.mock() as mock:
+        mock.get("http://agent:8421/status").respond(200, json={"running": True, "pid": 1, "exit_code": None})
+        compose_result = await service_control.get_agent_status()
+    assert set(compose_result.keys()) == expected_keys

@@ -17,7 +17,7 @@ import os
 
 import httpx
 
-from app.services.systemd import systemctl
+from app.services.systemd import get_service_status as systemd_get_status, systemctl
 
 logger = logging.getLogger(__name__)
 
@@ -74,3 +74,37 @@ async def start_agent_service() -> dict:
     if _mode() == "compose":
         return await _launcher_call("POST", "/run")
     return await systemctl("start", DEFAULT_AGENT_UNIT)
+
+
+async def stop_agent_service() -> dict:
+    """Stop the agent (systemctl stop, or POST /stop on the launcher)."""
+    if _mode() == "compose":
+        return await _launcher_call("POST", "/stop")
+    return await systemctl("stop", DEFAULT_AGENT_UNIT)
+
+
+async def get_agent_status() -> dict:
+    """Return service-active status with a shape compatible with the existing
+    systemd path: ``{"service_active": bool, "timer_active": bool, ...}``.
+
+    In compose mode the agent has no timer (the launcher is always up), so
+    ``timer_active`` is always False.
+    """
+    if _mode() == "compose":
+        result = await _launcher_call("GET", "/status")
+        running = bool(result.get("running"))
+        return {
+            "service_active": running,
+            "timer_active": False,
+            "timer_next": None,
+            "service_stdout": "",
+            "timer_stdout": "",
+            "pid": result.get("pid"),
+            "error": None if result.get("success") else result.get("error"),
+        }
+    # systemd mode — normalise to the compose shape so callers don't have to
+    # branch on deploy mode. The systemd path doesn't have a single pid (the
+    # service can have a tree of children), and there's no async error to
+    # surface, so both default to None.
+    result = await systemd_get_status()
+    return {**result, "pid": None, "error": None}
