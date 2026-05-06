@@ -36,10 +36,13 @@ services:
       # to anything beyond localhost.
       STATION_LAUNCHER_TOKEN: ${STATION_LAUNCHER_TOKEN:-cas-dev-launcher-token}
       STATION_SERVICE_USER: root
-      # Persist the GitHub OAuth token in the named volume so it survives
-      # container rebuilds. Default path resolves to the dashboard
-      # container's writable layer, which gets wiped on every `compose up`.
-      STATION_GITHUB_TOKEN_PATH: /var/lib/claude-agent-station/github_token
+      # GitHub App credentials persist in the named volume so they survive
+      # container rebuilds. The credentials file holds the App's RSA private
+      # key and is chmod 0600 by the service module.
+      STATION_GITHUB_APP_CREDENTIALS_PATH: /var/lib/claude-agent-station/github_app.json
+      # Public-facing dashboard URL — used in the manifest's redirect_url and
+      # setup_url so GitHub can find us after creating/installing the App.
+      STATION_DASHBOARD_BASE_URL: http://localhost:8420
     volumes:
       - station-data:/var/lib/claude-agent-station
       - station-logs:/var/log/claude-agent
@@ -72,6 +75,12 @@ services:
       # read this same env. Override with a strong token in production-shaped
       # deployments; the default below is fine for a single-host dev stack.
       STATION_LAUNCHER_TOKEN: ${STATION_LAUNCHER_TOKEN:-cas-dev-launcher-token}
+      # Where the agent fetches a fresh GitHub App installation token before
+      # spawning run-manager.sh. The token gets exported as GH_TOKEN so `gh`
+      # CLI calls authenticate as the App installation. Different host than
+      # the dashboard side because the agent reaches the dashboard via the
+      # compose service name.
+      STATION_DASHBOARD_BASE_URL: http://dashboard:8420
     volumes:
       - station-data:/var/lib/claude-agent-station
       - station-logs:/var/log/claude-agent

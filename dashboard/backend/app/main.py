@@ -22,7 +22,6 @@ from app.routers import (
     config_router,
     coordinator,
     events,
-    github_oauth,
     github_webhook,
     health,
     logs,
@@ -180,7 +179,6 @@ app.include_router(logs.router, dependencies=_auth)
 app.include_router(config_router.router, dependencies=_auth)
 app.include_router(system.router, dependencies=_auth)
 app.include_router(oauth.router, dependencies=_auth)
-app.include_router(github_oauth.router, dependencies=_auth)
 app.include_router(plans.router, dependencies=_auth)
 app.include_router(events.router, dependencies=_auth)
 app.include_router(coordinator.router, dependencies=_auth)

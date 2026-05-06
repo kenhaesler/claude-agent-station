@@ -41,13 +41,6 @@ class Settings(BaseSettings):
     # (backward-compatible with existing deployments).
     webhook_secret: str | None = None
 
-    # GitHub OAuth App credentials (for dashboard-managed GitHub login)
-    # Set via STATION_GITHUB_CLIENT_ID and STATION_GITHUB_CLIENT_SECRET env vars
-    github_client_id: str = ""
-    github_client_secret: str = ""
-    # Optional redirect URI for GitHub OAuth callback
-    github_oauth_redirect_uri: str = ""
-
     # Secret for verifying GitHub webhook HMAC-SHA256 signatures.
     # Set via STATION_GITHUB_WEBHOOK_SECRET env var.
     github_webhook_secret: str | None = None
