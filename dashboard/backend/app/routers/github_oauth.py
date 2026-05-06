@@ -85,8 +85,9 @@ def _write_token(path: Path, data: dict) -> None:
         os.replace(tmp, path)
         # Ensure the claude-agent user can read the token
         import shutil
+        service_user = os.environ.get("STATION_SERVICE_USER", "claude-agent")
         with contextlib.suppress(LookupError, OSError):
-            shutil.chown(path, user="claude-agent", group="claude-agent")
+            shutil.chown(path, user=service_user, group=service_user)
         os.chmod(path, 0o600)
     except Exception:
         with contextlib.suppress(OSError):
