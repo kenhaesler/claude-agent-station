@@ -119,3 +119,47 @@ def test_stop_auth_check_precedes_state_check(monkeypatch):
     resp = client.post("/stop")  # no token
     assert resp.status_code == 401
     assert _FakePopen.terminated is False  # we did NOT reach terminate()
+
+
+def test_run_passes_gh_token_via_env_when_dashboard_provides_one(monkeypatch, tmp_path):
+    """The launcher fetches a fresh installation token from the dashboard
+    before spawning run-manager.sh and exports it as GH_TOKEN."""
+    monkeypatch.setenv("STATION_LAUNCHER_TOKEN", "")
+    # Provide a fake script that just records its env to a file
+    sentinel = tmp_path / "env.out"
+    fake_script = tmp_path / "fake-run-manager.sh"
+    fake_script.write_text(f"""#!/bin/bash
+env | grep '^GH_TOKEN=' > {sentinel}
+""")
+    fake_script.chmod(0o755)
+    monkeypatch.setenv("STATION_RUN_MANAGER", str(fake_script))
+    monkeypatch.setenv("STATION_DASHBOARD_BASE_URL", "http://test")
+    monkeypatch.setenv("STATION_LOG_DIR", str(tmp_path / "logs"))
+    monkeypatch.setenv("STATION_WORKDIR", str(tmp_path))
+
+    # Mock the dashboard's /api/github/app/token to return a fixed token
+    import respx
+    import importlib
+
+    import agent.launcher as launcher_mod
+    importlib.reload(launcher_mod)
+
+    from fastapi.testclient import TestClient
+    client = TestClient(launcher_mod.app)
+
+    with respx.mock() as mock:
+        mock.get("http://test/api/github/app/token").respond(
+            200, json={"token": "ghs_test_inject"},
+        )
+        resp = client.post("/run")
+
+    assert resp.status_code == 200
+    # Wait briefly for the spawned subprocess to exit and write the env file
+    import time
+    for _ in range(20):
+        if sentinel.exists():
+            break
+        time.sleep(0.1)
+
+    assert sentinel.exists(), "spawned script never ran"
+    assert "GH_TOKEN=ghs_test_inject" in sentinel.read_text()

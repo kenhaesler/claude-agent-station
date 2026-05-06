@@ -17,6 +17,7 @@ import os
 import subprocess
 from pathlib import Path
 
+import httpx
 from fastapi import FastAPI, Header, HTTPException
 
 logger = logging.getLogger(__name__)
@@ -24,11 +25,38 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 
 RUN_MANAGER = Path(os.environ.get("STATION_RUN_MANAGER", "/app/agent/scripts/run-manager.sh"))
 LOG_DIR = Path(os.environ.get("STATION_LOG_DIR", "/var/log/claude-agent"))
+WORKDIR = os.environ.get("STATION_WORKDIR", "/app")
 # Shared secret with the dashboard. When set, /run requires a matching
 # X-Launcher-Token header. When unset we accept anonymous calls but log a
 # warning at startup — defaulting to closed would break the bare-metal
 # systemd path that doesn't go through this launcher at all.
 LAUNCHER_TOKEN = os.environ.get("STATION_LAUNCHER_TOKEN", "")
+DASHBOARD_BASE_URL = os.environ.get("STATION_DASHBOARD_BASE_URL", "http://localhost:8420").rstrip("/")
+
+
+def _fetch_gh_token() -> str | None:
+    """Fetch a fresh GitHub App installation token from the dashboard.
+
+    Returns None if the dashboard isn't reachable, the App isn't installed,
+    or any other failure mode. Best-effort — the run continues regardless.
+    """
+    headers = {}
+    if LAUNCHER_TOKEN:
+        headers["X-Launcher-Token"] = LAUNCHER_TOKEN
+    try:
+        with httpx.Client(timeout=5.0) as client:
+            resp = client.get(f"{DASHBOARD_BASE_URL}/api/github/app/token", headers=headers)
+    except httpx.HTTPError as exc:
+        logger.warning("Dashboard auth fetch failed: %s", exc)
+        return None
+    if resp.status_code == 200:
+        return resp.json().get("token")
+    if resp.status_code == 404:
+        # GitHub App not configured yet — silent, this is normal first-run
+        return None
+    logger.warning("Dashboard auth fetch returned %s: %s", resp.status_code, resp.text[:200])
+    return None
+
 
 # This launcher keeps process state in module globals (``_current``), so it
 # only works correctly under a single uvicorn worker. The Dockerfile launches
@@ -81,7 +109,15 @@ def stop(x_launcher_token: str | None = Header(default=None)) -> dict:
 
 @app.post("/run")
 def trigger(x_launcher_token: str | None = Header(default=None)) -> dict:
-    """Spawn run-manager.sh detached. Returns once the process is forked."""
+    """Spawn run-manager.sh detached. Returns once the process is forked.
+
+    Before spawning, fetch a fresh GitHub App installation token from the
+    dashboard and export it as GH_TOKEN in the subprocess env. Lets the
+    `gh` CLI (and any tools that read GH_TOKEN) act as the App's
+    installation. If the dashboard isn't reachable or GitHub isn't
+    configured, the run still proceeds — the agent will fall back to
+    whatever auth gh already has (e.g. host bind mount on systemd).
+    """
     global _current
 
     if LAUNCHER_TOKEN and x_launcher_token != LAUNCHER_TOKEN:
@@ -99,6 +135,13 @@ def trigger(x_launcher_token: str | None = Header(default=None)) -> dict:
             detail=f"run-manager.sh not found at {RUN_MANAGER}",
         )
 
+    # Fetch GH_TOKEN from the dashboard. Best-effort — never fail the run
+    # because of an auth fetch problem.
+    env = os.environ.copy()
+    gh_token = _fetch_gh_token()
+    if gh_token:
+        env["GH_TOKEN"] = gh_token
+
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     log_path = LOG_DIR / "launcher.out"
     log_fh = log_path.open("ab")
@@ -109,7 +152,9 @@ def trigger(x_launcher_token: str | None = Header(default=None)) -> dict:
         stderr=subprocess.STDOUT,
         stdin=subprocess.DEVNULL,
         start_new_session=True,
-        cwd="/app",
+        cwd=WORKDIR,
+        env=env,
     )
-    logger.info("Spawned run-manager.sh pid=%s, logging to %s", _current.pid, log_path)
+    logger.info("Spawned run-manager.sh pid=%s, logging to %s, app_auth=%s",
+                _current.pid, log_path, "yes" if gh_token else "no")
     return {"status": "triggered", "pid": _current.pid, "log": str(log_path)}
