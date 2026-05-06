@@ -194,3 +194,39 @@ async def install_callback(installation_id: int, setup_action: str = "install") 
 
     # Redirect back to the dashboard settings page
     return RedirectResponse("/settings?tab=auth", status_code=302)
+
+
+@router.get("/status")
+async def status() -> dict[str, Any]:
+    """Three-state machine the UI consumes."""
+    creds = github_app.read_credentials()
+    if not creds:
+        return {"state": "not_created"}
+    if not creds.get("installation_id"):
+        return {
+            "state": "created_not_installed",
+            "slug": creds["slug"],
+            "name": creds.get("name"),
+            "owner": creds.get("owner"),
+            "html_url": creds.get("html_url"),
+        }
+    return {
+        "state": "installed",
+        "slug": creds["slug"],
+        "name": creds.get("name"),
+        "owner": creds.get("owner"),
+        "installation_id": creds["installation_id"],
+        "html_url": creds.get("html_url"),
+    }
+
+
+@router.delete("")
+async def disconnect() -> dict[str, str]:
+    """Clear local App credentials.
+
+    The App and its installation continue to exist on GitHub — uninstall
+    those manually at https://github.com/settings/installations if desired.
+    """
+    github_app.delete_credentials()
+    github_app._token_cache.clear()
+    return {"status": "disconnected"}

@@ -176,3 +176,54 @@ async def test_install_callback_rejects_when_no_app_credentials(client):
     )
     assert resp.status_code == 400
     assert "no app" in resp.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_status_not_created(client):
+    resp = await client.get("/api/github/app/status")
+    assert resp.status_code == 200
+    assert resp.json() == {"state": "not_created"}
+
+
+@pytest.mark.asyncio
+async def test_status_created_not_installed(client):
+    from app.services import github_app
+    github_app.write_credentials({
+        "app_id": 1, "slug": "test-app", "name": "Test", "owner": "u",
+        "client_id": "c", "client_secret": "s", "webhook_secret": "w",
+        "pem": "PEM", "html_url": "https://github.com/apps/test-app",
+        "installation_id": None,
+    })
+
+    resp = await client.get("/api/github/app/status")
+    body = resp.json()
+    assert body["state"] == "created_not_installed"
+    assert body["slug"] == "test-app"
+    assert body["owner"] == "u"
+    assert body["html_url"] == "https://github.com/apps/test-app"
+
+
+@pytest.mark.asyncio
+async def test_status_installed(client):
+    from app.services import github_app
+    github_app.write_credentials({
+        "app_id": 1, "slug": "test-app", "name": "Test", "owner": "u",
+        "client_id": "c", "client_secret": "s", "webhook_secret": "w",
+        "pem": "PEM", "html_url": "https://github.com/apps/test-app",
+        "installation_id": 999,
+    })
+
+    resp = await client.get("/api/github/app/status")
+    body = resp.json()
+    assert body["state"] == "installed"
+    assert body["installation_id"] == 999
+
+
+@pytest.mark.asyncio
+async def test_disconnect_clears_credentials(client):
+    from app.services import github_app
+    github_app.write_credentials({"app_id": 1, "slug": "x"})
+
+    resp = await client.delete("/api/github/app")
+    assert resp.status_code == 200
+    assert github_app.read_credentials() is None
