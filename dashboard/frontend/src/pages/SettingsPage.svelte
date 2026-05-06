@@ -1,7 +1,9 @@
 <script lang="ts">
   import { getConfig, updateConfig, getSystemStatus, getAuthStatus, serviceAction,
-           listPrompts, updatePrompt, resetPrompt, startOAuthLogin, getGitHubOAuthStatus,
-           startGitHubDeviceFlow, pollGitHubDeviceFlow, refreshOAuthToken } from '../lib/api';
+           listPrompts, updatePrompt, resetPrompt, startOAuthLogin,
+           getGitHubAppStatus, startGitHubAppManifest, disconnectGitHubApp,
+           refreshOAuthToken } from '../lib/api';
+  import type { GitHubAppStatus } from '../lib/api';
   import type { PromptInfo, SystemStatus, AuthStatus } from '../lib/types';
   import { toastSuccess, toastError } from '../lib/toast.svelte';
   import Toggle from '../components/forms/Toggle.svelte';
@@ -12,7 +14,7 @@
   let prompts = $state<PromptInfo[]>([]);
   let systemStatus = $state<SystemStatus | null>(null);
   let authStatus = $state<AuthStatus | null>(null);
-  let githubStatus = $state<any>(null);
+  let githubStatus = $state<GitHubAppStatus | null>(null);
   let activeTab = $state(tab ?? 'general');
   let selectedPrompt = $state<string | null>(null);
   let promptContent = $state('');
@@ -21,7 +23,7 @@
 
   async function loadAll() {
     const [cRes, pRes, sRes, aRes, gRes] = await Promise.allSettled([
-      getConfig(), listPrompts(), getSystemStatus(), getAuthStatus(), getGitHubOAuthStatus(),
+      getConfig(), listPrompts(), getSystemStatus(), getAuthStatus(), getGitHubAppStatus(),
     ]);
     if (cRes.status === 'fulfilled') config = cRes.value;
     if (pRes.status === 'fulfilled') prompts = pRes.value;
@@ -68,6 +70,56 @@
       prompts = await listPrompts();
       selectPrompt(selectedPrompt);
     } catch (e: any) { toastError(e.message); }
+  }
+
+  let creating = $state(false);
+
+  async function createGitHubApp() {
+    if (creating) return;
+    creating = true;
+    try {
+      const { post_url, manifest } = await startGitHubAppManifest();
+      // GitHub's manifest endpoint requires a real form POST — fetch can't
+      // submit cross-origin with redirects the way GitHub expects. Build a
+      // form, append manifest as a hidden input, submit it.
+      const form = document.createElement('form');
+      form.method = 'POST';
+      form.action = post_url;
+      form.target = '_self';
+      const input = document.createElement('input');
+      input.type = 'hidden';
+      input.name = 'manifest';
+      input.value = JSON.stringify(manifest);
+      form.appendChild(input);
+      document.body.appendChild(form);
+      form.submit();
+      // Browser navigates away to GitHub at this point — the page won't
+      // come back here until GitHub redirects to /api/github/app/manifest/exchange.
+    } catch (e: any) {
+      toastError(`Failed to start GitHub App creation: ${e.message}`);
+      creating = false;
+    }
+  }
+
+  async function installGitHubApp() {
+    if (!githubStatus?.slug) return;
+    // Open install page in a new tab so the dashboard stays loaded; GitHub
+    // will redirect back to setup_url (our /api/github/app/install/callback)
+    // which then redirects to /settings?tab=auth, so this tab will end up
+    // on the right page after the install flow completes.
+    window.location.assign(`https://github.com/apps/${githubStatus.slug}/installations/new`);
+  }
+
+  async function handleDisconnectGitHubApp() {
+    if (!confirm('Disconnect GitHub? The App will remain in your GitHub account; uninstall manually at github.com/settings/installations if you want to fully remove it.')) {
+      return;
+    }
+    try {
+      await disconnectGitHubApp();
+      githubStatus = await getGitHubAppStatus();
+    } catch (e: any) {
+      toastError(e.message);
+    }
   }
 </script>
 
@@ -191,10 +243,56 @@
 
       <div class="card p-5">
         <h2 class="section-header mb-3">GitHub</h2>
-        <div class="flex items-center gap-2 text-sm">
-          <span class="w-2 h-2 rounded-full {githubStatus?.connected ? 'bg-status-active' : 'bg-status-inactive'}"></span>
-          <span class="text-secondary">{githubStatus?.connected ? `Connected as ${githubStatus.username}` : 'Not connected'}</span>
-        </div>
+
+        {#if !githubStatus || githubStatus.state === 'not_created'}
+          <div class="text-sm text-secondary mb-3">
+            No GitHub App configured. Creating one registers a private App
+            in your own GitHub account, so your user is the App's publisher
+            (no third-party shown). After creation you'll pick which repos
+            it can access.
+          </div>
+          <button
+            type="button"
+            onclick={createGitHubApp}
+            disabled={creating}
+            data-testid="github-app-create-btn"
+            class="btn btn-primary btn-sm text-xs"
+          >{creating ? 'Redirecting to GitHub…' : 'Create GitHub App'}</button>
+
+        {:else if githubStatus.state === 'created_not_installed'}
+          <div class="flex items-center gap-2 text-sm mb-3">
+            <span class="w-2 h-2 rounded-full bg-status-pending"></span>
+            <span class="text-secondary">
+              App <a href={githubStatus.html_url} target="_blank" rel="noopener" class="text-accent-orange underline">{githubStatus.slug}</a>
+              created (owner: {githubStatus.owner}) but not installed yet.
+            </span>
+          </div>
+          <button
+            type="button"
+            onclick={installGitHubApp}
+            data-testid="github-app-install-btn"
+            class="btn btn-primary btn-sm text-xs"
+          >Install on your repos</button>
+          <button
+            type="button"
+            onclick={handleDisconnectGitHubApp}
+            class="btn btn-ghost btn-sm text-xs ml-2"
+          >Disconnect</button>
+
+        {:else if githubStatus.state === 'installed'}
+          <div class="flex items-center gap-2 text-sm mb-3">
+            <span class="w-2 h-2 rounded-full bg-status-active"></span>
+            <span class="text-secondary">
+              Connected — App <a href={githubStatus.html_url} target="_blank" rel="noopener" class="text-accent-orange underline">{githubStatus.slug}</a>
+              installed (owner: {githubStatus.owner})
+            </span>
+          </div>
+          <button
+            type="button"
+            onclick={handleDisconnectGitHubApp}
+            class="btn btn-ghost btn-sm text-xs"
+          >Disconnect</button>
+        {/if}
       </div>
     </div>
 
