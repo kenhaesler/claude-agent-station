@@ -28,6 +28,7 @@ from app.schemas import (
     TeamSummary,
     TeammateStatus,
 )
+from app.services import service_control
 from app.services.diff_parser import DiffResult, parse_unified_diff
 from app.services.log_importer import import_historical_runs
 
@@ -374,8 +375,6 @@ async def trigger_run():
     ``STATION_DEPLOY_MODE`` between ``sudo systemctl start`` (systemd
     deployments) and ``POST /run`` on the agent launcher (compose).
     """
-    from app.services import service_control
-
     result = await service_control.start_agent_service()
     if not result.get("success"):
         # Compose path may set status_code to a launcher 4xx (e.g. 409

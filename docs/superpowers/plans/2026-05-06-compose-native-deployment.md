@@ -9,8 +9,8 @@
 **Tech Stack:** Python 3.11, FastAPI, httpx, pytest, respx (httpx mocking), docker-compose. Existing modules: `agent/launcher.py`, `agent/scripts/refresh-token.py`, `dashboard/backend/app/services/systemd.py`, `dashboard/backend/app/services/stale_run_reaper.py`.
 
 **Sequencing:** Two PRs.
-- **PR-A** = Tasks 1–14 (Phases 1+2+4): service_control abstraction, all four systemctl call-site migrations, configurable service-user.
-- **PR-B** = Tasks 15–22 (Phase 3): in-container token refresh.
+- **PR-A** = Tasks 1–10 (Phases 1+2+4): service_control abstraction, all four systemctl call-site migrations, configurable service-user.
+- **PR-B** = Tasks 11–14 (Phase 3): in-container token refresh.
 
 Each PR is independently shippable. PR-A is the larger refactor; PR-B is small and standalone.
 

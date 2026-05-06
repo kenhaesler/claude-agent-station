@@ -4,8 +4,10 @@ from __future__ import annotations
 
 When the agent is killed (hard stop, OOM, etc.) the run_complete webhook
 never fires, leaving Run.status == 'running' forever.  This module checks
-whether the systemd service is actually alive and, if not, marks orphaned
-runs as 'interrupted' so the UI reflects reality.
+whether the agent service is actually alive (via ``service_control``, which
+dispatches to systemd or the launcher's /status depending on
+``STATION_DEPLOY_MODE``) and, if not, marks orphaned runs as 'interrupted'
+so the UI reflects reality.
 """
 
 import logging

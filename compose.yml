@@ -25,8 +25,9 @@ services:
       STATION_LOG_DIR: /var/log/claude-agent
       STATION_WORKSPACES: /var/lib/claude-agent-station/workspaces
       STATION_DEPLOY_MODE: compose
-      # Containerized run trigger — when set, /api/runs/trigger POSTs here
-      # instead of calling systemctl (which doesn't exist in the container).
+      # Compose-mode run trigger — selected by STATION_DEPLOY_MODE=compose above.
+      # /api/runs/trigger POSTs to this URL instead of calling systemctl, which
+      # isn't available in the dashboard container.
       STATION_AGENT_LAUNCHER_URL: http://agent:8421
       # NOTE: the default token below is published in this repo and is
       # intended only for single-host dev stacks. Override via the
