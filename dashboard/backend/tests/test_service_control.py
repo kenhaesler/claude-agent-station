@@ -197,3 +197,50 @@ async def test_status_returns_same_keys_in_both_modes(monkeypatch):
         mock.get("http://agent:8421/status").respond(200, json={"running": True, "pid": 1, "exit_code": None})
         compose_result = await service_control.get_agent_status()
     assert set(compose_result.keys()) == expected_keys
+
+
+@pytest.mark.asyncio
+async def test_run_action_compose_unsupported_action_returns_501(monkeypatch):
+    monkeypatch.setenv("STATION_DEPLOY_MODE", "compose")
+    from app.services import service_control
+    result = await service_control.run_action("enable", "claude-agent.timer")
+    assert result["success"] is False
+    assert result["status_code"] == 501
+    assert "compose mode" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_run_action_status_compose_unreachable_surfaces_as_failure(monkeypatch):
+    """When the launcher is unreachable, run_action('status') must report
+    success=False so the system router raises instead of returning 200."""
+    import httpx
+    monkeypatch.setenv("STATION_DEPLOY_MODE", "compose")
+    monkeypatch.setenv("STATION_AGENT_LAUNCHER_URL", "http://agent:8421")
+    monkeypatch.delenv("STATION_LAUNCHER_TOKEN", raising=False)
+    from app.services import service_control
+
+    with respx.mock() as mock:
+        mock.get("http://agent:8421/status").mock(side_effect=httpx.ConnectError("refused"))
+        result = await service_control.run_action("status", "claude-agent.service")
+
+    assert result["success"] is False
+    assert "launcher unreachable" in result["error"].lower()
+    assert result["service_active"] is False
+
+
+@pytest.mark.asyncio
+async def test_run_action_status_compose_reachable_inactive_is_success(monkeypatch):
+    """Conversely, a reachable launcher reporting an inactive service is
+    NOT an error — the call succeeded, the agent is just idle."""
+    monkeypatch.setenv("STATION_DEPLOY_MODE", "compose")
+    monkeypatch.setenv("STATION_AGENT_LAUNCHER_URL", "http://agent:8421")
+    monkeypatch.delenv("STATION_LAUNCHER_TOKEN", raising=False)
+    from app.services import service_control
+
+    with respx.mock() as mock:
+        mock.get("http://agent:8421/status").respond(200, json={"running": False, "pid": None, "exit_code": None})
+        result = await service_control.run_action("status", "claude-agent.service")
+
+    assert result["success"] is True       # call succeeded
+    assert result["service_active"] is False  # but agent is idle
+    assert result["error"] is None

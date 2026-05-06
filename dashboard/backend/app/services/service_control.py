@@ -115,3 +115,32 @@ async def get_agent_status() -> dict:
     # surface, so both default to None.
     result = await systemd_get_status()
     return {**result, "pid": None, "error": None}
+
+
+async def run_action(action: str, unit: str | None = None) -> dict:
+    """Generic service action — used by the system router which exposes
+    arbitrary {start|stop|restart|status|enable|disable} on a unit.
+
+    In compose mode we only honour start/stop/status (the only verbs the
+    launcher implements); other actions return a 501-shaped error so the
+    UI can show a clear message instead of a 500.
+    """
+    if _mode() == "compose":
+        if action == "start":
+            return await start_agent_service()
+        if action == "stop":
+            return await stop_agent_service()
+        if action == "status":
+            status = await get_agent_status()
+            # Reflect launcher reachability: a `status` call that couldn't reach
+            # the launcher should surface as failure so the system router raises
+            # instead of returning HTTP 200 with the error buried in the body.
+            # `error` is None on a successful call (both systemd and compose),
+            # populated with a message when something went wrong.
+            return {**status, "success": status.get("error") is None}
+        return {
+            "success": False,
+            "status_code": 501,
+            "error": f"Action '{action}' is not supported in compose mode",
+        }
+    return await systemctl(action, unit or DEFAULT_AGENT_UNIT)

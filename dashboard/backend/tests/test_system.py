@@ -53,7 +53,7 @@ async def test_system_status(client):
         "memory_available_mb": 4096.0,
         "load_avg": [0.5, 0.3, 0.2],
     }
-    with patch("app.routers.system.get_service_status", new_callable=AsyncMock, return_value=mock_svc):
+    with patch("app.routers.system.service_control.get_agent_status", new_callable=AsyncMock, return_value=mock_svc):
         with patch("app.routers.system.get_system_resources", new_callable=AsyncMock, return_value=mock_resources):
             resp = await client.get("/api/system/status")
     assert resp.status_code == 200
@@ -74,7 +74,7 @@ async def test_system_status_inactive(client):
         "service_stdout": "",
         "timer_stdout": "",
     }
-    with patch("app.routers.system.get_service_status", new_callable=AsyncMock, return_value=mock_svc):
+    with patch("app.routers.system.service_control.get_agent_status", new_callable=AsyncMock, return_value=mock_svc):
         with patch("app.routers.system.get_system_resources", new_callable=AsyncMock, return_value={}):
             resp = await client.get("/api/system/status")
     assert resp.status_code == 200
@@ -91,22 +91,24 @@ async def test_system_status_inactive(client):
 async def test_service_action_valid(client):
     """POST /api/system/service/restart should succeed with mocked systemctl."""
     mock_result = {"success": True, "stdout": "", "stderr": "", "returncode": 0}
-    with patch("app.routers.system.systemctl", new_callable=AsyncMock, return_value=mock_result):
+    with patch("app.routers.system.service_control.run_action", new_callable=AsyncMock, return_value=mock_result) as mock_action:
         resp = await client.post("/api/system/service/restart")
     assert resp.status_code == 200
     data = resp.json()
     assert data["action"] == "restart"
     assert data["unit"] == "claude-agent.service"
+    mock_action.assert_awaited_once_with("restart", "claude-agent.service")
 
 
 @pytest.mark.asyncio
 async def test_service_action_custom_unit(client):
     """POST /api/system/service/start should accept custom unit query param."""
     mock_result = {"success": True, "stdout": "", "stderr": "", "returncode": 0}
-    with patch("app.routers.system.systemctl", new_callable=AsyncMock, return_value=mock_result):
+    with patch("app.routers.system.service_control.run_action", new_callable=AsyncMock, return_value=mock_result) as mock_action:
         resp = await client.post("/api/system/service/start?unit=claude-agent.timer")
     assert resp.status_code == 200
     assert resp.json()["unit"] == "claude-agent.timer"
+    mock_action.assert_awaited_once_with("start", "claude-agent.timer")
 
 
 @pytest.mark.asyncio
@@ -121,10 +123,11 @@ async def test_service_action_invalid(client):
 async def test_service_action_failure(client):
     """POST /api/system/service/stop should return 500 when systemctl fails."""
     mock_result = {"success": False, "error": "Permission denied"}
-    with patch("app.routers.system.systemctl", new_callable=AsyncMock, return_value=mock_result):
+    with patch("app.routers.system.service_control.run_action", new_callable=AsyncMock, return_value=mock_result) as mock_action:
         resp = await client.post("/api/system/service/stop")
     assert resp.status_code == 500
     assert "Permission denied" in resp.json()["detail"]
+    mock_action.assert_awaited_once_with("stop", "claude-agent.service")
 
 
 # ---------------------------------------------------------------------------
