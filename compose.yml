@@ -1,0 +1,68 @@
+# Local-dev compose for Claude Agent Station.
+#
+# - dashboard: FastAPI + built Svelte SPA on http://localhost:8420
+# - agent:     Python orchestrator + Claude Code CLI (idle; exec to run)
+#
+# Auth is taken from the host:
+#   ~/.claude    → Claude Code credentials  (read-write; CLI may refresh tokens)
+#   ~/.config/gh → GitHub CLI auth          (read-only)
+#
+# State lives in named volumes so it survives `compose down`.
+
+services:
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile.dashboard
+    image: claude-agent-station/dashboard:dev
+    container_name: cas-dashboard
+    ports:
+      - "8420:8420"
+    environment:
+      STATION_HOST: "0.0.0.0"
+      STATION_PORT: "8420"
+      STATION_DB_PATH: /var/lib/claude-agent-station/station.db
+      STATION_LOG_DIR: /var/log/claude-agent
+      STATION_WORKSPACES: /var/lib/claude-agent-station/workspaces
+      # Containerized run trigger — when set, /api/runs/trigger POSTs here
+      # instead of calling systemctl (which doesn't exist in the container).
+      STATION_AGENT_LAUNCHER_URL: http://agent:8421/run
+    volumes:
+      - station-data:/var/lib/claude-agent-station
+      - station-logs:/var/log/claude-agent
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8420/api/health',timeout=2).status==200 else 1)"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  agent:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    image: claude-agent-station/agent:dev
+    container_name: cas-agent
+    depends_on:
+      dashboard:
+        condition: service_healthy
+    environment:
+      STATION_DB_PATH: /var/lib/claude-agent-station/station.db
+      STATION_LOG_DIR: /var/log/claude-agent
+      STATION_WORKSPACES: /var/lib/claude-agent-station/workspaces
+      STATION_DASHBOARD_URL: http://dashboard:8420
+      # The orchestrator posts webhooks here; default in code points at
+      # localhost which would resolve inside the agent container, not the
+      # dashboard one. Override above.
+    volumes:
+      - station-data:/var/lib/claude-agent-station
+      - station-logs:/var/log/claude-agent
+      # Auth from the host. Keep ~/.claude rw so the CLI can refresh tokens.
+      - ${HOME}/.claude:/root/.claude
+      - ${HOME}/.config/gh:/root/.config/gh:ro
+    restart: unless-stopped
+
+volumes:
+  station-data:
+  station-logs:

@@ -1,0 +1,36 @@
+# Multi-stage build: frontend (Node) → backend (Python) serving the built SPA.
+
+# ---- Stage 1: build the Svelte/Vite frontend ----
+FROM node:20-alpine AS frontend
+WORKDIR /build
+COPY dashboard/frontend/package.json dashboard/frontend/package-lock.json* ./
+RUN npm ci
+COPY dashboard/frontend/ ./
+RUN npm run build
+
+# ---- Stage 2: Python runtime with backend + built frontend ----
+FROM python:3.11-slim AS runtime
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /app/dashboard/backend
+
+COPY dashboard/backend/requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY dashboard/backend/ /app/dashboard/backend/
+COPY --from=frontend /build/dist /app/dashboard/frontend/dist
+
+# Defaults — override via compose env. The volumes mounted at these paths
+# in compose.yml hold runtime state across restarts.
+ENV STATION_DB_PATH=/var/lib/claude-agent-station/station.db \
+    STATION_LOG_DIR=/var/log/claude-agent \
+    STATION_WORKSPACES=/var/lib/claude-agent-station/workspaces \
+    STATION_HOST=0.0.0.0 \
+    STATION_PORT=8420
+
+RUN mkdir -p /var/lib/claude-agent-station /var/log/claude-agent /var/lib/claude-agent-station/workspaces
+
+EXPOSE 8420
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8420"]

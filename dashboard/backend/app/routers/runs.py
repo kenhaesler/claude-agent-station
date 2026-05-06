@@ -369,7 +369,27 @@ async def rescan_logs(db: AsyncSession = Depends(get_db)):
 
 @router.post("/trigger")
 async def trigger_run():
-    """Trigger the agent service immediately."""
+    """Trigger the agent service immediately.
+
+    When ``STATION_AGENT_LAUNCHER_URL`` is set (compose deployment), POST to
+    the agent container's HTTP launcher. Otherwise fall back to systemctl,
+    which is how the bare-metal systemd deployment runs.
+    """
+    import os
+
+    import httpx
+
+    launcher_url = os.environ.get("STATION_AGENT_LAUNCHER_URL")
+    if launcher_url:
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.post(launcher_url)
+        except httpx.HTTPError as exc:
+            raise HTTPException(status_code=502, detail=f"launcher unreachable: {exc}") from exc
+        if resp.status_code >= 400:
+            raise HTTPException(status_code=resp.status_code, detail=resp.text)
+        return {"status": "triggered", "detail": "agent launcher accepted run", **resp.json()}
+
     result = await systemctl("start", "claude-agent.service")
     if not result.get("success"):
         raise HTTPException(

@@ -1,0 +1,51 @@
+# Agent runtime: Python orchestrator + Claude Code CLI + git/gh for repo work.
+
+FROM python:3.11-slim
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    NPM_CONFIG_PREFIX=/usr/local
+
+# git + gh CLI + node (for the Claude Code CLI which the agent SDK shells out to).
+# gh is pulled from the official cli.github.com apt repo to avoid the very old
+# version in Debian stable.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates curl gnupg git jq tini \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+        | gpg --dearmor -o /usr/share/keyrings/githubcli.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/githubcli.gpg] https://cli.github.com/packages stable main" \
+        > /etc/apt/sources.list.d/github-cli.list \
+    && apt-get update && apt-get install -y --no-install-recommends nodejs gh \
+    && rm -rf /var/lib/apt/lists/* \
+    && npm install -g @anthropic-ai/claude-code
+
+WORKDIR /app
+
+# Backend deps include claude-agent-sdk + sqlalchemy/aiosqlite that the
+# orchestrator and run_control share with the dashboard.
+COPY dashboard/backend/requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt
+
+# Copy agent code and the backend app package — the orchestrator imports
+# from app.models when wiring run_controls / station_control.
+COPY agent/ /app/agent/
+COPY dashboard/backend/ /app/dashboard/backend/
+
+# Make scripts executable.
+RUN chmod +x /app/agent/scripts/*.sh 2>/dev/null || true
+
+ENV STATION_DB_PATH=/var/lib/claude-agent-station/station.db \
+    STATION_LOG_DIR=/var/log/claude-agent \
+    STATION_WORKSPACES=/var/lib/claude-agent-station/workspaces \
+    STATION_CONFIG=/app/dashboard/backend/manager-config.json \
+    PYTHONPATH=/app:/app/dashboard/backend
+
+RUN mkdir -p /var/lib/claude-agent-station /var/log/claude-agent /var/lib/claude-agent-station/workspaces
+
+# The launcher exposes POST /run on 8421 so the dashboard can trigger
+# a run without docker-socket access. On bare metal you'd skip this and
+# rely on the existing systemd unit instead.
+EXPOSE 8421
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["uvicorn", "agent.launcher:app", "--host", "0.0.0.0", "--port", "8421"]
