@@ -53,3 +53,31 @@ def delete_credentials() -> None:
         CREDENTIALS_PATH.unlink()
     except FileNotFoundError:
         pass
+
+
+import time
+
+import jwt as pyjwt
+
+# GitHub allows JWT iat up to 60s in the past; subtract 60 from iat to absorb
+# clock drift between the dashboard host and GitHub. Max exp is iat+600s.
+_JWT_IAT_BUFFER_SECONDS = 60
+_JWT_LIFETIME_SECONDS = 540  # under the 600 ceiling, with safety margin
+
+
+def make_jwt(app_id: int, private_key_pem: str) -> str:
+    """Sign a short-lived RS256 JWT for App-level GitHub API calls.
+
+    GitHub requires App JWTs to have ``iss`` set to the App's numeric id and
+    a ``iat``/``exp`` window of at most 600 seconds. We use 540s and
+    pre-date ``iat`` by 60s for clock skew.
+    """
+    now = int(time.time())
+    payload = {
+        "iat": now - _JWT_IAT_BUFFER_SECONDS,
+        "exp": now - _JWT_IAT_BUFFER_SECONDS + _JWT_LIFETIME_SECONDS,
+        # PyJWT >= 2.9 enforces RFC 7519: iss must be a string.
+        # GitHub accepts "12345" the same as 12345.
+        "iss": str(app_id),
+    }
+    return pyjwt.encode(payload, private_key_pem, algorithm="RS256")

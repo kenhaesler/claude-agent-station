@@ -70,3 +70,55 @@ def test_delete_removes_file(monkeypatch, tmp_path):
     assert not target.exists()
     # Idempotent
     github_app.delete_credentials()
+
+
+import time
+
+import jwt as pyjwt
+
+
+@pytest.fixture
+def rsa_keypair():
+    """Generate a throwaway RSA key for JWT signing tests."""
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.hazmat.primitives import serialization
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    pem = key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode()
+    public_pem = key.public_key().public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    ).decode()
+    return pem, public_pem
+
+
+def test_make_jwt_signs_with_app_credentials(rsa_keypair):
+    pem, public_pem = rsa_keypair
+    from app.services import github_app
+
+    token = github_app.make_jwt(app_id=12345, private_key_pem=pem)
+
+    decoded = pyjwt.decode(token, public_pem, algorithms=["RS256"])
+    # PyJWT >= 2.9 enforces iss as string (RFC 7519); GitHub accepts "12345".
+    assert decoded["iss"] == "12345"
+    # GitHub requires iat and exp; iat <= now, exp = iat + 600s max.
+    now = int(time.time())
+    assert decoded["iat"] <= now
+    assert decoded["exp"] > now
+    assert decoded["exp"] - decoded["iat"] <= 600
+
+
+def test_make_jwt_iat_clock_skew_buffer(rsa_keypair):
+    """GitHub rejects JWTs with iat in the future. Subtract 60s from iat
+    to absorb minor clock drift between the dashboard and GitHub."""
+    pem, public_pem = rsa_keypair
+    from app.services import github_app
+
+    token = github_app.make_jwt(app_id=1, private_key_pem=pem)
+    decoded = pyjwt.decode(token, public_pem, algorithms=["RS256"])
+    now = int(time.time())
+    assert decoded["iat"] <= now - 30  # buffered behind real now
