@@ -122,3 +122,125 @@ def test_make_jwt_iat_clock_skew_buffer(rsa_keypair):
     decoded = pyjwt.decode(token, public_pem, algorithms=["RS256"])
     now = int(time.time())
     assert decoded["iat"] <= now - 30  # buffered behind real now
+
+
+import respx
+
+
+@pytest.mark.asyncio
+async def test_mint_installation_token_calls_github(rsa_keypair, monkeypatch, tmp_path):
+    pem, _ = rsa_keypair
+    monkeypatch.setenv("STATION_GITHUB_APP_CREDENTIALS_PATH", str(tmp_path / "creds.json"))
+    import importlib
+
+    from app.services import github_app
+    importlib.reload(github_app)
+
+    github_app.write_credentials({
+        "app_id": 12345,
+        "slug": "test-app",
+        "pem": pem,
+        "installation_id": 67890,
+    })
+    github_app._token_cache.clear()
+
+    with respx.mock() as mock:
+        route = mock.post(
+            "https://api.github.com/app/installations/67890/access_tokens"
+        ).respond(
+            201,
+            json={
+                "token": "ghs_abc123",
+                "expires_at": "2026-05-06T23:00:00Z",
+                "permissions": {"contents": "write"},
+            },
+        )
+        token = await github_app.get_installation_token()
+
+    assert token == "ghs_abc123"
+    # JWT should appear in Authorization header on the request to GitHub
+    assert route.calls[0].request.headers["Authorization"].startswith("Bearer eyJ")
+
+
+@pytest.mark.asyncio
+async def test_get_installation_token_returns_none_when_not_configured(monkeypatch, tmp_path):
+    monkeypatch.setenv("STATION_GITHUB_APP_CREDENTIALS_PATH", str(tmp_path / "missing.json"))
+    import importlib
+
+    from app.services import github_app
+    importlib.reload(github_app)
+    github_app._token_cache.clear()
+
+    assert await github_app.get_installation_token() is None
+
+
+@pytest.mark.asyncio
+async def test_get_installation_token_caches_until_near_expiry(rsa_keypair, monkeypatch, tmp_path):
+    """Two consecutive calls should hit GitHub once. Cache invalidates when
+    less than 5 minutes remain on the token."""
+    pem, _ = rsa_keypair
+    monkeypatch.setenv("STATION_GITHUB_APP_CREDENTIALS_PATH", str(tmp_path / "creds.json"))
+    import importlib
+
+    from app.services import github_app
+    importlib.reload(github_app)
+
+    github_app.write_credentials({
+        "app_id": 1, "slug": "x", "pem": pem, "installation_id": 99,
+    })
+    github_app._token_cache.clear()
+
+    # Token "expires" in 1 hour
+    future = time.gmtime(time.time() + 3600)
+    expires_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", future)
+
+    with respx.mock() as mock:
+        route = mock.post(
+            "https://api.github.com/app/installations/99/access_tokens"
+        ).respond(201, json={"token": "ghs_first", "expires_at": expires_iso})
+
+        first = await github_app.get_installation_token()
+        second = await github_app.get_installation_token()
+
+    assert first == "ghs_first"
+    assert second == "ghs_first"
+    assert route.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_token_refreshes_when_close_to_expiry(rsa_keypair, monkeypatch, tmp_path):
+    pem, _ = rsa_keypair
+    monkeypatch.setenv("STATION_GITHUB_APP_CREDENTIALS_PATH", str(tmp_path / "creds.json"))
+    import importlib
+
+    from app.services import github_app
+    importlib.reload(github_app)
+
+    github_app.write_credentials({
+        "app_id": 1, "slug": "x", "pem": pem, "installation_id": 99,
+    })
+    github_app._token_cache.clear()
+
+    # Token "expires" in 60 seconds (well under the 5-minute refresh threshold)
+    soon = time.gmtime(time.time() + 60)
+    expires_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", soon)
+    later = time.gmtime(time.time() + 3600)
+    later_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", later)
+
+    with respx.mock() as mock:
+        route = mock.post(
+            "https://api.github.com/app/installations/99/access_tokens"
+        ).respond(201, json={"token": "ghs_first", "expires_at": expires_iso})
+
+        first = await github_app.get_installation_token()
+
+    with respx.mock() as mock:
+        route2 = mock.post(
+            "https://api.github.com/app/installations/99/access_tokens"
+        ).respond(201, json={"token": "ghs_second", "expires_at": later_iso})
+
+        second = await github_app.get_installation_token()
+
+    assert first == "ghs_first"
+    assert second == "ghs_second"
+    assert route2.call_count == 1

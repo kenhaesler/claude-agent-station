@@ -81,3 +81,66 @@ def make_jwt(app_id: int, private_key_pem: str) -> str:
         "iss": str(app_id),
     }
     return pyjwt.encode(payload, private_key_pem, algorithm="RS256")
+
+
+from datetime import datetime, timezone
+
+import httpx
+
+# Refresh threshold: when an installation token has less than this many
+# seconds left, treat it as expired and mint a new one.
+_TOKEN_REFRESH_THRESHOLD_SECONDS = 300
+
+# In-memory cache: {installation_id: (token, expires_at_epoch)}.
+# Single-process state; the launcher and dashboard run independently and
+# each maintains their own cache, which is fine because every miss just
+# costs one extra GitHub round-trip.
+_token_cache: dict[int, tuple[str, float]] = {}
+
+
+def _parse_iso8601(s: str) -> float:
+    """GitHub returns ``2026-05-06T23:00:00Z``; convert to epoch seconds."""
+    return datetime.strptime(s, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).timestamp()
+
+
+async def get_installation_token() -> str | None:
+    """Return a fresh installation access token, minting one if needed.
+
+    Returns None if the App is not yet configured (manifest not exchanged,
+    or App not yet installed on any account). Callers should treat None
+    as "GitHub integration is not set up; surface a clear UI message."
+    """
+    creds = read_credentials()
+    if not creds:
+        return None
+    app_id = creds.get("app_id")
+    pem = creds.get("pem")
+    installation_id = creds.get("installation_id")
+    if not (app_id and pem and installation_id):
+        return None
+
+    # Cache hit?
+    cached = _token_cache.get(installation_id)
+    if cached:
+        token, expires_at = cached
+        if expires_at - time.time() > _TOKEN_REFRESH_THRESHOLD_SECONDS:
+            return token
+
+    # Cache miss — mint a new token.
+    jwt_token = make_jwt(app_id=app_id, private_key_pem=pem)
+    url = f"https://api.github.com/app/installations/{installation_id}/access_tokens"
+    headers = {
+        "Authorization": f"Bearer {jwt_token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.post(url, headers=headers)
+    if resp.status_code != 201:
+        logger.warning("GitHub minting request failed (http_status=%s)", resp.status_code)
+        return None
+    data = resp.json()
+    token = data["token"]
+    expires_at = _parse_iso8601(data["expires_at"])
+    _token_cache[installation_id] = (token, expires_at)
+    return token
