@@ -41,9 +41,9 @@ def write_credentials(data: dict) -> None:
     """Atomically write the credentials JSON, chmod 0600."""
     CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
     tmp = CREDENTIALS_PATH.with_suffix(".tmp")
-    with tmp.open("w") as f:
+    fd = os.open(tmp, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
         json.dump(data, f, indent=2)
-    os.chmod(tmp, 0o600)
     tmp.replace(CREDENTIALS_PATH)
 
 
