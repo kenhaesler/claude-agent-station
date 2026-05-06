@@ -244,3 +244,28 @@ async def test_token_refreshes_when_close_to_expiry(rsa_keypair, monkeypatch, tm
     assert first == "ghs_first"
     assert second == "ghs_second"
     assert route2.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_get_installation_token_returns_none_on_malformed_github_response(rsa_keypair, monkeypatch, tmp_path):
+    """If GitHub returns 201 with a malformed body, surface as None instead
+    of letting the parse error propagate to callers."""
+    pem, _ = rsa_keypair
+    monkeypatch.setenv("STATION_GITHUB_APP_CREDENTIALS_PATH", str(tmp_path / "creds.json"))
+    import importlib
+
+    from app.services import github_app
+    importlib.reload(github_app)
+
+    github_app.write_credentials({
+        "app_id": 1, "slug": "x", "pem": pem, "installation_id": 99,
+    })
+    github_app._token_cache.clear()
+
+    with respx.mock() as mock:
+        mock.post(
+            "https://api.github.com/app/installations/99/access_tokens"
+        ).respond(201, json={"unexpected": "shape"})
+        result = await github_app.get_installation_token()
+
+    assert result is None

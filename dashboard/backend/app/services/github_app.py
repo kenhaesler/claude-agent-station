@@ -139,8 +139,12 @@ async def get_installation_token() -> str | None:
     if resp.status_code != 201:
         logger.warning("GitHub minting request failed (http_status=%s)", resp.status_code)
         return None
-    data = resp.json()
-    token = data["token"]
-    expires_at = _parse_iso8601(data["expires_at"])
+    try:
+        data = resp.json()
+        token = data["token"]
+        expires_at = _parse_iso8601(data["expires_at"])
+    except (ValueError, KeyError, TypeError) as exc:
+        logger.warning("GitHub returned 201 but response was unparseable: %s", exc)
+        return None
     _token_cache[installation_id] = (token, expires_at)
     return token
