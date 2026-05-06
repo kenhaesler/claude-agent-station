@@ -61,3 +61,82 @@ async def test_manifest_start_state_is_random_per_call(client):
     a = (await client.post("/api/github/app/manifest/start")).json()["state"]
     b = (await client.post("/api/github/app/manifest/start")).json()["state"]
     assert a != b
+
+
+import respx
+from fastapi.responses import RedirectResponse
+
+
+@pytest.mark.asyncio
+async def test_exchange_rejects_unknown_state(client):
+    resp = await client.get("/api/github/app/manifest/exchange?code=abc&state=not-issued")
+    assert resp.status_code == 400
+    assert "state" in resp.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_exchange_persists_credentials_and_redirects_to_install(client, tmp_path):
+    # Issue a real state via the start endpoint
+    start_resp = await client.post("/api/github/app/manifest/start")
+    state = start_resp.json()["state"]
+
+    fake_app = {
+        "id": 12345,
+        "slug": "claude-agent-station-laboef1900",
+        "name": "Claude Agent Station",
+        "owner": {"login": "laboef1900"},
+        "client_id": "Iv1.testclient",
+        "client_secret": "secret-shh",
+        "webhook_secret": "webhook-shh",
+        "pem": "-----BEGIN PRIVATE KEY-----\nFAKE\n-----END PRIVATE KEY-----\n",
+        "html_url": "https://github.com/apps/claude-agent-station-laboef1900",
+    }
+
+    with respx.mock() as mock:
+        mock.post("https://api.github.com/app-manifests/CODE123/conversions").respond(
+            201, json=fake_app,
+        )
+        resp = await client.get(
+            f"/api/github/app/manifest/exchange?code=CODE123&state={state}",
+            follow_redirects=False,
+        )
+
+    assert resp.status_code == 302
+    # Redirect points the operator at the installation page on github.com
+    assert resp.headers["location"].startswith(
+        "https://github.com/apps/claude-agent-station-laboef1900/installations/new"
+    )
+
+    # Credentials were persisted
+    from app.services import github_app
+    creds = github_app.read_credentials()
+    assert creds["app_id"] == 12345
+    assert creds["slug"] == "claude-agent-station-laboef1900"
+    assert creds["owner"] == "laboef1900"
+    assert creds["pem"].startswith("-----BEGIN PRIVATE KEY-----")
+
+
+@pytest.mark.asyncio
+async def test_exchange_returns_state_used_only_once(client):
+    start_resp = await client.post("/api/github/app/manifest/start")
+    state = start_resp.json()["state"]
+
+    fake_app = {
+        "id": 1, "slug": "x", "name": "x", "owner": {"login": "u"},
+        "client_id": "c", "client_secret": "s", "webhook_secret": "w",
+        "pem": "PEM", "html_url": "https://github.com/apps/x",
+    }
+    with respx.mock() as mock:
+        mock.post("https://api.github.com/app-manifests/CODE/conversions").respond(201, json=fake_app)
+        first = await client.get(
+            f"/api/github/app/manifest/exchange?code=CODE&state={state}",
+            follow_redirects=False,
+        )
+    assert first.status_code == 302
+
+    # Replay with the same state — should be rejected
+    second = await client.get(
+        f"/api/github/app/manifest/exchange?code=CODE&state={state}",
+        follow_redirects=False,
+    )
+    assert second.status_code == 400

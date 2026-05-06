@@ -104,3 +104,60 @@ async def manifest_start() -> dict[str, Any]:
         "post_url": f"https://github.com/settings/apps/new?state={state}",
         "manifest": _build_manifest(),
     }
+
+
+import httpx
+from fastapi.responses import RedirectResponse
+
+
+@router.get("/manifest/exchange")
+async def manifest_exchange(code: str, state: str) -> RedirectResponse:
+    """Exchange the manifest code for App credentials, persist them, and
+    redirect the operator to GitHub's "install on repos" page.
+
+    GitHub redirects here after the operator clicks "Create GitHub App"
+    on the form we POSTed in the previous step. The ``code`` is one-time
+    use and short-lived (10 minutes per GitHub docs).
+    """
+    if not _consume_state(state):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid or expired state token — start the flow again.",
+        )
+
+    url = f"https://api.github.com/app-manifests/{code}/conversions"
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(url, headers=headers)
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"GitHub unreachable: {exc}") from exc
+
+    if resp.status_code != 201:
+        raise HTTPException(
+            status_code=resp.status_code,
+            detail=f"GitHub manifest exchange failed: {resp.text[:300]}",
+        )
+
+    data = resp.json()
+    creds = {
+        "app_id": data["id"],
+        "slug": data["slug"],
+        "name": data["name"],
+        "owner": data.get("owner", {}).get("login"),
+        "client_id": data["client_id"],
+        "client_secret": data["client_secret"],
+        "webhook_secret": data["webhook_secret"],
+        "pem": data["pem"],
+        "html_url": data["html_url"],
+        # installation_id is filled in by the install callback later
+        "installation_id": None,
+    }
+    github_app.write_credentials(creds)
+    logger.info("GitHub App created: %s (id=%s, owner=%s)", creds["slug"], creds["app_id"], creds["owner"])
+
+    install_url = f"https://github.com/apps/{creds['slug']}/installations/new"
+    return RedirectResponse(install_url, status_code=302)
