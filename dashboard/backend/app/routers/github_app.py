@@ -161,3 +161,36 @@ async def manifest_exchange(code: str, state: str) -> RedirectResponse:
 
     install_url = f"https://github.com/apps/{creds['slug']}/installations/new"
     return RedirectResponse(install_url, status_code=302)
+
+
+@router.get("/install/callback")
+async def install_callback(installation_id: int, setup_action: str = "install") -> RedirectResponse:
+    """GitHub redirects here after the operator picks repos and clicks Install.
+
+    We look up the App credentials persisted during manifest exchange and
+    store the new installation_id on top, then send the operator back to
+    the dashboard's Settings page.
+
+    SECURITY NOTE: this endpoint trusts the ``installation_id`` query
+    parameter — anyone reaching it can write a value into our credentials
+    store. The risk is low because the dashboard isn't typically
+    internet-exposed (compose binds 8420 to localhost; bare-metal puts it
+    behind firewalld). A hardened follow-up would fetch
+    ``/app/installations/{id}`` with the App JWT and verify
+    ``account.login`` matches the stored ``owner``. Tracked as a
+    follow-up below.
+    """
+    creds = github_app.read_credentials()
+    if not creds:
+        raise HTTPException(
+            status_code=400,
+            detail="No App credentials found — finish the manifest creation step first.",
+        )
+    creds["installation_id"] = installation_id
+    github_app.write_credentials(creds)
+    # Invalidate any stale token from a previous installation
+    github_app._token_cache.pop(installation_id, None)
+    logger.info("GitHub App installed: installation_id=%s setup_action=%s", installation_id, setup_action)
+
+    # Redirect back to the dashboard settings page
+    return RedirectResponse("/settings?tab=auth", status_code=302)

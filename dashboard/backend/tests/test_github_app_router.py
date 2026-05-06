@@ -140,3 +140,39 @@ async def test_exchange_returns_state_used_only_once(client):
         follow_redirects=False,
     )
     assert second.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_install_callback_stores_installation_id(client):
+    # Seed an existing App-creation result (no installation_id yet)
+    from app.services import github_app
+    github_app.write_credentials({
+        "app_id": 1, "slug": "x", "name": "x", "owner": "u",
+        "client_id": "c", "client_secret": "s", "webhook_secret": "w",
+        "pem": "PEM", "html_url": "https://github.com/apps/x",
+        "installation_id": None,
+    })
+
+    resp = await client.get(
+        "/api/github/app/install/callback?installation_id=99999&setup_action=install",
+        follow_redirects=False,
+    )
+
+    assert resp.status_code == 302
+    assert resp.headers["location"] == "/settings?tab=auth"
+
+    creds = github_app.read_credentials()
+    assert creds["installation_id"] == 99999
+
+
+@pytest.mark.asyncio
+async def test_install_callback_rejects_when_no_app_credentials(client):
+    """If a malicious user calls the callback before manifest exchange has
+    run, we shouldn't accept their installation_id (the installation isn't
+    bound to *our* App)."""
+    resp = await client.get(
+        "/api/github/app/install/callback?installation_id=1&setup_action=install",
+        follow_redirects=False,
+    )
+    assert resp.status_code == 400
+    assert "no app" in resp.json()["detail"].lower()
