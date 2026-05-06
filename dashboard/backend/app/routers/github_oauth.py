@@ -26,8 +26,19 @@ USER_API_URL = "https://api.github.com/user"
 GITHUB_CLIENT_ID = "Ov23liUWRzu5iRGDS1kE"
 SCOPES = "repo read:org read:user workflow"
 
-# Default token storage path (alongside Claude credentials)
-GITHUB_TOKEN_PATH = Path.home() / ".claude-agent-station" / "github_token"
+# Token storage path. The default lives alongside Claude credentials in the
+# user's home dir, which is the right place on a bare-metal systemd install
+# (the claude-agent service user owns its own home). In compose, ``HOME`` is
+# the dashboard container's writable layer — it gets wiped on every rebuild,
+# so the path must point at a mounted volume instead. Set
+# ``STATION_GITHUB_TOKEN_PATH`` to override; compose.yml sets it to the
+# ``station-data`` named volume.
+GITHUB_TOKEN_PATH = Path(
+    os.environ.get(
+        "STATION_GITHUB_TOKEN_PATH",
+        str(Path.home() / ".claude-agent-station" / "github_token"),
+    )
+)
 
 
 @dataclass

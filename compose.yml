@@ -36,6 +36,10 @@ services:
       # to anything beyond localhost.
       STATION_LAUNCHER_TOKEN: ${STATION_LAUNCHER_TOKEN:-cas-dev-launcher-token}
       STATION_SERVICE_USER: root
+      # Persist the GitHub OAuth token in the named volume so it survives
+      # container rebuilds. Default path resolves to the dashboard
+      # container's writable layer, which gets wiped on every `compose up`.
+      STATION_GITHUB_TOKEN_PATH: /var/lib/claude-agent-station/github_token
     volumes:
       - station-data:/var/lib/claude-agent-station
       - station-logs:/var/log/claude-agent
