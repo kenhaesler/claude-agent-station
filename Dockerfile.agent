@@ -32,9 +32,6 @@ RUN pip install --no-cache-dir -r /tmp/requirements.txt
 COPY agent/ /app/agent/
 COPY dashboard/backend/ /app/dashboard/backend/
 
-# Make scripts executable.
-RUN chmod +x /app/agent/scripts/*.sh 2>/dev/null || true
-
 ENV STATION_DB_PATH=/var/lib/claude-agent-station/station.db \
     STATION_LOG_DIR=/var/log/claude-agent \
     STATION_WORKSPACES=/var/lib/claude-agent-station/workspaces \

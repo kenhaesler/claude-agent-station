@@ -27,6 +27,7 @@ services:
       # Containerized run trigger — when set, /api/runs/trigger POSTs here
       # instead of calling systemctl (which doesn't exist in the container).
       STATION_AGENT_LAUNCHER_URL: http://agent:8421/run
+      STATION_LAUNCHER_TOKEN: ${STATION_LAUNCHER_TOKEN:-cas-dev-launcher-token}
     volumes:
       - station-data:/var/lib/claude-agent-station
       - station-logs:/var/log/claude-agent
@@ -51,16 +52,27 @@ services:
       STATION_DB_PATH: /var/lib/claude-agent-station/station.db
       STATION_LOG_DIR: /var/log/claude-agent
       STATION_WORKSPACES: /var/lib/claude-agent-station/workspaces
-      STATION_DASHBOARD_URL: http://dashboard:8420
-      # The orchestrator posts webhooks here; default in code points at
-      # localhost which would resolve inside the agent container, not the
-      # dashboard one. Override above.
+      # Override the orchestrator's webhook URL so it reaches the dashboard
+      # service by name on the compose network. Without this it falls back
+      # to localhost, which inside the agent container is the agent itself.
+      STATION_WEBHOOK_URL: http://dashboard:8420/api/webhook/run-event
+      # Shared secret authenticating dashboard → launcher calls. Both ends
+      # read this same env. Override with a strong token in production-shaped
+      # deployments; the default below is fine for a single-host dev stack.
+      STATION_LAUNCHER_TOKEN: ${STATION_LAUNCHER_TOKEN:-cas-dev-launcher-token}
     volumes:
       - station-data:/var/lib/claude-agent-station
       - station-logs:/var/log/claude-agent
-      # Auth from the host. Keep ~/.claude rw so the CLI can refresh tokens.
-      - ${HOME}/.claude:/root/.claude
-      - ${HOME}/.config/gh:/root/.config/gh:ro
+      # Auth from the host. ``:z`` relabels for SELinux (Fedora/RHEL hosts
+      # would otherwise fail with EPERM under enforcing mode).
+      #
+      # SECURITY: ``~/.claude`` is mounted read-write so the Claude CLI can
+      # refresh OAuth tokens. A compromise of the agent process therefore
+      # has write access to the host's Claude credentials, including those
+      # of unrelated projects. For a hardened deployment, copy creds into
+      # an isolated dir and bind that instead.
+      - ${HOME}/.claude:/root/.claude:z
+      - ${HOME}/.config/gh:/root/.config/gh:ro,z
     restart: unless-stopped
 
 volumes:

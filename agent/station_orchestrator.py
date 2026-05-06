@@ -21,8 +21,6 @@ import os
 import subprocess
 import sys
 import time
-import urllib.error
-import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -398,10 +396,20 @@ def _message_to_dict(message) -> dict:
 
 
 def post_webhook(config: dict, event: str, data: dict | None = None) -> None:
-    """Send an event to the dashboard webhook (best-effort)."""
-    webhook_url = config.get("dashboard", {}).get(
+    """Send an event to the dashboard webhook (best-effort).
+
+    URL precedence: ``STATION_WEBHOOK_URL`` env (set by compose so the agent
+    container reaches the dashboard service by name), then config-file
+    ``dashboard.webhook_url``, then a localhost default for systemd hosts.
+    """
+    webhook_url = os.environ.get("STATION_WEBHOOK_URL") or config.get("dashboard", {}).get(
         "webhook_url", "http://127.0.0.1:8420/api/webhook/run-event"
     )
+    # urllib.request honors file://, ftp://, etc. — restrict to http/https so a
+    # misconfigured env or config can't be coerced into reading local files.
+    if not webhook_url.startswith(("http://", "https://")):
+        logger.warning("Refusing webhook URL with unsupported scheme: %s", webhook_url)
+        return
     webhook_secret = os.environ.get("STATION_WEBHOOK_SECRET", "") or config.get(
         "dashboard", {}
     ).get("webhook_secret", "")
@@ -413,14 +421,17 @@ def post_webhook(config: dict, event: str, data: dict | None = None) -> None:
     if data:
         payload.update(data)
 
+    headers: dict[str, str] = {"Content-Type": "application/json"}
+    if webhook_secret:
+        headers["X-Webhook-Token"] = webhook_secret
+
     try:
-        body = json.dumps(payload).encode()
-        headers: dict[str, str] = {"Content-Type": "application/json"}
-        if webhook_secret:
-            headers["X-Webhook-Token"] = webhook_secret
-        req = urllib.request.Request(webhook_url, data=body, headers=headers, method="POST")
-        with urllib.request.urlopen(req, timeout=3):
-            pass
+        # httpx (vs. urllib.request) refuses file:// and other local schemes,
+        # so even with the explicit guard above we cannot be tricked into
+        # reading local files via a misconfigured webhook_url.
+        import httpx
+        with httpx.Client(timeout=3.0) as client:
+            client.post(webhook_url, content=json.dumps(payload), headers=headers)
     except Exception:
         pass  # Best-effort
 

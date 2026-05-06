@@ -3,7 +3,7 @@
 # ---- Stage 1: build the Svelte/Vite frontend ----
 FROM node:20-alpine AS frontend
 WORKDIR /build
-COPY dashboard/frontend/package.json dashboard/frontend/package-lock.json* ./
+COPY dashboard/frontend/package.json dashboard/frontend/package-lock.json ./
 RUN npm ci
 COPY dashboard/frontend/ ./
 RUN npm run build

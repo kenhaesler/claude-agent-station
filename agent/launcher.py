@@ -16,20 +16,30 @@ import os
 import subprocess
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 RUN_MANAGER = Path(os.environ.get("STATION_RUN_MANAGER", "/app/agent/scripts/run-manager.sh"))
 LOG_DIR = Path(os.environ.get("STATION_LOG_DIR", "/var/log/claude-agent"))
+# Shared secret with the dashboard. When set, /run requires a matching
+# X-Launcher-Token header. When unset we accept anonymous calls but log a
+# warning at startup — defaulting to closed would break the bare-metal
+# systemd path that doesn't go through this launcher at all.
+LAUNCHER_TOKEN = os.environ.get("STATION_LAUNCHER_TOKEN", "")
 
+# This launcher keeps process state in module globals (``_current``), so it
+# only works correctly under a single uvicorn worker. The Dockerfile launches
+# without --workers; do not change that without reworking state to be shared.
 app = FastAPI(title="claude-agent-station launcher")
-
-# Track the last-spawned process so a second trigger can report whether one
-# is already in flight. Best-effort — if the process exits and we miss it,
-# the next trigger just starts a new one.
 _current: subprocess.Popen | None = None
+
+if not LAUNCHER_TOKEN:
+    logger.warning(
+        "launcher: STATION_LAUNCHER_TOKEN unset — /run accepts anonymous calls. "
+        "Set this env on both the agent and dashboard for production-shaped use."
+    )
 
 
 @app.get("/health")
@@ -48,9 +58,12 @@ def status() -> dict:
 
 
 @app.post("/run")
-def trigger() -> dict:
+def trigger(x_launcher_token: str | None = Header(default=None)) -> dict:
     """Spawn run-manager.sh detached. Returns once the process is forked."""
     global _current
+
+    if LAUNCHER_TOKEN and x_launcher_token != LAUNCHER_TOKEN:
+        raise HTTPException(status_code=401, detail="invalid or missing launcher token")
 
     if _current is not None and _current.poll() is None:
         raise HTTPException(

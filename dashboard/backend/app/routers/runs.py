@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Optional
 import logging
+import os
 from pathlib import Path
+from typing import Optional
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -375,15 +377,15 @@ async def trigger_run():
     the agent container's HTTP launcher. Otherwise fall back to systemctl,
     which is how the bare-metal systemd deployment runs.
     """
-    import os
-
-    import httpx
-
     launcher_url = os.environ.get("STATION_AGENT_LAUNCHER_URL")
     if launcher_url:
+        headers = {}
+        token = os.environ.get("STATION_LAUNCHER_TOKEN")
+        if token:
+            headers["X-Launcher-Token"] = token
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.post(launcher_url)
+                resp = await client.post(launcher_url, headers=headers)
         except httpx.HTTPError as exc:
             raise HTTPException(status_code=502, detail=f"launcher unreachable: {exc}") from exc
         if resp.status_code >= 400:
