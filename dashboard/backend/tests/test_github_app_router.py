@@ -227,3 +227,75 @@ async def test_disconnect_clears_credentials(client):
     resp = await client.delete("/api/github/app")
     assert resp.status_code == 200
     assert github_app.read_credentials() is None
+
+
+@pytest.fixture
+def rsa_keypair():
+    """Throwaway RSA key for App-JWT tests in this module."""
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.hazmat.primitives import serialization
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    pem = key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode()
+    public_pem = key.public_key().public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    ).decode()
+    return pem, public_pem
+
+
+@pytest.mark.asyncio
+async def test_token_endpoint_requires_launcher_token_when_set(client, monkeypatch):
+    monkeypatch.setenv("STATION_LAUNCHER_TOKEN", "secret-launcher")
+
+    resp = await client.get("/api/github/app/token")
+    assert resp.status_code == 401
+
+    resp = await client.get(
+        "/api/github/app/token",
+        headers={"X-Launcher-Token": "wrong"},
+    )
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_token_endpoint_accepts_anonymous_when_token_unset(client, monkeypatch, rsa_keypair):
+    """Without STATION_LAUNCHER_TOKEN, the dashboard accepts anonymous calls
+    so first-run on bare-metal systemd works without extra config."""
+    monkeypatch.delenv("STATION_LAUNCHER_TOKEN", raising=False)
+    pem, _ = rsa_keypair
+    from app.services import github_app
+    github_app.write_credentials({
+        "app_id": 1, "slug": "x", "pem": pem, "installation_id": 99,
+    })
+    github_app._token_cache.clear()
+
+    with respx.mock() as mock:
+        mock.post(
+            "https://api.github.com/app/installations/99/access_tokens"
+        ).respond(201, json={
+            "token": "ghs_anon",
+            "expires_at": "2099-01-01T00:00:00Z",
+        })
+        resp = await client.get("/api/github/app/token")
+
+    assert resp.status_code == 200
+    assert resp.json()["token"] == "ghs_anon"
+
+
+@pytest.mark.asyncio
+async def test_token_endpoint_returns_404_when_app_not_installed(client):
+    """If the App credentials don't include an installation_id, we can't
+    mint a token. Surface as 404 so the caller can show a clear message."""
+    from app.services import github_app
+    github_app.write_credentials({
+        "app_id": 1, "slug": "x", "pem": "PEM",
+        "installation_id": None,
+    })
+
+    resp = await client.get("/api/github/app/token")
+    assert resp.status_code == 404

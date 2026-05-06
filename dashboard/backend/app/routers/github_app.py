@@ -230,3 +230,30 @@ async def disconnect() -> dict[str, str]:
     github_app.delete_credentials()
     github_app._token_cache.clear()
     return {"status": "disconnected"}
+
+
+from fastapi import Header
+
+
+@router.get("/token")
+async def token(x_launcher_token: str | None = Header(default=None)) -> dict[str, str]:
+    """Mint and return a fresh installation token.
+
+    Token-gated when ``STATION_LAUNCHER_TOKEN`` is set so only the agent's
+    launcher (which already has the same shared secret) can fetch it.
+    """
+    expected = os.environ.get("STATION_LAUNCHER_TOKEN", "")
+    if expected and x_launcher_token != expected:
+        raise HTTPException(status_code=401, detail="invalid or missing launcher token")
+
+    creds = github_app.read_credentials()
+    if not creds or not creds.get("installation_id"):
+        raise HTTPException(
+            status_code=404,
+            detail="GitHub App not installed — finish setup at /settings",
+        )
+
+    tok = await github_app.get_installation_token()
+    if not tok:
+        raise HTTPException(status_code=502, detail="Failed to obtain installation credential")
+    return {"token": tok}
