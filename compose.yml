@@ -24,15 +24,17 @@ services:
       STATION_DB_PATH: /var/lib/claude-agent-station/station.db
       STATION_LOG_DIR: /var/log/claude-agent
       STATION_WORKSPACES: /var/lib/claude-agent-station/workspaces
+      STATION_DEPLOY_MODE: compose
       # Containerized run trigger — when set, /api/runs/trigger POSTs here
       # instead of calling systemctl (which doesn't exist in the container).
-      STATION_AGENT_LAUNCHER_URL: http://agent:8421/run
+      STATION_AGENT_LAUNCHER_URL: http://agent:8421
       # NOTE: the default token below is published in this repo and is
       # intended only for single-host dev stacks. Override via the
       # STATION_LAUNCHER_TOKEN env (e.g. ``STATION_LAUNCHER_TOKEN=$(openssl
       # rand -hex 32) docker compose up -d``) before exposing the launcher
       # to anything beyond localhost.
       STATION_LAUNCHER_TOKEN: ${STATION_LAUNCHER_TOKEN:-cas-dev-launcher-token}
+      STATION_SERVICE_USER: root
     volumes:
       - station-data:/var/lib/claude-agent-station
       - station-logs:/var/log/claude-agent
