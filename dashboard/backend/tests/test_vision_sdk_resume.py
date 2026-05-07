@@ -3,14 +3,24 @@
 If this test fails, the chat backend MUST fall back to transcript-replay
 (see spec § Resume strategy).
 
-Skipped by default; run with `pytest -m integration`.
+This test spawns the real `claude` CLI and burns tokens, so it's
+default-skipped via an env-var gate rather than a marker — markers
+are decorative unless the pytest invocation filters on them, and CI
+doesn't filter. To run it locally:
+
+    RUN_INTEGRATION_TESTS=1 pytest tests/test_vision_sdk_resume.py
 """
+
+import os
 
 import pytest
 from claude_agent_sdk import query, ClaudeAgentOptions
 from claude_agent_sdk.types import AssistantMessage, ResultMessage
 
-pytestmark = pytest.mark.integration
+pytestmark = pytest.mark.skipif(
+    not os.environ.get("RUN_INTEGRATION_TESTS"),
+    reason="integration test — set RUN_INTEGRATION_TESTS=1 to enable",
+)
 
 
 async def _user_msg(text: str):
