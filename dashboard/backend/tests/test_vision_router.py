@@ -122,3 +122,48 @@ async def test_post_vision_409_on_stale_sha_returns_envelope(project):
     assert payload["code"] == "stale_sha"
     assert payload["current_sha"] == "newer-sha"
     assert payload["current_body"] == "# external"
+
+
+@pytest.mark.asyncio
+async def test_post_vision_chat_streams_sse_events(project):
+    """SSE endpoint yields events for assistant text, coverage, done."""
+    async def fake_run_chat_turn(db, *, session_id, user_message, system_prompt, model, sdk_session_id):
+        yield {"type": "assistant_text", "delta": "hi"}
+        yield {"type": "coverage_update", "covered": ["problem"], "remaining": []}
+        yield {"type": "done"}
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        with patch("app.services.vision_chat.run_chat_turn", new=fake_run_chat_turn):
+            async with c.stream(
+                "POST",
+                f"/api/projects/{project.id}/vision/chat",
+                json={"session_id": None, "message": "hi"},
+            ) as r:
+                assert r.status_code == 200
+                lines = []
+                async for line in r.aiter_lines():
+                    lines.append(line)
+                    if len(lines) > 12: break
+    text = "\n".join(lines)
+    assert "event: assistant_text" in text
+    assert "event: coverage_update" in text
+    assert "event: done" in text
+
+
+@pytest.mark.asyncio
+async def test_post_vision_chat_409_when_session_already_active(project):
+    from app.services import vision_chat as vc_service
+    async with async_session() as db:
+        await vc_service.create_session(db, project.id)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        r = await c.post(
+            f"/api/projects/{project.id}/vision/chat",
+            json={"session_id": None, "message": "hi"},
+        )
+    assert r.status_code == 409
+    detail = r.json()["detail"]
+    assert detail["code"] == "session_exists"
+    assert detail["session_id"]
