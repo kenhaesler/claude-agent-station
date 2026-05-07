@@ -102,6 +102,13 @@ body {
   min-height: 100vh;
 }
 
+/* Custom z-index utilities used by overlays. Without these, Tailwind v4
+   silently drops `z-modal` / `z-overlay` and the elements render at the
+   default z-index, ending up behind the page content (Add Project modal
+   was the visible casualty — clicks landed but the modal stayed hidden). */
+.z-modal { z-index: 50; }
+.z-overlay { z-index: 40; }
+
 /* --- Typography --- */
 h1, h2, h3, h4, h5, h6 {
   font-family: var(--font-heading);
