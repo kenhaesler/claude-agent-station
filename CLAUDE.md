@@ -6,7 +6,7 @@ Self-hosted autonomous Claude Code agent with web dashboard. Uses **Agent Teams 
 ## Tech Stack
 - **Agent Core**: Claude Agent SDK (Python) + bash run-manager
 - **Lead Agent**: Sonnet 4.6 — coordinates teammates, reviews plans, monitors progress
-- **Teammates**: Opus 4.6 — implement issues via `issue-worker` agent definition
+- **Teammates**: Opus 4.7 — implement issues via `issue-worker` agent definition
 - **Backend**: Python 3.11+ / FastAPI / SQLite / uvicorn
 - **Frontend**: Svelte 5 + Vite + TailwindCSS
 - **Deployment**: systemd (Rocky Linux 9 / RHEL-based)

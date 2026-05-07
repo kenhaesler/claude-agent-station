@@ -89,7 +89,7 @@ class TestStaleRunReaperQueueRecovery:
         _make_queue_item(db, state="completed", run_id="run-DEAD", assigned_to=1)
         await db.commit()
 
-        with patch("app.services.stale_run_reaper.get_service_status",
+        with patch("app.services.stale_run_reaper.get_agent_status",
                     new_callable=AsyncMock, return_value={"service_active": False}), \
              patch("app.services.stale_run_reaper.event_bus_publish",
                     new_callable=AsyncMock), \
@@ -119,7 +119,7 @@ class TestStaleRunReaperQueueRecovery:
         _make_queue_item(db, state="assigned", run_id="run-ALIVE")
         await db.commit()
 
-        with patch("app.services.stale_run_reaper.get_service_status",
+        with patch("app.services.stale_run_reaper.get_agent_status",
                     new_callable=AsyncMock, return_value={"service_active": True}):
             count = await reap_stale_runs(db)
 

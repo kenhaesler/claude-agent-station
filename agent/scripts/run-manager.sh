@@ -2348,7 +2348,12 @@ for item in data.get('items', []):
         fi
     done
 
-    # ---- PHASE 0.5: Pre-assign issues for multi-employee projects ----
+    # ---- PHASE 0.5: Workspace setup + (optional) issue pre-assignment ----
+    #
+    # The Agent Teams orchestrator expects each project's workspace to
+    # already exist (it cd's into it for `gh issue list` and creates
+    # worktrees there). Clone/refresh every enabled project up-front, then
+    # pre-assign only when running multiple employees on the same repo.
     for ((i = 0; i < project_count; i++)); do
         local repo_check enabled_check mode_check
         repo_check=$(get_project_field "$i" "repo")
@@ -2356,18 +2361,18 @@ for item in data.get('items', []):
         [ "$enabled_check" = "false" ] && continue
         mode_check=$(get_project_field "$i" "mode" 2>/dev/null || echo "full")
 
-        local employees_for_assign=$max_per_project
+        local mode_branch
+        mode_branch=$(get_project_field "$i" "branch" 2>/dev/null || echo "")
+        local assign_workspace
+        assign_workspace=$(setup_workspace "$repo_check" "$mode_branch") || {
+            log_warn "Failed to setup workspace for $repo_check, orchestrator will skip this project"
+            continue
+        }
 
-        # Only pre-assign if multiple employees on same project in full mode
+        # Pre-assign only for multi-employee projects in full mode; the
+        # orchestrator self-selects in single-employee runs.
+        local employees_for_assign=$max_per_project
         if [ "$employees_for_assign" -gt 1 ] && [ "$mode_check" = "full" ]; then
-            # Need workspace for fetching issues
-            local mode_branch
-            mode_branch=$(get_project_field "$i" "branch" 2>/dev/null || echo "")
-            local assign_workspace
-            assign_workspace=$(setup_workspace "$repo_check" "$mode_branch") || {
-                log_warn "Failed to setup workspace for $repo_check assignment, will self-select"
-                continue
-            }
             assign_work "$repo_check" "$i" "$employees_for_assign" || true
         fi
     done
@@ -2384,7 +2389,7 @@ for item in data.get('items', []):
     local agent_dir
     agent_dir="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-    PYTHONPATH="$agent_dir/.." "$agent_dir/../venv/bin/python3" -m agent.station_orchestrator \
+    PYTHONPATH="$agent_dir/.." python3 -m agent.station_orchestrator \
         --config "$CONFIG_FILE" \
         --run-id "$RUN_ID" \
         --workspaces-dir "$WORKSPACES_DIR"

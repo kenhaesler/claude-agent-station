@@ -431,13 +431,29 @@
         <h3 class="text-xs font-mono uppercase tracking-widest text-tertiary mb-4">Intelligence Decisions</h3>
         <div class="space-y-2">
           {#each ctx.intelligence_decisions as event}
-            <div class="px-3 py-2 rounded-lg bg-surface-1 border border-border">
-              <div class="flex items-center justify-between mb-1">
-                <span class="text-xs font-mono text-cyan">{event.event_type}</span>
-                <span class="text-[10px] font-mono text-ghost">{timeAgo(event.created_at)}</span>
+            {#if event.event_type === 'vision_misalignment'}
+              <div class="card p-3" style="border-left: 3px solid #B06030;">
+                <div class="flex items-center gap-2 text-xs text-[#B06030] font-semibold mb-1">
+                  ⚠ Vision misalignment — issue #{event.event_data?.issue_number}
+                </div>
+                <div class="text-xs text-secondary mb-1">
+                  Violated: <code class="text-accent-orange">{event.event_data?.violated_section}</code>
+                </div>
+                <blockquote class="text-xs text-tertiary italic border-l-2 border-tertiary/40 pl-2 my-1">
+                  "{event.event_data?.quote}"
+                </blockquote>
+                <div class="text-xs text-tertiary">Plan excerpt: {event.event_data?.plan_excerpt}</div>
+                <div class="text-[10px] font-mono text-ghost mt-1">{timeAgo(event.created_at)}</div>
               </div>
-              <pre class="text-[11px] font-mono text-tertiary overflow-x-auto">{JSON.stringify(event.event_data, null, 2)}</pre>
-            </div>
+            {:else}
+              <div class="px-3 py-2 rounded-lg bg-surface-1 border border-border">
+                <div class="flex items-center justify-between mb-1">
+                  <span class="text-xs font-mono text-cyan">{event.event_type}</span>
+                  <span class="text-[10px] font-mono text-ghost">{timeAgo(event.created_at)}</span>
+                </div>
+                <pre class="text-[11px] font-mono text-tertiary overflow-x-auto">{JSON.stringify(event.event_data, null, 2)}</pre>
+              </div>
+            {/if}
           {/each}
         </div>
       </div>

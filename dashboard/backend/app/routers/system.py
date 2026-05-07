@@ -10,12 +10,8 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException
 
 from app.config import settings
-from app.services.systemd import (
-    ALLOWED_ACTIONS,
-    get_service_status,
-    get_system_resources,
-    systemctl,
-)
+from app.services import service_control
+from app.services.systemd import ALLOWED_ACTIONS, get_system_resources
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +24,7 @@ _AUTH_REFRESH_THRESHOLD = 3600  # 1 hour — matches oauth.REFRESH_THRESHOLD_SEC
 @router.get("/status")
 async def system_status():
     """Get system and service status."""
-    svc = await get_service_status()
+    svc = await service_control.get_agent_status()
     resources = await get_system_resources()
     return {
         "service": {
@@ -48,12 +44,12 @@ async def service_action(action: str, unit: str = "claude-agent.service"):
     if action not in ALLOWED_ACTIONS:
         raise HTTPException(status_code=400, detail=f"Action not allowed: {action}")
 
-    result = await systemctl(action, unit)
+    result = await service_control.run_action(action, unit)
     if not result.get("success"):
-        raise HTTPException(
-            status_code=500,
-            detail=result.get("error") or result.get("stderr", "Command failed"),
-        )
+        status = result.get("status_code") or 500
+        if status < 400:
+            status = 500
+        raise HTTPException(status_code=status, detail=result.get("error") or "Failed")
     return {"action": action, "unit": unit, "result": result}
 
 

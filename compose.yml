@@ -1,0 +1,122 @@
+# Local-dev compose for Claude Agent Station.
+#
+# - dashboard: FastAPI + built Svelte SPA on http://localhost:8420
+# - agent:     Python orchestrator + Claude Code CLI (idle; exec to run)
+#
+# Auth is taken from the host:
+#   ~/.claude    → Claude Code credentials  (read-write; CLI may refresh tokens)
+#   ~/.config/gh → GitHub CLI auth          (read-only)
+#
+# State lives in named volumes so it survives `compose down`.
+
+services:
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile.dashboard
+    image: claude-agent-station/dashboard:dev
+    container_name: cas-dashboard
+    ports:
+      - "8420:8420"
+    environment:
+      STATION_HOST: "0.0.0.0"
+      STATION_PORT: "8420"
+      STATION_DB_PATH: /var/lib/claude-agent-station/station.db
+      STATION_LOG_DIR: /var/log/claude-agent
+      STATION_WORKSPACES: /var/lib/claude-agent-station/workspaces
+      # Manager config JSON — source of truth for projects/permissions.
+      # Lives on the named volume so dashboard and agent share it and it
+      # survives container rebuilds. Default in app/config.py points at
+      # /home/claude-agent/.claude/autonomous/ which is the bare-metal
+      # systemd path and doesn't exist inside the dashboard container.
+      STATION_CONFIG_PATH: /var/lib/claude-agent-station/manager-config.json
+      STATION_DEPLOY_MODE: compose
+      # Compose-mode run trigger — selected by STATION_DEPLOY_MODE=compose above.
+      # /api/runs/trigger POSTs to this URL instead of calling systemctl, which
+      # isn't available in the dashboard container.
+      STATION_AGENT_LAUNCHER_URL: http://agent:8421
+      # NOTE: the default token below is published in this repo and is
+      # intended only for single-host dev stacks. Override via the
+      # STATION_LAUNCHER_TOKEN env (e.g. ``STATION_LAUNCHER_TOKEN=$(openssl
+      # rand -hex 32) docker compose up -d``) before exposing the launcher
+      # to anything beyond localhost.
+      STATION_LAUNCHER_TOKEN: ${STATION_LAUNCHER_TOKEN:-cas-dev-launcher-token}
+      STATION_SERVICE_USER: root
+      # GitHub App credentials persist in the named volume so they survive
+      # container rebuilds. The credentials file holds the App's RSA private
+      # key and is chmod 0600 by the service module.
+      STATION_GITHUB_APP_CREDENTIALS_PATH: /var/lib/claude-agent-station/github_app.json
+      # PAT fallback. Same volume so the operator's saved token persists
+      # across rebuilds. Used as override when the App flow isn't viable
+      # (e.g. dashboard reachable only on localhost / private VM).
+      STATION_GITHUB_PAT_PATH: /var/lib/claude-agent-station/github_pat.json
+      # Public-facing dashboard URL — used in the manifest's redirect_url and
+      # setup_url so GitHub can find us after creating/installing the App.
+      STATION_DASHBOARD_BASE_URL: http://localhost:8420
+      # Path the OAuth router writes Claude credentials to. Points at the
+      # same file the agent's CLI reads via the host mount below, so the
+      # dashboard login actually authenticates the agent.
+      STATION_CREDENTIALS_PATH: /root/.claude/.credentials.json
+    volumes:
+      - station-data:/var/lib/claude-agent-station
+      - station-logs:/var/log/claude-agent
+      # Share the host's Claude credentials with the dashboard so the
+      # OAuth login writes to the same file the agent's CLI reads. Mounted
+      # read-write because /api/oauth/refresh updates the token in place.
+      - ${HOME}/.claude:/root/.claude:z
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8420/api/health',timeout=2).status==200 else 1)"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  agent:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    image: claude-agent-station/agent:dev
+    container_name: cas-agent
+    depends_on:
+      dashboard:
+        condition: service_healthy
+    environment:
+      STATION_DB_PATH: /var/lib/claude-agent-station/station.db
+      STATION_LOG_DIR: /var/log/claude-agent
+      STATION_WORKSPACES: /var/lib/claude-agent-station/workspaces
+      # Same shared config the dashboard writes to, so the orchestrator
+      # picks up newly-created projects on the next run.
+      STATION_CONFIG: /var/lib/claude-agent-station/manager-config.json
+      # Override the orchestrator's webhook URL so it reaches the dashboard
+      # service by name on the compose network. Without this it falls back
+      # to localhost, which inside the agent container is the agent itself.
+      STATION_WEBHOOK_URL: http://dashboard:8420/api/webhook/run-event
+      # Shared secret authenticating dashboard → launcher calls. Both ends
+      # read this same env. Override with a strong token in production-shaped
+      # deployments; the default below is fine for a single-host dev stack.
+      STATION_LAUNCHER_TOKEN: ${STATION_LAUNCHER_TOKEN:-cas-dev-launcher-token}
+      # Where the agent fetches a fresh GitHub App installation token before
+      # spawning run-manager.sh. The token gets exported as GH_TOKEN so `gh`
+      # CLI calls authenticate as the App installation. Different host than
+      # the dashboard side because the agent reaches the dashboard via the
+      # compose service name.
+      STATION_DASHBOARD_BASE_URL: http://dashboard:8420
+    volumes:
+      - station-data:/var/lib/claude-agent-station
+      - station-logs:/var/log/claude-agent
+      # Auth from the host. ``:z`` relabels for SELinux (Fedora/RHEL hosts
+      # would otherwise fail with EPERM under enforcing mode).
+      #
+      # SECURITY: ``~/.claude`` is mounted read-write so the Claude CLI can
+      # refresh OAuth tokens. A compromise of the agent process therefore
+      # has write access to the host's Claude credentials, including those
+      # of unrelated projects. For a hardened deployment, copy creds into
+      # an isolated dir and bind that instead.
+      - ${HOME}/.claude:/root/.claude:z
+      - ${HOME}/.config/gh:/root/.config/gh:ro,z
+    restart: unless-stopped
+
+volumes:
+  station-data:
+  station-logs:

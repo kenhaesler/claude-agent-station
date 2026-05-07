@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.dependencies import get_db
-from app.models import Project, Run
+from app.models import AgentEvent, Project, Run
 from app.schemas import WebhookRunEvent
 from app.services.event_bus import publish as event_bus_publish
 from app.services.idempotency import is_duplicate
@@ -96,6 +96,20 @@ async def receive_run_event(
 
     elif event_name in _DAG_EVENTS:
         pass  # DAG is saved as a file by the coordinator
+
+    elif event_name == "vision_misalignment":
+        db.add(AgentEvent(
+            workflow_id=f"trace-{event.run_id}",
+            run_id=event.run_id,
+            agent_id=event.agent_id or "lead",
+            event_type="vision_misalignment",
+            event_data=json.dumps({
+                "issue_number": event.issue_number,
+                "violated_section": event.violated_section,
+                "quote": event.quote,
+                "plan_excerpt": event.plan_excerpt,
+            }),
+        ))
 
     else:
         run = await run_lifecycle.handle_unknown(db, event, project_id, run)
@@ -248,5 +262,6 @@ def _normalize_event_name(event_name: str) -> str:
         "teammate_progress": "teammate_progress",
         "team_cleanup": "team_cleanup",
         "progress_update": "progress_update",
+        "vision_misalignment": "vision_misalignment",
     }
     return mapping.get(event_name, event_name)

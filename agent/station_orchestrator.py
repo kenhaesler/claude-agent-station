@@ -21,11 +21,11 @@ import os
 import subprocess
 import sys
 import time
-import urllib.error
-import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+
+import httpx
 
 from claude_agent_sdk import query, ClaudeAgentOptions
 from claude_agent_sdk.types import (
@@ -55,12 +55,26 @@ class _StreamState:
     BATCH_INTERVAL: float = 15.0  # seconds between progress webhooks
 
 
+async def _user_prompt_stream(text: str):
+    """Wrap a string prompt as the AsyncIterable form the SDK requires when
+    can_use_tool is supplied. Yields one user message then ends, matching
+    the dict shape the SDK uses internally for string prompts.
+    """
+    yield {
+        "type": "user",
+        "session_id": "",
+        "message": {"role": "user", "content": text},
+        "parent_tool_use_id": None,
+    }
+
+
 SKIP_LABELS = frozenset({
     "autonomous-agent/in-progress",
     "autonomous-agent/needs-help",
     "NO AI",
     "backlog",
     "wontfix",
+    "vision-suggested",  # Hook 3: proposed by vision_analyst, awaits human acceptance
 })
 
 # Priority label ordering for deterministic assignment
@@ -70,6 +84,51 @@ PRIORITY_ORDER = {
     "priority/medium": 2,
     "priority/low": 3,
 }
+
+
+def priority_key(issue: dict) -> int:
+    """Return the priority rank for an issue (lower = higher priority)."""
+    for label in issue.get("labels", []) or []:
+        name = label.get("name", "")
+        if name in PRIORITY_ORDER:
+            return PRIORITY_ORDER[name]
+    return len(PRIORITY_ORDER)  # unlabeled = lowest
+
+
+from agent.vision import load_vision  # noqa: E402
+from agent.vision_scoring import score_issues_against_vision  # noqa: E402
+
+
+def _combined_rank_issues(
+    issues: list[dict],
+    vision: dict | None,
+    weight: float,
+    model: str,
+) -> list[dict]:
+    """Combine label-priority and vision-alignment into a single sort.
+
+    No vision (or weight=0) → pure priority. Returns issues with
+    vision_score / vision_reason fields (0.5 / "" when no vision).
+    """
+    N = len(PRIORITY_ORDER)  # number of priority labels
+    if not issues:
+        return issues
+
+    if vision is None or weight <= 0:
+        scored = [{**i, "vision_score": 0.5, "vision_reason": ""} for i in issues]
+        weight = 0.0
+    else:
+        scored = score_issues_against_vision(issues, vision, model)
+
+    def combined(issue: dict) -> float:
+        # priority_label_rank: 0=critical … N-1=unlabeled. Convert to score:
+        # 1.0 for critical, 0.0 for unlabeled.
+        rank = priority_key(issue)  # 0..N (or N if no label)
+        prio_score = 1.0 - (min(rank, N - 1) / max(N - 1, 1))
+        v = float(issue.get("vision_score", 0.5))
+        return prio_score * (1.0 - weight) + v * weight
+
+    return sorted(scored, key=combined, reverse=True)
 
 
 # ── Configuration ──────────────────────────────────────────────
@@ -167,13 +226,6 @@ def fetch_eligible_issues(repo: str, limit: int, workspace: str | None = None) -
         eligible.append(issue)
 
     # Sort by priority labels (critical first, unlabeled last)
-    def priority_key(issue: dict) -> int:
-        for label in issue.get("labels", []):
-            name = label.get("name", "")
-            if name in PRIORITY_ORDER:
-                return PRIORITY_ORDER[name]
-        return len(PRIORITY_ORDER)
-
     eligible.sort(key=priority_key)
     return eligible[:limit]
 
@@ -190,15 +242,19 @@ def build_team_prompt(
     run_id: str,
     workspace: str = "",
     worktree_paths: dict[str, str] | None = None,
+    vision: dict | None = None,
 ) -> str:
     """Build the lead agent prompt that creates and manages the team."""
     issue_entries = []
     for issue in issues:
         labels_str = ", ".join(l.get("name", "") for l in issue.get("labels", []))
-        issue_entries.append(
-            f"- **#{issue['number']}**: {issue.get('title', 'Untitled')}"
-            + (f" [{labels_str}]" if labels_str else "")
-        )
+        why = issue.get("vision_reason", "")
+        line = f"- **#{issue['number']}**: {issue.get('title', 'Untitled')}"
+        if labels_str:
+            line += f" [{labels_str}]"
+        if why:
+            line += f"\n    *Why this advances the vision:* {why}"
+        issue_entries.append(line)
     issue_list = "\n".join(issue_entries)
 
     max_turns = get_limit(config, "max_employee_turns", 200)
@@ -213,6 +269,44 @@ def build_team_prompt(
     if worktree_paths:
         wt_lines = [f"- **{role}** specialist → `{path}`" for role, path in worktree_paths.items()]
         wt_section = "\n".join(wt_lines)
+
+    vision_section = ""
+    if vision is not None:
+        non_goals = (vision.get("non_goals") or "").strip() or "_(not specified)_"
+        anti_patterns = (vision.get("anti_patterns") or "").strip() or "_(not specified)_"
+        # Resolve webhook URL with the same precedence as post_webhook():
+        # STATION_WEBHOOK_URL env (set by compose) → config dashboard.webhook_url
+        # → localhost default for systemd. Hardcoding "http://dashboard:8420"
+        # only resolves on the compose network and silently breaks Hook 2 on
+        # systemd-mode deployments.
+        webhook_url = os.environ.get("STATION_WEBHOOK_URL") or config.get(
+            "dashboard", {}
+        ).get("webhook_url", "http://127.0.0.1:8420/api/webhook/run-event")
+        vision_section = f"""
+## Vision check (when reviewing teammate plans)
+
+This project has a vision. Before approving ANY teammate plan, verify the
+plan does not violate the non-goals or anti-patterns below. If it does:
+
+1. Reject the plan with a specific quote from the violated section.
+2. Apply label `autonomous-agent/needs-help` to the issue:
+   `gh issue edit <number> --add-label autonomous-agent/needs-help`
+3. POST a misalignment event to the dashboard:
+   `curl -s -X POST {webhook_url} \\
+       -H "Content-Type: application/json" \\
+       -d '{{"event":"vision_misalignment","run_id":"run-{run_id}",
+            "issue_number":<number>,"violated_section":"<non_goals|anti_patterns>",
+            "quote":"<exact quote>","plan_excerpt":"<short excerpt>"}}'`
+4. Reassign the teammate to a different task or stop them.
+
+### Vision — Non-goals
+{non_goals}
+
+### Vision — Anti-patterns
+{anti_patterns}
+
+(Full vision available at `{workspace}/docs/vision.md` if you need other context.)
+"""
 
     return f"""You are the lead of an agent team implementing GitHub issues for **{repo}**.
 
@@ -298,7 +392,7 @@ and your teammates lose their work. You must keep making tool calls to stay aliv
 - Workspace: {workspace}
 - Base branch: `{base_branch}` (teammates must branch FROM this)
 - GH_TOKEN is available for GitHub CLI operations
-"""
+{vision_section}"""
 
 
 def build_followup_prompt(workspace: str) -> str:
@@ -398,10 +492,20 @@ def _message_to_dict(message) -> dict:
 
 
 def post_webhook(config: dict, event: str, data: dict | None = None) -> None:
-    """Send an event to the dashboard webhook (best-effort)."""
-    webhook_url = config.get("dashboard", {}).get(
+    """Send an event to the dashboard webhook (best-effort).
+
+    URL precedence: ``STATION_WEBHOOK_URL`` env (set by compose so the agent
+    container reaches the dashboard service by name), then config-file
+    ``dashboard.webhook_url``, then a localhost default for systemd hosts.
+    """
+    webhook_url = os.environ.get("STATION_WEBHOOK_URL") or config.get("dashboard", {}).get(
         "webhook_url", "http://127.0.0.1:8420/api/webhook/run-event"
     )
+    # urllib.request honors file://, ftp://, etc. — restrict to http/https so a
+    # misconfigured env or config can't be coerced into reading local files.
+    if not webhook_url.startswith(("http://", "https://")):
+        logger.warning("Refusing webhook URL with unsupported scheme: %s", webhook_url)
+        return
     webhook_secret = os.environ.get("STATION_WEBHOOK_SECRET", "") or config.get(
         "dashboard", {}
     ).get("webhook_secret", "")
@@ -413,14 +517,16 @@ def post_webhook(config: dict, event: str, data: dict | None = None) -> None:
     if data:
         payload.update(data)
 
+    headers: dict[str, str] = {"Content-Type": "application/json"}
+    if webhook_secret:
+        headers["X-Webhook-Token"] = webhook_secret
+
+    # httpx (vs. urllib.request) refuses file:// and other local schemes, so
+    # even without the explicit guard above we cannot be tricked into reading
+    # local files via a misconfigured webhook_url.
     try:
-        body = json.dumps(payload).encode()
-        headers: dict[str, str] = {"Content-Type": "application/json"}
-        if webhook_secret:
-            headers["X-Webhook-Token"] = webhook_secret
-        req = urllib.request.Request(webhook_url, data=body, headers=headers, method="POST")
-        with urllib.request.urlopen(req, timeout=3):
-            pass
+        with httpx.Client(timeout=3.0) as client:
+            client.post(webhook_url, content=json.dumps(payload), headers=headers)
     except Exception:
         pass  # Best-effort
 
@@ -607,6 +713,19 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
             logger.info("No eligible issues for %s, skipping", repo)
             continue
 
+        # Hook 1: vision-aware prioritisation
+        vision = load_vision(workspace)
+        weight = float((config.get("vision") or {}).get("scoring_weight", 0.4))
+        analyst_model = get_model(config, "analyst", "claude-sonnet-4-6")
+        issues = _combined_rank_issues(issues, vision=vision, weight=weight, model=analyst_model)
+
+        if vision is not None:
+            for issue in issues:
+                logger.info(
+                    "Picked #%s (vision_score=%.2f): %s",
+                    issue["number"], issue.get("vision_score", 0.5), issue.get("vision_reason", ""),
+                )
+
         logger.info(
             "Found %d eligible issues for %s: %s",
             len(issues), repo, [f"#{i['number']}" for i in issues],
@@ -708,7 +827,7 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
                             iteration + 1, max_reentries, session_id,
                         )
                     else:
-                        prompt = build_team_prompt(repo, issues, config, run_id, workspace, worktree_paths)
+                        prompt = build_team_prompt(repo, issues, config, run_id, workspace, worktree_paths, vision=vision)
 
                     # Build options — use resume for follow-up iterations.
                     # Auto Mode (ADR-0001) is wired here: can_use_tool runs
@@ -735,7 +854,7 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
                         options.resume = session_id
                         options.continue_conversation = True
 
-                    async for message in query(prompt=prompt, options=options):
+                    async for message in query(prompt=_user_prompt_stream(prompt), options=options):
                         # Capture session_id for resume
                         sid = getattr(message, "session_id", None)
                         if sid:

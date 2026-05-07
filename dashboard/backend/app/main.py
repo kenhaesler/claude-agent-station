@@ -22,7 +22,6 @@ from app.routers import (
     config_router,
     coordinator,
     events,
-    github_oauth,
     github_webhook,
     health,
     logs,
@@ -37,9 +36,12 @@ from app.routers import (
     system,
     webhook,
 )
+from app.routers import github_app as github_app_router
+from app.routers import vision as vision_router
 from app.services.config_sync import sync_config_to_db
 from app.services.log_importer import import_historical_runs
 from app.services.stale_run_reaper import reap_stale_runs
+from app.services.vision_cleanup import run_cleanup_loop as run_vision_cleanup_loop
 
 logging.basicConfig(
     level=logging.INFO,
@@ -55,6 +57,9 @@ STALE_RUN_CHECK_INTERVAL = 15
 
 # Interval (seconds) between OAuth token refresh checks
 TOKEN_REFRESH_INTERVAL = 1800  # 30 minutes
+
+# Interval (seconds) between vision session cleanup sweeps
+VISION_CLEANUP_INTERVAL = 1800  # 30 minutes
 
 
 async def _periodic_log_import() -> None:
@@ -79,9 +84,9 @@ async def _periodic_token_refresh() -> None:
 
             result = await refresh_oauth_token()
             if result.refreshed:
-                logger.info("Periodic token refresh: new expiry %s", result.expires_at)
+                logger.info("Periodic OAuth refresh: new expiry %s", result.expires_at)
             elif result.error:
-                logger.warning("Periodic token refresh failed: %s", result.error)
+                logger.warning("Periodic OAuth refresh error: %s", result.error)
         except Exception:
             logger.exception("Error in periodic token refresh")
 
@@ -131,9 +136,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     rescan_task = asyncio.create_task(_periodic_log_import())
     reaper_task = asyncio.create_task(_periodic_stale_run_check())
     token_task = asyncio.create_task(_periodic_token_refresh())
+    vision_cleanup_task = asyncio.create_task(run_vision_cleanup_loop())
     logger.info("Started periodic log rescan (every %ds)", LOG_RESCAN_INTERVAL)
     logger.info("Started stale run reaper (every %ds)", STALE_RUN_CHECK_INTERVAL)
     logger.info("Started periodic token refresh (every %ds)", TOKEN_REFRESH_INTERVAL)
+    logger.info("Started vision session cleanup (every %ds)", VISION_CLEANUP_INTERVAL)
 
     yield
 
@@ -141,7 +148,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     rescan_task.cancel()
     reaper_task.cancel()
     token_task.cancel()
-    for task in (rescan_task, reaper_task, token_task):
+    vision_cleanup_task.cancel()
+    for task in (rescan_task, reaper_task, token_task, vision_cleanup_task):
         with suppress(asyncio.CancelledError):
             await task
     logger.info("Shutting down dashboard backend")
@@ -179,7 +187,6 @@ app.include_router(logs.router, dependencies=_auth)
 app.include_router(config_router.router, dependencies=_auth)
 app.include_router(system.router, dependencies=_auth)
 app.include_router(oauth.router, dependencies=_auth)
-app.include_router(github_oauth.router, dependencies=_auth)
 app.include_router(plans.router, dependencies=_auth)
 app.include_router(events.router, dependencies=_auth)
 app.include_router(coordinator.router, dependencies=_auth)
@@ -188,9 +195,15 @@ app.include_router(prompts.router, dependencies=_auth)
 app.include_router(queue.router, dependencies=_auth)
 app.include_router(agent_events.router, dependencies=_auth)
 app.include_router(permissions.router, dependencies=_auth)
+app.include_router(vision_router.router, dependencies=_auth)
 
 # GitHub webhook: has own auth via HMAC signature verification
 app.include_router(github_webhook.router)
+
+# GitHub App lifecycle: unauth'd — manifest/exchange and install/callback
+# arrive via 302 redirect from github.com and cannot carry the dashboard API key.
+# Mirrors github_webhook above. Token endpoint (T9) has its own STATION_LAUNCHER_TOKEN gate.
+app.include_router(github_app_router.router)
 
 # Serve frontend static files (must be last, catches all non-API routes)
 _frontend_dist = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"

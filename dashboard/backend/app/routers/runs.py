@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Optional
 import logging
 from pathlib import Path
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import desc, func, select
@@ -28,9 +28,9 @@ from app.schemas import (
     TeamSummary,
     TeammateStatus,
 )
+from app.services import service_control
 from app.services.diff_parser import DiffResult, parse_unified_diff
 from app.services.log_importer import import_historical_runs
-from app.services.systemd import systemctl
 
 logger = logging.getLogger(__name__)
 
@@ -369,11 +369,46 @@ async def rescan_logs(db: AsyncSession = Depends(get_db)):
 
 @router.post("/trigger")
 async def trigger_run():
-    """Trigger the agent service immediately."""
-    result = await systemctl("start", "claude-agent.service")
+    """Trigger the agent service immediately.
+
+    Delegates to :mod:`app.services.service_control` which branches on
+    ``STATION_DEPLOY_MODE`` between ``sudo systemctl start`` (systemd
+    deployments) and ``POST /run`` on the agent launcher (compose).
+    """
+    result = await service_control.start_agent_service()
     if not result.get("success"):
+        # Compose path may set status_code to a launcher 4xx (e.g. 409
+        # "already running") or 502 (unreachable); systemd path returns
+        # generic 500. Preserve the upstream status so the UI can show a
+        # precise message.
+        status = result.get("status_code") or 500
+        if status < 400:
+            status = 500
+        # Detail precedence: structured error fields first, then any
+        # JSON ``detail`` from the launcher response, then ``raw`` for
+        # plain-text 4xx bodies (the launcher's HTTPException emits JSON
+        # but tests and some clients exercise the text path), then a
+        # generic fallback.
         raise HTTPException(
-            status_code=500,
-            detail=result.get("error") or result.get("stderr", "Failed to trigger run"),
+            status_code=status,
+            detail=(
+                result.get("error")
+                or result.get("stderr")
+                or result.get("detail")
+                or result.get("raw")
+                or "Failed to trigger run"
+            ),
         )
-    return {"status": "triggered", "detail": "claude-agent.service started"}
+    # Choose the success message based on the actual deploy mode rather
+    # than sniffing for ``pid`` in the result. The previous heuristic would
+    # silently flip to the launcher message if a future systemd
+    # implementation surfaced MainPID.
+    is_compose = service_control.deploy_mode() == "compose"
+    detail = result.get("detail") or (
+        "agent launcher accepted run" if is_compose else "claude-agent.service started"
+    )
+    return {
+        "status": "triggered",
+        "detail": detail,
+        **{k: v for k, v in result.items() if k not in {"success", "status_code"}},
+    }
