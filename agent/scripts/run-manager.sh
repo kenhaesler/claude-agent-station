@@ -875,7 +875,7 @@ run_employee() {
     fi
 
     local model max_turns
-    model=$(json_get "$CONFIG_FILE" "models.employee" 2>/dev/null || echo "claude-opus-4-6")
+    model=$(json_get "$CONFIG_FILE" "models.employee" 2>/dev/null || echo "claude-opus-4-7")
     max_turns=$(json_get "$CONFIG_FILE" "limits.max_employee_turns" 2>/dev/null || echo "200")
 
     # Apply budget override if provided (from parallel budget calculation)

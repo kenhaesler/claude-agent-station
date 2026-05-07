@@ -339,6 +339,7 @@ export interface TokenUsage {
 
 // --- System ---
 export interface SystemStatus {
+  deploy_mode: 'systemd' | 'compose';
   service: { active: boolean; status: string };
   timer: { active: boolean; next_trigger: string | null };
   resources: {

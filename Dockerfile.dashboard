@@ -21,6 +21,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY dashboard/backend/ /app/dashboard/backend/
 COPY --from=frontend /build/dist /app/dashboard/frontend/dist
+COPY agent/prompts/ /app/agent/prompts/
 
 # Defaults — override via compose env. The volumes mounted at these paths
 # in compose.yml hold runtime state across restarts.

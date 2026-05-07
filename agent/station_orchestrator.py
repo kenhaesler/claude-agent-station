@@ -21,7 +21,7 @@ import os
 import subprocess
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -147,14 +147,6 @@ def get_model(config: dict, key: str, default: str) -> str:
     return config.get("models", {}).get(key, default)
 
 
-# Map full model names to SDK short names
-MODEL_MAP = {
-    "claude-opus-4-6": "opus",
-    "claude-sonnet-4-6": "sonnet",
-    "claude-haiku-4-5": "haiku",
-}
-
-
 def load_agent_definition(path: Path) -> tuple[str, AgentDefinition]:
     """Parse an agent markdown file (with YAML frontmatter) into an AgentDefinition."""
     text = path.read_text()
@@ -173,8 +165,7 @@ def load_agent_definition(path: Path) -> tuple[str, AgentDefinition]:
     name = meta.get("name", path.stem)
     tools_str = meta.get("tools", "")
     tools = [t.strip() for t in tools_str.split(",")] if tools_str else None
-    model_raw = meta.get("model", "")
-    model = MODEL_MAP.get(model_raw, "opus")
+    model = meta.get("model", "") or None
 
     return name, AgentDefinition(
         description=meta.get("description", ""),
@@ -258,7 +249,7 @@ def build_team_prompt(
     issue_list = "\n".join(issue_entries)
 
     max_turns = get_limit(config, "max_employee_turns", 200)
-    teammate_model = get_model(config, "employee", "claude-opus-4-6")
+    teammate_model = get_model(config, "employee", "claude-opus-4-7")
 
     # Determine base branch (always use integration dev branch)
     integration = config.get("integration", {})
@@ -674,8 +665,12 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
     if worker_file.exists():
         try:
             worker_name, worker_def = load_agent_definition(worker_file)
+            employee_override = get_model(config, "employee", "")
+            if employee_override:
+                worker_def = replace(worker_def, model=employee_override)
+                logger.info("Overriding teammate model from config: %s", employee_override)
             agents_dict = {worker_name: worker_def}
-            logger.info("Loaded agent definition: %s from %s", worker_name, worker_file)
+            logger.info("Loaded agent definition: %s from %s (model=%s)", worker_name, worker_file, worker_def.model)
         except Exception as e:
             logger.warning("Failed to load agent definition %s: %s", worker_file, e)
 

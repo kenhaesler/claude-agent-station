@@ -27,6 +27,7 @@ async def system_status():
     svc = await service_control.get_agent_status()
     resources = await get_system_resources()
     return {
+        "deploy_mode": service_control.deploy_mode(),
         "service": {
             "active": svc["service_active"],
         },
