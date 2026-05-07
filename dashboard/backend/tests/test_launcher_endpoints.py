@@ -159,11 +159,12 @@ env | grep '^GH_TOKEN=' > {sentinel}
     # the Popen handle on the module global. Polling on `sentinel.exists()`
     # is racy because bash's `>` redirection creates an empty file the
     # instant the pipeline starts, well before `env | grep` writes content.
+    import subprocess
     spawned = launcher_mod._current
     assert spawned is not None, "launcher did not record a subprocess"
     try:
         spawned.wait(timeout=5)
-    except Exception as exc:  # subprocess.TimeoutExpired or platform variant
+    except subprocess.TimeoutExpired as exc:
         spawned.kill()
         raise AssertionError(f"spawned script did not exit within 5s: {exc}")
 

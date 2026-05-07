@@ -1,5 +1,7 @@
 # lib/setup_script.sh — safe execution of per-project setup_script values.
-# Sourced by integration-branch.sh. Must NOT have set -euo pipefail or shebang.
+# Sourced via integration-branch.sh from run-manager.sh and promote.sh, and
+# directly by tests/test_setup_script_validation.sh. Must NOT have
+# set -euo pipefail or shebang.
 #
 # Depends on the caller defining: log_info, log_warn, log_error.
 #
