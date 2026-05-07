@@ -28,6 +28,34 @@ logger = logging.getLogger(__name__)
 SWEEPER_EXPIRED = "sweeper-expired"
 
 
+def _safe_repo_short(project: str | None) -> str | None:
+    """Defense-in-depth validator for the ``project`` field before it reaches
+    :func:`parse_employee_report`.
+
+    The choke-point in ``log_parser`` already enforces filesystem containment
+    (issue #189), but we reject obviously bogus values here too so that:
+
+    1. Malformed inputs never even hit the filesystem.
+    2. The intent is documented at every call site.
+
+    Returns the trailing path component (after ``/``) on success, or ``None``
+    if the value is empty, contains shell/path-traversal characters, or is a
+    relative-path component that should not be used as a directory name.
+    """
+    if not project:
+        return None
+    # Match the existing extraction logic: take the trailing path component.
+    repo_short = project.split("/")[-1] if "/" in project else project
+    repo_short = repo_short.strip()
+    if not repo_short:
+        return None
+    if repo_short in (".", ".."):
+        return None
+    if "/" in repo_short or "\\" in repo_short or "\x00" in repo_short:
+        return None
+    return repo_short
+
+
 async def expire_orphan_controls(db: AsyncSession, run_id: str) -> list[dict]:
     """Mark every unconsumed run_control for ``run_id`` as expired and emit
     an SSE ``run_message_expired`` event per row.
@@ -156,10 +184,11 @@ async def handle_finished(
     run.model = event.model or run.model
 
     if not run.employee_report and event.project:
-        repo_short = event.project.split("/")[-1] if "/" in event.project else event.project
-        report = parse_employee_report(repo_short)
-        if report:
-            run.employee_report = json.dumps(report)
+        repo_short = _safe_repo_short(event.project)
+        if repo_short:
+            report = parse_employee_report(repo_short)
+            if report:
+                run.employee_report = json.dumps(report)
 
     # Mission Control: the orchestrator for this run has exited, so any
     # pending run_control rows will never be drained. Mark them expired and
@@ -240,10 +269,11 @@ async def handle_verdict(
     })
 
     if not run.employee_report and event.project:
-        repo_short = event.project.split("/")[-1] if "/" in event.project else event.project
-        report = parse_employee_report(repo_short)
-        if report:
-            run.employee_report = json.dumps(report)
+        repo_short = _safe_repo_short(event.project)
+        if repo_short:
+            report = parse_employee_report(repo_short)
+            if report:
+                run.employee_report = json.dumps(report)
 
     notification = Notification(
         run_id=event.run_id,

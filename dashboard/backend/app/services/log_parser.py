@@ -134,15 +134,51 @@ def parse_verdicts_file(filepath: str) -> dict[str, Any] | None:
 
 
 def parse_employee_report(repo_name: str) -> dict[str, Any] | None:
-    """Read employee report from workspace directory."""
-    report_path = Path(settings.workspaces_dir) / repo_name / ".claude-employee-report.json"
-    if not report_path.exists():
+    """Read employee report from workspace directory.
+
+    Security (issue #189): ``repo_name`` originates from the webhook
+    ``event.project`` field, which is attacker-influenced when
+    ``STATION_WEBHOOK_SECRET`` is unset. Without containment, values like
+    ``".."`` or ``"foo/../.."`` would let an attacker read arbitrary
+    ``.claude-employee-report.json`` files outside ``settings.workspaces_dir``
+    and exfiltrate the contents through ``GET /api/runs/{run_id}.employee_report``.
+
+    We resolve both the candidate path and the workspaces root, then enforce
+    containment via :py:meth:`pathlib.Path.relative_to` (avoiding ``startswith``
+    string-prefix bugs like ``/foo`` matching ``/foobar``). Symlinks that
+    escape the root are rejected because :py:meth:`Path.resolve` follows them.
+    """
+    # Reject obvious junk before touching the filesystem so the warning log
+    # below stays focused on real escape attempts.
+    if not isinstance(repo_name, str) or not repo_name:
+        return None
+
+    workspaces_root = Path(settings.workspaces_dir)
+    report_path = workspaces_root / repo_name / ".claude-employee-report.json"
+
+    try:
+        resolved = report_path.resolve(strict=False)
+        workspaces_resolved = workspaces_root.resolve(strict=False)
+    except (OSError, RuntimeError) as e:
+        logger.warning("Failed to resolve employee report path %s: %s", report_path, e)
+        return None
+
+    try:
+        resolved.relative_to(workspaces_resolved)
+    except ValueError:
+        logger.warning(
+            "Refusing to read employee report outside workspaces: repo_name=%r resolved=%s",
+            repo_name, resolved,
+        )
+        return None
+
+    if not resolved.exists():
         return None
     try:
-        with open(report_path) as f:
+        with open(resolved) as f:
             return json.load(f)
     except Exception as e:
-        logger.warning("Failed to parse employee report %s: %s", report_path, e)
+        logger.warning("Failed to parse employee report %s: %s", resolved, e)
         return None
 
 

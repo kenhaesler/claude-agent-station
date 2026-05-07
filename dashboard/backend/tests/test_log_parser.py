@@ -15,6 +15,7 @@ import tempfile
 
 from app.services.log_parser import (
     discover_run_files,
+    parse_employee_report,
     parse_repo_from_filename,
     parse_result_json,
     parse_run_id_from_filename,
@@ -347,3 +348,116 @@ class TestDiscoverRunFiles:
             run = result["20260308T130028Z"]
             assert len(run["results"]) == 1
             assert len(run["verdicts"]) == 1
+
+
+class TestParseEmployeeReportPathTraversal:
+    """Path-traversal containment for parse_employee_report (issue #189).
+
+    The repo_name argument originates from the webhook ``event.project`` field,
+    which is attacker-influenced when STATION_WEBHOOK_SECRET is unset. The
+    function must refuse any path that escapes settings.workspaces_dir.
+    """
+
+    def _make_workspaces(self, tmpdir: str) -> str:
+        ws = os.path.join(tmpdir, "workspaces")
+        os.makedirs(ws)
+        return ws
+
+    def _write_outside_report(self, tmpdir: str) -> None:
+        """Place a sentinel report OUTSIDE the workspaces dir.
+
+        Lives at <tmpdir>/.claude-employee-report.json so that
+        repo_name="../" lands on it.
+        """
+        outside = os.path.join(tmpdir, ".claude-employee-report.json")
+        with open(outside, "w") as f:
+            json.dump({"leaked": True}, f)
+
+    def test_legitimate_repo_returns_report(self, monkeypatch):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ws = self._make_workspaces(tmpdir)
+            repo_dir = os.path.join(ws, "legitimate-repo")
+            os.makedirs(repo_dir)
+            with open(os.path.join(repo_dir, ".claude-employee-report.json"), "w") as f:
+                json.dump({"issue_title": "ok"}, f)
+
+            from app.services import log_parser as lp
+            monkeypatch.setattr(lp.settings, "workspaces_dir", ws)
+
+            result = parse_employee_report("legitimate-repo")
+            assert result == {"issue_title": "ok"}
+
+    def test_dotdot_returns_none(self, monkeypatch):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ws = self._make_workspaces(tmpdir)
+            self._write_outside_report(tmpdir)
+
+            from app.services import log_parser as lp
+            monkeypatch.setattr(lp.settings, "workspaces_dir", ws)
+
+            assert parse_employee_report("..") is None
+
+    def test_relative_path_traversal_returns_none(self, monkeypatch):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ws = self._make_workspaces(tmpdir)
+            self._write_outside_report(tmpdir)
+
+            from app.services import log_parser as lp
+            monkeypatch.setattr(lp.settings, "workspaces_dir", ws)
+
+            assert parse_employee_report("../../etc/passwd") is None
+
+    def test_embedded_dotdot_returns_none(self, monkeypatch):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ws = self._make_workspaces(tmpdir)
+            self._write_outside_report(tmpdir)
+
+            from app.services import log_parser as lp
+            monkeypatch.setattr(lp.settings, "workspaces_dir", ws)
+
+            # foo/../.. -> escapes workspaces
+            assert parse_employee_report("foo/../..") is None
+
+    def test_absolute_path_returns_none(self, monkeypatch):
+        """An absolute path argument must not bypass the workspaces root."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ws = self._make_workspaces(tmpdir)
+            # Create the report at /tmp-style absolute path inside tmpdir
+            outside_dir = os.path.join(tmpdir, "elsewhere")
+            os.makedirs(outside_dir)
+            with open(os.path.join(outside_dir, ".claude-employee-report.json"), "w") as f:
+                json.dump({"leaked": True}, f)
+
+            from app.services import log_parser as lp
+            monkeypatch.setattr(lp.settings, "workspaces_dir", ws)
+
+            # Path() / "/abs/path" discards the workspaces prefix on POSIX.
+            # The containment check must still refuse this.
+            assert parse_employee_report(outside_dir) is None
+
+    def test_symlink_escape_returns_none(self, monkeypatch):
+        """A symlinked repo dir pointing outside workspaces must be rejected."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ws = self._make_workspaces(tmpdir)
+            outside_dir = os.path.join(tmpdir, "outside")
+            os.makedirs(outside_dir)
+            with open(os.path.join(outside_dir, ".claude-employee-report.json"), "w") as f:
+                json.dump({"leaked": True}, f)
+
+            # Symlink workspaces/evil -> outside
+            os.symlink(outside_dir, os.path.join(ws, "evil"))
+
+            from app.services import log_parser as lp
+            monkeypatch.setattr(lp.settings, "workspaces_dir", ws)
+
+            assert parse_employee_report("evil") is None
+
+    def test_missing_report_returns_none(self, monkeypatch):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ws = self._make_workspaces(tmpdir)
+            os.makedirs(os.path.join(ws, "real-repo"))
+
+            from app.services import log_parser as lp
+            monkeypatch.setattr(lp.settings, "workspaces_dir", ws)
+
+            assert parse_employee_report("real-repo") is None
