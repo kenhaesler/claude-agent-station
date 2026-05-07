@@ -39,13 +39,21 @@ async def create_project(data: ProjectCreate, db: AsyncSession = Depends(get_db)
     if result.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="Project with this repo already exists")
 
+    # Pattern: flush → sync → commit. The sync writes the JSON file and
+    # raises if the path isn't writable; we want that failure to roll back
+    # the row insertion so DB and JSON stay consistent. flush() makes the
+    # pending INSERT visible to the SELECT inside sync_db_to_config without
+    # finalizing the transaction.
     project = Project(**data.model_dump())
     db.add(project)
-    await db.commit()
+    try:
+        await db.flush()
+        await sync_db_to_config(db)
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
     await db.refresh(project)
-
-    # Sync to config JSON
-    await sync_db_to_config(db)
     return project
 
 
@@ -64,11 +72,14 @@ async def update_project(
     for key, value in update_data.items():
         setattr(project, key, value)
 
-    await db.commit()
+    try:
+        await db.flush()
+        await sync_db_to_config(db)
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
     await db.refresh(project)
-
-    # Sync to config JSON
-    await sync_db_to_config(db)
     return project
 
 
@@ -89,7 +100,10 @@ async def delete_project(project_id: int, db: AsyncSession = Depends(get_db)):
     )
 
     await db.delete(project)
-    await db.commit()
-
-    # Sync to config JSON
-    await sync_db_to_config(db)
+    try:
+        await db.flush()
+        await sync_db_to_config(db)
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise

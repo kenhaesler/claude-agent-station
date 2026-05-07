@@ -29,6 +29,10 @@ class Project(Base):
     # ADR-0001: autonomy level (manual/assisted/auto); default budget ceiling
     autonomy_level = Column(Text, default="assisted")
     max_budget_usd = Column(Float, nullable=True, default=None)
+    # Vision cache (Phase 1 — see docs/superpowers/specs/2026-05-07-project-vision-design.md)
+    vision_cached_sha = Column(Text, nullable=True, default=None)
+    vision_cached_body = Column(Text, nullable=True, default=None)
+    vision_cached_at = Column(DateTime, nullable=True, default=None)
     created_at = Column(DateTime, default=_utcnow)
     updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
 
@@ -385,3 +389,24 @@ class StationControl(Base):
     global_pause = Column(Boolean, nullable=False, default=False)
     updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
     updated_by = Column(Text, nullable=True)
+
+
+class VisionChatSession(Base):
+    """In-flight chat session for collaborative vision authoring.
+
+    "One active per project" is enforced in the application layer (SQLite
+    can't do partial unique indexes); historical 'approved' and 'cancelled'
+    rows coexist freely. See spec 2026-05-07-project-vision-design.md.
+    """
+    __tablename__ = "vision_chat_sessions"
+
+    id = Column(Text, primary_key=True)  # UUID
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False, index=True)
+    state = Column(Text, nullable=False, default="active")  # active|approved|cancelled
+    phase = Column(Text, nullable=False, default="freeform")  # freeform|structured
+    coverage = Column(Text, nullable=False, default="{}")  # JSON
+    sdk_session_id = Column(Text, nullable=True, default=None)
+    messages = Column(Text, nullable=False, default="[]")  # JSON list
+    assembled = Column(Text, nullable=True, default=None)  # JSON
+    created_at = Column(DateTime, default=_utcnow)
+    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)

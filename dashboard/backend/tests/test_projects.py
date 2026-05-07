@@ -270,3 +270,69 @@ async def test_delete_project_deletes_related_plans(mock_sync, client, sample_pr
             select(Plan).where(Plan.project_id == sample_project.id)
         )
         assert result.scalar_one_or_none() is None
+
+
+# --- Transactional behavior: sync failure rolls the DB write back ---
+
+
+@pytest.mark.asyncio
+@patch("app.routers.projects.sync_db_to_config", new_callable=AsyncMock)
+async def test_create_rolls_back_when_sync_fails(mock_sync, client):
+    """If sync_db_to_config raises, the project insert must NOT survive in
+    the DB. The previous behavior committed first, leaving an orphan row
+    that 409'd the next attempt with the same repo.
+
+    httpx's ASGITransport propagates app exceptions by default (vs.
+    returning 500), so the test catches the raised OSError and asserts
+    on the DB state — the rollback is what matters for correctness."""
+    mock_sync.side_effect = OSError("config dir not writable")
+
+    with pytest.raises(OSError, match="config dir not writable"):
+        await client.post("/api/projects", json={"repo": "owner/rollback-create"})
+
+    from sqlalchemy import select
+    async with async_session() as session:
+        result = await session.execute(
+            select(Project).where(Project.repo == "owner/rollback-create")
+        )
+        assert result.scalar_one_or_none() is None
+
+
+@pytest.mark.asyncio
+@patch("app.routers.projects.sync_db_to_config", new_callable=AsyncMock)
+async def test_update_rolls_back_when_sync_fails(mock_sync, client, sample_project):
+    """If sync fails on update, the project should retain its original values."""
+    mock_sync.side_effect = OSError("config dir not writable")
+
+    with pytest.raises(OSError, match="config dir not writable"):
+        await client.put(
+            f"/api/projects/{sample_project.id}",
+            json={"priority": "high", "enabled": False},
+        )
+
+    from sqlalchemy import select
+    async with async_session() as session:
+        result = await session.execute(
+            select(Project).where(Project.id == sample_project.id)
+        )
+        project = result.scalar_one()
+        assert project.priority == "medium"  # unchanged
+        assert project.enabled is True  # unchanged
+
+
+@pytest.mark.asyncio
+@patch("app.routers.projects.sync_db_to_config", new_callable=AsyncMock)
+async def test_delete_rolls_back_when_sync_fails(mock_sync, client, sample_project):
+    """If sync fails on delete, the project should still exist (delete reverted)."""
+    mock_sync.side_effect = OSError("config dir not writable")
+
+    with pytest.raises(OSError, match="config dir not writable"):
+        await client.delete(f"/api/projects/{sample_project.id}")
+
+    # Project must still be there
+    from sqlalchemy import select
+    async with async_session() as session:
+        result = await session.execute(
+            select(Project).where(Project.id == sample_project.id)
+        )
+        assert result.scalar_one_or_none() is not None

@@ -4,7 +4,7 @@
 </script>
 
 <!-- Base color -->
-<div class="fixed inset-0 z-0" style="background: #FFF5EE;"></div>
+<div class="fixed inset-0 z-0" style="background: var(--color-void);"></div>
 
 <!-- Neumorphic ripple field -->
 <div class="fixed inset-0 z-0 pointer-events-none overflow-hidden">

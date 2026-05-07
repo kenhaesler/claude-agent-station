@@ -417,3 +417,54 @@ export interface SSEEvent {
   type: string;
   data: Record<string, unknown>;
 }
+
+// ── Vision (Phase 1) ───────────────────────────────────────────
+
+export interface VisionDoc {
+  problem: string;
+  users: string;
+  end_state: string;
+  non_goals: string;
+  principles: string;
+  horizons: string;
+  anti_patterns: string;
+}
+
+export interface VisionRead {
+  sha: string;
+  body: string;
+  last_refined_at?: string | null;
+  last_refined_by?: string | null;
+  cache_age_seconds: number;
+}
+
+export interface VisionCommitOut {
+  sha: string;
+  html_url: string;
+}
+
+export interface VisionStaleSha {
+  code: 'stale_sha';
+  current_sha: string;
+  current_body: string;
+}
+
+export interface VisionChatSession {
+  id: string;
+  project_id: number;
+  state: 'active' | 'approved' | 'cancelled';
+  phase: 'freeform' | 'structured';
+  coverage: Record<string, boolean>;
+  messages: { role: 'user' | 'assistant'; content: string }[];
+  assembled: VisionDoc | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type VisionSseEvent =
+  | { type: 'assistant_text'; delta: string }
+  | { type: 'coverage_update'; covered: string[]; remaining: string[] }
+  | { type: 'phase_change'; phase: 'freeform' | 'structured' }
+  | { type: 'vision_ready'; vision_doc: VisionDoc }
+  | { type: 'error'; code: string; message: string }
+  | { type: 'done' };

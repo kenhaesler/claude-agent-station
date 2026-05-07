@@ -14,7 +14,7 @@ from app.config import settings
 from app.dependencies import get_db
 from app.models import Plan, Project, QueueItem
 from app.schemas import PlanCreate, PlanList, PlanOut, PlanUpdate
-from app.services.systemd import systemctl
+from app.services import service_control
 
 logger = logging.getLogger(__name__)
 
@@ -217,7 +217,7 @@ async def implement_plan(plan_id: int, db: AsyncSession = Depends(get_db)) -> Pl
     await db.refresh(plan)
 
     # Trigger the agent service
-    trigger_result = await systemctl("start", "claude-agent.service")
+    trigger_result = await service_control.start_agent_service()
     if not trigger_result.get("success"):
         logger.warning("Failed to trigger agent service: %s", trigger_result)
         # Don't fail — the plan file is written and can be picked up on next run

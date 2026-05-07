@@ -295,6 +295,10 @@ class WebhookRunEvent(BaseModel):
     agent_id: str | None = None
     agent_name: str | None = None
     member_count: int | None = None
+    # Vision misalignment fields
+    violated_section: str | None = None
+    quote: str | None = None
+    plan_excerpt: str | None = None
 
 
 # --- Coordinator ---
@@ -717,3 +721,62 @@ class GlobalPauseState(BaseModel):
     global_pause: bool
     updated_at: datetime | None = None
     updated_by: str | None = None
+
+
+# ── Vision (Phase 1) ───────────────────────────────────────────
+
+class VisionDoc(BaseModel):
+    """Structured vision payload — one field per section."""
+    problem: str
+    users: str
+    end_state: str
+    non_goals: str
+    principles: str
+    horizons: str
+    anti_patterns: str
+
+
+class VisionRead(BaseModel):
+    """Response for GET /api/projects/{id}/vision."""
+    sha: str
+    body: str
+    last_refined_at: str | None = None  # ISO timestamp from latest commit
+    last_refined_by: str | None = None  # GitHub login from latest commit
+    cache_age_seconds: int
+
+
+class VisionCommitIn(BaseModel):
+    """Body for POST /api/projects/{id}/vision."""
+    vision_doc: VisionDoc
+
+
+class VisionCommitOut(BaseModel):
+    """Response for POST /api/projects/{id}/vision."""
+    sha: str
+    html_url: str
+
+
+class VisionStaleSha(BaseModel):
+    """409 envelope for POST /api/projects/{id}/vision."""
+    code: str = "stale_sha"
+    current_sha: str
+    current_body: str
+
+
+class VisionChatSessionOut(BaseModel):
+    """Response for GET /api/projects/{id}/vision/chat."""
+    id: str
+    project_id: int
+    state: str
+    phase: str
+    coverage: dict
+    messages: list[dict]
+    assembled: dict | None
+    created_at: str
+    updated_at: str
+
+
+class VisionChatTurnIn(BaseModel):
+    """Body for POST /api/projects/{id}/vision/chat (turn)."""
+    session_id: str | None = None  # None on first turn
+    message: str

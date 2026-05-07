@@ -13,6 +13,7 @@ import type {
   AnalyticsResponse, DiffResult, PlanUsage,
   PromptInfo, StationConfig, TokenUsage,
   AgentEvent, Notification,
+  VisionRead, VisionDoc, VisionCommitOut, VisionChatSession,
 } from './types';
 
 import { toastError } from './toast.svelte';
@@ -288,7 +289,7 @@ export const getAuthStatus = () =>
 // --- OAuth (Claude) ---
 
 export const startOAuthLogin = () =>
-  request<{ url: string; state: string }>('/api/oauth/start', { method: 'POST' });
+  request<{ auth_url: string; state: string }>('/api/oauth/start', { method: 'POST' });
 
 export const submitOAuthCode = (code: string, state: string) =>
   request<{ success: boolean; error?: string }>('/api/oauth/callback', {
@@ -298,21 +299,60 @@ export const submitOAuthCode = (code: string, state: string) =>
 export const refreshOAuthToken = () =>
   request<{ refreshed: boolean; error?: string; expires_at?: string }>('/api/oauth/refresh', { method: 'POST' });
 
-// --- OAuth (GitHub) - Device Authorization Flow ---
+// --- GitHub auth: App + PAT ---
 
-export const getGitHubOAuthStatus = () =>
-  request<{ connected: boolean; username?: string; scopes?: string[] }>('/api/oauth/github/status');
+export interface GitHubAppStatus {
+  state: 'not_created' | 'created_not_installed' | 'installed';
+  slug?: string;
+  name?: string;
+  owner?: string;
+  installation_id?: number;
+  html_url?: string;
+  pat_set: boolean;
+}
 
-export const startGitHubDeviceFlow = () =>
-  request<{ flow_id: string; user_code: string; verification_uri: string; expires_in: number }>('/api/oauth/github/device/start', { method: 'POST' });
+export interface GitHubAppManifestStart {
+  state: string;
+  post_url: string;     // https://github.com/settings/apps/new?state=...
+  manifest: Record<string, unknown>;
+}
 
-export const pollGitHubDeviceFlow = (flowId: string) =>
-  request<{ status: string; error?: string }>('/api/oauth/github/device/poll', {
-    method: 'POST', body: JSON.stringify({ flow_id: flowId }),
+export const getGitHubAppStatus = () =>
+  request<GitHubAppStatus>('/api/github/app/status');
+
+export const startGitHubAppManifest = () =>
+  request<GitHubAppManifestStart>('/api/github/app/manifest/start', { method: 'POST' });
+
+export const disconnectGitHubApp = () =>
+  requestWithToast<{ status: string }>('/api/github/app', { method: 'DELETE' });
+
+export const setGitHubPAT = (token: string) =>
+  requestWithToast<{ status: string }>('/api/github/app/pat', {
+    method: 'PUT', body: JSON.stringify({ token }),
   });
 
-export const disconnectGitHub = () =>
-  requestWithToast<{ success: boolean; message: string }>('/api/oauth/github', { method: 'DELETE' });
+export const clearGitHubPAT = () =>
+  requestWithToast<{ status: string }>('/api/github/app/pat', { method: 'DELETE' });
+
+export interface GitHubRepo {
+  full_name: string;
+  private: boolean;
+  html_url: string;
+  default_branch: string;
+}
+
+export interface GitHubBranch {
+  name: string;
+  protected: boolean;
+}
+
+export const listGitHubRepos = () =>
+  request<{ repos: GitHubRepo[] }>('/api/github/app/repos');
+
+export const listGitHubBranches = (repo: string) =>
+  request<{ branches: GitHubBranch[] }>(
+    `/api/github/app/branches?repo=${encodeURIComponent(repo)}`,
+  );
 
 // --- Plans ---
 
@@ -485,3 +525,26 @@ export const getAgentEventStats = () =>
 
 export const getNotifications = (params?: { unread_only?: boolean; limit?: number }) =>
   request<Notification[]>(`/api/events/subscribers${qs(params ?? {})}`);
+
+// --- Vision (Phase 1) ---
+
+export const getVision = (projectId: number) =>
+  request<VisionRead>(`/api/projects/${projectId}/vision`);
+
+export const commitVision = (projectId: number, vision_doc: VisionDoc) =>
+  request<VisionCommitOut>(`/api/projects/${projectId}/vision`, {
+    method: 'POST', body: JSON.stringify({ vision_doc }),
+  });
+
+export const getVisionChatSession = (projectId: number) =>
+  request<VisionChatSession>(`/api/projects/${projectId}/vision/chat`);
+
+export const cancelVisionChat = (projectId: number) =>
+  request<void>(`/api/projects/${projectId}/vision/chat`, { method: 'DELETE' });
+
+// SSE chat turn — see lib/vision-sse.ts for the streaming wrapper
+export const visionChatTurnUrl = (projectId: number) =>
+  `${BASE}/api/projects/${projectId}/vision/chat`;
+
+export const findVisionGaps = (projectId: number) =>
+  request<{ status: string; pid?: number; log?: string }>(`/api/projects/${projectId}/vision/find-gaps`, { method: 'POST' });
