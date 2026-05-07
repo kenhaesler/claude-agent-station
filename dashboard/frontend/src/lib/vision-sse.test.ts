@@ -50,9 +50,9 @@ describe('streamVisionChat', () => {
 
   it('aborts via AbortController and ends gracefully', async () => {
     const ctrl = new AbortController();
-    const fakeFetch = vi.fn(async (url: string, init: any) => {
+    const fakeFetch = vi.fn(async (_input: URL | RequestInfo, _init?: RequestInit) => {
       // simulate hanging response
-      return { ok: true, body: new ReadableStream({ start() {} }) } as any;
+      return { ok: true, body: new ReadableStream({ start() {} }) } as unknown as Response;
     });
     const it = streamVisionChat({
       url: 'http://test/chat',
