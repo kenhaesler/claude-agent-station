@@ -55,6 +55,19 @@ class _StreamState:
     BATCH_INTERVAL: float = 15.0  # seconds between progress webhooks
 
 
+async def _user_prompt_stream(text: str):
+    """Wrap a string prompt as the AsyncIterable form the SDK requires when
+    can_use_tool is supplied. Yields one user message then ends, matching
+    the dict shape the SDK uses internally for string prompts.
+    """
+    yield {
+        "type": "user",
+        "session_id": "",
+        "message": {"role": "user", "content": text},
+        "parent_tool_use_id": None,
+    }
+
+
 SKIP_LABELS = frozenset({
     "autonomous-agent/in-progress",
     "autonomous-agent/needs-help",
@@ -747,7 +760,7 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
                         options.resume = session_id
                         options.continue_conversation = True
 
-                    async for message in query(prompt=prompt, options=options):
+                    async for message in query(prompt=_user_prompt_stream(prompt), options=options):
                         # Capture session_id for resume
                         sid = getattr(message, "session_id", None)
                         if sid:
