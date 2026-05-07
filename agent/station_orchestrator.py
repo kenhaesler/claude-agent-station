@@ -246,10 +246,13 @@ def build_team_prompt(
     issue_entries = []
     for issue in issues:
         labels_str = ", ".join(l.get("name", "") for l in issue.get("labels", []))
-        issue_entries.append(
-            f"- **#{issue['number']}**: {issue.get('title', 'Untitled')}"
-            + (f" [{labels_str}]" if labels_str else "")
-        )
+        why = issue.get("vision_reason", "")
+        line = f"- **#{issue['number']}**: {issue.get('title', 'Untitled')}"
+        if labels_str:
+            line += f" [{labels_str}]"
+        if why:
+            line += f"\n    *Why this advances the vision:* {why}"
+        issue_entries.append(line)
     issue_list = "\n".join(issue_entries)
 
     max_turns = get_limit(config, "max_employee_turns", 200)
