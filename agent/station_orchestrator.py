@@ -40,6 +40,11 @@ from claude_agent_sdk.types import (
 
 from agent.audit_hook import make_audited_policy
 from agent.auto_mode import AutonomyLevel, _coerce_level
+from agent.run_control import (
+    OrchestratorStopRequested,
+    drain_pending_controls,
+    set_run_paused,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -395,9 +400,26 @@ and your teammates lose their work. You must keep making tool calls to stay aliv
 {vision_section}"""
 
 
-def build_followup_prompt(workspace: str) -> str:
-    """Build a follow-up prompt for re-entering the lead agent session."""
-    return (
+def build_followup_prompt(
+    workspace: str,
+    operator_messages: list[str] | None = None,
+) -> str:
+    """Build a follow-up prompt for re-entering the lead agent session.
+
+    When ``operator_messages`` is non-empty, they are prepended as high-priority
+    guidance from the human operator. Use this to inject Mission Control
+    messages captured while the previous iteration was running.
+    """
+    header = ""
+    if operator_messages:
+        joined = "\n\n".join(f"> {m}" for m in operator_messages if m.strip())
+        if joined:
+            header = (
+                "━━━ OPERATOR MESSAGES (received during your last turn) ━━━\n"
+                f"{joined}\n"
+                "━━━ Acknowledge these and adjust your plan if needed. ━━━\n\n"
+            )
+    return header + (
         "Your previous session ended but teammates may still be working.\n\n"
         "Check their status now:\n"
         f"1. Run: `find {workspace} -name '.claude-employee-report.json' -type f`\n"
@@ -489,6 +511,118 @@ def _message_to_dict(message) -> dict:
             result["session_id"] = sid
 
     return result
+
+
+def _apply_controls(
+    full_run_id: str,
+    config: dict,
+    pending_messages: list[str],
+    flags: dict[str, bool],
+) -> None:
+    """Drain the run_controls queue for this run and apply each action.
+
+    - pause/resume flip the per-run pause flag (the policy engine reads it).
+    - stop sets flags['stop']; the caller breaks out of the SDK stream.
+    - message accumulates operator text for the next followup prompt.
+
+    All actions emit a webhook so the dashboard timeline shows the
+    intervention alongside agent activity. Never raises.
+
+    NOTE: This synchronous version is retained for the startup drain (called
+    before any iteration begins) and for tests. The main runtime path now
+    uses :func:`_control_poll_loop` running as a dedicated asyncio task so
+    controls are picked up within ~1s even during long tool calls when no
+    SDK messages are flowing.
+    """
+    rows = drain_pending_controls(full_run_id)
+    if not rows:
+        return
+    for row in rows:
+        action = row.action
+        if action == "pause":
+            set_run_paused(full_run_id, True)
+            logger.info("Mission Control: run paused by %s", row.requested_by or "operator")
+            post_webhook(config, "run_paused", {
+                "run_id": full_run_id,
+                "requested_by": row.requested_by,
+                "control_id": row.id,
+            })
+        elif action == "resume":
+            set_run_paused(full_run_id, False)
+            logger.info("Mission Control: run resumed by %s", row.requested_by or "operator")
+            post_webhook(config, "run_resumed", {
+                "run_id": full_run_id,
+                "requested_by": row.requested_by,
+                "control_id": row.id,
+            })
+        elif action == "stop":
+            flags["stop"] = True
+            logger.info("Mission Control: stop requested by %s", row.requested_by or "operator")
+            post_webhook(config, "run_stop_requested", {
+                "run_id": full_run_id,
+                "requested_by": row.requested_by,
+                "control_id": row.id,
+            })
+        elif action == "message":
+            text = ""
+            if isinstance(row.payload, dict):
+                text = str(row.payload.get("text") or "").strip()
+            if text:
+                pending_messages.append(text)
+                logger.info(
+                    "Mission Control: queued operator message (%d chars) from %s",
+                    len(text), row.requested_by or "operator",
+                )
+                post_webhook(config, "run_message_queued", {
+                    "run_id": full_run_id,
+                    "requested_by": row.requested_by,
+                    "control_id": row.id,
+                    "text": text[:500],
+                })
+        else:
+            logger.warning("Mission Control: unknown action %r (id=%d)", action, row.id)
+
+
+async def _control_poll_loop(
+    full_run_id: str,
+    config: dict,
+    pending_messages: list[str],
+    flags: dict[str, bool],
+    *,
+    interval: float = 1.0,
+) -> None:
+    """Dedicated asyncio task that drains run_controls every ``interval``
+    seconds for the lifetime of the run. Runs concurrently with the SDK
+    stream loop so operator interventions are picked up even when no SDK
+    messages are flowing (long tool calls, idle waits, API stalls).
+
+    Cancellation is the only way this coroutine exits — the caller cancels
+    it in a ``finally:`` block when the run ends. We swallow CancelledError
+    so the cleanup path doesn't log a traceback.
+
+    SQLite access in :func:`drain_pending_controls` is synchronous; we call
+    it directly on the event loop because the drain is cheap (<5ms for the
+    empty case, which is 99% of ticks) and wrapping in run_in_executor adds
+    more latency than it saves. If drain latency ever becomes a problem,
+    switch to ``asyncio.to_thread``.
+    """
+    logger.info("Mission Control: control poll task started for %s (interval=%.1fs)",
+                full_run_id, interval)
+    try:
+        while True:
+            try:
+                _apply_controls(full_run_id, config, pending_messages, flags)
+            except Exception as exc:  # pragma: no cover — never crash the poll loop
+                logger.warning("Mission Control: control poll tick failed: %s", exc)
+            # Exit fast once stop is latched so the stream loop doesn't have
+            # to wait a full tick for the task to notice.
+            if flags.get("stop"):
+                logger.info("Mission Control: control poll task exiting (stop latched)")
+                return
+            await asyncio.sleep(interval)
+    except asyncio.CancelledError:
+        logger.debug("Mission Control: control poll task cancelled for %s", full_run_id)
+        raise
 
 
 def post_webhook(config: dict, event: str, data: dict | None = None) -> None:
@@ -813,15 +947,46 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
         work_complete = False
         first_init_sent = False
         stream_state = _StreamState(last_webhook_time=time.monotonic())
+        # Mission Control: operator messages captured mid-stream, flushed
+        # into the followup prompt on the next iteration.
+        pending_operator_messages: list[str] = []
+        full_run_id = f"run-{run_id}"
+        # Mutable box so _apply_control can signal stop back to the loop.
+        control_flags = {"stop": False}
+        control_task: asyncio.Task | None = None
 
         try:
             logger.info("Starting Agent Teams lead for %s (%d issues, model=%s)", repo, len(issues), manager_model)
+            # Mission Control: kick off the dedicated control-polling task
+            # now so operator actions are applied within ~1s for the entire
+            # lifetime of the run — not just at iteration boundaries and SDK
+            # message boundaries, which can be 30+ seconds apart during long
+            # tool calls. The task is cancelled in the outer finally block.
+            control_task = asyncio.create_task(
+                _control_poll_loop(
+                    full_run_id, config,
+                    pending_operator_messages, control_flags,
+                    interval=1.0,
+                ),
+                name=f"mission-control-{full_run_id}",
+            )
+
             with open(stream_log_path, "a") as log_file:
                 for iteration in range(max_reentries):
                     is_followup = iteration > 0
 
+                    # Early exit if the background poller already latched stop
+                    # (e.g. operator clicked Stop before the first iteration).
+                    if control_flags["stop"]:
+                        logger.info("Stop requested before iteration %d", iteration + 1)
+                        break
+
                     if is_followup:
-                        prompt = build_followup_prompt(workspace)
+                        prompt = build_followup_prompt(
+                            workspace,
+                            operator_messages=pending_operator_messages,
+                        )
+                        pending_operator_messages.clear()
                         logger.info(
                             "Re-entering lead session (iteration %d/%d, session=%s)",
                             iteration + 1, max_reentries, session_id,
@@ -871,24 +1036,49 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
 
                         handle_stream_event(message, config, run_id, log_file=log_file, state=stream_state)
 
+                        # The background control poll task is already running;
+                        # we only need to check the stop flag here to break
+                        # out of the stream loop as soon as it latches.
+                        if control_flags["stop"]:
+                            logger.info("Stop requested; breaking SDK stream")
+                            break
+
                         # Check result for completion
                         if isinstance(message, ResultMessage):
                             result_text = getattr(message, "result", "")
                             if _is_work_complete(result_text):
                                 work_complete = True
 
+                    if control_flags["stop"]:
+                        raise OrchestratorStopRequested()
+
                     if work_complete:
                         logger.info("Agent Teams orchestration completed for %s", repo)
                         break
 
-                    # Brief pause before re-entry
+                    # Brief pause before re-entry. The control task keeps
+                    # running during this sleep so a mid-idle stop/message
+                    # is picked up immediately.
                     await asyncio.sleep(15)
 
-            if not work_complete:
+            if not work_complete and not control_flags["stop"]:
                 logger.warning(
                     "Orchestrator exhausted %d re-entries for %s without completion",
                     max_reentries, repo,
                 )
+
+        except OrchestratorStopRequested:
+            logger.info("Agent Teams orchestration interrupted by operator for %s", repo)
+            post_webhook(config, "orchestrator_complete", {
+                "run_id": f"run-{run_id}",
+                "is_error": False,
+                "duration_ms": 0,
+                "num_turns": stream_state.turns,
+                "status": "interrupted",
+            })
+            # Ensure the run record flips to 'interrupted' via the webhook
+            # lifecycle handler; also clear any stale pause flag.
+            set_run_paused(f"run-{run_id}", False)
 
         except Exception as e:
             logger.exception("Agent Teams orchestration failed for %s: %s", repo, e)
@@ -899,6 +1089,15 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
             })
             exit_code = 1
         finally:
+            # Always stop the background control task before anything else so
+            # it can't race with cleanup (worktree removal, next project).
+            if control_task is not None and not control_task.done():
+                control_task.cancel()
+                try:
+                    await control_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+
             # Clean up worktrees
             for role, wt_path in worktree_paths.items():
                 if os.path.isdir(wt_path):

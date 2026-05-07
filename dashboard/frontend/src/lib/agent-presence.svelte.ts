@@ -116,6 +116,13 @@ interface AgentPresenceState {
   // Panel state
   panelOpen: boolean;
   selectedAgent: string | null;
+
+  // Mission Control (Phase A): which runs have an operator-requested pause
+  // pending, and whether the global kill-switch is engaged. Updated by SSE.
+  // Stored as a plain record keyed by run_id — Svelte 5 $state does not track
+  // mutations on a raw Set, so $derived reads never update.
+  pausedRuns: Record<string, boolean>;
+  globalPause: boolean;
 }
 
 const MAX_CONVERSATION = 200;
@@ -142,6 +149,8 @@ export const agentPresence = $state<AgentPresenceState>({
   pendingDecisionCount: 0,
   panelOpen: false,
   selectedAgent: null,
+  pausedRuns: {},
+  globalPause: false,
 });
 
 // --- Internal ---
@@ -295,7 +304,10 @@ function handleWsMessage(data: string) {
         agentName,
         agentColor,
         type: 'thinking',
-        content: truncate(evt.thinking ?? '', 300),
+        // Mission Control: operators need the whole reasoning to judge
+        // whether to intervene. Cap at 4k chars so a runaway block can't
+        // blow the UI, but 4k >> a paragraph.
+        content: truncate(evt.thinking ?? '', 4000),
       });
     }
 
@@ -306,7 +318,7 @@ function handleWsMessage(data: string) {
         agentName,
         agentColor,
         type: 'text',
-        content: truncate(evt.text ?? '', 500),
+        content: truncate(evt.text ?? '', 4000),
       });
     }
 
@@ -410,15 +422,27 @@ function handleSSEEvent(data: any) {
       });
       break;
     case 'run_complete':
+    case 'orchestrator_complete':
+    case 'orchestrator_error': {
+      // All three signal terminal state for the run. In Agent Teams mode the
+      // orchestrator emits `orchestrator_complete` directly, so without this
+      // branch the UI kept showing the run as live for up to 10s until the
+      // next poll — long enough for an operator to type and send a message
+      // to a dead run. Refresh immediately so Mission Control locks down.
       agentPresence.phase = 'idle';
+      const interrupted = data.status === 'interrupted' || data.data?.status === 'interrupted';
       addConversationEntry({
         agentName: 'Manager',
         agentColor,
         type: 'phase',
-        content: 'Run completed',
+        content: interrupted
+          ? 'Run interrupted by operator'
+          : (eventType === 'orchestrator_error' ? 'Run failed' : 'Run completed'),
+        isError: interrupted || eventType === 'orchestrator_error',
       });
       refreshActiveRuns();
       break;
+    }
     case 'planner_start':
       addConversationEntry({
         agentName: 'Planner',
@@ -470,6 +494,107 @@ function handleSSEEvent(data: any) {
         content: `REAPER: stale run ${data.run_id ?? 'unknown'} terminated`,
       });
       refreshActiveRuns();
+      break;
+
+    // Mission Control (Phase A) — operator intervention events.
+    // Two event families land here:
+    //   run_control_* — fired by the dashboard router the moment the
+    //     operator clicks; tells the UI the request has been queued.
+    //   run_paused / run_resumed / run_stop_requested — fired by the
+    //     orchestrator once it actually consumed the queued row, so the
+    //     UI can flip the badge from "requested" to "confirmed".
+    case 'run_control_pause':
+    case 'run_paused': {
+      const rid = data.run_id ?? data.data?.run_id;
+      if (rid) agentPresence.pausedRuns[rid] = true;
+      addConversationEntry({
+        agentName: 'Operator',
+        agentColor: getRoleColors().manager,
+        type: 'guidance',
+        content: eventType === 'run_paused' ? 'Agent confirmed pause' : 'Pause requested',
+      });
+      break;
+    }
+    case 'run_control_resume':
+    case 'run_resumed': {
+      const rid = data.run_id ?? data.data?.run_id;
+      if (rid) delete agentPresence.pausedRuns[rid];
+      addConversationEntry({
+        agentName: 'Operator',
+        agentColor: getRoleColors().manager,
+        type: 'guidance',
+        content: eventType === 'run_resumed' ? 'Agent confirmed resume' : 'Resume requested',
+      });
+      break;
+    }
+    case 'run_control_stop':
+    case 'run_stop_requested': {
+      addConversationEntry({
+        agentName: 'Operator',
+        agentColor: getRoleColors().manager,
+        type: 'guidance',
+        content: eventType === 'run_stop_requested' ? 'Agent received stop' : 'Stop requested',
+        isError: true,
+      });
+      // A stop flips the run to 'interrupted' once the orchestrator catches
+      // it; refresh so Mission Control shows the transition immediately.
+      refreshActiveRuns();
+      break;
+    }
+    case 'run_control_message':
+    case 'run_message_queued': {
+      // Two distinct events share this branch:
+      //   run_control_message — fired by the backend router the instant the
+      //     operator clicks Send, so the UI can confirm the row was written.
+      //   run_message_queued — fired by the orchestrator once the dedicated
+      //     poll task has actually drained the row and accumulated it for
+      //     the next turn. This is the "agent received it" signal.
+      const text = (data.payload?.text ?? data.text ?? data.data?.text ?? '').toString();
+      const queued = eventType === 'run_control_message';
+      addConversationEntry({
+        agentName: 'Operator',
+        agentColor: getRoleColors().manager,
+        type: 'guidance',
+        content: queued
+          ? (text ? `Queued for agent: ${text.slice(0, 200)}` : 'Message queued')
+          : (text ? `Agent picked up: ${text.slice(0, 200)}` : 'Agent picked up message'),
+      });
+      break;
+    }
+    case 'run_message_expired': {
+      // The run terminated before the orchestrator drained the control row.
+      // Surface this in red so the operator knows their message was NOT
+      // delivered — previously these rows sat in the queue forever.
+      const text = (data.text ?? data.data?.text ?? data.payload?.text ?? '').toString();
+      addConversationEntry({
+        agentName: 'Operator',
+        agentColor: getRoleColors().manager,
+        type: 'guidance',
+        content: text
+          ? `Not delivered (run ended): ${text.slice(0, 200)}`
+          : 'Pending intervention expired — run ended before pickup',
+        isError: true,
+      });
+      break;
+    }
+    case 'global_pause_set':
+      agentPresence.globalPause = true;
+      addConversationEntry({
+        agentName: 'Operator',
+        agentColor: getRoleColors().manager,
+        type: 'guidance',
+        content: 'Global pause engaged — every tool call now routes to the tray',
+        isError: true,
+      });
+      break;
+    case 'global_pause_cleared':
+      agentPresence.globalPause = false;
+      addConversationEntry({
+        agentName: 'Operator',
+        agentColor: getRoleColors().manager,
+        type: 'guidance',
+        content: 'Global pause released',
+      });
       break;
   }
 }
@@ -613,6 +738,8 @@ export function disconnect() {
   agentPresence.wsConnected = false;
   agentPresence.sseConnected = false;
   agentPresence.pendingDecisionCount = 0;
+  for (const k of Object.keys(agentPresence.pausedRuns)) delete agentPresence.pausedRuns[k];
+  agentPresence.globalPause = false;
   rawIntensity = 0;
   eventsSinceLastSample = 0;
 }

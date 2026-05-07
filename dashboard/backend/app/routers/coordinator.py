@@ -151,10 +151,71 @@ async def send_guidance_api(
     payload: GuidanceSend,
     db: AsyncSession = Depends(get_db),
 ):
-    """Send guidance to an employee from the dashboard UI."""
-    raise HTTPException(
-        status_code=501,
-        detail="Legacy guidance not available. Agent Teams mode uses SDK messaging.",
-    )
+    """Legacy shim — forwards to the Mission Control run_controls queue.
 
-    return {"status": "ok", "message": "Guidance sent"}
+    The dashboard's GuidanceInput component should call
+    ``POST /api/runs/{run_id}/message`` directly going forward, but this
+    shim keeps any older caller working by translating ``guidance_type`` +
+    ``content`` into a control-queue message.
+    """
+    import json as _json
+
+    from app.models import Run, RunControl
+    from app.services.event_bus import publish
+
+    if not payload.content or not payload.content.strip():
+        raise HTTPException(status_code=400, detail="content must not be empty")
+
+    # Verify the run exists and is still running — guidance on a completed
+    # run is a no-op and we want to surface that clearly. Treat any terminal
+    # status (completed/failed/interrupted) or a non-null finished_at as
+    # "orchestrator has exited, queue will never drain" → 409.
+    result = await db.execute(select(Run).where(Run.run_id == payload.run_id))
+    run = result.scalar_one_or_none()
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    if (run.status or "") in {"completed", "failed", "interrupted"} or run.finished_at is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Run {payload.run_id} is no longer active "
+                f"(status={run.status or 'unknown'}) — guidance has no effect."
+            ),
+        )
+
+    # Map legacy guidance_type → orchestrator control action. 'stop' maps
+    # to the hard stop path; everything else becomes an injected message
+    # so the lead agent can read it in-context.
+    if (payload.guidance_type or "").lower() == "stop":
+        action = "stop"
+        control_payload = None
+    else:
+        action = "message"
+        prefix = f"[operator-{payload.guidance_type or 'info'}] "
+        control_payload = {"text": prefix + payload.content.strip()}
+
+    row = RunControl(
+        run_id=payload.run_id,
+        action=action,
+        payload=_json.dumps(control_payload) if control_payload else None,
+        requested_by="guidance",
+    )
+    db.add(row)
+    await db.commit()
+    await db.refresh(row)
+
+    await publish({
+        "type": f"run_control_{action}",
+        "data": {
+            "run_id": payload.run_id,
+            "control_id": row.id,
+            "requested_by": "guidance",
+            "payload": control_payload or {},
+        },
+    })
+
+    return {
+        "status": "ok",
+        "action": action,
+        "control_id": row.id,
+    }

@@ -4,6 +4,7 @@
 
 export type Page =
   | 'command-center'
+  | 'mission-control'
   | 'agent-teams'
   | 'runs'
   | 'run-detail'
@@ -42,6 +43,7 @@ function parsePath(): Route {
   if (raw === 'settings' && parts.length > 1) return { page: 'settings', param: parts[1] };
 
   const routeMap: Record<string, Page> = {
+    'mission-control': 'mission-control',
     'agent-teams': 'agent-teams',
     runs: 'runs',
     queue: 'queue',
@@ -121,6 +123,7 @@ export function handleLinkClick(e: MouseEvent): void {
 export function getPageTitle(page: Page): string {
   const titles: Record<Page, string> = {
     'command-center': 'Command Center',
+    'mission-control': 'Mission Control',
     'agent-teams': 'Agent Teams',
     'runs': 'Runs',
     'run-detail': 'Run Detail',

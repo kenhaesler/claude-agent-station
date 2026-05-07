@@ -206,6 +206,51 @@ export const triggerRun = () =>
 export const rescanRuns = () =>
   requestWithToast<{ status: string; imported: number }>('/api/runs/rescan', { method: 'POST' });
 
+// --- Mission Control: per-run intervention (Phase A) ---
+
+export interface RunControlAck {
+  run_id: string;
+  action: string;
+  control_id: number;
+  queued_at: string;
+}
+
+// Mission Control control calls use the raw `request` helper (no auto-toast)
+// so the caller can render its own precise feedback — especially on 409
+// (run has already terminated), where the detail string explains *why* the
+// intervention did nothing. The UI components below already handle both
+// success and error branches.
+export const pauseRun = (runId: string) =>
+  request<RunControlAck>(`/api/runs/${runId}/pause`, { method: 'POST' });
+
+export const resumeRun = (runId: string) =>
+  request<RunControlAck>(`/api/runs/${runId}/resume`, { method: 'POST' });
+
+export const stopRun = (runId: string) =>
+  request<RunControlAck>(`/api/runs/${runId}/stop`, { method: 'POST' });
+
+export const messageRun = (runId: string, text: string) =>
+  request<RunControlAck>(`/api/runs/${runId}/message`, {
+    method: 'POST', body: JSON.stringify({ text }),
+  });
+
+// --- Mission Control: global pause kill-switch (Phase A) ---
+
+export interface GlobalPauseState {
+  global_pause: boolean;
+  updated_at: string | null;
+  updated_by: string | null;
+}
+
+export const getGlobalPause = () =>
+  request<GlobalPauseState>('/api/system/pause');
+
+export const pauseAll = () =>
+  requestWithToast<GlobalPauseState>('/api/system/pause', { method: 'POST' });
+
+export const resumeAll = () =>
+  requestWithToast<GlobalPauseState>('/api/system/resume', { method: 'POST' });
+
 // --- Config ---
 
 export const getConfig = () =>

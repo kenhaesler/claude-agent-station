@@ -53,10 +53,12 @@
 >
   {#each entries as entry (entry.id)}
     <div class="flex gap-2 px-2 py-1 rounded hover:bg-surface-0/40 activity-enter
-                {entry.isError ? 'bg-reject/5' : ''}">
+                {entry.isError ? 'bg-reject/5' : ''}
+                {entry.type === 'thinking' ? 'italic text-secondary' : ''}
+                {entry.type === 'guidance' ? 'bg-accent-blue/5' : ''}">
       <span class="text-tertiary shrink-0 w-4 text-center">{typeIcons[entry.type] ?? '·'}</span>
       <span class="shrink-0 w-16 truncate" style="color: {entry.agentColor}">{entry.agentName}</span>
-      <span class="text-secondary flex-1 break-words min-w-0">
+      <span class="text-secondary flex-1 break-words min-w-0 whitespace-pre-wrap">
         {#if entry.toolName}
           <span class="text-tertiary">{entry.toolName}:</span>
         {/if}

@@ -82,3 +82,94 @@ def test_orchestrator_options_block_contains_can_use_tool():
         "ClaudeAgentOptions must pass can_use_tool=make_audited_policy(...)"
     )
     assert 'agent_id="lead"' in source
+
+
+# --- Mission Control: dedicated control poll task --------------------------
+
+
+async def test_control_poll_loop_drains_messages_continuously(tmp_path, monkeypatch):
+    """The poll loop must drain the run_controls queue on its own cadence,
+    independent of the SDK stream. This is the core hotfix — previously
+    controls were only drained when the SDK yielded a message, which could
+    be 30+ seconds during a long tool call.
+    """
+    import asyncio
+    import sqlite3
+
+    from agent import station_orchestrator, run_control
+
+    # Build a minimal sqlite DB that the control drain can talk to.
+    db = tmp_path / "poll.db"
+    conn = sqlite3.connect(str(db))
+    conn.execute(
+        """
+        CREATE TABLE run_controls (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          run_id TEXT, action TEXT, payload TEXT, requested_by TEXT,
+          requested_at TEXT, consumed_at TEXT
+        )
+        """
+    )
+    conn.commit()
+    monkeypatch.setenv("STATION_DB_PATH", str(db))
+
+    # Silence the webhook — the poller would otherwise try to POST.
+    monkeypatch.setattr(
+        station_orchestrator, "post_webhook",
+        lambda *_a, **_kw: None,
+    )
+
+    full_run_id = "run-poll-test"
+    pending: list[str] = []
+    flags = {"stop": False}
+
+    task = asyncio.create_task(
+        station_orchestrator._control_poll_loop(
+            full_run_id, {}, pending, flags, interval=0.05,
+        )
+    )
+
+    try:
+        # Inject a message after the task has started.
+        await asyncio.sleep(0.1)
+        conn.execute(
+            "INSERT INTO run_controls (run_id, action, payload, requested_by, requested_at) "
+            "VALUES (?, ?, ?, ?, datetime('now'))",
+            (full_run_id, "message", '{"text": "hello from operator"}', "api"),
+        )
+        conn.commit()
+
+        # The poll task runs every 50ms; give it a few ticks to pick up.
+        for _ in range(20):
+            if pending:
+                break
+            await asyncio.sleep(0.05)
+        assert pending == ["hello from operator"], (
+            f"poll loop failed to drain message queue; got {pending}"
+        )
+
+        # A stop row should latch flags['stop'] and exit the loop.
+        conn.execute(
+            "INSERT INTO run_controls (run_id, action, payload, requested_by, requested_at) "
+            "VALUES (?, ?, ?, ?, datetime('now'))",
+            (full_run_id, "stop", None, "api"),
+        )
+        conn.commit()
+
+        for _ in range(20):
+            if flags["stop"]:
+                break
+            await asyncio.sleep(0.05)
+        assert flags["stop"], "stop action failed to latch"
+
+        # Loop self-exits when stop is latched (no cancel needed).
+        await asyncio.wait_for(task, timeout=1.0)
+    finally:
+        run_control._paused_runs.clear()
+        if not task.done():
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+        conn.close()

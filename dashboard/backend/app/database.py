@@ -118,11 +118,17 @@ async def init_db():
             Project,
             QueueItem,
             Run,
+            RunControl,
+            StationControl,
             TaskOutcome,
             VisionChatSession,  # ← add
         )
         await conn.run_sync(Base.metadata.create_all)
         await _migrate_add_columns(conn)
+        # Seed StationControl singleton (id=1). Idempotent via INSERT OR IGNORE.
+        await conn.execute(
+            text("INSERT OR IGNORE INTO station_control (id, global_pause) VALUES (1, 0)")
+        )
 
     # Run JSON config migrations (idempotent, safe to call every startup)
     try:
