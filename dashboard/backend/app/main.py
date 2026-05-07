@@ -37,6 +37,7 @@ from app.routers import (
     webhook,
 )
 from app.routers import github_app as github_app_router
+from app.routers import vision as vision_router
 from app.services.config_sync import sync_config_to_db
 from app.services.log_importer import import_historical_runs
 from app.services.stale_run_reaper import reap_stale_runs
@@ -187,6 +188,7 @@ app.include_router(prompts.router, dependencies=_auth)
 app.include_router(queue.router, dependencies=_auth)
 app.include_router(agent_events.router, dependencies=_auth)
 app.include_router(permissions.router, dependencies=_auth)
+app.include_router(vision_router.router, dependencies=_auth)
 
 # GitHub webhook: has own auth via HMAC signature verification
 app.include_router(github_webhook.router)
