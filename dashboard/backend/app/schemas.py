@@ -295,6 +295,10 @@ class WebhookRunEvent(BaseModel):
     agent_id: str | None = None
     agent_name: str | None = None
     member_count: int | None = None
+    # Vision misalignment fields
+    violated_section: str | None = None
+    quote: str | None = None
+    plan_excerpt: str | None = None
 
 
 # --- Coordinator ---
