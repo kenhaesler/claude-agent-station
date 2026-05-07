@@ -90,3 +90,53 @@ async def test_append_turn_adds_to_messages_and_updates_coverage(db_session, pro
 async def test_mark_cancelled_with_unknown_id_raises(db_session, setup_db):
     with pytest.raises(SessionNotFound):
         await mark_cancelled(db_session, "no-such-id")
+
+
+from unittest.mock import patch
+
+@pytest.mark.asyncio
+async def test_run_chat_turn_yields_text_meta_and_done(db_session, project):
+    """run_chat_turn yields TextChunk, MetaChunk, DoneChunk for a normal turn."""
+    from claude_agent_sdk.types import AssistantMessage, ResultMessage, TextBlock
+
+    s = await create_session(db_session, project.id)
+
+    # Build real SDK message instances so isinstance() checks pass
+    assistant_text = (
+        "Hello!\n\n"
+        "```vision-meta\n"
+        '{"phase": "freeform", "covered": ["problem"], '
+        '"ready_to_assemble": false}\n'
+        "```\n"
+    )
+    msg_assistant = AssistantMessage(
+        content=[TextBlock(text=assistant_text)],
+        model="claude-sonnet-4-6",
+    )
+    msg_result = ResultMessage(
+        subtype="success",
+        duration_ms=100,
+        duration_api_ms=90,
+        is_error=False,
+        num_turns=1,
+        session_id="sdk-sid-1",
+    )
+
+    async def fake_query(prompt, options):
+        yield msg_assistant
+        yield msg_result
+
+    from app.services import vision_chat as vc
+    with patch.object(vc, "query", new=fake_query):
+        chunks = []
+        async for chunk in vc.run_chat_turn(
+            db_session, session_id=s.id, user_message="Hi",
+            system_prompt="<test prompt>", model="claude-sonnet-4-6",
+        ):
+            chunks.append(chunk)
+
+    kinds = [c["type"] for c in chunks]
+    assert "assistant_text" in kinds
+    assert "coverage_update" in kinds
+    assert "phase_change" in kinds
+    assert kinds[-1] == "done"
