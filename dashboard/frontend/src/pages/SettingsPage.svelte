@@ -4,7 +4,9 @@
            getGitHubAppStatus, startGitHubAppManifest, disconnectGitHubApp,
            setGitHubPAT, clearGitHubPAT,
            setGitHubOAuthConfig, clearGitHubOAuth, githubOAuthLogout,
+           startGitHubDeviceFlow, pollGitHubDeviceFlow,
            refreshOAuthToken } from '../lib/api';
+  import type { DeviceFlowStart } from '../lib/api';
   import type { GitHubAppStatus } from '../lib/api';
   import type { PromptInfo, SystemStatus, AuthStatus } from '../lib/types';
   import { toastSuccess, toastError } from '../lib/toast.svelte';
@@ -221,6 +223,74 @@
     } catch (e: any) {
       toastError(e.message);
     }
+  }
+
+  // Device flow — sign in without a callback URL. Backend holds the
+  // device_code; the browser shows the user_code and polls until GitHub
+  // confirms the user approved.
+  let deviceFlow = $state<DeviceFlowStart | null>(null);
+  let deviceFlowError = $state<string | null>(null);
+  let devicePollTimer: ReturnType<typeof setTimeout> | null = null;
+
+  async function startDeviceSignIn() {
+    if (deviceFlow) return;
+    deviceFlowError = null;
+    try {
+      const flow = await startGitHubDeviceFlow();
+      deviceFlow = flow;
+      // Open the verification URL with the code pre-filled. Pop-up blockers
+      // sometimes intercept this — the user_code is shown on the page so
+      // the user can copy it manually as a fallback.
+      window.open(flow.verification_uri_complete, '_blank', 'noopener');
+      schedulePoll();
+    } catch (e: any) {
+      toastError(e.message);
+    }
+  }
+
+  function schedulePoll() {
+    if (!deviceFlow) return;
+    if (devicePollTimer) clearTimeout(devicePollTimer);
+    devicePollTimer = setTimeout(pollDeviceOnce, deviceFlow.interval * 1000);
+  }
+
+  async function pollDeviceOnce() {
+    if (!deviceFlow) return;
+    try {
+      const result = await pollGitHubDeviceFlow();
+      if (result.status === 'success') {
+        deviceFlow = null;
+        devicePollTimer = null;
+        githubStatus = await getGitHubAppStatus();
+        toastSuccess(`Signed in${result.username ? ` as @${result.username}` : ''}`);
+      } else if (result.status === 'pending') {
+        schedulePoll();
+      } else if (result.status === 'expired') {
+        deviceFlow = null;
+        deviceFlowError = 'Code expired — try again.';
+      } else {
+        deviceFlow = null;
+        deviceFlowError = result.message ?? 'Sign-in failed';
+      }
+    } catch (e: any) {
+      // Swallow transient poll failures — schedule another attempt.
+      schedulePoll();
+      console.warn('device poll error', e);
+    }
+  }
+
+  function cancelDeviceFlow() {
+    if (devicePollTimer) {
+      clearTimeout(devicePollTimer);
+      devicePollTimer = null;
+    }
+    deviceFlow = null;
+    deviceFlowError = null;
+  }
+
+  function copyUserCode() {
+    if (!deviceFlow) return;
+    navigator.clipboard?.writeText(deviceFlow.user_code).catch(() => { /* best-effort */ });
   }
 </script>
 
@@ -479,17 +549,63 @@
               <span class="w-2 h-2 rounded-full bg-status-pending"></span>
               <span class="text-secondary">OAuth App configured but not signed in.</span>
             </div>
-            <button
-              type="button"
-              onclick={startOAuthSignIn}
-              data-testid="github-oauth-signin-btn"
-              class="btn btn-primary btn-sm text-xs"
-            >Sign in with GitHub</button>
-            <button
-              type="button"
-              onclick={handleOAuthForget}
-              class="btn btn-ghost btn-sm text-xs ml-2"
-            >Forget OAuth App</button>
+
+            {#if deviceFlow}
+              <div class="rounded border border-status-pending/40 bg-status-pending/5 p-3 mb-3">
+                <div class="text-xs text-secondary mb-2">
+                  A new tab opened on github.com. If the page asks for a code,
+                  enter the one below (it should already be pre-filled):
+                </div>
+                <div class="flex items-center gap-3 mb-2">
+                  <div class="font-mono text-lg tracking-widest text-primary select-all" data-testid="device-flow-user-code">
+                    {deviceFlow.user_code}
+                  </div>
+                  <button
+                    type="button"
+                    onclick={copyUserCode}
+                    class="btn btn-ghost btn-sm text-xs"
+                  >Copy</button>
+                </div>
+                <div class="text-xs text-tertiary mb-3">
+                  Waiting for you to approve on
+                  <a href={deviceFlow.verification_uri} target="_blank" rel="noopener" class="text-accent-orange underline">
+                    {deviceFlow.verification_uri}
+                  </a>…
+                </div>
+                <button
+                  type="button"
+                  onclick={cancelDeviceFlow}
+                  class="btn btn-ghost btn-sm text-xs"
+                >Cancel</button>
+              </div>
+            {:else}
+              <div class="flex flex-wrap gap-2 mb-2">
+                <button
+                  type="button"
+                  onclick={startDeviceSignIn}
+                  data-testid="github-device-flow-btn"
+                  class="btn btn-primary btn-sm text-xs"
+                >Sign in via device code</button>
+                <button
+                  type="button"
+                  onclick={startOAuthSignIn}
+                  data-testid="github-oauth-signin-btn"
+                  class="btn btn-ghost btn-sm text-xs"
+                >Sign in via web flow</button>
+                <button
+                  type="button"
+                  onclick={handleOAuthForget}
+                  class="btn btn-ghost btn-sm text-xs"
+                >Forget OAuth App</button>
+              </div>
+              <div class="text-[10px] text-tertiary">
+                Device flow: no callback URL needed, opens a tab on github.com to enter the code.
+                Web flow: standard redirect — needs the callback URL registered on the OAuth App.
+              </div>
+              {#if deviceFlowError}
+                <div class="text-xs text-status-error mt-2">{deviceFlowError}</div>
+              {/if}
+            {/if}
 
           {:else}
             <div class="space-y-3">

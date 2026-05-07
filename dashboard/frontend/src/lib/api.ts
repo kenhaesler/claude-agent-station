@@ -309,6 +309,29 @@ export const clearGitHubOAuth = () =>
 export const githubOAuthLogout = () =>
   requestWithToast<{ status: string }>('/api/github/app/oauth/token', { method: 'DELETE' });
 
+// Device flow — third sign-in path, no callback URL needed.
+// Backend keeps the device_code; the browser only sees the user_code.
+
+export interface DeviceFlowStart {
+  user_code: string;
+  verification_uri: string;
+  verification_uri_complete: string;
+  interval: number;
+  expires_in: number;
+}
+
+export interface DeviceFlowPoll {
+  status: 'pending' | 'success' | 'error' | 'expired';
+  message?: string;
+  username?: string;
+}
+
+export const startGitHubDeviceFlow = () =>
+  request<DeviceFlowStart>('/api/github/app/oauth/device/start', { method: 'POST' });
+
+export const pollGitHubDeviceFlow = () =>
+  request<DeviceFlowPoll>('/api/github/app/oauth/device/poll', { method: 'POST' });
+
 // --- Plans ---
 
 export const listPlans = (params?: {

@@ -32,6 +32,13 @@ async def client(setup_db, monkeypatch, tmp_path):
     importlib.reload(github_pat)
     importlib.reload(github_oauth)
 
+    # Reset router-level mutable state without reloading (reload would
+    # invalidate FastAPI's route registrations). Only the in-memory
+    # _active_device_flow leaks across tests; clear it here.
+    from app.routers import github_app as github_app_router
+    github_app_router._active_device_flow = None
+    github_app_router._pending_states.clear()
+
     from app.main import app
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
@@ -644,3 +651,215 @@ async def test_token_endpoint_pat_beats_oauth(client, monkeypatch):
     body = (await client.get("/api/github/app/token")).json()
     assert body["token"] == "ghp_pat_wins"
     assert body["source"] == "pat"
+
+
+# --- OAuth device flow ---
+
+
+@pytest.mark.asyncio
+async def test_device_start_requires_oauth_config(client):
+    resp = await client.post("/api/github/app/oauth/device/start")
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_device_start_returns_user_code_and_verification_uri(client):
+    from app.services import github_oauth
+    github_oauth.write_oauth({"client_id": "Iv1.abc", "client_secret": "shh"})
+
+    with respx.mock() as mock:
+        mock.post("https://github.com/login/device/code").respond(
+            200,
+            json={
+                "device_code": "secret-device-code",
+                "user_code": "WDJB-MJHT",
+                "verification_uri": "https://github.com/login/device",
+                "verification_uri_complete": "https://github.com/login/device?user_code=WDJB-MJHT",
+                "expires_in": 900,
+                "interval": 5,
+            },
+        )
+        resp = await client.post("/api/github/app/oauth/device/start")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["user_code"] == "WDJB-MJHT"
+    assert body["verification_uri"] == "https://github.com/login/device"
+    assert body["verification_uri_complete"].endswith("user_code=WDJB-MJHT")
+    assert body["interval"] == 5
+    # device_code is server-side only — must NOT leak to the browser
+    assert "device_code" not in body
+
+
+@pytest.mark.asyncio
+async def test_device_start_synthesizes_complete_uri_when_github_omits(client):
+    """Older GitHub responses don't always include verification_uri_complete.
+    Backend should build it from verification_uri + user_code so the UI can
+    auto-open a pre-filled link regardless."""
+    from app.services import github_oauth
+    github_oauth.write_oauth({"client_id": "Iv1.abc", "client_secret": "shh"})
+
+    with respx.mock() as mock:
+        mock.post("https://github.com/login/device/code").respond(
+            200,
+            json={
+                "device_code": "dc",
+                "user_code": "AAAA-BBBB",
+                "verification_uri": "https://github.com/login/device",
+                "expires_in": 900,
+                "interval": 5,
+            },
+        )
+        body = (await client.post("/api/github/app/oauth/device/start")).json()
+
+    assert body["verification_uri_complete"] == "https://github.com/login/device?user_code=AAAA-BBBB"
+
+
+@pytest.mark.asyncio
+async def test_device_poll_400_when_no_flow_in_progress(client):
+    resp = await client.post("/api/github/app/oauth/device/poll")
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_device_poll_pending_when_user_has_not_approved(client):
+    from app.services import github_oauth
+    github_oauth.write_oauth({"client_id": "Iv1.abc", "client_secret": "shh"})
+
+    # Start a flow
+    with respx.mock() as mock:
+        mock.post("https://github.com/login/device/code").respond(
+            200, json={
+                "device_code": "dc", "user_code": "X", "verification_uri": "https://github.com/login/device",
+                "expires_in": 900, "interval": 5,
+            },
+        )
+        await client.post("/api/github/app/oauth/device/start")
+
+    # GitHub returns authorization_pending until user approves
+    with respx.mock() as mock:
+        mock.post("https://github.com/login/oauth/access_token").respond(
+            200, json={"error": "authorization_pending", "error_description": "..."},
+        )
+        resp = await client.post("/api/github/app/oauth/device/poll")
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_device_poll_success_persists_token_and_username(client):
+    from app.services import github_oauth
+    github_oauth.write_oauth({"client_id": "Iv1.abc", "client_secret": "shh"})
+
+    with respx.mock() as mock:
+        mock.post("https://github.com/login/device/code").respond(
+            200, json={
+                "device_code": "dc", "user_code": "X", "verification_uri": "https://github.com/login/device",
+                "expires_in": 900, "interval": 5,
+            },
+        )
+        await client.post("/api/github/app/oauth/device/start")
+
+    with respx.mock() as mock:
+        mock.post("https://github.com/login/oauth/access_token").respond(
+            200, json={"access_token": "gho_device_token", "scope": "repo,workflow"},
+        )
+        mock.get("https://api.github.com/user").respond(
+            200, json={"login": "octocat"},
+        )
+        resp = await client.post("/api/github/app/oauth/device/poll")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "success"
+    assert body["username"] == "octocat"
+
+    # Token persisted via the OAuth service
+    state = github_oauth.read_oauth()
+    assert state["access_token"] == "gho_device_token"
+    assert state["username"] == "octocat"
+    assert state["scope"] == "repo,workflow"
+    # Config preserved
+    assert state["client_id"] == "Iv1.abc"
+    assert state["client_secret"] == "shh"
+
+
+@pytest.mark.asyncio
+async def test_device_poll_subsequent_call_after_success_400(client):
+    """Once the flow finishes (success or terminal error), the in-progress
+    state is cleared. Subsequent polls return 400 'no flow in progress'."""
+    from app.services import github_oauth
+    github_oauth.write_oauth({"client_id": "Iv1.abc", "client_secret": "shh"})
+
+    with respx.mock() as mock:
+        mock.post("https://github.com/login/device/code").respond(
+            200, json={
+                "device_code": "dc", "user_code": "X", "verification_uri": "https://github.com/login/device",
+                "expires_in": 900, "interval": 5,
+            },
+        )
+        await client.post("/api/github/app/oauth/device/start")
+
+    with respx.mock() as mock:
+        mock.post("https://github.com/login/oauth/access_token").respond(
+            200, json={"access_token": "gho_x", "scope": "repo"},
+        )
+        mock.get("https://api.github.com/user").respond(200, json={"login": "u"})
+        await client.post("/api/github/app/oauth/device/poll")  # success
+
+    # Second poll after success
+    resp = await client.post("/api/github/app/oauth/device/poll")
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_device_poll_terminal_error_clears_flow(client):
+    from app.services import github_oauth
+    github_oauth.write_oauth({"client_id": "Iv1.abc", "client_secret": "shh"})
+
+    with respx.mock() as mock:
+        mock.post("https://github.com/login/device/code").respond(
+            200, json={
+                "device_code": "dc", "user_code": "X", "verification_uri": "https://github.com/login/device",
+                "expires_in": 900, "interval": 5,
+            },
+        )
+        await client.post("/api/github/app/oauth/device/start")
+
+    with respx.mock() as mock:
+        mock.post("https://github.com/login/oauth/access_token").respond(
+            200, json={"error": "access_denied", "error_description": "User denied"},
+        )
+        resp = await client.post("/api/github/app/oauth/device/poll")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "error"
+    assert "denied" in body["message"].lower()
+
+    # Subsequent poll after terminal error → 400 (flow cleared)
+    resp2 = await client.post("/api/github/app/oauth/device/poll")
+    assert resp2.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_clear_oauth_also_clears_active_device_flow(client):
+    """DELETE /oauth should kill any in-progress device flow alongside
+    the persisted state — no zombie polls after disconnect."""
+    from app.services import github_oauth
+    github_oauth.write_oauth({"client_id": "Iv1.abc", "client_secret": "shh"})
+
+    with respx.mock() as mock:
+        mock.post("https://github.com/login/device/code").respond(
+            200, json={
+                "device_code": "dc", "user_code": "X", "verification_uri": "https://github.com/login/device",
+                "expires_in": 900, "interval": 5,
+            },
+        )
+        await client.post("/api/github/app/oauth/device/start")
+
+    await client.delete("/api/github/app/oauth")
+
+    resp = await client.post("/api/github/app/oauth/device/poll")
+    assert resp.status_code == 400
