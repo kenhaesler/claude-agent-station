@@ -430,3 +430,111 @@ async def test_pat_set_requires_no_launcher_token_for_now(client, monkeypatch):
     monkeypatch.setenv("STATION_LAUNCHER_TOKEN", "secret-only-affects-token-endpoint")
     resp = await client.put("/api/github/app/pat", json={"token": "ghp_x"})
     assert resp.status_code == 200
+
+
+# --- Repo listing ---
+
+
+@pytest.mark.asyncio
+async def test_list_repos_empty_when_no_auth(client):
+    """No GitHub auth configured → empty list (UI falls back to text input)."""
+    body = (await client.get("/api/github/app/repos")).json()
+    assert body == {"repos": []}
+
+
+@pytest.mark.asyncio
+async def test_list_repos_uses_pat_when_set(client):
+    """PAT configured → call GitHub /user/repos with PAT bearer."""
+    from app.services import github_pat
+    github_pat.write_pat("ghp_user_pat")
+
+    with respx.mock() as mock:
+        route = mock.get("https://api.github.com/user/repos").respond(
+            200,
+            json=[
+                {
+                    "full_name": "octocat/hello-world",
+                    "private": False,
+                    "html_url": "https://github.com/octocat/hello-world",
+                    "default_branch": "main",
+                },
+                {
+                    "full_name": "octocat/secret",
+                    "private": True,
+                    "html_url": "https://github.com/octocat/secret",
+                    "default_branch": "trunk",
+                },
+            ],
+        )
+        body = (await client.get("/api/github/app/repos")).json()
+
+    # Authorization header carried the PAT
+    assert route.calls[0].request.headers["Authorization"] == "Bearer ghp_user_pat"
+    assert body == {
+        "repos": [
+            {"full_name": "octocat/hello-world", "private": False,
+             "html_url": "https://github.com/octocat/hello-world", "default_branch": "main"},
+            {"full_name": "octocat/secret", "private": True,
+             "html_url": "https://github.com/octocat/secret", "default_branch": "trunk"},
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_list_repos_uses_installation_endpoint_for_app(client, rsa_keypair):
+    """App configured (no PAT) → mint installation token, call GitHub
+    /installation/repositories which returns {repositories: [...]}."""
+    pem, _ = rsa_keypair
+    from app.services import github_app
+    github_app.write_credentials({
+        "app_id": 1, "slug": "x", "pem": pem, "installation_id": 99,
+    })
+    github_app._token_cache.clear()
+
+    with respx.mock() as mock:
+        # First call mints the installation token
+        mock.post(
+            "https://api.github.com/app/installations/99/access_tokens"
+        ).respond(201, json={
+            "token": "ghs_installation",
+            "expires_at": "2099-01-01T00:00:00Z",
+        })
+        # Second call lists repos using that token; response wraps repos
+        # under "repositories" (different shape than /user/repos).
+        repos_route = mock.get(
+            "https://api.github.com/installation/repositories"
+        ).respond(
+            200,
+            json={
+                "total_count": 1,
+                "repositories": [
+                    {
+                        "full_name": "laboef1900/agent-station",
+                        "private": True,
+                        "html_url": "https://github.com/laboef1900/agent-station",
+                        "default_branch": "main",
+                    },
+                ],
+            },
+        )
+        body = (await client.get("/api/github/app/repos")).json()
+
+    assert repos_route.calls[0].request.headers["Authorization"] == "Bearer ghs_installation"
+    assert body["repos"] == [
+        {"full_name": "laboef1900/agent-station", "private": True,
+         "html_url": "https://github.com/laboef1900/agent-station", "default_branch": "main"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_list_repos_returns_empty_on_github_error(client):
+    """GitHub returns 401/500/etc → return empty list rather than 500-ing
+    the dashboard. UI degrades gracefully back to manual repo entry."""
+    from app.services import github_pat
+    github_pat.write_pat("ghp_invalid")
+
+    with respx.mock() as mock:
+        mock.get("https://api.github.com/user/repos").respond(401, json={"message": "Bad credentials"})
+        body = (await client.get("/api/github/app/repos")).json()
+
+    assert body == {"repos": []}

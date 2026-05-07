@@ -1,8 +1,9 @@
 <script lang="ts">
-  import { listProjects, createProject, deleteProject, updateProject } from '../lib/api';
+  import { listProjects, createProject, deleteProject, updateProject, listGitHubRepos } from '../lib/api';
   import { navigate } from '../lib/router.svelte';
   import { toastSuccess, toastError } from '../lib/toast.svelte';
   import type { Project, AgentMode, AutonomyLevel } from '../lib/types';
+  import type { GitHubRepo } from '../lib/api';
   import Modal from '../components/overlays/Modal.svelte';
   import EmptyState from '../components/data-display/EmptyState.svelte';
   import SkeletonLoader from '../components/data-display/SkeletonLoader.svelte';
@@ -15,11 +16,43 @@
   let newMode = $state<AgentMode>('full');
   let newPriority = $state('medium');
 
+  // Repos pulled from GitHub via the configured auth (App or PAT). The
+  // dropdown shows these; users can also pick "Custom…" to type a repo
+  // name by hand (e.g. for a repo the App isn't installed on yet).
+  let repos = $state<GitHubRepo[]>([]);
+  let reposLoading = $state(false);
+  let useCustomRepo = $state(false);
+
   $effect(() => { loadProjects(); });
 
   async function loadProjects() {
     try { projects = await listProjects(); } catch { /* silent */ }
     loading = false;
+  }
+
+  async function loadRepos() {
+    reposLoading = true;
+    try {
+      const res = await listGitHubRepos();
+      // Filter out repos already added as projects so the dropdown only
+      // shows things the user can actually create.
+      const existing = new Set(projects.map(p => p.repo));
+      repos = res.repos.filter(r => !existing.has(r.full_name));
+      // If GitHub returned nothing, fall straight to custom-input mode.
+      useCustomRepo = repos.length === 0;
+    } catch {
+      repos = [];
+      useCustomRepo = true;
+    } finally {
+      reposLoading = false;
+    }
+  }
+
+  function openCreateModal() {
+    showCreateModal = true;
+    newRepo = '';
+    useCustomRepo = false;
+    loadRepos();
   }
 
   async function handleCreate() {
@@ -68,7 +101,7 @@
 <div class="space-y-4 animate-fade-in">
   <div class="flex items-center justify-between">
     <h1 class="font-heading text-xl">Projects</h1>
-    <button onclick={() => showCreateModal = true} class="btn btn-primary btn-sm">
+    <button onclick={openCreateModal} class="btn btn-primary btn-sm">
       + Add Project
     </button>
   </div>
@@ -150,11 +183,43 @@
 
 <Modal show={showCreateModal} onClose={() => showCreateModal = false} title="Add Project">
   <div class="space-y-3">
-    <input
-      bind:value={newRepo}
-      placeholder="owner/repo"
-      class="input"
-    />
+    {#if reposLoading}
+      <div class="text-xs text-tertiary py-2">Loading repos from GitHub…</div>
+    {:else if !useCustomRepo && repos.length > 0}
+      <select bind:value={newRepo} class="input" data-testid="repo-select">
+        <option value="" disabled>Pick a repo…</option>
+        {#each repos as r (r.full_name)}
+          <option value={r.full_name}>
+            {r.full_name}{r.private ? ' (private)' : ''}
+          </option>
+        {/each}
+      </select>
+      <button
+        type="button"
+        onclick={() => { useCustomRepo = true; newRepo = ''; }}
+        class="text-xs text-tertiary hover:text-secondary underline"
+      >Or enter a repo manually</button>
+    {:else}
+      <input
+        bind:value={newRepo}
+        placeholder="owner/repo"
+        class="input"
+        data-testid="repo-input"
+      />
+      {#if repos.length > 0}
+        <button
+          type="button"
+          onclick={() => { useCustomRepo = false; newRepo = ''; }}
+          class="text-xs text-tertiary hover:text-secondary underline"
+        >Pick from your GitHub repos</button>
+      {:else}
+        <div class="text-[11px] text-tertiary">
+          No repos found via GitHub auth. Connect a GitHub App or PAT in
+          <a href="/settings?tab=auth" class="text-accent-orange underline">Settings → Auth</a>
+          to populate this list automatically.
+        </div>
+      {/if}
+    {/if}
     <div class="flex gap-3">
       <select bind:value={newMode} class="input">
         <option value="full">Full</option>
@@ -168,6 +233,6 @@
         <option value="low">Low</option>
       </select>
     </div>
-    <button onclick={handleCreate} class="w-full btn btn-primary">Create</button>
+    <button onclick={handleCreate} disabled={!newRepo.trim()} class="w-full btn btn-primary">Create</button>
   </div>
 </Modal>

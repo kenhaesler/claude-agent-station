@@ -9,6 +9,7 @@ Endpoints:
   GET    /api/github/app/status            — App state + pat_set
   DELETE /api/github/app                   — clear App credentials (App stays in GitHub)
   GET    /api/github/app/token             — return a usable token (resolution above)
+  GET    /api/github/app/repos             — list repos accessible to the configured auth
   PUT    /api/github/app/pat               — store a Personal Access Token
   DELETE /api/github/app/pat               — clear the stored PAT
 """
@@ -302,3 +303,64 @@ async def clear_pat() -> dict[str, str]:
     """Remove the persisted PAT. Idempotent."""
     github_pat.delete_pat()
     return {"status": "cleared"}
+
+
+@router.get("/repos")
+async def list_repos() -> dict[str, list[dict[str, Any]]]:
+    """List repositories the configured GitHub auth can access.
+
+    PAT path → ``GET /user/repos`` (returns the user's own repos as a list).
+    App path → ``GET /installation/repositories`` with an installation token
+    (returns ``{"repositories": [...]}``, only repos the App is installed on).
+
+    Returns ``{"repos": []}`` when nothing is configured or GitHub returns
+    an error, so the UI can degrade gracefully back to manual repo entry.
+    """
+    pat = github_pat.read_pat()
+    if pat:
+        token = pat
+        url = "https://api.github.com/user/repos?per_page=100&sort=updated"
+        wrapper_key: str | None = None
+    else:
+        creds = github_app.read_credentials()
+        if not creds or not creds.get("installation_id"):
+            return {"repos": []}
+        token = await github_app.get_installation_token()
+        if not token:
+            return {"repos": []}
+        url = "https://api.github.com/installation/repositories?per_page=100"
+        wrapper_key = "repositories"
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url, headers=headers)
+    except httpx.HTTPError as exc:
+        logger.warning("GitHub repos fetch failed: %s", exc)
+        return {"repos": []}
+    if resp.status_code != 200:
+        logger.warning("GitHub repos returned %s: %s", resp.status_code, resp.text[:200])
+        return {"repos": []}
+    try:
+        data = resp.json()
+        raw = data.get(wrapper_key, []) if wrapper_key else data
+    except (ValueError, AttributeError) as exc:
+        logger.warning("GitHub repos response unparseable: %s", exc)
+        return {"repos": []}
+
+    return {
+        "repos": [
+            {
+                "full_name": r["full_name"],
+                "private": r.get("private", False),
+                "html_url": r.get("html_url", f"https://github.com/{r['full_name']}"),
+                "default_branch": r.get("default_branch", "main"),
+            }
+            for r in raw
+            if "full_name" in r
+        ],
+    }

@@ -288,6 +288,16 @@ export const setGitHubPAT = (token: string) =>
 export const clearGitHubPAT = () =>
   requestWithToast<{ status: string }>('/api/github/app/pat', { method: 'DELETE' });
 
+export interface GitHubRepo {
+  full_name: string;
+  private: boolean;
+  html_url: string;
+  default_branch: string;
+}
+
+export const listGitHubRepos = () =>
+  request<{ repos: GitHubRepo[] }>('/api/github/app/repos');
+
 // --- Plans ---
 
 export const listPlans = (params?: {
