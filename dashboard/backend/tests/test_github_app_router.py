@@ -22,13 +22,15 @@ async def setup_db():
 async def client(setup_db, monkeypatch, tmp_path):
     monkeypatch.setenv("STATION_GITHUB_APP_CREDENTIALS_PATH", str(tmp_path / "creds.json"))
     monkeypatch.setenv("STATION_GITHUB_PAT_PATH", str(tmp_path / "pat.json"))
+    monkeypatch.setenv("STATION_GITHUB_OAUTH_PATH", str(tmp_path / "oauth.json"))
     monkeypatch.setenv("STATION_DASHBOARD_BASE_URL", "http://localhost:8420")
     # Reload so module-level constants pick up the env vars.
     import importlib
 
-    from app.services import github_app, github_pat
+    from app.services import github_app, github_oauth, github_pat
     importlib.reload(github_app)
     importlib.reload(github_pat)
+    importlib.reload(github_oauth)
 
     from app.main import app
     transport = ASGITransport(app=app)
@@ -187,6 +189,7 @@ async def test_status_not_created(client):
     body = resp.json()
     assert body["state"] == "not_created"
     assert body["pat_set"] is False
+    assert body["oauth"] == {"configured": False, "logged_in": False, "username": None}
 
 
 @pytest.mark.asyncio
@@ -424,3 +427,220 @@ async def test_pat_set_requires_no_launcher_token_for_now(client, monkeypatch):
     monkeypatch.setenv("STATION_LAUNCHER_TOKEN", "secret-only-affects-token-endpoint")
     resp = await client.put("/api/github/app/pat", json={"token": "ghp_x"})
     assert resp.status_code == 200
+
+
+# --- OAuth App login ---
+
+
+@pytest.mark.asyncio
+async def test_set_oauth_config_persists(client):
+    resp = await client.put(
+        "/api/github/app/oauth/config",
+        json={"client_id": "Iv1.test", "client_secret": "shh"},
+    )
+    assert resp.status_code == 200
+
+    from app.services import github_oauth
+    state = github_oauth.read_oauth()
+    assert state["client_id"] == "Iv1.test"
+    assert state["client_secret"] == "shh"
+    assert state.get("access_token") is None
+
+
+@pytest.mark.asyncio
+async def test_set_oauth_config_rejects_empty(client):
+    resp = await client.put(
+        "/api/github/app/oauth/config",
+        json={"client_id": "", "client_secret": "shh"},
+    )
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_set_oauth_config_preserves_existing_token(client):
+    """Updating client credentials shouldn't log the user out."""
+    from app.services import github_oauth
+    github_oauth.write_oauth({
+        "client_id": "old", "client_secret": "old-secret",
+        "access_token": "gho_existing", "username": "octocat", "scope": "repo",
+    })
+
+    resp = await client.put(
+        "/api/github/app/oauth/config",
+        json={"client_id": "new", "client_secret": "new-secret"},
+    )
+    assert resp.status_code == 200
+
+    state = github_oauth.read_oauth()
+    assert state["client_id"] == "new"
+    assert state["access_token"] == "gho_existing"
+    assert state["username"] == "octocat"
+
+
+@pytest.mark.asyncio
+async def test_clear_oauth_removes_everything(client):
+    from app.services import github_oauth
+    github_oauth.write_oauth({
+        "client_id": "x", "client_secret": "y",
+        "access_token": "gho_z", "username": "u", "scope": "repo",
+    })
+
+    resp = await client.delete("/api/github/app/oauth")
+    assert resp.status_code == 200
+    assert github_oauth.read_oauth() is None
+
+
+@pytest.mark.asyncio
+async def test_oauth_logout_keeps_config(client):
+    from app.services import github_oauth
+    github_oauth.write_oauth({
+        "client_id": "x", "client_secret": "y",
+        "access_token": "gho_z", "username": "u", "scope": "repo",
+    })
+
+    resp = await client.delete("/api/github/app/oauth/token")
+    assert resp.status_code == 200
+
+    after = github_oauth.read_oauth()
+    assert after["client_id"] == "x"
+    assert after["client_secret"] == "y"
+    assert after.get("access_token") is None
+
+
+@pytest.mark.asyncio
+async def test_oauth_login_redirects_to_github_authorize(client):
+    from app.services import github_oauth
+    github_oauth.write_oauth({"client_id": "Iv1.abc", "client_secret": "shh"})
+
+    resp = await client.get("/api/github/app/oauth/login", follow_redirects=False)
+    assert resp.status_code == 302
+    location = resp.headers["location"]
+    assert location.startswith("https://github.com/login/oauth/authorize?")
+    assert "client_id=Iv1.abc" in location
+    assert "redirect_uri=" in location
+    assert "state=" in location
+    assert "scope=" in location
+
+
+@pytest.mark.asyncio
+async def test_oauth_login_400_when_not_configured(client):
+    resp = await client.get("/api/github/app/oauth/login", follow_redirects=False)
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_oauth_callback_rejects_unknown_state(client):
+    resp = await client.get(
+        "/api/github/app/oauth/callback?code=abc&state=not-issued",
+        follow_redirects=False,
+    )
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_oauth_callback_exchanges_code_persists_token_and_redirects(client):
+    from app.services import github_oauth
+    github_oauth.write_oauth({"client_id": "Iv1.abc", "client_secret": "shh"})
+
+    # Issue a state via /login (mock follow on github.com URL not needed since we
+    # only care about extracting the state param)
+    login_resp = await client.get("/api/github/app/oauth/login", follow_redirects=False)
+    location = login_resp.headers["location"]
+    state = location.split("state=")[1].split("&")[0]
+
+    with respx.mock() as mock:
+        mock.post("https://github.com/login/oauth/access_token").respond(
+            200,
+            json={"access_token": "gho_user_token", "scope": "repo,workflow", "token_type": "bearer"},
+        )
+        mock.get("https://api.github.com/user").respond(
+            200, json={"login": "octocat", "id": 1},
+        )
+        resp = await client.get(
+            f"/api/github/app/oauth/callback?code=CODE&state={state}",
+            follow_redirects=False,
+        )
+
+    assert resp.status_code == 302
+    assert resp.headers["location"] == "/settings?tab=auth"
+
+    state_after = github_oauth.read_oauth()
+    assert state_after["access_token"] == "gho_user_token"
+    assert state_after["username"] == "octocat"
+    assert state_after["scope"] == "repo,workflow"
+
+
+@pytest.mark.asyncio
+async def test_oauth_callback_502_when_github_returns_no_token(client):
+    from app.services import github_oauth
+    github_oauth.write_oauth({"client_id": "Iv1.abc", "client_secret": "shh"})
+
+    login_resp = await client.get("/api/github/app/oauth/login", follow_redirects=False)
+    state = login_resp.headers["location"].split("state=")[1].split("&")[0]
+
+    with respx.mock() as mock:
+        # GitHub returns 200 with an error body (e.g. bad_verification_code)
+        mock.post("https://github.com/login/oauth/access_token").respond(
+            200, json={"error": "bad_verification_code"},
+        )
+        resp = await client.get(
+            f"/api/github/app/oauth/callback?code=BAD&state={state}",
+            follow_redirects=False,
+        )
+
+    assert resp.status_code == 502
+
+
+@pytest.mark.asyncio
+async def test_status_reflects_oauth_states(client):
+    from app.services import github_oauth
+
+    # Configured but not signed in
+    github_oauth.write_oauth({"client_id": "Iv1.abc", "client_secret": "shh"})
+    body = (await client.get("/api/github/app/status")).json()
+    assert body["oauth"]["configured"] is True
+    assert body["oauth"]["logged_in"] is False
+    assert body["oauth"]["username"] is None
+
+    # Signed in
+    github_oauth.write_oauth({
+        "client_id": "Iv1.abc", "client_secret": "shh",
+        "access_token": "gho_t", "username": "octocat", "scope": "repo",
+    })
+    body = (await client.get("/api/github/app/status")).json()
+    assert body["oauth"]["configured"] is True
+    assert body["oauth"]["logged_in"] is True
+    assert body["oauth"]["username"] == "octocat"
+
+
+@pytest.mark.asyncio
+async def test_token_endpoint_resolves_oauth_when_no_pat(client, monkeypatch):
+    """OAuth token sits between PAT (highest priority) and App (lowest)."""
+    monkeypatch.delenv("STATION_LAUNCHER_TOKEN", raising=False)
+    from app.services import github_oauth
+    github_oauth.write_oauth({
+        "client_id": "x", "client_secret": "y",
+        "access_token": "gho_resolved", "username": "u", "scope": "repo",
+    })
+
+    resp = await client.get("/api/github/app/token")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["token"] == "gho_resolved"
+    assert body["source"] == "oauth"
+
+
+@pytest.mark.asyncio
+async def test_token_endpoint_pat_beats_oauth(client, monkeypatch):
+    """PAT remains highest precedence (explicit override)."""
+    monkeypatch.delenv("STATION_LAUNCHER_TOKEN", raising=False)
+    from app.services import github_oauth, github_pat
+    github_pat.write_pat("ghp_pat_wins")
+    github_oauth.write_oauth({
+        "client_id": "x", "client_secret": "y",
+        "access_token": "gho_loses", "username": "u", "scope": "repo",
+    })
+
+    body = (await client.get("/api/github/app/token")).json()
+    assert body["token"] == "ghp_pat_wins"
+    assert body["source"] == "pat"

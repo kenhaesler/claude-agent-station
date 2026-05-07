@@ -3,6 +3,7 @@
            listPrompts, updatePrompt, resetPrompt, startOAuthLogin,
            getGitHubAppStatus, startGitHubAppManifest, disconnectGitHubApp,
            setGitHubPAT, clearGitHubPAT,
+           setGitHubOAuthConfig, clearGitHubOAuth, githubOAuthLogout,
            refreshOAuthToken } from '../lib/api';
   import type { GitHubAppStatus } from '../lib/api';
   import type { PromptInfo, SystemStatus, AuthStatus } from '../lib/types';
@@ -148,6 +149,59 @@
     }
     try {
       await clearGitHubPAT();
+      githubStatus = await getGitHubAppStatus();
+    } catch (e: any) {
+      toastError(e.message);
+    }
+  }
+
+  // OAuth App login — third auth path. Standard OAuth 2.0 web flow.
+  // Operator pre-creates an OAuth App in their GitHub settings, enters
+  // its client_id/client_secret here, then clicks "Sign in with GitHub".
+  let oauthClientId = $state('');
+  let oauthClientSecret = $state('');
+  let oauthSaving = $state(false);
+
+  async function saveOAuthConfig() {
+    if (!oauthClientId.trim() || !oauthClientSecret.trim() || oauthSaving) return;
+    oauthSaving = true;
+    try {
+      await setGitHubOAuthConfig(oauthClientId.trim(), oauthClientSecret.trim());
+      oauthClientId = '';
+      oauthClientSecret = '';
+      githubStatus = await getGitHubAppStatus();
+    } catch (e: any) {
+      toastError(e.message);
+    } finally {
+      oauthSaving = false;
+    }
+  }
+
+  function startOAuthSignIn() {
+    // The login endpoint is a server-side 302 to github.com — let the
+    // browser follow it directly so the dashboard doesn't try to fetch
+    // GitHub cross-origin.
+    window.location.assign('/api/github/app/oauth/login');
+  }
+
+  async function handleOAuthLogout() {
+    if (!confirm('Sign out of GitHub OAuth? Your client credentials will be kept so you can sign in again.')) {
+      return;
+    }
+    try {
+      await githubOAuthLogout();
+      githubStatus = await getGitHubAppStatus();
+    } catch (e: any) {
+      toastError(e.message);
+    }
+  }
+
+  async function handleOAuthForget() {
+    if (!confirm('Forget OAuth App credentials entirely? You\'ll need to re-enter client_id and client_secret to use OAuth again.')) {
+      return;
+    }
+    try {
+      await clearGitHubOAuth();
       githubStatus = await getGitHubAppStatus();
     } catch (e: any) {
       toastError(e.message);
@@ -367,6 +421,83 @@
                 data-testid="github-pat-save-btn"
                 class="btn btn-primary btn-sm text-xs"
               >{patSaving ? 'Saving…' : 'Save PAT'}</button>
+            </div>
+          {/if}
+        </div>
+
+        <!-- OAuth App login — works on localhost (unlike GitHub App).
+             Used between PAT and App in the resolution chain. -->
+        <div class="mt-5 pt-4 border-t border-tertiary/20">
+          <h3 class="text-xs font-semibold text-primary mb-2">OAuth App Login</h3>
+          <div class="text-xs text-tertiary mb-3">
+            Sign in with a regular GitHub OAuth App (different from GitHub Apps —
+            OAuth Apps allow <code class="text-accent-orange">localhost</code> callbacks). Create one at
+            <a href="https://github.com/settings/developers" target="_blank" rel="noopener" class="text-accent-orange underline">github.com/settings/developers</a>
+            with callback URL <code class="text-accent-orange break-all">{`${typeof window !== 'undefined' ? window.location.origin : 'http://localhost:8420'}/api/github/app/oauth/callback`}</code>.
+            Used between PAT and App in the resolution chain.
+          </div>
+
+          {#if githubStatus?.oauth?.logged_in}
+            <div class="flex items-center gap-2 text-sm mb-3">
+              <span class="w-2 h-2 rounded-full bg-status-active"></span>
+              <span class="text-secondary">
+                Signed in{githubStatus.oauth.username ? ` as @${githubStatus.oauth.username}` : ''}
+              </span>
+            </div>
+            <button
+              type="button"
+              onclick={handleOAuthLogout}
+              data-testid="github-oauth-logout-btn"
+              class="btn btn-ghost btn-sm text-xs"
+            >Sign out</button>
+            <button
+              type="button"
+              onclick={handleOAuthForget}
+              class="btn btn-ghost btn-sm text-xs ml-2"
+            >Forget OAuth App</button>
+
+          {:else if githubStatus?.oauth?.configured}
+            <div class="flex items-center gap-2 text-sm mb-3">
+              <span class="w-2 h-2 rounded-full bg-status-pending"></span>
+              <span class="text-secondary">OAuth App configured but not signed in.</span>
+            </div>
+            <button
+              type="button"
+              onclick={startOAuthSignIn}
+              data-testid="github-oauth-signin-btn"
+              class="btn btn-primary btn-sm text-xs"
+            >Sign in with GitHub</button>
+            <button
+              type="button"
+              onclick={handleOAuthForget}
+              class="btn btn-ghost btn-sm text-xs ml-2"
+            >Forget OAuth App</button>
+
+          {:else}
+            <div class="space-y-2">
+              <input
+                type="text"
+                bind:value={oauthClientId}
+                placeholder="Client ID (e.g. Iv1.1234abcd…)"
+                data-testid="github-oauth-client-id"
+                class="input w-full text-xs font-mono"
+                autocomplete="off"
+              />
+              <input
+                type="password"
+                bind:value={oauthClientSecret}
+                placeholder="Client secret"
+                data-testid="github-oauth-client-secret"
+                class="input w-full text-xs font-mono"
+                autocomplete="off"
+              />
+              <button
+                type="button"
+                onclick={saveOAuthConfig}
+                disabled={oauthSaving || !oauthClientId.trim() || !oauthClientSecret.trim()}
+                data-testid="github-oauth-save-btn"
+                class="btn btn-primary btn-sm text-xs"
+              >{oauthSaving ? 'Saving…' : 'Save OAuth App credentials'}</button>
             </div>
           {/if}
         </div>
