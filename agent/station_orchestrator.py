@@ -666,9 +666,12 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
         try:
             worker_name, worker_def = load_agent_definition(worker_file)
             employee_override = get_model(config, "employee", "")
-            if employee_override:
+            if employee_override and employee_override != worker_def.model:
+                logger.info(
+                    "Overriding teammate model from config: %s (was %s)",
+                    employee_override, worker_def.model,
+                )
                 worker_def = replace(worker_def, model=employee_override)
-                logger.info("Overriding teammate model from config: %s", employee_override)
             agents_dict = {worker_name: worker_def}
             logger.info("Loaded agent definition: %s from %s (model=%s)", worker_name, worker_file, worker_def.model)
         except Exception as e:
