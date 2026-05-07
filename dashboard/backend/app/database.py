@@ -119,6 +119,7 @@ async def init_db():
             QueueItem,
             Run,
             TaskOutcome,
+            VisionChatSession,  # ← add
         )
         await conn.run_sync(Base.metadata.create_all)
         await _migrate_add_columns(conn)
