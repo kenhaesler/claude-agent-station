@@ -154,12 +154,18 @@ env | grep '^GH_TOKEN=' > {sentinel}
         resp = client.post("/run")
 
     assert resp.status_code == 200
-    # Wait briefly for the spawned subprocess to exit and write the env file
-    import time
-    for _ in range(20):
-        if sentinel.exists():
-            break
-        time.sleep(0.1)
+
+    # Block until the spawned subprocess actually exits — the launcher keeps
+    # the Popen handle on the module global. Polling on `sentinel.exists()`
+    # is racy because bash's `>` redirection creates an empty file the
+    # instant the pipeline starts, well before `env | grep` writes content.
+    spawned = launcher_mod._current
+    assert spawned is not None, "launcher did not record a subprocess"
+    try:
+        spawned.wait(timeout=5)
+    except Exception as exc:  # subprocess.TimeoutExpired or platform variant
+        spawned.kill()
+        raise AssertionError(f"spawned script did not exit within 5s: {exc}")
 
     assert sentinel.exists(), "spawned script never ran"
     assert "GH_TOKEN=ghs_test_inject" in sentinel.read_text()
