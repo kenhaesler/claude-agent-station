@@ -78,6 +78,59 @@
   --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
 }
 
+/* Surface tokens used by .card / .glass / .input / .btn — pulled out of the
+   utility classes so they swap with the theme. Defined here on :root rather
+   than inside @theme since they are component-internal, not Tailwind tokens. */
+:root {
+  --surface-glass: rgba(255,251,247,0.55);
+  --surface-card: rgba(255,251,247,0.50);
+  --surface-input: rgba(255,251,247,0.60);
+  --surface-btn-secondary: rgba(255,251,247,0.60);
+  --surface-btn-secondary-hover: rgba(255,251,247,0.80);
+  --surface-btn-ghost-hover: rgba(240,220,200,0.15);
+
+  --neu-light: rgba(255,255,255,0.35);
+  --neu-light-md: rgba(255,255,255,0.40);
+  --neu-light-lg: rgba(255,255,255,0.45);
+  --neu-dark: rgba(0,0,0,0.03);
+  --neu-dark-md: rgba(0,0,0,0.04);
+  --neu-dark-lg: rgba(0,0,0,0.05);
+}
+
+/* --- Dark theme overrides --- */
+[data-theme="dark"] {
+  --color-void: #1A140E;
+  --color-surface-0: #221C16;
+  --color-surface-1: rgba(34,28,22,0.65);
+  --color-surface-2: rgba(34,28,22,0.50);
+  --color-border: rgba(240,220,200,0.10);
+  --color-border-hover: rgba(240,220,200,0.20);
+  --color-border-focus: rgba(224,144,96,0.40);
+
+  --color-primary: #F0DCC8;
+  --color-secondary: #C8B49E;
+  --color-tertiary: #A89684;
+  --color-ghost: #7A6652;
+
+  --surface-glass: rgba(34,28,22,0.55);
+  --surface-card: rgba(34,28,22,0.50);
+  --surface-input: rgba(34,28,22,0.55);
+  --surface-btn-secondary: rgba(34,28,22,0.60);
+  --surface-btn-secondary-hover: rgba(50,40,30,0.80);
+  --surface-btn-ghost-hover: rgba(240,220,200,0.06);
+
+  --neu-light: rgba(255,220,180,0.04);
+  --neu-light-md: rgba(255,220,180,0.06);
+  --neu-light-lg: rgba(255,220,180,0.08);
+  --neu-dark: rgba(0,0,0,0.40);
+  --neu-dark-md: rgba(0,0,0,0.50);
+  --neu-dark-lg: rgba(0,0,0,0.60);
+
+  --shadow-sm: 2px 2px 6px var(--neu-dark), -2px -2px 6px var(--neu-light);
+  --shadow-md: 3px 3px 8px var(--neu-dark-md), -3px -3px 8px var(--neu-light-md);
+  --shadow-lg: 0 4px 12px rgba(0,0,0,0.40), 0 12px 32px rgba(0,0,0,0.55);
+}
+
 /* --- Base Styles --- */
 html {
   font-family: var(--font-body);
@@ -247,13 +300,13 @@ code, .font-mono {
 
 /* --- Glass Panel — warm neumorphic --- */
 .glass {
-  background: rgba(255,251,247,0.55);
+  background: var(--surface-glass);
   backdrop-filter: blur(16px) saturate(1.3);
   -webkit-backdrop-filter: blur(16px) saturate(1.3);
-  border: 1px solid rgba(240,220,200,0.30);
-  box-shadow: 3px 3px 8px rgba(0,0,0,0.04), -3px -3px 8px rgba(255,255,255,0.40);
+  border: 1px solid var(--color-border);
+  box-shadow: 3px 3px 8px var(--neu-dark-md), -3px -3px 8px var(--neu-light-md);
 }
-.glass:hover { border-color: rgba(240,220,200,0.40); }
+.glass:hover { border-color: var(--color-border-hover); }
 
 /* --- Glow Effects — warm --- */
 .glow-cyan { box-shadow: var(--shadow-glow-cyan); }
@@ -317,19 +370,19 @@ code, .font-mono {
 
 /* --- Card — warm neumorphic --- */
 .card {
-  background: rgba(255,251,247,0.50);
+  background: var(--surface-card);
   backdrop-filter: blur(14px) saturate(1.3);
   -webkit-backdrop-filter: blur(14px) saturate(1.3);
-  border: 1px solid rgba(240,220,200,0.25);
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
-  box-shadow: 2px 2px 6px rgba(0,0,0,0.03), -2px -2px 6px rgba(255,255,255,0.35);
+  box-shadow: 2px 2px 6px var(--neu-dark), -2px -2px 6px var(--neu-light);
   transition: border-color 200ms var(--ease-out),
               box-shadow 300ms var(--ease-out),
               transform 200ms var(--ease-out);
 }
 .card:hover {
-  border-color: rgba(240,220,200,0.40);
-  box-shadow: 3px 3px 10px rgba(0,0,0,0.05), -3px -3px 10px rgba(255,255,255,0.45);
+  border-color: var(--color-border-hover);
+  box-shadow: 3px 3px 10px var(--neu-dark-lg), -3px -3px 10px var(--neu-light-lg);
 }
 .card-interactive:hover {
   transform: translateY(-2px);
@@ -370,16 +423,16 @@ code, .font-mono {
   transform: scale(1.04);
 }
 .btn-secondary {
-  background: rgba(255,251,247,0.60);
+  background: var(--surface-btn-secondary);
   color: var(--color-primary);
-  border: 1px solid rgba(240,220,200,0.30);
+  border: 1px solid var(--color-border);
 }
 .btn-secondary:hover {
-  background: rgba(255,251,247,0.80);
-  border-color: rgba(240,220,200,0.50);
+  background: var(--surface-btn-secondary-hover);
+  border-color: var(--color-border-hover);
 }
 .btn-ghost { background: transparent; color: var(--color-secondary); }
-.btn-ghost:hover { background: rgba(240,220,200,0.15); color: var(--color-primary); }
+.btn-ghost:hover { background: var(--surface-btn-ghost-hover); color: var(--color-primary); }
 .btn-danger { background: rgba(208,96,80,0.08); color: #D06050; border-color: rgba(208,96,80,0.15); }
 .btn-danger:hover { background: rgba(208,96,80,0.15); box-shadow: var(--shadow-glow-rose); }
 .btn-sm { padding: 6px 12px; font-size: 12px; }
@@ -389,8 +442,8 @@ code, .font-mono {
 .input {
   width: 100%;
   padding: 10px 14px;
-  background: rgba(255,251,247,0.60);
-  border: 1px solid rgba(240,220,200,0.25);
+  background: var(--surface-input);
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   color: var(--color-primary);
   font-family: var(--font-body);
@@ -423,12 +476,12 @@ code, .font-mono {
 /* --- Neumorphic Ripples (for VaporBackground) --- */
 .neu-ripple {
   position: absolute; border-radius: 50%;
-  box-shadow: inset 3px 3px 8px rgba(255,255,255,0.45), inset -3px -3px 8px rgba(0,0,0,0.10), 3px 3px 10px rgba(0,0,0,0.07), -3px -3px 10px rgba(255,255,255,0.5);
+  box-shadow: inset 3px 3px 8px var(--neu-light-lg), inset -3px -3px 8px rgba(0,0,0,0.10), 3px 3px 10px rgba(0,0,0,0.07), -3px -3px 10px var(--neu-light-lg);
   opacity: 0; animation: ripple-expand var(--duration) ease-out var(--delay) infinite;
 }
 .neu-ripple-inner {
   position: absolute; border-radius: 50%;
-  box-shadow: inset 2px 2px 5px rgba(255,255,255,0.35), inset -2px -2px 5px rgba(0,0,0,0.07), 2px 2px 6px rgba(0,0,0,0.04), -2px -2px 6px rgba(255,255,255,0.35);
+  box-shadow: inset 2px 2px 5px var(--neu-light), inset -2px -2px 5px rgba(0,0,0,0.07), 2px 2px 6px var(--neu-dark-md), -2px -2px 6px var(--neu-light);
   opacity: 0; animation: ripple-expand var(--duration) ease-out var(--delay) infinite;
 }
 
@@ -463,6 +516,10 @@ code, .font-mono {
 .warm-glow-2 { width: 60vw; height: 20vh; top: 40vh; left: 50vw; background: radial-gradient(ellipse, rgba(255,200,160,0.30) 0%, transparent 65%); animation: glow-drift-2 16s ease-in-out infinite; }
 .warm-glow-3 { width: 75vw; height: 22vh; top: 70vh; left: -10vw; background: radial-gradient(ellipse, rgba(255,220,180,0.25) 0%, transparent 65%); animation: glow-drift-3 10s ease-in-out infinite; }
 
+[data-theme="dark"] .warm-glow-1 { background: radial-gradient(ellipse, rgba(176,96,48,0.18) 0%, transparent 65%); }
+[data-theme="dark"] .warm-glow-2 { background: radial-gradient(ellipse, rgba(74,55,40,0.22) 0%, transparent 65%); }
+[data-theme="dark"] .warm-glow-3 { background: radial-gradient(ellipse, rgba(99,102,180,0.12) 0%, transparent 65%); }
+
 .grain { position: fixed; inset: 0; opacity: 0.025; pointer-events: none; z-index: 0; background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); }
 
 /* --- Scrollbar Utilities --- */
@@ -476,4 +533,14 @@ code, .font-mono {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* User-controlled animation kill switch (Settings → Appearance). Mirrors the
+   reduced-motion behavior but driven by the explicit toggle on <html>. */
+[data-animations="off"] *,
+[data-animations="off"] *::before,
+[data-animations="off"] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
 }
