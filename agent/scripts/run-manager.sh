@@ -862,12 +862,13 @@ run_employee() {
     fi
 
     # Run setup script if configured for this project (install dependencies, etc.)
+    # Validator + runner live in integration-branch.sh — see issue #179.
     local setup_script
     setup_script=$(get_project_field "$project_index" "setup_script" 2>/dev/null || echo "")
     if [ -n "$setup_script" ]; then
         log_info "Running setup script for $repo..."
         cd "$workspace"
-        if bash -c "$setup_script" 2>&1 | tail -20; then
+        if run_setup_script "$setup_script" "setup($repo)" 2>&1 | tail -20; then
             log_ok "Setup script completed"
         else
             log_warn "Setup script failed (exit $?), continuing anyway"

