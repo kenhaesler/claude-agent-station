@@ -274,6 +274,14 @@ def build_team_prompt(
     if vision is not None:
         non_goals = (vision.get("non_goals") or "").strip() or "_(not specified)_"
         anti_patterns = (vision.get("anti_patterns") or "").strip() or "_(not specified)_"
+        # Resolve webhook URL with the same precedence as post_webhook():
+        # STATION_WEBHOOK_URL env (set by compose) → config dashboard.webhook_url
+        # → localhost default for systemd. Hardcoding "http://dashboard:8420"
+        # only resolves on the compose network and silently breaks Hook 2 on
+        # systemd-mode deployments.
+        webhook_url = os.environ.get("STATION_WEBHOOK_URL") or config.get(
+            "dashboard", {}
+        ).get("webhook_url", "http://127.0.0.1:8420/api/webhook/run-event")
         vision_section = f"""
 ## Vision check (when reviewing teammate plans)
 
@@ -284,7 +292,7 @@ plan does not violate the non-goals or anti-patterns below. If it does:
 2. Apply label `autonomous-agent/needs-help` to the issue:
    `gh issue edit <number> --add-label autonomous-agent/needs-help`
 3. POST a misalignment event to the dashboard:
-   `curl -s -X POST http://dashboard:8420/api/webhook/run-event \\
+   `curl -s -X POST {webhook_url} \\
        -H "Content-Type: application/json" \\
        -d '{{"event":"vision_misalignment","run_id":"run-{run_id}",
             "issue_number":<number>,"violated_section":"<non_goals|anti_patterns>",
