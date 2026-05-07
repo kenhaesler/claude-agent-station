@@ -241,6 +241,7 @@ def build_team_prompt(
     run_id: str,
     workspace: str = "",
     worktree_paths: dict[str, str] | None = None,
+    vision: dict | None = None,
 ) -> str:
     """Build the lead agent prompt that creates and manages the team."""
     issue_entries = []
@@ -267,6 +268,36 @@ def build_team_prompt(
     if worktree_paths:
         wt_lines = [f"- **{role}** specialist → `{path}`" for role, path in worktree_paths.items()]
         wt_section = "\n".join(wt_lines)
+
+    vision_section = ""
+    if vision is not None:
+        non_goals = (vision.get("non_goals") or "").strip() or "_(not specified)_"
+        anti_patterns = (vision.get("anti_patterns") or "").strip() or "_(not specified)_"
+        vision_section = f"""
+## Vision check (when reviewing teammate plans)
+
+This project has a vision. Before approving ANY teammate plan, verify the
+plan does not violate the non-goals or anti-patterns below. If it does:
+
+1. Reject the plan with a specific quote from the violated section.
+2. Apply label `autonomous-agent/needs-help` to the issue:
+   `gh issue edit <number> --add-label autonomous-agent/needs-help`
+3. POST a misalignment event to the dashboard:
+   `curl -s -X POST http://dashboard:8420/api/webhook/run-event \\
+       -H "Content-Type: application/json" \\
+       -d '{{"event":"vision_misalignment","run_id":"run-{run_id}",
+            "issue_number":<number>,"violated_section":"<non_goals|anti_patterns>",
+            "quote":"<exact quote>","plan_excerpt":"<short excerpt>"}}'`
+4. Reassign the teammate to a different task or stop them.
+
+### Vision — Non-goals
+{non_goals}
+
+### Vision — Anti-patterns
+{anti_patterns}
+
+(Full vision available at `{workspace}/docs/vision.md` if you need other context.)
+"""
 
     return f"""You are the lead of an agent team implementing GitHub issues for **{repo}**.
 
@@ -352,7 +383,7 @@ and your teammates lose their work. You must keep making tool calls to stay aliv
 - Workspace: {workspace}
 - Base branch: `{base_branch}` (teammates must branch FROM this)
 - GH_TOKEN is available for GitHub CLI operations
-"""
+{vision_section}"""
 
 
 def build_followup_prompt(workspace: str) -> str:
@@ -787,7 +818,7 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
                             iteration + 1, max_reentries, session_id,
                         )
                     else:
-                        prompt = build_team_prompt(repo, issues, config, run_id, workspace, worktree_paths)
+                        prompt = build_team_prompt(repo, issues, config, run_id, workspace, worktree_paths, vision=vision)
 
                     # Build options — use resume for follow-up iterations.
                     # Auto Mode (ADR-0001) is wired here: can_use_tool runs
