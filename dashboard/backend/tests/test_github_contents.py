@@ -97,3 +97,29 @@ async def test_write_file_409_on_stale_sha_raises_StaleSha():
                 )
     assert exc.value.current_sha == "newer-sha"
     assert exc.value.current_body == "someone else wrote this"
+
+
+@pytest.mark.asyncio
+async def test_write_file_422_on_stale_sha_raises_StaleSha():
+    """GitHub Contents API may return 422 (not 409) for stale-sha; handle both."""
+    async def fake_put(self, url, headers=None, json=None):
+        return httpx.Response(422, json={"message": "sha doesn't match"}, request=httpx.Request("PUT", url))
+    fake_current = {
+        "sha": "newer-sha",
+        "content": base64.b64encode(b"someone else wrote this").decode(),
+        "encoding": "base64",
+        "html_url": "x",
+    }
+    async def fake_get(self, url, headers=None, params=None):
+        return httpx.Response(200, json=fake_current, request=httpx.Request("GET", url))
+    with patch("app.services.github_contents._get_token", return_value="ghi"):
+        with patch.object(httpx.AsyncClient, "put", new=fake_put), \
+             patch.object(httpx.AsyncClient, "get", new=fake_get):
+            from app.services.github_contents import write_file, StaleSha
+            with pytest.raises(StaleSha) as exc:
+                await write_file(
+                    repo="o/r", path="docs/vision.md", branch="main",
+                    body="# mine\n", message="docs: refine", current_sha="my-old-sha",
+                )
+    assert exc.value.current_sha == "newer-sha"
+    assert exc.value.current_body == "someone else wrote this"

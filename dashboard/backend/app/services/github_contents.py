@@ -119,7 +119,8 @@ async def write_file(
     if resp.status_code in (200, 201):
         return resp.json()["content"]["sha"]
 
-    if resp.status_code == 409:
+    if resp.status_code in (409, 422):
+        # GitHub returns 409 Conflict or 422 Unprocessable Entity for sha mismatch.
         # Re-fetch live state so the caller can surface a useful 409 envelope.
         try:
             current = await read_file(repo=repo, path=path, branch=branch)
