@@ -13,6 +13,7 @@
   let loading = $state(true);
   let showCreateModal = $state(false);
   let newRepo = $state('');
+  let newBranch = $state('main');
   let newMode = $state<AgentMode>('full');
   let newPriority = $state('medium');
 
@@ -22,6 +23,16 @@
   let repos = $state<GitHubRepo[]>([]);
   let reposLoading = $state(false);
   let useCustomRepo = $state(false);
+
+  // When the user picks a repo from the dropdown, auto-fill the branch
+  // with that repo's default_branch (e.g. "main", "master", "trunk").
+  // The user can still edit it for non-default branches. In manual mode
+  // we leave the branch as whatever they had — they know what they want.
+  $effect(() => {
+    if (!showCreateModal || useCustomRepo || !newRepo) return;
+    const picked = repos.find(r => r.full_name === newRepo);
+    if (picked) newBranch = picked.default_branch;
+  });
 
   $effect(() => { loadProjects(); });
 
@@ -51,6 +62,7 @@
   function openCreateModal() {
     showCreateModal = true;
     newRepo = '';
+    newBranch = 'main';
     useCustomRepo = false;
     loadRepos();
   }
@@ -58,10 +70,16 @@
   async function handleCreate() {
     if (!newRepo.trim()) return;
     try {
-      await createProject({ repo: newRepo.trim(), mode: newMode, priority: newPriority });
+      await createProject({
+        repo: newRepo.trim(),
+        branch: newBranch.trim() || 'main',
+        mode: newMode,
+        priority: newPriority,
+      });
       toastSuccess('Project created');
       showCreateModal = false;
       newRepo = '';
+      newBranch = 'main';
       loadProjects();
     } catch (e: any) { toastError(e.message); }
   }
@@ -220,6 +238,20 @@
         </div>
       {/if}
     {/if}
+
+    <div>
+      <label for="branch-input" class="text-[11px] uppercase tracking-widest text-tertiary block mb-1">
+        Branch
+      </label>
+      <input
+        id="branch-input"
+        bind:value={newBranch}
+        placeholder="main"
+        class="input"
+        data-testid="branch-input"
+      />
+    </div>
+
     <div class="flex gap-3">
       <select bind:value={newMode} class="input">
         <option value="full">Full</option>
@@ -233,6 +265,6 @@
         <option value="low">Low</option>
       </select>
     </div>
-    <button onclick={handleCreate} disabled={!newRepo.trim()} class="w-full btn btn-primary">Create</button>
+    <button onclick={handleCreate} disabled={!newRepo.trim() || !newBranch.trim()} class="w-full btn btn-primary">Create</button>
   </div>
 </Modal>
