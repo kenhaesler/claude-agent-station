@@ -44,10 +44,6 @@ services:
       # across rebuilds. Used as override when the App flow isn't viable
       # (e.g. dashboard reachable only on localhost / private VM).
       STATION_GITHUB_PAT_PATH: /var/lib/claude-agent-station/github_pat.json
-      # OAuth App (web flow) state — client_id/client_secret + the user's
-      # access token after a successful sign-in. OAuth Apps allow
-      # localhost callbacks, so this is the cleanest path for dev VMs.
-      STATION_GITHUB_OAUTH_PATH: /var/lib/claude-agent-station/github_oauth.json
       # Public-facing dashboard URL — used in the manifest's redirect_url and
       # setup_url so GitHub can find us after creating/installing the App.
       STATION_DASHBOARD_BASE_URL: http://localhost:8420

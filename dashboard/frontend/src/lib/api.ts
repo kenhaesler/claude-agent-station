@@ -253,7 +253,7 @@ export const submitOAuthCode = (code: string, state: string) =>
 export const refreshOAuthToken = () =>
   request<{ refreshed: boolean; error?: string; expires_at?: string }>('/api/oauth/refresh', { method: 'POST' });
 
-// --- GitHub auth: App + PAT + OAuth App ---
+// --- GitHub auth: App + PAT ---
 
 export interface GitHubAppStatus {
   state: 'not_created' | 'created_not_installed' | 'installed';
@@ -263,11 +263,6 @@ export interface GitHubAppStatus {
   installation_id?: number;
   html_url?: string;
   pat_set: boolean;
-  oauth: {
-    configured: boolean;
-    logged_in: boolean;
-    username: string | null;
-  };
 }
 
 export interface GitHubAppManifestStart {
@@ -292,45 +287,6 @@ export const setGitHubPAT = (token: string) =>
 
 export const clearGitHubPAT = () =>
   requestWithToast<{ status: string }>('/api/github/app/pat', { method: 'DELETE' });
-
-// OAuth App: uses standard OAuth 2.0 web flow. Works on localhost (unlike
-// the GitHub App manifest, whose hook URL must be public-Internet reachable).
-// The login redirect happens browser-side: navigate to /api/github/app/oauth/login
-// and the dashboard 302's to GitHub.
-
-export const setGitHubOAuthConfig = (client_id: string, client_secret: string) =>
-  requestWithToast<{ status: string }>('/api/github/app/oauth/config', {
-    method: 'PUT', body: JSON.stringify({ client_id, client_secret }),
-  });
-
-export const clearGitHubOAuth = () =>
-  requestWithToast<{ status: string }>('/api/github/app/oauth', { method: 'DELETE' });
-
-export const githubOAuthLogout = () =>
-  requestWithToast<{ status: string }>('/api/github/app/oauth/token', { method: 'DELETE' });
-
-// Device flow — third sign-in path, no callback URL needed.
-// Backend keeps the device_code; the browser only sees the user_code.
-
-export interface DeviceFlowStart {
-  user_code: string;
-  verification_uri: string;
-  verification_uri_complete: string;
-  interval: number;
-  expires_in: number;
-}
-
-export interface DeviceFlowPoll {
-  status: 'pending' | 'success' | 'error' | 'expired';
-  message?: string;
-  username?: string;
-}
-
-export const startGitHubDeviceFlow = () =>
-  request<DeviceFlowStart>('/api/github/app/oauth/device/start', { method: 'POST' });
-
-export const pollGitHubDeviceFlow = () =>
-  request<DeviceFlowPoll>('/api/github/app/oauth/device/poll', { method: 'POST' });
 
 // --- Plans ---
 

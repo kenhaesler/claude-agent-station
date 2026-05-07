@@ -1,23 +1,16 @@
-"""HTTP surface for GitHub auth: App lifecycle, PAT fallback, OAuth (web + device).
+"""HTTP surface for GitHub auth: App lifecycle + PAT fallback.
 
-Token resolution at ``/token``: PAT > OAuth access_token > App > 404.
+Token resolution at ``/token``: PAT > App > 404.
 
 Endpoints:
   POST   /api/github/app/manifest/start    — issue a fresh state token, return manifest
   GET    /api/github/app/manifest/exchange — receive code from GitHub, persist credentials
   GET    /api/github/app/install/callback  — receive installation_id, persist
-  GET    /api/github/app/status            — App state + pat_set + oauth status
+  GET    /api/github/app/status            — App state + pat_set
   DELETE /api/github/app                   — clear App credentials (App stays in GitHub)
   GET    /api/github/app/token             — return a usable token (resolution above)
   PUT    /api/github/app/pat               — store a Personal Access Token
   DELETE /api/github/app/pat               — clear the stored PAT
-  PUT    /api/github/app/oauth/config      — store OAuth App client_id/client_secret
-  DELETE /api/github/app/oauth             — clear OAuth state entirely
-  DELETE /api/github/app/oauth/token       — log out (keep config for re-login)
-  GET    /api/github/app/oauth/login       — redirect to GitHub authorize (web flow)
-  GET    /api/github/app/oauth/callback    — exchange code for access_token (web flow)
-  POST   /api/github/app/oauth/device/start — request a device_code (device flow)
-  POST   /api/github/app/oauth/device/poll  — poll for the access_token (device flow)
 """
 
 from __future__ import annotations
@@ -31,7 +24,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from app.services import github_app, github_oauth, github_pat
+from app.services import github_app, github_pat
 
 logger = logging.getLogger(__name__)
 
@@ -207,27 +200,18 @@ async def install_callback(installation_id: int, setup_action: str = "install") 
     return RedirectResponse("/settings?tab=auth", status_code=302)
 
 
-def _oauth_status() -> dict[str, Any]:
-    state = github_oauth.read_oauth() or {}
-    return {
-        "configured": bool(state.get("client_id")),
-        "logged_in": bool(state.get("access_token")),
-        "username": state.get("username"),
-    }
-
-
 @router.get("/status")
 async def status() -> dict[str, Any]:
-    """Combined status for all three GitHub auth paths.
+    """Three-state App machine plus a flag for whether a PAT is configured.
 
-    The three sources are independent on disk but their tokens are resolved
-    in priority order at ``/token`` (PAT > OAuth > App).
+    The PAT and App are independent: ``pat_set`` reflects only the PAT
+    file; the ``state`` field still describes the App lifecycle. The
+    ``/token`` endpoint resolves precedence (PAT wins when both are set).
     """
     pat_set = github_pat.read_pat() is not None
-    oauth = _oauth_status()
     creds = github_app.read_credentials()
     if not creds:
-        return {"state": "not_created", "pat_set": pat_set, "oauth": oauth}
+        return {"state": "not_created", "pat_set": pat_set}
     if not creds.get("installation_id"):
         return {
             "state": "created_not_installed",
@@ -236,7 +220,6 @@ async def status() -> dict[str, Any]:
             "owner": creds.get("owner"),
             "html_url": creds.get("html_url"),
             "pat_set": pat_set,
-            "oauth": oauth,
         }
     return {
         "state": "installed",
@@ -246,7 +229,6 @@ async def status() -> dict[str, Any]:
         "installation_id": creds["installation_id"],
         "html_url": creds.get("html_url"),
         "pat_set": pat_set,
-        "oauth": oauth,
     }
 
 
@@ -287,16 +269,11 @@ async def token(x_launcher_token: str | None = Header(default=None)) -> dict[str
     if pat:
         return {"token": pat, "source": "pat"}
 
-    oauth_state = github_oauth.read_oauth() or {}
-    oauth_token = oauth_state.get("access_token")
-    if oauth_token:
-        return {"token": oauth_token, "source": "oauth"}
-
     creds = github_app.read_credentials()
     if not creds or not creds.get("installation_id"):
         raise HTTPException(
             status_code=404,
-            detail="No GitHub auth configured — set a PAT, sign in via OAuth, or install the GitHub App at /settings",
+            detail="No GitHub auth configured — set a PAT or install the GitHub App at /settings",
         )
 
     tok = await github_app.get_installation_token()
@@ -325,328 +302,3 @@ async def clear_pat() -> dict[str, str]:
     """Remove the persisted PAT. Idempotent."""
     github_pat.delete_pat()
     return {"status": "cleared"}
-
-
-# --- OAuth App login ---
-
-
-# Scopes requested when redirecting to GitHub authorize. Matches what the
-# `gh` CLI expects so cloned repos, PR creation, and Actions reads all
-# work with the resulting token. Space-separated; URL-encoded at use site.
-_OAUTH_SCOPE = "repo workflow read:org"
-
-
-class _OAuthConfigBody(BaseModel):
-    client_id: str
-    client_secret: str
-
-
-@router.put("/oauth/config")
-async def set_oauth_config(body: _OAuthConfigBody) -> dict[str, str]:
-    """Persist OAuth App credentials. Preserves any existing access_token
-    so updating the client info doesn't sign the user out.
-    """
-    cid = body.client_id.strip()
-    cs = body.client_secret.strip()
-    if not cid or not cs:
-        raise HTTPException(
-            status_code=400,
-            detail="client_id and client_secret are required",
-        )
-    existing = github_oauth.read_oauth() or {}
-    github_oauth.write_oauth({
-        "client_id": cid,
-        "client_secret": cs,
-        "access_token": existing.get("access_token"),
-        "username": existing.get("username"),
-        "scope": existing.get("scope"),
-    })
-    return {"status": "saved"}
-
-
-@router.delete("/oauth")
-async def clear_oauth() -> dict[str, str]:
-    """Wipe OAuth state entirely (config + token + any in-progress device flow)."""
-    global _active_device_flow
-    github_oauth.delete_oauth()
-    _active_device_flow = None
-    return {"status": "cleared"}
-
-
-@router.delete("/oauth/token")
-async def oauth_logout() -> dict[str, str]:
-    """Forget the current access token but keep the OAuth App config so the
-    user can sign in again with one click.
-    """
-    github_oauth.clear_token()
-    return {"status": "logged_out"}
-
-
-@router.get("/oauth/login")
-async def oauth_login() -> RedirectResponse:
-    """Redirect to GitHub's authorize page with a fresh state parameter."""
-    oauth = github_oauth.read_oauth() or {}
-    if not oauth.get("client_id"):
-        raise HTTPException(
-            status_code=400,
-            detail="OAuth App not configured — POST client_id and client_secret first.",
-        )
-
-    state = _issue_state()
-    base = _dashboard_base_url()
-    redirect_uri = f"{base}/api/github/app/oauth/callback"
-    scope = _OAUTH_SCOPE.replace(" ", "+")
-    authorize_url = (
-        "https://github.com/login/oauth/authorize"
-        f"?client_id={oauth['client_id']}"
-        f"&redirect_uri={redirect_uri}"
-        f"&scope={scope}"
-        f"&state={state}"
-    )
-    return RedirectResponse(authorize_url, status_code=302)
-
-
-@router.get("/oauth/callback")
-async def oauth_callback(code: str, state: str) -> RedirectResponse:
-    """Exchange the authorization code for an access token, fetch the
-    GitHub username for display, persist, and bounce back to settings.
-    """
-    if not _consume_state(state):
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid or expired OAuth state — start the login flow again.",
-        )
-
-    oauth = github_oauth.read_oauth() or {}
-    if not oauth.get("client_id") or not oauth.get("client_secret"):
-        raise HTTPException(
-            status_code=400,
-            detail="OAuth App not configured.",
-        )
-
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as http:
-            exchange = await http.post(
-                "https://github.com/login/oauth/access_token",
-                json={
-                    "client_id": oauth["client_id"],
-                    "client_secret": oauth["client_secret"],
-                    "code": code,
-                },
-                headers={"Accept": "application/vnd.github+json"},
-            )
-    except httpx.HTTPError as exc:
-        raise HTTPException(status_code=502, detail=f"GitHub unreachable: {exc}") from exc
-
-    if exchange.status_code != 200:
-        raise HTTPException(
-            status_code=502,
-            detail=f"OAuth exchange failed: {exchange.text[:300]}",
-        )
-
-    data = exchange.json()
-    access_token = data.get("access_token")
-    if not access_token:
-        # GitHub returns 200 with {error, error_description} on bad codes.
-        raise HTTPException(
-            status_code=502,
-            detail=f"OAuth exchange returned no access_token: {data.get('error_description') or data.get('error') or data}",
-        )
-
-    # Best-effort fetch of /user to display "signed in as @username".
-    username = None
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as http:
-            user_resp = await http.get(
-                "https://api.github.com/user",
-                headers={
-                    "Authorization": f"Bearer {access_token}",
-                    "Accept": "application/vnd.github+json",
-                    "X-GitHub-Api-Version": "2022-11-28",
-                },
-            )
-        if user_resp.status_code == 200:
-            username = user_resp.json().get("login")
-    except httpx.HTTPError as exc:
-        logger.warning("OAuth /user lookup failed (non-fatal): %s", exc)
-
-    github_oauth.write_oauth({
-        "client_id": oauth["client_id"],
-        "client_secret": oauth["client_secret"],
-        "access_token": access_token,
-        "username": username,
-        "scope": data.get("scope"),
-    })
-    logger.info("GitHub OAuth login succeeded for user=%s", username)
-
-    return RedirectResponse("/settings?tab=auth", status_code=302)
-
-
-# --- OAuth device flow ---
-#
-# Device flow is the third sign-in path. Unlike the web flow it doesn't need
-# a callback URL, which makes it the cleanest fit when the dashboard is on
-# localhost and the user already has an OAuth App configured. The device
-# flow uses only the OAuth App's client_id (no client_secret, since the
-# dashboard is treated as a "public client" on this path).
-#
-# Single-process module-level state — there is at most one active device
-# flow per dashboard instance. Cleared on terminal poll outcomes (success,
-# error, expiry) and on explicit /oauth disconnect.
-
-_active_device_flow: dict | None = None
-
-
-@router.post("/oauth/device/start")
-async def device_start() -> dict[str, Any]:
-    """Begin the device flow.
-
-    Calls GitHub's ``/login/device/code`` with the configured OAuth App
-    client_id and returns the user_code + verification URI to the UI.
-    The device_code itself is held server-side and never returned —
-    knowing it is what authorizes the poll to succeed, so it stays
-    out of the browser.
-    """
-    global _active_device_flow
-
-    oauth = github_oauth.read_oauth() or {}
-    if not oauth.get("client_id"):
-        raise HTTPException(
-            status_code=400,
-            detail="OAuth App not configured — set client_id first.",
-        )
-
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as http:
-            resp = await http.post(
-                "https://github.com/login/device/code",
-                json={"client_id": oauth["client_id"], "scope": _OAUTH_SCOPE},
-                headers={"Accept": "application/vnd.github+json"},
-            )
-    except httpx.HTTPError as exc:
-        raise HTTPException(status_code=502, detail=f"GitHub unreachable: {exc}") from exc
-
-    if resp.status_code != 200:
-        raise HTTPException(
-            status_code=502,
-            detail=f"GitHub device-code request failed: {resp.text[:300]}",
-        )
-
-    data = resp.json()
-    if not data.get("device_code") or not data.get("user_code"):
-        raise HTTPException(
-            status_code=502,
-            detail=f"GitHub device-code response missing required fields: {data}",
-        )
-
-    interval = int(data.get("interval", 5))
-    expires_in = int(data.get("expires_in", 900))
-    verification_uri = data.get("verification_uri", "https://github.com/login/device")
-    user_code = data["user_code"]
-    # GitHub usually returns verification_uri_complete with the code baked
-    # in for one-click pre-fill; build it ourselves if absent so the UI
-    # behavior is uniform.
-    verification_uri_complete = (
-        data.get("verification_uri_complete")
-        or f"{verification_uri}?user_code={user_code}"
-    )
-
-    _active_device_flow = {
-        "device_code": data["device_code"],
-        "client_id": oauth["client_id"],
-        "interval": interval,
-        "started_at": time.time(),
-        "expires_in": expires_in,
-    }
-
-    return {
-        "user_code": user_code,
-        "verification_uri": verification_uri,
-        "verification_uri_complete": verification_uri_complete,
-        "interval": interval,
-        "expires_in": expires_in,
-    }
-
-
-@router.post("/oauth/device/poll")
-async def device_poll() -> dict[str, Any]:
-    """Poll GitHub for the access_token. Frontend calls this every ``interval``
-    seconds until the response is ``success``, ``error``, or ``expired``.
-    """
-    global _active_device_flow
-
-    flow = _active_device_flow
-    if not flow:
-        raise HTTPException(
-            status_code=400,
-            detail="No device flow in progress — start one first.",
-        )
-
-    if time.time() - flow["started_at"] > flow["expires_in"]:
-        _active_device_flow = None
-        return {"status": "expired"}
-
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as http:
-            resp = await http.post(
-                "https://github.com/login/oauth/access_token",
-                json={
-                    "client_id": flow["client_id"],
-                    "device_code": flow["device_code"],
-                    "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
-                },
-                headers={"Accept": "application/vnd.github+json"},
-            )
-    except httpx.HTTPError as exc:
-        raise HTTPException(status_code=502, detail=f"GitHub unreachable: {exc}") from exc
-
-    if resp.status_code != 200:
-        return {"status": "error", "message": f"GitHub returned HTTP {resp.status_code}"}
-
-    data = resp.json()
-
-    if "error" in data:
-        err = data["error"]
-        if err in ("authorization_pending", "slow_down"):
-            # Still waiting for the user. ``slow_down`` means GitHub wants
-            # us to back off, but the UI poll interval is conservative so
-            # treat them the same.
-            return {"status": "pending"}
-        # Terminal error — drop the flow so the next /start can begin clean.
-        _active_device_flow = None
-        return {"status": "error", "message": data.get("error_description") or err}
-
-    access_token = data.get("access_token")
-    if not access_token:
-        # Defensive: 200 without error and without token shouldn't happen,
-        # but treat as still-pending rather than crash.
-        return {"status": "pending"}
-
-    # Success path — fetch /user for the username (best effort), persist.
-    username = None
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as http:
-            user_resp = await http.get(
-                "https://api.github.com/user",
-                headers={
-                    "Authorization": f"Bearer {access_token}",
-                    "Accept": "application/vnd.github+json",
-                    "X-GitHub-Api-Version": "2022-11-28",
-                },
-            )
-        if user_resp.status_code == 200:
-            username = user_resp.json().get("login")
-    except httpx.HTTPError as exc:
-        logger.warning("OAuth /user lookup after device flow failed: %s", exc)
-
-    oauth = github_oauth.read_oauth() or {}
-    github_oauth.write_oauth({
-        "client_id": oauth.get("client_id"),
-        "client_secret": oauth.get("client_secret"),
-        "access_token": access_token,
-        "username": username,
-        "scope": data.get("scope"),
-    })
-    _active_device_flow = None
-    logger.info("GitHub OAuth device flow succeeded for user=%s", username)
-    return {"status": "success", "username": username}
