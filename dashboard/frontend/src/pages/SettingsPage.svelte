@@ -12,6 +12,26 @@
 
   let { tab = null }: { tab?: string | null } = $props();
 
+  const MODEL_OPTIONS = [
+    { id: 'claude-opus-4-7',           label: 'Opus 4.7 — most capable' },
+    { id: 'claude-sonnet-4-6',         label: 'Sonnet 4.6 — balanced' },
+    { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5 — fast & cheap' },
+  ];
+
+  const ROLE_DEFAULTS: Record<string, string> = {
+    employee: 'claude-opus-4-7',
+    manager:  'claude-sonnet-4-6',
+    analyst:  'claude-sonnet-4-6',
+    planner:  'claude-sonnet-4-6',
+    router:   'claude-haiku-4-5-20251001',
+  };
+
+  function defaultLabel(role: string): string {
+    const id = ROLE_DEFAULTS[role];
+    const opt = MODEL_OPTIONS.find(o => o.id === id);
+    return opt ? `Default — ${opt.label}` : 'Default';
+  }
+
   let config = $state<Record<string, any>>({});
   let prompts = $state<PromptInfo[]>([]);
   let systemStatus = $state<SystemStatus | null>(null);
@@ -270,16 +290,23 @@
     <div class="card p-5 space-y-4">
       <h2 class="section-header">Model Assignments</h2>
       <p class="text-xs text-tertiary">Configure which Claude model each agent role uses</p>
-      {#each ['employee', 'manager', 'analyst', 'planner'] as role}
+      {#each ['employee', 'manager', 'analyst', 'planner', 'router'] as role}
+        {@const current = config.models?.[role] ?? ''}
         <div class="flex items-center justify-between gap-4">
           <span class="text-sm text-secondary capitalize font-medium w-24">{role}</span>
-          <input
-            type="text"
-            value={config.models?.[role] ?? ''}
-            onchange={(e) => saveConfig('models', { ...config.models, [role]: (e.target as HTMLInputElement).value })}
+          <select
+            value={current}
+            onchange={(e) => saveConfig('models', { ...config.models, [role]: (e.target as HTMLSelectElement).value })}
             class="input font-mono text-xs flex-1"
-            placeholder="claude-opus-4-6"
-          />
+          >
+            <option value="">{defaultLabel(role)}</option>
+            {#each MODEL_OPTIONS as opt}
+              <option value={opt.id}>{opt.label}</option>
+            {/each}
+            {#if current && !MODEL_OPTIONS.some(o => o.id === current)}
+              <option value={current}>{current} (custom)</option>
+            {/if}
+          </select>
         </div>
       {/each}
     </div>
@@ -295,10 +322,12 @@
         <div class="flex gap-2">
           <button onclick={() => handleServiceAction('start')} class="btn btn-sm" style="background: rgba(46,125,50,0.10); color: #2E7D32;">Start</button>
           <button onclick={() => handleServiceAction('stop')} class="btn btn-sm" style="background: rgba(208,96,80,0.10); color: #D06050;">Stop</button>
-          <button onclick={() => handleServiceAction('restart')} class="btn btn-sm" style="background: rgba(176,96,48,0.10); color: #B06030;">Restart</button>
+          {#if systemStatus?.deploy_mode !== 'compose'}
+            <button onclick={() => handleServiceAction('restart')} class="btn btn-sm" style="background: rgba(176,96,48,0.10); color: #B06030;">Restart</button>
+          {/if}
         </div>
       </div>
-      {#if systemStatus?.timer}
+      {#if systemStatus?.timer && systemStatus?.deploy_mode !== 'compose'}
         <div class="flex items-center justify-between text-sm">
           <div>
             <div class="text-primary">Timer</div>

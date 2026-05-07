@@ -11,7 +11,7 @@
   },
   "schedule": "1h",
   "models": {
-    "employee": "claude-opus-4-6",
+    "employee": "claude-opus-4-7",
     "manager": "claude-sonnet-4-6",
     "analyst": "claude-sonnet-4-6",
     "planner": "claude-sonnet-4-6",

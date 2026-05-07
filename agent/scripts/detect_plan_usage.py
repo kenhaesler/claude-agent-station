@@ -48,18 +48,21 @@ SESSION_RESET_HOURS = 4
 # These are approximate based on publicly documented Claude plan limits.
 PLAN_LIMITS: dict[str, dict[str, int]] = {
     "max_5x": {
+        "claude-opus-4-7": 225_000_000,
         "claude-opus-4-6": 225_000_000,
         "claude-sonnet-4-6": 900_000_000,
         "claude-haiku-4-5-20251001": 4_500_000_000,
         "default": 900_000_000,
     },
     "pro": {
+        "claude-opus-4-7": 45_000_000,
         "claude-opus-4-6": 45_000_000,
         "claude-sonnet-4-6": 180_000_000,
         "claude-haiku-4-5-20251001": 900_000_000,
         "default": 180_000_000,
     },
     "team": {
+        "claude-opus-4-7": 90_000_000,
         "claude-opus-4-6": 90_000_000,
         "claude-sonnet-4-6": 360_000_000,
         "claude-haiku-4-5-20251001": 1_800_000_000,
@@ -70,18 +73,21 @@ PLAN_LIMITS: dict[str, dict[str, int]] = {
 # Session limits per tier (approximate tokens per session window)
 SESSION_LIMITS: dict[str, dict[str, int]] = {
     "max_5x": {
+        "claude-opus-4-7": 32_000_000,
         "claude-opus-4-6": 32_000_000,
         "claude-sonnet-4-6": 128_000_000,
         "claude-haiku-4-5-20251001": 640_000_000,
         "default": 128_000_000,
     },
     "pro": {
+        "claude-opus-4-7": 6_400_000,
         "claude-opus-4-6": 6_400_000,
         "claude-sonnet-4-6": 25_600_000,
         "claude-haiku-4-5-20251001": 128_000_000,
         "default": 25_600_000,
     },
     "team": {
+        "claude-opus-4-7": 12_800_000,
         "claude-opus-4-6": 12_800_000,
         "claude-sonnet-4-6": 51_200_000,
         "claude-haiku-4-5-20251001": 256_000_000,

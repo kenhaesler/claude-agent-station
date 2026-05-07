@@ -25,14 +25,21 @@ logger = logging.getLogger(__name__)
 DEFAULT_AGENT_UNIT = "claude-agent.service"
 
 
+_VALID_DEPLOY_MODES = ("systemd", "compose")
+
+
 def deploy_mode() -> str:
-    """Return the active deploy mode (``"systemd"`` or ``"compose"``).
+    """Return the active deploy mode — exactly ``"systemd"`` or ``"compose"``.
 
     Public API — other services that need to branch on the deploy shape
     (e.g. the stale-run reaper) should call this instead of reading the
-    env var directly so the dispatch decision lives in one place.
+    env var directly so the dispatch decision lives in one place. The
+    return value is also surfaced by ``/api/system/status`` and typed as
+    ``'systemd' | 'compose'`` on the frontend, so anything outside that
+    set falls back to ``"systemd"`` rather than leaking through.
     """
-    return os.environ.get("STATION_DEPLOY_MODE", "systemd").lower()
+    raw = os.environ.get("STATION_DEPLOY_MODE", "systemd").lower()
+    return raw if raw in _VALID_DEPLOY_MODES else "systemd"
 
 
 # Alias retained for the existing internal call sites; new code should use

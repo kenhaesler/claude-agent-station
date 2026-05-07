@@ -89,7 +89,7 @@
         // Teammates run as Opus per CLAUDE.md; the lead (Sonnet) is the
         // TeamLeadCard above. If a real model name arrives on the task it
         // will override this default.
-        model: (t as { model?: string | null }).model ?? 'claude-opus-4-6',
+        model: (t as { model?: string | null }).model ?? 'claude-opus-4-7',
         task: t.title ?? 'Untitled task',
         status: t.status === 'running' ? (t.result_summary || 'Working...') :
                 t.status === 'completed' ? 'Completed' :
