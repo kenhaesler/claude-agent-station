@@ -7,14 +7,14 @@
    ============================================ */
 
 @theme {
-  /* Base layers — Soft Sunrise */
-  --color-void: #FFF5EE;
-  --color-surface-0: #FFFBF7;
-  --color-surface-1: rgba(255,251,247,0.65);
-  --color-surface-2: rgba(255,251,247,0.50);
-  --color-border: rgba(240,220,200,0.25);
-  --color-border-hover: rgba(240,220,200,0.40);
-  --color-border-focus: rgba(224,144,96,0.30);
+  /* Base layers — Soft Sunrise (toned down, less yellow) */
+  --color-void: #FAF8F5;
+  --color-surface-0: #FCFBF9;
+  --color-surface-1: rgba(252,251,249,0.65);
+  --color-surface-2: rgba(252,251,249,0.50);
+  --color-border: rgba(220,215,208,0.30);
+  --color-border-hover: rgba(220,215,208,0.45);
+  --color-border-focus: rgba(176,96,48,0.30);
 
   /* Text — warm browns */
   --color-primary: #3D2A1A;
@@ -82,12 +82,12 @@
    utility classes so they swap with the theme. Defined here on :root rather
    than inside @theme since they are component-internal, not Tailwind tokens. */
 :root {
-  --surface-glass: rgba(255,251,247,0.55);
-  --surface-card: rgba(255,251,247,0.50);
-  --surface-input: rgba(255,251,247,0.60);
-  --surface-btn-secondary: rgba(255,251,247,0.60);
-  --surface-btn-secondary-hover: rgba(255,251,247,0.80);
-  --surface-btn-ghost-hover: rgba(240,220,200,0.15);
+  --surface-glass: rgba(252,251,249,0.55);
+  --surface-card: rgba(252,251,249,0.50);
+  --surface-input: rgba(252,251,249,0.60);
+  --surface-btn-secondary: rgba(252,251,249,0.60);
+  --surface-btn-secondary-hover: rgba(252,251,249,0.80);
+  --surface-btn-ghost-hover: rgba(220,215,208,0.18);
 
   --neu-light: rgba(255,255,255,0.35);
   --neu-light-md: rgba(255,255,255,0.40);
@@ -285,7 +285,7 @@ code, .font-mono {
 .animate-spin-slow { animation: spin-slow 3s linear infinite; }
 
 .animate-shimmer {
-  background: linear-gradient(90deg, transparent 0%, rgba(255,220,180,0.08) 50%, transparent 100%);
+  background: linear-gradient(90deg, transparent 0%, rgba(225,215,205,0.10) 50%, transparent 100%);
   background-size: 200% 100%;
   animation: shimmer 2s ease-in-out infinite;
 }
@@ -468,7 +468,7 @@ code, .font-mono {
   content: '';
   position: absolute;
   inset: 0;
-  background: linear-gradient(90deg, transparent 0%, rgba(255,220,180,0.15) 50%, transparent 100%);
+  background: linear-gradient(90deg, transparent 0%, rgba(225,215,205,0.18) 50%, transparent 100%);
   background-size: 200% 100%;
   animation: shimmer 2s ease-in-out infinite;
 }
@@ -512,9 +512,9 @@ code, .font-mono {
 
 /* --- Warm Glows (for VaporBackground) --- */
 .warm-glow { position: fixed; border-radius: 50%; filter: blur(40px); pointer-events: none; z-index: 0; }
-.warm-glow-1 { width: 70vw; height: 25vh; top: 5vh; left: -20vw; background: radial-gradient(ellipse, rgba(255,180,120,0.35) 0%, transparent 65%); animation: glow-drift-1 12s ease-in-out infinite; }
-.warm-glow-2 { width: 60vw; height: 20vh; top: 40vh; left: 50vw; background: radial-gradient(ellipse, rgba(255,200,160,0.30) 0%, transparent 65%); animation: glow-drift-2 16s ease-in-out infinite; }
-.warm-glow-3 { width: 75vw; height: 22vh; top: 70vh; left: -10vw; background: radial-gradient(ellipse, rgba(255,220,180,0.25) 0%, transparent 65%); animation: glow-drift-3 10s ease-in-out infinite; }
+.warm-glow-1 { width: 70vw; height: 25vh; top: 5vh; left: -20vw; background: radial-gradient(ellipse, rgba(230,200,180,0.18) 0%, transparent 65%); animation: glow-drift-1 12s ease-in-out infinite; }
+.warm-glow-2 { width: 60vw; height: 20vh; top: 40vh; left: 50vw; background: radial-gradient(ellipse, rgba(220,210,200,0.15) 0%, transparent 65%); animation: glow-drift-2 16s ease-in-out infinite; }
+.warm-glow-3 { width: 75vw; height: 22vh; top: 70vh; left: -10vw; background: radial-gradient(ellipse, rgba(225,215,205,0.12) 0%, transparent 65%); animation: glow-drift-3 10s ease-in-out infinite; }
 
 [data-theme="dark"] .warm-glow-1 { background: radial-gradient(ellipse, rgba(176,96,48,0.18) 0%, transparent 65%); }
 [data-theme="dark"] .warm-glow-2 { background: radial-gradient(ellipse, rgba(74,55,40,0.22) 0%, transparent 65%); }
