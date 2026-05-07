@@ -74,6 +74,7 @@ SKIP_LABELS = frozenset({
     "NO AI",
     "backlog",
     "wontfix",
+    "vision-suggested",  # Hook 3: proposed by vision_analyst, awaits human acceptance
 })
 
 # Priority label ordering for deterministic assignment
