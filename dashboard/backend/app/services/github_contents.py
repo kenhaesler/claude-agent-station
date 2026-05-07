@@ -79,3 +79,56 @@ async def read_file(repo: str, path: str, branch: str) -> ContentsResult:
         raise HTTPException(status_code=500, detail="unexpected encoding from GitHub")
     body = base64.b64decode(payload["content"]).decode("utf-8", errors="replace")
     return ContentsResult(sha=payload["sha"], body=body, html_url=payload.get("html_url", ""))
+
+
+async def write_file(
+    repo: str,
+    path: str,
+    branch: str,
+    body: str,
+    message: str,
+    current_sha: str | None,
+) -> str:
+    """PUT a file to a branch.
+
+    Pass current_sha=None for first-create. Pass the previously-fetched
+    sha to update; on conflict, re-fetches the live state and raises
+    StaleSha so callers can surface a 409 envelope.
+
+    Returns the new blob sha on success.
+    """
+    token = await _get_token()
+    url = f"{GITHUB_API}/repos/{repo}/contents/{path}"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    payload = {
+        "message": message,
+        "content": base64.b64encode(body.encode("utf-8")).decode("ascii"),
+        "branch": branch,
+        "committer": COMMIT_AUTHOR,
+    }
+    if current_sha is not None:
+        payload["sha"] = current_sha
+
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        resp = await client.put(url, headers=headers, json=payload)
+
+    if resp.status_code in (200, 201):
+        return resp.json()["content"]["sha"]
+
+    if resp.status_code == 409:
+        # Re-fetch live state so the caller can surface a useful 409 envelope.
+        try:
+            current = await read_file(repo=repo, path=path, branch=branch)
+        except FileNotFound:
+            raise HTTPException(
+                status_code=409,
+                detail="Concurrent edit and file no longer exists; please retry.",
+            )
+        raise StaleSha(current_sha=current.sha, current_body=current.body)
+
+    logger.warning("GitHub Contents write failed: %s %s", resp.status_code, resp.text[:200])
+    raise HTTPException(status_code=resp.status_code, detail=resp.text)
