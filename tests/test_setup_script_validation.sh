@@ -14,7 +14,7 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-INTEG_SCRIPT="${REPO_ROOT}/agent/scripts/integration-branch.sh"
+SETUP_LIB="${REPO_ROOT}/agent/scripts/lib/setup_script.sh"
 
 PASS=0
 FAIL=0
@@ -24,27 +24,14 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 NC='\033[0m'
 
-# Stub the loggers integration-branch.sh expects from run-manager.sh.
+# Stub the loggers the lib expects from its caller.
 log_error() { echo "ERR: $*" >&2; }
 log_info()  { :; }
 log_warn()  { :; }
-log_ok()    { :; }
-log_debug() { :; }
 
-# Extract just the SETUP-SCRIPT block — the rest of integration-branch.sh
-# pulls in too many run-manager.sh globals. Boundaries:
-#   start: line containing `SETUP_SCRIPT_MAX_LEN=` (with or without `readonly`)
-#   end:   the second top-level `}` line after start (closes run_setup_script)
-TMP_BLOCK="$(mktemp)"
-trap 'rm -f "$TMP_BLOCK"' EXIT
-awk '/SETUP_SCRIPT_MAX_LEN=/{flag=1} flag {print} flag && /^}$/{count++; if(count==2) exit}' \
-    "$INTEG_SCRIPT" > "$TMP_BLOCK"
-if ! grep -q '^run_setup_script()' "$TMP_BLOCK"; then
-    echo "FATAL: failed to extract SETUP-SCRIPT block from $INTEG_SCRIPT" >&2
-    exit 2
-fi
-# shellcheck disable=SC1090
-source "$TMP_BLOCK"
+# Source the lib directly — it has no other dependencies.
+# shellcheck source=../agent/scripts/lib/setup_script.sh
+. "$SETUP_LIB"
 
 assert_validate_pass() {
     local label="$1" input="$2"
