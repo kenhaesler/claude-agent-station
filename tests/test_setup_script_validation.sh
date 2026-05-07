@@ -32,11 +32,17 @@ log_ok()    { :; }
 log_debug() { :; }
 
 # Extract just the SETUP-SCRIPT block — the rest of integration-branch.sh
-# pulls in too many run-manager.sh globals.
+# pulls in too many run-manager.sh globals. Boundaries:
+#   start: line containing `SETUP_SCRIPT_MAX_LEN=` (with or without `readonly`)
+#   end:   the second top-level `}` line after start (closes run_setup_script)
 TMP_BLOCK="$(mktemp)"
 trap 'rm -f "$TMP_BLOCK"' EXIT
-awk '/^SETUP_SCRIPT_MAX_LEN=/{flag=1} flag {print} flag && /^}$/{count++; if(count==2) exit}' \
+awk '/SETUP_SCRIPT_MAX_LEN=/{flag=1} flag {print} flag && /^}$/{count++; if(count==2) exit}' \
     "$INTEG_SCRIPT" > "$TMP_BLOCK"
+if ! grep -q '^run_setup_script()' "$TMP_BLOCK"; then
+    echo "FATAL: failed to extract SETUP-SCRIPT block from $INTEG_SCRIPT" >&2
+    exit 2
+fi
 # shellcheck disable=SC1090
 source "$TMP_BLOCK"
 
@@ -136,6 +142,41 @@ if run_setup_script "this-command-does-not-exist-xyz" "test" >/dev/null 2>&1; th
 else
     PASS=$((PASS + 1))
     echo -e "${GREEN}PASS${NC}: nonexistent command exits non-zero"
+fi
+
+# Glob/brace expansion: tokens like `*` survive intact (set -f is active).
+# Stage a fake workspace dir with a sentinel file so any expansion of `*`
+# would show up in echo's output.
+GLOB_DIR="$(mktemp -d)"
+touch "$GLOB_DIR/should-not-appear-in-output"
+TOTAL=$((TOTAL + 1))
+glob_out=$(cd "$GLOB_DIR" && run_setup_script "/bin/echo *" "test" 2>&1) || true
+if [ "$glob_out" = "*" ]; then
+    PASS=$((PASS + 1))
+    echo -e "${GREEN}PASS${NC}: '*' is not pathname-expanded (set -f works)"
+else
+    FAIL=$((FAIL + 1))
+    echo -e "${RED}FAIL${NC}: '*' expanded to [$glob_out]"
+fi
+rm -rf "$GLOB_DIR"
+
+# `set -f` must NOT leak out of the function back to the caller.
+TOTAL=$((TOTAL + 1))
+case "$-" in
+    *f*) before_state=on ;;
+    *)   before_state=off ;;
+esac
+run_setup_script "/bin/true" "test" >/dev/null 2>&1 || true
+case "$-" in
+    *f*) after_state=on ;;
+    *)   after_state=off ;;
+esac
+if [ "$before_state" = "$after_state" ]; then
+    PASS=$((PASS + 1))
+    echo -e "${GREEN}PASS${NC}: caller's glob state preserved across call"
+else
+    FAIL=$((FAIL + 1))
+    echo -e "${RED}FAIL${NC}: caller's glob state changed ($before_state → $after_state)"
 fi
 
 echo ""

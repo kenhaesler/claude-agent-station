@@ -32,7 +32,9 @@
 # attacker found a way to write the field. For richer setup logic, commit a
 # script to the repo and reference it (`./scripts/setup.sh`) — that path is
 # under the repo's review process, not the config file's.
-SETUP_SCRIPT_MAX_LEN=1024
+# `readonly` so an attacker with shell-level access to the agent process
+# can't widen the cap and re-validate a giant payload. Belt-and-braces.
+readonly SETUP_SCRIPT_MAX_LEN=1024
 
 validate_setup_script() {
     # validate_setup_script <script>
@@ -76,8 +78,22 @@ run_setup_script() {
     # so `npm install -r requirements.txt` becomes a 4-arg invocation. The
     # validator above already ensured no metacharacters can re-enter the
     # shell at this point.
+    #
+    # `set -f` disables pathname expansion (globbing) and brace expansion
+    # for the duration of the split. Without it, a token like `*` or
+    # `{a,b}` would still expand against the workspace contents — not an
+    # injection vector since the validator rejects `(` `)`, but a
+    # predictability gap (a file in the workspace named `--no-verify`
+    # could feed itself into the argv via `*`). Restore the prior glob
+    # state via `set +f` / `set -f` based on whether `f` was in `$-`.
+    local saved_glob_off=0
+    case "$-" in *f*) saved_glob_off=1 ;; esac
+    set -f
     # shellcheck disable=SC2086
     set -- $s
+    if [ "$saved_glob_off" -eq 0 ]; then
+        set +f
+    fi
     "$@"
 }
 
