@@ -1,0 +1,51 @@
+"""Smoke test: claude_agent_sdk.query resume works for chat-style usage.
+
+If this test fails, the chat backend MUST fall back to transcript-replay
+(see spec § Resume strategy).
+
+Skipped by default; run with `pytest -m integration`.
+"""
+
+import pytest
+from claude_agent_sdk import query, ClaudeAgentOptions
+from claude_agent_sdk.types import AssistantMessage, ResultMessage
+
+pytestmark = pytest.mark.integration
+
+
+async def _user_msg(text: str):
+    """Generate a single user message as an async iterable."""
+    yield {
+        "type": "user",
+        "session_id": "",
+        "message": {"role": "user", "content": text},
+        "parent_tool_use_id": None,
+    }
+
+
+@pytest.mark.asyncio
+async def test_query_resume_chat_style_remembers_context():
+    """First turn establishes context; second turn (resumed) recalls it."""
+    options1 = ClaudeAgentOptions(
+        system_prompt="Reply concisely. Remember anything I tell you.",
+        model="claude-haiku-4-5-20251001",
+        max_turns=1,
+    )
+    sid = None
+    async for msg in query(prompt=_user_msg("My name is Sam."), options=options1):
+        sid = getattr(msg, "session_id", None) or sid
+    assert sid, "no session_id captured"
+
+    options2 = ClaudeAgentOptions(
+        system_prompt="Reply concisely.",
+        model="claude-haiku-4-5-20251001",
+        max_turns=1,
+        resume=sid,
+        continue_conversation=True,
+    )
+    final = ""
+    async for msg in query(prompt=_user_msg("What is my name?"), options=options2):
+        if isinstance(msg, AssistantMessage):
+            for b in getattr(msg, "content", []) or []:
+                final += getattr(b, "text", "")
+    assert "Sam" in final, f"resume failed to recall name; got: {final!r}"
