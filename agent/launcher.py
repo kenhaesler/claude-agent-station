@@ -158,3 +158,58 @@ def trigger(x_launcher_token: str | None = Header(default=None)) -> dict:
     logger.info("Spawned run-manager.sh pid=%s, logging to %s, app_auth=%s",
                 _current.pid, log_path, "yes" if gh_token else "no")
     return {"status": "triggered", "pid": _current.pid, "log": str(log_path)}
+
+
+_current_analyst: subprocess.Popen | None = None
+
+
+@app.get("/vision-analyst/status")
+def vision_analyst_status() -> dict:
+    running = _current_analyst is not None and _current_analyst.poll() is None
+    return {
+        "running": running,
+        "pid": _current_analyst.pid if running else None,
+        "exit_code": _current_analyst.returncode if (_current_analyst and not running) else None,
+    }
+
+
+@app.post("/vision-analyst")
+def trigger_vision_analyst(
+    project_id: int,
+    x_launcher_token: str | None = Header(default=None),
+) -> dict:
+    """Spawn `python -m agent.vision_analyst --project-id <id>` detached."""
+    global _current_analyst
+
+    if LAUNCHER_TOKEN and x_launcher_token != LAUNCHER_TOKEN:
+        raise HTTPException(status_code=401, detail="invalid or missing launcher token")
+
+    if _current_analyst is not None and _current_analyst.poll() is None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"vision-analyst already running (pid={_current_analyst.pid})",
+        )
+
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    log_path = LOG_DIR / f"vision-analyst-{project_id}.out"
+    log_fh = log_path.open("ab")
+
+    env = os.environ.copy()
+    gh_token = _fetch_gh_token()
+    if gh_token:
+        env["GH_TOKEN"] = gh_token
+
+    _current_analyst = subprocess.Popen(
+        ["python", "-m", "agent.vision_analyst", "--project-id", str(project_id)],
+        stdout=log_fh,
+        stderr=subprocess.STDOUT,
+        stdin=subprocess.DEVNULL,
+        start_new_session=True,
+        cwd=WORKDIR,
+        env=env,
+    )
+    logger.info(
+        "Spawned vision_analyst pid=%s, project_id=%s, log=%s, app_auth=%s",
+        _current_analyst.pid, project_id, log_path, "yes" if gh_token else "no",
+    )
+    return {"status": "triggered", "pid": _current_analyst.pid, "log": str(log_path)}

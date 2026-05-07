@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import os
+import subprocess
 
 import httpx
 
@@ -156,3 +157,37 @@ async def run_action(action: str, unit: str | None = None) -> dict:
             "error": f"Action '{action}' is not supported in compose mode",
         }
     return await systemctl(action, unit or DEFAULT_AGENT_UNIT)
+
+
+async def start_vision_analyst(project_id: int) -> dict:
+    """Trigger the vision_analyst (compose: launcher; systemd: transient unit)."""
+    if _mode() == "compose":
+        base = _launcher_base_url()
+        if not base:
+            return {"success": False, "error": "STATION_AGENT_LAUNCHER_URL not set"}
+        url = f"{base.rstrip('/')}/vision-analyst?project_id={project_id}"
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.post(url, headers=_launcher_headers())
+        except httpx.HTTPError as exc:
+            return {"success": False, "error": f"launcher unreachable: {exc}", "status_code": 502}
+        body = {}
+        try:
+            body = resp.json()
+        except Exception:
+            body = {"raw": resp.text}
+        return {**body, "success": 200 <= resp.status_code < 300, "status_code": resp.status_code}
+
+    # systemd: spawn a transient unit
+    cmd = [
+        "sudo", "systemd-run", "--unit", f"claude-agent-vision-analyst-{project_id}",
+        "--user", os.environ.get("STATION_SERVICE_USER", "claude-agent"),
+        "python", "-m", "agent.vision_analyst", "--project-id", str(project_id),
+    ]
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+    return {
+        "success": proc.returncode == 0,
+        "stdout": proc.stdout,
+        "stderr": proc.stderr,
+        "status_code": 200 if proc.returncode == 0 else 500,
+    }

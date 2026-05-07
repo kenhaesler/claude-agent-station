@@ -146,12 +146,17 @@ class TestPromptRouterSync:
         router_count = len(PROMPT_ROLES)
 
         # This assertion documents the gap. Update both sides when fixed.
-        assert actual_files_count == 8, (
-            f"Expected 8 prompt files on disk, found {actual_files_count}"
+        # 8 agent role prompts (analyst, assigner, employee, manager, planner,
+        # reviewer, security-reviewer, triager) + 2 vision-chat prompts
+        # (vision_create, vision_refine — used by the dashboard chat backend,
+        # not by orchestrator role agents) = 10 total.
+        assert actual_files_count == 10, (
+            f"Expected 10 prompt files on disk, found {actual_files_count}"
         )
         assert router_count == 6, (
             f"PROMPT_ROLES currently has {router_count} entries. "
-            f"Expected 6 (triager not yet added to router)."
+            f"Expected 6 (triager not yet added to router; vision chat "
+            f"prompts are not exposed via the prompts router)."
         )
 
 
