@@ -6,6 +6,12 @@
 #   log_info, log_warn, log_error, log_ok, webhook_event, queue_api,
 #   json_get, repo_name, notify, $WORKSPACES_DIR, $CONFIG_FILE, $RUN_ID
 
+# Setup-script validator/runner (issue #179) — definitions live in lib/
+# so the test suite can source them without depending on the rest of this
+# file's run-manager.sh globals.
+# shellcheck source=lib/setup_script.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/setup_script.sh"
+
 # ============================================================================
 # INTEGRATION BRANCH CONFIGURATION
 # ============================================================================
@@ -276,11 +282,17 @@ validate_dev() {
     }
     git pull origin "$dev_branch" 2>/dev/null || true
 
-    # Run setup if provided (e.g. dependency install)
+    # Run setup if provided (e.g. dependency install). Announce the script
+    # content only after it passes validation, so a rejected payload
+    # doesn't reach logs verbatim. See lib/setup_script.sh / issue #179.
     if [ -n "$setup_script" ]; then
-        log_info "Running setup: $setup_script"
-        if ! eval "$setup_script" 2>&1 | while IFS= read -r line; do log_info "  [setup] $line"; done; then
-            log_warn "Setup script failed, continuing with validation anyway"
+        if validate_setup_script "$setup_script"; then
+            log_info "Running setup: $setup_script"
+            if ! run_setup_script "$setup_script" "validate_dev($project)" 2>&1 | while IFS= read -r line; do log_info "  [setup] $line"; done; then
+                log_warn "Setup script failed, continuing with validation anyway"
+            fi
+        else
+            log_warn "setup_script rejected by validator, skipping for $project"
         fi
     fi
 

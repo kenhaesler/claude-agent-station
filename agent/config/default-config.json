@@ -6,7 +6,7 @@
     "mode": "full | analyze | plan | fix | triage | review",
     "enabled": true,
     "branch": "main",
-    "setup_script": "Commands to run before the agent starts, e.g. 'npm install' or 'pip install -r requirements.txt'",
+    "setup_script": "Single command run before each agent run (e.g. 'npm install', 'pip install -r requirements.txt', './scripts/setup.sh'). For safety the value must not contain shell metacharacters (; & | ` $ < > ( ) \\) or newlines, and is capped at 1024 chars; for richer setup, commit a script to the repo and reference its path here.",
     "custom_instructions": "Extra instructions appended to the agent prompt"
   },
   "schedule": "1h",
