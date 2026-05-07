@@ -85,6 +85,51 @@ PRIORITY_ORDER = {
 }
 
 
+def priority_key(issue: dict) -> int:
+    """Return the priority rank for an issue (lower = higher priority)."""
+    for label in issue.get("labels", []) or []:
+        name = label.get("name", "")
+        if name in PRIORITY_ORDER:
+            return PRIORITY_ORDER[name]
+    return len(PRIORITY_ORDER)  # unlabeled = lowest
+
+
+from agent.vision import load_vision  # noqa: E402
+from agent.vision_scoring import score_issues_against_vision  # noqa: E402
+
+
+def _combined_rank_issues(
+    issues: list[dict],
+    vision: dict | None,
+    weight: float,
+    model: str,
+) -> list[dict]:
+    """Combine label-priority and vision-alignment into a single sort.
+
+    No vision (or weight=0) → pure priority. Returns issues with
+    vision_score / vision_reason fields (0.5 / "" when no vision).
+    """
+    N = len(PRIORITY_ORDER)  # number of priority labels
+    if not issues:
+        return issues
+
+    if vision is None or weight <= 0:
+        scored = [{**i, "vision_score": 0.5, "vision_reason": ""} for i in issues]
+        weight = 0.0
+    else:
+        scored = score_issues_against_vision(issues, vision, model)
+
+    def combined(issue: dict) -> float:
+        # priority_label_rank: 0=critical … N-1=unlabeled. Convert to score:
+        # 1.0 for critical, 0.0 for unlabeled.
+        rank = priority_key(issue)  # 0..N (or N if no label)
+        prio_score = 1.0 - (min(rank, N - 1) / max(N - 1, 1))
+        v = float(issue.get("vision_score", 0.5))
+        return prio_score * (1.0 - weight) + v * weight
+
+    return sorted(scored, key=combined, reverse=True)
+
+
 # ── Configuration ──────────────────────────────────────────────
 
 def load_config(config_file: str) -> dict:
@@ -180,13 +225,6 @@ def fetch_eligible_issues(repo: str, limit: int, workspace: str | None = None) -
         eligible.append(issue)
 
     # Sort by priority labels (critical first, unlabeled last)
-    def priority_key(issue: dict) -> int:
-        for label in issue.get("labels", []):
-            name = label.get("name", "")
-            if name in PRIORITY_ORDER:
-                return PRIORITY_ORDER[name]
-        return len(PRIORITY_ORDER)
-
     eligible.sort(key=priority_key)
     return eligible[:limit]
 
@@ -631,6 +669,19 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
         if not issues:
             logger.info("No eligible issues for %s, skipping", repo)
             continue
+
+        # Hook 1: vision-aware prioritisation
+        vision = load_vision(workspace)
+        weight = float((config.get("vision") or {}).get("scoring_weight", 0.4))
+        analyst_model = get_model(config, "analyst", "claude-sonnet-4-6")
+        issues = _combined_rank_issues(issues, vision=vision, weight=weight, model=analyst_model)
+
+        if vision is not None:
+            for issue in issues:
+                logger.info(
+                    "Picked #%s (vision_score=%.2f): %s",
+                    issue["number"], issue.get("vision_score", 0.5), issue.get("vision_reason", ""),
+                )
 
         logger.info(
             "Found %d eligible issues for %s: %s",
