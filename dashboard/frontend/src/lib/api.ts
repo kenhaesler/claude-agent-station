@@ -13,6 +13,7 @@ import type {
   AnalyticsResponse, DiffResult, PlanUsage,
   PromptInfo, StationConfig, TokenUsage,
   AgentEvent, Notification,
+  VisionRead, VisionDoc, VisionCommitOut, VisionChatSession,
 } from './types';
 
 import { toastError } from './toast.svelte';
@@ -479,3 +480,23 @@ export const getAgentEventStats = () =>
 
 export const getNotifications = (params?: { unread_only?: boolean; limit?: number }) =>
   request<Notification[]>(`/api/events/subscribers${qs(params ?? {})}`);
+
+// --- Vision (Phase 1) ---
+
+export const getVision = (projectId: number) =>
+  request<VisionRead>(`/api/projects/${projectId}/vision`);
+
+export const commitVision = (projectId: number, vision_doc: VisionDoc) =>
+  request<VisionCommitOut>(`/api/projects/${projectId}/vision`, {
+    method: 'POST', body: JSON.stringify({ vision_doc }),
+  });
+
+export const getVisionChatSession = (projectId: number) =>
+  request<VisionChatSession>(`/api/projects/${projectId}/vision/chat`);
+
+export const cancelVisionChat = (projectId: number) =>
+  request<void>(`/api/projects/${projectId}/vision/chat`, { method: 'DELETE' });
+
+// SSE chat turn — see lib/vision-sse.ts for the streaming wrapper
+export const visionChatTurnUrl = (projectId: number) =>
+  `${BASE}/api/projects/${projectId}/vision/chat`;
