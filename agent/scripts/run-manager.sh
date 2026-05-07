@@ -54,12 +54,17 @@ log_error() { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] [ERROR] $1" >&2; }
 log_ok()    { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] [OK]    $1"; }
 
 json_get() {
+    # Read a value from a JSON file by dotted path. Args (file, path) are
+    # passed via argv to the embedded Python — never interpolated into the
+    # source — so quotes/newlines/code-like characters in either are inert.
+    # See issue #185.
     local file="$1" path="$2"
-    python3 -c "
+    python3 - "$file" "$path" 2>/dev/null <<'PYEOF'
 import json, sys
-with open('$file') as f:
+file_path, dotted = sys.argv[1], sys.argv[2]
+with open(file_path) as f:
     data = json.load(f)
-keys = '$path'.split('.')
+keys = dotted.split('.')
 for k in keys:
     if isinstance(data, list):
         data = data[int(k)]
@@ -73,23 +78,25 @@ elif isinstance(data, bool):
     print('true' if data else 'false')
 else:
     print(data)
-" 2>/dev/null
+PYEOF
 }
 
 ensure_gh_token() {
     # Load GH_TOKEN from dashboard-managed file if not already set.
     # Falls back to existing GH_TOKEN env var for backward compatibility.
+    # The token file path is passed via argv to the embedded Python (issue #185).
     local token_file="$HOME/.claude-agent-station/github_token"
     if [ -f "$token_file" ]; then
         local file_token
-        file_token=$(python3 -c "
+        file_token=$(python3 - "$token_file" <<'PYEOF' 2>/dev/null
 import json, sys
 try:
-    with open('$token_file') as f:
+    with open(sys.argv[1]) as f:
         print(json.load(f).get('access_token', ''))
 except Exception:
     pass
-" 2>/dev/null || echo "")
+PYEOF
+) || file_token=""
         if [ -n "$file_token" ]; then
             export GH_TOKEN="$file_token"
             return 0
@@ -116,9 +123,23 @@ notify() {
         webhook)
             local url
             url=$(json_get "$CONFIG_FILE" "notifications.webhook_url" 2>/dev/null || echo "")
-            [ -n "$url" ] && curl -s -X POST "$url" \
-                -H "Content-Type: application/json" \
-                -d "{\"status\":\"$status\",\"message\":\"$message\",\"run_id\":\"$RUN_ID\"}" 2>/dev/null || true
+            if [ -n "$url" ]; then
+                # Build payload via python json.dumps so values containing
+                # quotes/newlines/etc. are escaped correctly (issue #180).
+                local notify_payload
+                notify_payload=$(python3 - "$status" "$message" "$RUN_ID" 2>/dev/null <<'PYEOF'
+import json, sys
+print(json.dumps({
+    "status": sys.argv[1],
+    "message": sys.argv[2],
+    "run_id": sys.argv[3],
+}))
+PYEOF
+)
+                curl -s -X POST "$url" \
+                    -H "Content-Type: application/json" \
+                    -d "$notify_payload" 2>/dev/null || true
+            fi
             ;;
     esac
 }
@@ -127,10 +148,60 @@ notify() {
 # DASHBOARD WEBHOOK (best-effort, never fails the agent run)
 # ============================================================================
 
+build_webhook_json() {
+    # Build a JSON payload using python's json.dumps so that string values
+    # with quotes/newlines/backslashes are escaped correctly. Issue #180.
+    #
+    # Usage: build_webhook_json EVENT RUN_ID [key value]...
+    #   - EVENT and RUN_ID become top-level fields.
+    #   - A "timestamp" field is auto-added (UTC, RFC3339-ish).
+    #   - Remaining argv pairs are interpreted as key/value. Values matching
+    #     "true"/"false"/"null" or numeric (int/float) literals are coerced
+    #     to JSON booleans/null/numbers; everything else stays a string.
+    #   - An odd trailing key with no value is silently skipped.
+    python3 - "$@" 2>/dev/null <<'PYEOF'
+import json, sys, datetime
+argv = sys.argv[1:]
+event = argv[0] if len(argv) > 0 else ""
+run_id = argv[1] if len(argv) > 1 else ""
+out = {
+    "event": event,
+    "run_id": run_id,
+    "timestamp": datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+}
+pairs = argv[2:]
+for i in range(0, len(pairs) - 1, 2):
+    k = pairs[i]
+    v = pairs[i + 1]
+    if v == "true":
+        out[k] = True
+    elif v == "false":
+        out[k] = False
+    elif v == "null":
+        out[k] = None
+    else:
+        # Numeric coercion: int first, then float; otherwise keep as string.
+        coerced = v
+        if v.lstrip("-").isdigit():
+            try:
+                coerced = int(v)
+            except ValueError:
+                pass
+        elif v.replace(".", "", 1).lstrip("-").isdigit():
+            try:
+                coerced = float(v)
+            except ValueError:
+                pass
+        out[k] = coerced
+print(json.dumps(out))
+PYEOF
+}
+
 webhook_event() {
+    # webhook_event EVENT [key value]...
+    # Builds a safe JSON payload (issue #180) and POSTs to the dashboard.
     local event="$1"
     shift
-    local payload="$*"
     local webhook_url
     webhook_url=$(json_get "$CONFIG_FILE" "dashboard.webhook_url" 2>/dev/null || echo "")
     # Default to local dashboard if not configured
@@ -142,10 +213,12 @@ webhook_event() {
     if [ -n "$webhook_secret" ]; then
         auth_header=(-H "X-Webhook-Token: $webhook_secret")
     fi
+    local payload
+    payload=$(build_webhook_json "$event" "run-$RUN_ID" "$@")
     curl -s --max-time 3 -X POST "$webhook_url" \
         -H "Content-Type: application/json" \
         "${auth_header[@]}" \
-        -d "{\"event\":\"$event\",\"run_id\":\"run-$RUN_ID\",\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",${payload}}" \
+        -d "$payload" \
         >/dev/null 2>/dev/null || true
 }
 
@@ -335,7 +408,14 @@ _send_run_complete_on_exit() {
         [ $exit_code -eq 130 ] && status="interrupted"
         local _duration_ms=0
         [ "$_RUN_START_EPOCH" -gt 0 ] && _duration_ms=$(( ($(date +%s) - _RUN_START_EPOCH) * 1000 ))
-        webhook_event "run_complete" "\"status\":\"$status\",\"exit_code\":$exit_code,\"tokens_input\":$_TOTAL_TOKENS_IN,\"tokens_output\":$_TOTAL_TOKENS_OUT,\"tokens_total\":$((_TOTAL_TOKENS_IN + _TOTAL_TOKENS_OUT)),\"turns\":$_TOTAL_TURNS,\"duration_ms\":$_duration_ms" || true
+        webhook_event "run_complete" \
+            status "$status" \
+            exit_code "$exit_code" \
+            tokens_input "$_TOTAL_TOKENS_IN" \
+            tokens_output "$_TOTAL_TOKENS_OUT" \
+            tokens_total "$((_TOTAL_TOKENS_IN + _TOTAL_TOKENS_OUT))" \
+            turns "$_TOTAL_TURNS" \
+            duration_ms "$_duration_ms" || true
         _RUN_COMPLETE_SENT=1
     fi
 }
@@ -709,7 +789,9 @@ $prs_json
 Return ONLY the JSON assignment object, no other text."
 
     # Run assigner with Haiku (fast + cheap)
-    webhook_event "assigner_start" "\"project\":\"$repo\",\"employee_count\":$employee_count"
+    webhook_event "assigner_start" \
+        project "$repo" \
+        employee_count "$employee_count"
     local assigner_prompt_file="$(resolve_prompt assigner)"
     local assignment_output
     assignment_output=$(echo "$assignment_prompt" | claude -p \
@@ -719,11 +801,16 @@ Return ONLY the JSON assignment object, no other text."
         --no-session-persistence \
         --dangerously-skip-permissions \
         --output-format text 2>/dev/null) || {
-        webhook_event "assigner_complete" "\"project\":\"$repo\",\"status\":\"failed\""
+        webhook_event "assigner_complete" \
+            project "$repo" \
+            status "failed"
         log_warn "Assignment agent failed for $repo, employees will self-select"
         return 1
     }
-    webhook_event "assigner_complete" "\"project\":\"$repo\",\"status\":\"success\",\"employee_count\":$employee_count"
+    webhook_event "assigner_complete" \
+        project "$repo" \
+        status "success" \
+        employee_count "$employee_count"
 
     # Extract JSON from output (handle potential markdown wrapping)
     local clean_json
@@ -851,7 +938,9 @@ run_employee() {
         2>/dev/null || true
     # Emit role-specific presence event for planner mode
     if [ "$mode" = "plan" ]; then
-        webhook_event "planner_start" "\"project\":\"$repo\",\"employee_index\":$employee_index"
+        webhook_event "planner_start" \
+            project "$repo" \
+            employee_index "$employee_index"
     fi
 
     # Transition queue item to in_progress
@@ -1335,7 +1424,10 @@ print(f'{t:,}')
 
     # Emit planner_complete if this was a plan-mode employee
     if [ "$mode" = "plan" ]; then
-        webhook_event "planner_complete" "\"project\":\"$repo\",\"employee_index\":$employee_index,\"exit_code\":$exit_code"
+        webhook_event "planner_complete" \
+            project "$repo" \
+            employee_index "$employee_index" \
+            exit_code "$exit_code"
     fi
 
     # Use employee-specific run_id to complete the correct Run record
@@ -1564,7 +1656,7 @@ run_manager_review() {
     log_info "MANAGER: Reviewing employee work" >&2
     log_info "==========================================" >&2
 
-    webhook_event "manager_review" "\"review_package\":\"$review_package\"" >&2
+    webhook_event "manager_review" review_package "$review_package" >&2
 
     local model max_turns
     model=$(json_get "$CONFIG_FILE" "models.manager" 2>/dev/null || echo "claude-sonnet-4-6")
@@ -1707,12 +1799,17 @@ print(json.dumps(v))
         log_info "Project: $project | Verdict: $verdict | Issue: #$issue_number | Branch: $branch"
         log_info "Reasoning: $reasoning"
 
-        # Escape reasoning for JSON (replace newlines and quotes)
-        local escaped_reasoning
-        escaped_reasoning=$(echo "$reasoning" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read().strip())[1:-1])" 2>/dev/null || echo "$reasoning")
+        # build_webhook_json handles string escaping (json.dumps); pass the
+        # reasoning verbatim. Use literal "null" for missing issue_number so
+        # the helper coerces it to a JSON null.
         local issue_num_json="null"
         [ -n "$issue_number" ] && issue_num_json="$issue_number"
-        webhook_event "verdict_execute" "\"project\":\"$project\",\"verdict\":\"$verdict\",\"issue_number\":$issue_num_json,\"branch\":\"$branch\",\"reasoning\":\"$escaped_reasoning\""
+        webhook_event "verdict_execute" \
+            project "$project" \
+            verdict "$verdict" \
+            issue_number "$issue_num_json" \
+            branch "$branch" \
+            reasoning "$reasoning"
 
         # Intelligence: record outcome for the learning loop
         local _report_confidence="" _report_tokens="" _report_duration="" _report_complexity="" _report_mode_used="" _report_model_used="" _report_esc_rung="0"
@@ -1951,7 +2048,10 @@ Rate limit: max 1 auto-draft PR per project per hour. Regenerated at $(date -u +
                                 if [ -n "$pr_url" ]; then
                                     log_ok "Draft PR created: $pr_url"
                                     auto_draft_rate_limit_record "$project"
-                                    webhook_event "auto_draft_pr_opened" "\"project\":\"$project\",\"branch\":\"$branch\",\"pr_url\":\"$pr_url\"" >&2
+                                    webhook_event "auto_draft_pr_opened" \
+                                        project "$project" \
+                                        branch "$branch" \
+                                        pr_url "$pr_url" >&2
                                 else
                                     log_error "Auto-draft PR creation failed for $branch"
                                 fi
@@ -2294,7 +2394,11 @@ main() {
     log_info "Concurrency: max_concurrent=$max_concurrent, max_per_project=$max_per_project, strategy=$budget_strategy"
 
     _RUN_START_EPOCH=$(date +%s)
-    webhook_event "run_start" "\"project_count\":$project_count,\"max_concurrent\":$max_concurrent,\"concurrent_group_id\":\"$CONCURRENT_GROUP_ID\",\"log_file\":\"$LOG_DIR/run-${RUN_ID}.log\""
+    webhook_event "run_start" \
+        project_count "$project_count" \
+        max_concurrent "$max_concurrent" \
+        concurrent_group_id "$CONCURRENT_GROUP_ID" \
+        log_file "$LOG_DIR/run-${RUN_ID}.log"
 
     # ---- Count total employees to spawn (for budget calculation) ----
     local total_employees=0
@@ -2471,7 +2575,11 @@ Human review is still required for merge.
 Run: $RUN_ID | \`[auto-pr]\`" 2>/dev/null || echo "")
                             if [ -n "$pr_url" ]; then
                                 log_ok "  Auto-PR created: $pr_url"
-                                webhook_event "intelligence.confidence_gate_passed" "\"project\":\"$repo_cg\",\"confidence\":$conf_confidence,\"branch\":\"$conf_branch\",\"pr_url\":\"$pr_url\""
+                                webhook_event "intelligence.confidence_gate_passed" \
+                                    project "$repo_cg" \
+                                    confidence "$conf_confidence" \
+                                    branch "$conf_branch" \
+                                    pr_url "$pr_url"
                                 auto_pr_projects+=("$repo_cg")
                             fi
                         else
@@ -2611,7 +2719,13 @@ print(json.dumps(result))
         notify "complete" "Run $RUN_ID finished (no work to review)"
         local _duration_ms_nr=0
         [ "$_RUN_START_EPOCH" -gt 0 ] && _duration_ms_nr=$(( ($(date +%s) - _RUN_START_EPOCH) * 1000 ))
-        webhook_event "run_complete" "\"status\":\"no_reports\",\"tokens_input\":$_TOTAL_TOKENS_IN,\"tokens_output\":$_TOTAL_TOKENS_OUT,\"tokens_total\":$((_TOTAL_TOKENS_IN + _TOTAL_TOKENS_OUT)),\"turns\":$_TOTAL_TURNS,\"duration_ms\":$_duration_ms_nr"
+        webhook_event "run_complete" \
+            status "no_reports" \
+            tokens_input "$_TOTAL_TOKENS_IN" \
+            tokens_output "$_TOTAL_TOKENS_OUT" \
+            tokens_total "$((_TOTAL_TOKENS_IN + _TOTAL_TOKENS_OUT))" \
+            turns "$_TOTAL_TURNS" \
+            duration_ms "$_duration_ms_nr"
         _RUN_COMPLETE_SENT=1
         exit 0
     fi
@@ -2621,7 +2735,13 @@ print(json.dumps(result))
         notify "rate_limit" "Rate limit reached before manager review in run $RUN_ID"
         local _duration_ms_rl=0
         [ "$_RUN_START_EPOCH" -gt 0 ] && _duration_ms_rl=$(( ($(date +%s) - _RUN_START_EPOCH) * 1000 ))
-        webhook_event "run_complete" "\"status\":\"rate_limited\",\"tokens_input\":$_TOTAL_TOKENS_IN,\"tokens_output\":$_TOTAL_TOKENS_OUT,\"tokens_total\":$((_TOTAL_TOKENS_IN + _TOTAL_TOKENS_OUT)),\"turns\":$_TOTAL_TURNS,\"duration_ms\":$_duration_ms_rl"
+        webhook_event "run_complete" \
+            status "rate_limited" \
+            tokens_input "$_TOTAL_TOKENS_IN" \
+            tokens_output "$_TOTAL_TOKENS_OUT" \
+            tokens_total "$((_TOTAL_TOKENS_IN + _TOTAL_TOKENS_OUT))" \
+            turns "$_TOTAL_TURNS" \
+            duration_ms "$_duration_ms_rl"
         _RUN_COMPLETE_SENT=1
         exit 0
     fi
@@ -2767,7 +2887,13 @@ print(json.dumps(result))
     notify "complete" "Run $RUN_ID finished successfully"
     local _duration_ms_ok=0
     [ "$_RUN_START_EPOCH" -gt 0 ] && _duration_ms_ok=$(( ($(date +%s) - _RUN_START_EPOCH) * 1000 ))
-    webhook_event "run_complete" "\"status\":\"success\",\"tokens_input\":$_TOTAL_TOKENS_IN,\"tokens_output\":$_TOTAL_TOKENS_OUT,\"tokens_total\":$((_TOTAL_TOKENS_IN + _TOTAL_TOKENS_OUT)),\"turns\":$_TOTAL_TURNS,\"duration_ms\":$_duration_ms_ok"
+    webhook_event "run_complete" \
+        status "success" \
+        tokens_input "$_TOTAL_TOKENS_IN" \
+        tokens_output "$_TOTAL_TOKENS_OUT" \
+        tokens_total "$((_TOTAL_TOKENS_IN + _TOTAL_TOKENS_OUT))" \
+        turns "$_TOTAL_TURNS" \
+        duration_ms "$_duration_ms_ok"
     _RUN_COMPLETE_SENT=1
 }
 
