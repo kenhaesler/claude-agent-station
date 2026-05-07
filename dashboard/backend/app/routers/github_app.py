@@ -10,6 +10,7 @@ Endpoints:
   DELETE /api/github/app                   — clear App credentials (App stays in GitHub)
   GET    /api/github/app/token             — return a usable token (resolution above)
   GET    /api/github/app/repos             — list repos accessible to the configured auth
+  GET    /api/github/app/branches?repo=…   — list branches for a given owner/repo
   PUT    /api/github/app/pat               — store a Personal Access Token
   DELETE /api/github/app/pat               — clear the stored PAT
 """
@@ -362,5 +363,64 @@ async def list_repos() -> dict[str, list[dict[str, Any]]]:
             }
             for r in raw
             if "full_name" in r
+        ],
+    }
+
+
+async def _resolve_github_token() -> str | None:
+    """Return the same token /token would mint: PAT > App, or None."""
+    pat = github_pat.read_pat()
+    if pat:
+        return pat
+    creds = github_app.read_credentials()
+    if not creds or not creds.get("installation_id"):
+        return None
+    return await github_app.get_installation_token()
+
+
+@router.get("/branches")
+async def list_branches(repo: str) -> dict[str, list[dict[str, Any]]]:
+    """List branches for a single ``owner/repo``.
+
+    Calls GitHub ``/repos/{owner}/{repo}/branches`` with whichever token
+    /token would resolve. Returns an empty list on auth-not-configured or
+    any GitHub error so the UI can fall back to a text input.
+    """
+    if "/" not in repo or repo.startswith("/") or repo.endswith("/"):
+        raise HTTPException(
+            status_code=400,
+            detail="repo must be in 'owner/name' format",
+        )
+
+    token = await _resolve_github_token()
+    if not token:
+        return {"branches": []}
+
+    url = f"https://api.github.com/repos/{repo}/branches?per_page=100"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url, headers=headers)
+    except httpx.HTTPError as exc:
+        logger.warning("GitHub branches fetch failed: %s", exc)
+        return {"branches": []}
+    if resp.status_code != 200:
+        logger.warning("GitHub branches returned %s for %s", resp.status_code, repo)
+        return {"branches": []}
+    try:
+        data = resp.json()
+    except (ValueError, AttributeError) as exc:
+        logger.warning("GitHub branches response unparseable: %s", exc)
+        return {"branches": []}
+
+    return {
+        "branches": [
+            {"name": b["name"], "protected": b.get("protected", False)}
+            for b in data
+            if "name" in b
         ],
     }

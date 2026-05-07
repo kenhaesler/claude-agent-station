@@ -538,3 +538,82 @@ async def test_list_repos_returns_empty_on_github_error(client):
         body = (await client.get("/api/github/app/repos")).json()
 
     assert body == {"repos": []}
+
+
+# --- Branch listing ---
+
+
+@pytest.mark.asyncio
+async def test_list_branches_rejects_malformed_repo(client):
+    """repo query param must be owner/name. Anything else → 400."""
+    resp = await client.get("/api/github/app/branches?repo=just-a-name")
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_list_branches_empty_when_no_auth(client):
+    body = (await client.get("/api/github/app/branches?repo=octocat/hello-world")).json()
+    assert body == {"branches": []}
+
+
+@pytest.mark.asyncio
+async def test_list_branches_uses_pat_when_set(client):
+    from app.services import github_pat
+    github_pat.write_pat("ghp_user_pat")
+
+    with respx.mock() as mock:
+        route = mock.get(
+            "https://api.github.com/repos/octocat/hello-world/branches"
+        ).respond(
+            200,
+            json=[
+                {"name": "main", "protected": True, "commit": {"sha": "abc"}},
+                {"name": "develop", "protected": False, "commit": {"sha": "def"}},
+            ],
+        )
+        body = (await client.get("/api/github/app/branches?repo=octocat/hello-world")).json()
+
+    assert route.calls[0].request.headers["Authorization"] == "Bearer ghp_user_pat"
+    assert body == {
+        "branches": [
+            {"name": "main", "protected": True},
+            {"name": "develop", "protected": False},
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_list_branches_uses_installation_token_for_app(client, rsa_keypair):
+    pem, _ = rsa_keypair
+    from app.services import github_app
+    github_app.write_credentials({
+        "app_id": 1, "slug": "x", "pem": pem, "installation_id": 99,
+    })
+    github_app._token_cache.clear()
+
+    with respx.mock() as mock:
+        mock.post(
+            "https://api.github.com/app/installations/99/access_tokens"
+        ).respond(201, json={"token": "ghs_inst", "expires_at": "2099-01-01T00:00:00Z"})
+        branches_route = mock.get(
+            "https://api.github.com/repos/laboef1900/agent-station/branches"
+        ).respond(200, json=[{"name": "master", "protected": False}])
+        body = (await client.get("/api/github/app/branches?repo=laboef1900/agent-station")).json()
+
+    assert branches_route.calls[0].request.headers["Authorization"] == "Bearer ghs_inst"
+    assert body == {"branches": [{"name": "master", "protected": False}]}
+
+
+@pytest.mark.asyncio
+async def test_list_branches_returns_empty_on_github_error(client):
+    """GitHub 404/etc → empty list, UI degrades to text-input branch field."""
+    from app.services import github_pat
+    github_pat.write_pat("ghp_x")
+
+    with respx.mock() as mock:
+        mock.get("https://api.github.com/repos/owner/missing/branches").respond(
+            404, json={"message": "Not Found"},
+        )
+        body = (await client.get("/api/github/app/branches?repo=owner/missing")).json()
+
+    assert body == {"branches": []}

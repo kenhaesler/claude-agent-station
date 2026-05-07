@@ -295,8 +295,18 @@ export interface GitHubRepo {
   default_branch: string;
 }
 
+export interface GitHubBranch {
+  name: string;
+  protected: boolean;
+}
+
 export const listGitHubRepos = () =>
   request<{ repos: GitHubRepo[] }>('/api/github/app/repos');
+
+export const listGitHubBranches = (repo: string) =>
+  request<{ branches: GitHubBranch[] }>(
+    `/api/github/app/branches?repo=${encodeURIComponent(repo)}`,
+  );
 
 // --- Plans ---
 

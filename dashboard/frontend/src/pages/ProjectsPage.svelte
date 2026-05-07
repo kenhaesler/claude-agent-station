@@ -1,9 +1,9 @@
 <script lang="ts">
-  import { listProjects, createProject, deleteProject, updateProject, listGitHubRepos } from '../lib/api';
+  import { listProjects, createProject, deleteProject, updateProject, listGitHubRepos, listGitHubBranches } from '../lib/api';
   import { navigate } from '../lib/router.svelte';
   import { toastSuccess, toastError } from '../lib/toast.svelte';
   import type { Project, AgentMode, AutonomyLevel } from '../lib/types';
-  import type { GitHubRepo } from '../lib/api';
+  import type { GitHubRepo, GitHubBranch } from '../lib/api';
   import Modal from '../components/overlays/Modal.svelte';
   import EmptyState from '../components/data-display/EmptyState.svelte';
   import SkeletonLoader from '../components/data-display/SkeletonLoader.svelte';
@@ -24,15 +24,38 @@
   let reposLoading = $state(false);
   let useCustomRepo = $state(false);
 
-  // When the user picks a repo from the dropdown, auto-fill the branch
-  // with that repo's default_branch (e.g. "main", "master", "trunk").
-  // The user can still edit it for non-default branches. In manual mode
-  // we leave the branch as whatever they had — they know what they want.
+  // Branches for the currently-selected repo. Fetched lazily when newRepo
+  // changes. Empty list = no GitHub auth, manual-repo mode, or fetch
+  // failed → UI degrades to a free-text branch input.
+  let branches = $state<GitHubBranch[]>([]);
+  let branchesLoading = $state(false);
+
+  // When the user picks a repo from the dropdown, fetch its branches and
+  // pre-select the default. In manual-repo mode we leave the branch field
+  // alone — there's no way to know the default without an extra round-trip
+  // and users typing a custom repo usually know which branch they want.
   $effect(() => {
-    if (!showCreateModal || useCustomRepo || !newRepo) return;
+    if (!showCreateModal || useCustomRepo || !newRepo) {
+      branches = [];
+      return;
+    }
     const picked = repos.find(r => r.full_name === newRepo);
-    if (picked) newBranch = picked.default_branch;
+    if (!picked) return;
+    newBranch = picked.default_branch;
+    loadBranches(picked.full_name);
   });
+
+  async function loadBranches(repo: string) {
+    branchesLoading = true;
+    try {
+      const res = await listGitHubBranches(repo);
+      branches = res.branches;
+    } catch {
+      branches = [];
+    } finally {
+      branchesLoading = false;
+    }
+  }
 
   $effect(() => { loadProjects(); });
 
@@ -64,6 +87,7 @@
     newRepo = '';
     newBranch = 'main';
     useCustomRepo = false;
+    branches = [];
     loadRepos();
   }
 
@@ -243,13 +267,25 @@
       <label for="branch-input" class="text-[11px] uppercase tracking-widest text-tertiary block mb-1">
         Branch
       </label>
-      <input
-        id="branch-input"
-        bind:value={newBranch}
-        placeholder="main"
-        class="input"
-        data-testid="branch-input"
-      />
+      {#if branchesLoading}
+        <div class="text-xs text-tertiary py-2">Loading branches…</div>
+      {:else if branches.length > 0}
+        <select id="branch-input" bind:value={newBranch} class="input" data-testid="branch-select">
+          {#each branches as b (b.name)}
+            <option value={b.name}>
+              {b.name}{b.protected ? ' (protected)' : ''}
+            </option>
+          {/each}
+        </select>
+      {:else}
+        <input
+          id="branch-input"
+          bind:value={newBranch}
+          placeholder="main"
+          class="input"
+          data-testid="branch-input"
+        />
+      {/if}
     </div>
 
     <div class="flex gap-3">
