@@ -19,7 +19,11 @@ from app.config import settings
 from app.dependencies import get_db
 from app.models import ConfigEntry, Run
 from app.services.config_sync import _read_config_json, _write_config_json, sync_config_to_db
-from app.services.notifier import send_test_notification
+from app.services.notifier import (
+    WebhookUrlValidationError,
+    send_test_notification,
+    validate_notifications_config,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -114,7 +118,18 @@ async def update_config(body: StationConfigUpdate, db: AsyncSession = Depends(ge
     # Read current config to preserve any fields not sent by frontend
     current = await asyncio.to_thread(_read_config_json)
     # Merge: update only keys the frontend sends
-    for key, value in body.model_dump(exclude_none=True).items():
+    update_payload = body.model_dump(exclude_none=True)
+
+    # SSRF protection: validate every webhook URL in incoming notifications
+    # block (top-level webhook_url and each targets[*].webhook_url).  Reject
+    # the whole request with HTTP 400 if any URL is invalid.
+    if "notifications" in update_payload:
+        try:
+            validate_notifications_config(update_payload["notifications"])
+        except WebhookUrlValidationError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+    for key, value in update_payload.items():
         current[key] = value
 
     # Normalize limits (migrate old -> new) before persisting

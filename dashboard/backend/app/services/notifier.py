@@ -19,8 +19,10 @@ Transient HTTP errors (5xx) are retried once after a 1-second delay.
 """
 
 import asyncio
+import ipaddress
 import logging
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 
@@ -32,6 +34,125 @@ logger = logging.getLogger(__name__)
 # Retry settings for transient (5xx) failures
 _MAX_RETRIES = 1
 _RETRY_DELAY_SECONDS = 1.0
+
+
+# ---------------------------------------------------------------------------
+# SSRF protection: webhook URL validation
+# ---------------------------------------------------------------------------
+
+_ALLOWED_SCHEMES = frozenset({"http", "https"})
+
+# Hostnames that always resolve into reserved space and are therefore rejected
+# without any DNS lookup.  Anything else is checked only if it parses as a
+# literal IP address -- DNS resolution is intentionally skipped (we rely on
+# outbound network egress controls for hostnames).
+_BLOCKED_HOSTNAMES = frozenset({"localhost", "ip6-localhost", "ip6-loopback"})
+
+
+class WebhookUrlValidationError(ValueError):
+    """Raised when a webhook URL is rejected by SSRF protection."""
+
+
+def _ip_is_blocked(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """Return True for IPs in private, loopback, link-local, multicast,
+    reserved, or unspecified ranges (i.e. anything that should not be
+    callable from a public webhook config)."""
+    return (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_multicast
+        or ip.is_reserved
+        or ip.is_unspecified
+    )
+
+
+def validate_webhook_url(url: str) -> None:
+    """Validate *url* for use as a webhook target.
+
+    Raises :class:`WebhookUrlValidationError` if the URL:
+
+    - has a scheme other than ``http`` / ``https``
+    - is missing a hostname / netloc
+    - has a hostname literal that resolves into private, loopback,
+      link-local, multicast, reserved, or unspecified address space
+    - has a hostname in :data:`_BLOCKED_HOSTNAMES` (e.g. ``localhost``)
+
+    DNS resolution is intentionally skipped for non-IP hostnames; the caller
+    relies on outbound network egress controls for that defence layer.
+    """
+    if not isinstance(url, str) or not url:
+        raise WebhookUrlValidationError("webhook_url must be a non-empty string")
+
+    try:
+        parsed = urlparse(url)
+    except ValueError as e:
+        raise WebhookUrlValidationError(f"webhook_url is not a valid URL: {e}") from e
+
+    scheme = (parsed.scheme or "").lower()
+    if scheme not in _ALLOWED_SCHEMES:
+        raise WebhookUrlValidationError(
+            f"webhook_url scheme must be http or https (got '{scheme or 'missing'}')"
+        )
+
+    hostname = parsed.hostname
+    if not hostname:
+        raise WebhookUrlValidationError("webhook_url is missing a hostname")
+
+    host_lc = hostname.lower()
+    if host_lc in _BLOCKED_HOSTNAMES:
+        raise WebhookUrlValidationError(
+            f"webhook_url hostname '{hostname}' is not allowed"
+        )
+
+    # If the hostname is a literal IP address, reject any reserved range.
+    # IPv6 hostnames come back from urlparse without surrounding brackets.
+    try:
+        ip = ipaddress.ip_address(host_lc)
+    except ValueError:
+        # Not an IP literal -- accept (rely on egress controls).
+        return
+
+    if _ip_is_blocked(ip):
+        raise WebhookUrlValidationError(
+            f"webhook_url points to a non-public IP address ({ip})"
+        )
+
+
+def validate_notifications_config(notifications: dict[str, Any]) -> None:
+    """Validate every webhook URL inside a ``notifications`` config block.
+
+    Validates both the legacy top-level ``webhook_url`` and every
+    ``targets[*].webhook_url`` entry.  Empty / missing URLs are skipped
+    (they're harmless -- the notifier simply won't send).
+
+    Raises :class:`WebhookUrlValidationError` if any URL is invalid.
+    """
+    if not isinstance(notifications, dict):
+        return
+
+    top_url = notifications.get("webhook_url")
+    if isinstance(top_url, str) and top_url:
+        try:
+            validate_webhook_url(top_url)
+        except WebhookUrlValidationError as e:
+            raise WebhookUrlValidationError(
+                f"Invalid notifications.webhook_url: {e}"
+            ) from e
+
+    targets = notifications.get("targets")
+    if isinstance(targets, list):
+        for idx, target in enumerate(targets):
+            if not isinstance(target, dict):
+                continue
+            t_url = target.get("webhook_url")
+            if isinstance(t_url, str) and t_url:
+                try:
+                    validate_webhook_url(t_url)
+                except WebhookUrlValidationError as e:
+                    raise WebhookUrlValidationError(
+                        f"Invalid notifications.targets[{idx}].webhook_url: {e}"
+                    ) from e
 
 
 # ---------------------------------------------------------------------------
@@ -172,6 +293,19 @@ async def _send_to_target(
         webhook_url = target["webhook_url"]
         webhook_type = target.get("webhook_type", "generic").lower()
         dashboard_url = target.get("dashboard_url", "").rstrip("/") or None
+
+        # Defense-in-depth: re-validate the URL before issuing the request.
+        # If a malicious config slipped past write-time validation (e.g.
+        # via direct file edit), refuse to make the outbound call.
+        try:
+            validate_webhook_url(webhook_url)
+        except WebhookUrlValidationError as e:
+            detail = f"Refusing to send to invalid webhook_url: {e}"
+            logger.warning(
+                "Notification blocked by SSRF guard (url=%s): %s",
+                webhook_url, e,
+            )
+            return (False, detail)
 
         adapter = get_adapter(webhook_type)
 
