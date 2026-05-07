@@ -110,6 +110,11 @@ async def append_turn(
 async def mark_approved(
     db: AsyncSession, session_id: str, assembled: dict | None = None
 ) -> None:
+    """Mark a session as approved and optionally store the assembled doc.
+
+    Accumulates mutations only — the **caller is responsible for committing**
+    so that this write and any surrounding mutations land in one transaction.
+    """
     session = await db.get(VisionChatSession, session_id)
     if session is None:
         raise SessionNotFound(session_id)
@@ -117,16 +122,19 @@ async def mark_approved(
     if assembled is not None:
         session.assembled = json.dumps(assembled)
     session.updated_at = datetime.now(timezone.utc)
-    await db.commit()
 
 
 async def mark_cancelled(db: AsyncSession, session_id: str) -> None:
+    """Mark a session as cancelled.
+
+    Accumulates mutations only — the **caller is responsible for committing**
+    so that this write and any surrounding mutations land in one transaction.
+    """
     session = await db.get(VisionChatSession, session_id)
     if session is None:
         raise SessionNotFound(session_id)
     session.state = "cancelled"
     session.updated_at = datetime.now(timezone.utc)
-    await db.commit()
 
 
 # ---------------------------------------------------------------------------

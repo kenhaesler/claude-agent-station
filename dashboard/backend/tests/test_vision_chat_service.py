@@ -55,6 +55,7 @@ async def test_create_second_session_while_active_raises(db_session, project):
 async def test_get_active_session_returns_only_active_state(db_session, project):
     s1 = await create_session(db_session, project.id)
     await mark_approved(db_session, s1.id)
+    await db_session.commit()
     found = await get_active_session(db_session, project.id)
     assert found is None  # approved doesn't count
 
@@ -62,6 +63,7 @@ async def test_get_active_session_returns_only_active_state(db_session, project)
 async def test_create_session_after_previous_approved(db_session, project):
     s1 = await create_session(db_session, project.id)
     await mark_approved(db_session, s1.id)
+    await db_session.commit()
     s2 = await create_session(db_session, project.id)
     assert s2.id != s1.id
     assert s2.state == "active"
@@ -90,6 +92,7 @@ async def test_append_turn_adds_to_messages_and_updates_coverage(db_session, pro
 async def test_mark_cancelled_with_unknown_id_raises(db_session, setup_db):
     with pytest.raises(SessionNotFound):
         await mark_cancelled(db_session, "no-such-id")
+        await db_session.commit()
 
 
 from unittest.mock import patch
