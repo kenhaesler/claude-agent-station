@@ -243,7 +243,7 @@ export const getAuthStatus = () =>
 // --- OAuth (Claude) ---
 
 export const startOAuthLogin = () =>
-  request<{ url: string; state: string }>('/api/oauth/start', { method: 'POST' });
+  request<{ auth_url: string; state: string }>('/api/oauth/start', { method: 'POST' });
 
 export const submitOAuthCode = (code: string, state: string) =>
   request<{ success: boolean; error?: string }>('/api/oauth/callback', {

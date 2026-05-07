@@ -1,6 +1,6 @@
 <script lang="ts">
   import { getConfig, updateConfig, getSystemStatus, getAuthStatus, serviceAction,
-           listPrompts, updatePrompt, resetPrompt, startOAuthLogin,
+           listPrompts, updatePrompt, resetPrompt, startOAuthLogin, submitOAuthCode,
            getGitHubAppStatus, startGitHubAppManifest, disconnectGitHubApp,
            setGitHubPAT, clearGitHubPAT,
            refreshOAuthToken } from '../lib/api';
@@ -32,6 +32,54 @@
     if (sRes.status === 'fulfilled') systemStatus = sRes.value;
     if (aRes.status === 'fulfilled') authStatus = aRes.value;
     if (gRes.status === 'fulfilled') githubStatus = gRes.value;
+  }
+
+  // Claude OAuth flow state
+  type OAuthFlow = 'idle' | 'waiting_for_code' | 'submitting' | 'done';
+  let oauthFlow = $state<OAuthFlow>('idle');
+  let oauthState = $state('');
+  let oauthCode = $state('');
+  let oauthError = $state('');
+
+  async function handleOAuthStart() {
+    oauthError = '';
+    try {
+      const res = await startOAuthLogin();
+      oauthState = res.state;
+      oauthCode = '';
+      oauthFlow = 'waiting_for_code';
+      window.open(res.auth_url, '_blank', 'noopener,noreferrer');
+    } catch (e: any) {
+      oauthError = e.message;
+    }
+  }
+
+  async function handleOAuthSubmit() {
+    if (!oauthCode.trim()) return;
+    oauthError = '';
+    oauthFlow = 'submitting';
+    try {
+      const res = await submitOAuthCode(oauthCode.trim(), oauthState);
+      if (res.success) {
+        oauthFlow = 'done';
+        toastSuccess('Authentication successful');
+        authStatus = await getAuthStatus();
+        setTimeout(() => { oauthFlow = 'idle'; }, 2000);
+      } else {
+        oauthError = res.error || 'Token exchange failed';
+        oauthFlow = 'waiting_for_code';
+      }
+    } catch (e: any) {
+      oauthError = e.message;
+      oauthFlow = 'waiting_for_code';
+    }
+  }
+
+  function handleOAuthCancel() {
+    oauthFlow = 'idle';
+    oauthState = '';
+    oauthCode = '';
+    oauthError = '';
   }
 
   async function saveConfig(field: string, value: any) {
@@ -272,6 +320,53 @@
         {#if authStatus?.expires_at}
           <div class="text-xs text-tertiary mt-1">Expires: {new Date(authStatus.expires_at).toLocaleString()}</div>
         {/if}
+
+        <div class="mt-4">
+          {#if oauthFlow === 'idle'}
+            <button
+              type="button"
+              onclick={handleOAuthStart}
+              data-testid="claude-oauth-login-btn"
+              class="btn btn-primary btn-sm text-xs"
+            >{authStatus?.logged_in && !authStatus?.expired ? 'Re-authenticate' : 'Login with Claude'}</button>
+          {:else if oauthFlow === 'waiting_for_code'}
+            <p class="text-xs text-tertiary mb-2">
+              A new tab opened on claude.ai. Authenticate there, then copy the
+              authorization code shown on the callback page and paste it below.
+            </p>
+            <div class="flex gap-2">
+              <input
+                type="text"
+                bind:value={oauthCode}
+                placeholder="Paste authorization code"
+                data-testid="claude-oauth-code-input"
+                class="input flex-1 text-xs font-mono"
+                onkeydown={(e: KeyboardEvent) => { if (e.key === 'Enter') handleOAuthSubmit(); }}
+                autocomplete="off"
+              />
+              <button
+                type="button"
+                onclick={handleOAuthSubmit}
+                disabled={!oauthCode.trim()}
+                data-testid="claude-oauth-submit-btn"
+                class="btn btn-primary btn-sm text-xs"
+              >Submit</button>
+              <button
+                type="button"
+                onclick={handleOAuthCancel}
+                class="btn btn-ghost btn-sm text-xs"
+              >Cancel</button>
+            </div>
+          {:else if oauthFlow === 'submitting'}
+            <div class="text-xs text-tertiary">Exchanging code for tokens…</div>
+          {:else if oauthFlow === 'done'}
+            <div class="text-xs" style="color: #2E7D32;">Authentication successful!</div>
+          {/if}
+
+          {#if oauthError}
+            <p class="text-xs mt-2" style="color: #D06050;">{oauthError}</p>
+          {/if}
+        </div>
       </div>
 
       <div class="card p-5">

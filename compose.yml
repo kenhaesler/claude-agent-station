@@ -53,9 +53,17 @@ services:
       # Public-facing dashboard URL — used in the manifest's redirect_url and
       # setup_url so GitHub can find us after creating/installing the App.
       STATION_DASHBOARD_BASE_URL: http://localhost:8420
+      # Path the OAuth router writes Claude credentials to. Points at the
+      # same file the agent's CLI reads via the host mount below, so the
+      # dashboard login actually authenticates the agent.
+      STATION_CREDENTIALS_PATH: /root/.claude/.credentials.json
     volumes:
       - station-data:/var/lib/claude-agent-station
       - station-logs:/var/log/claude-agent
+      # Share the host's Claude credentials with the dashboard so the
+      # OAuth login writes to the same file the agent's CLI reads. Mounted
+      # read-write because /api/oauth/refresh updates the token in place.
+      - ${HOME}/.claude:/root/.claude:z
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8420/api/health',timeout=2).status==200 else 1)"]
