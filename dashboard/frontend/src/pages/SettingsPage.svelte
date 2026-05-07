@@ -184,6 +184,21 @@
     window.location.assign('/api/github/app/oauth/login');
   }
 
+  function openOAuthAppCreator() {
+    // GitHub doesn't expose an API to programmatically create OAuth Apps
+    // (unlike the GitHub App manifest flow). The closest we can do is
+    // open the registration page with our values pre-filled so the user
+    // only has to click "Register application" and copy back the
+    // resulting client_id / client_secret.
+    const origin = window.location.origin;
+    const params = new URLSearchParams({
+      'oauth_application[name]': 'Claude Agent Station',
+      'oauth_application[url]': origin,
+      'oauth_application[callback_url]': `${origin}/api/github/app/oauth/callback`,
+    });
+    window.open(`https://github.com/settings/applications/new?${params}`, '_blank', 'noopener');
+  }
+
   async function handleOAuthLogout() {
     if (!confirm('Sign out of GitHub OAuth? Your client credentials will be kept so you can sign in again.')) {
       return;
@@ -431,10 +446,13 @@
           <h3 class="text-xs font-semibold text-primary mb-2">OAuth App Login</h3>
           <div class="text-xs text-tertiary mb-3">
             Sign in with a regular GitHub OAuth App (different from GitHub Apps —
-            OAuth Apps allow <code class="text-accent-orange">localhost</code> callbacks). Create one at
-            <a href="https://github.com/settings/developers" target="_blank" rel="noopener" class="text-accent-orange underline">github.com/settings/developers</a>
-            with callback URL <code class="text-accent-orange break-all">{`${typeof window !== 'undefined' ? window.location.origin : 'http://localhost:8420'}/api/github/app/oauth/callback`}</code>.
+            OAuth Apps allow <code class="text-accent-orange">localhost</code> callbacks).
             Used between PAT and App in the resolution chain.
+            <span class="block mt-2 italic">
+              GitHub doesn't expose an API to create OAuth Apps, so the
+              registration step happens on github.com — the button below
+              opens it with name + callback URL pre-filled.
+            </span>
           </div>
 
           {#if githubStatus?.oauth?.logged_in}
@@ -474,7 +492,16 @@
             >Forget OAuth App</button>
 
           {:else}
-            <div class="space-y-2">
+            <div class="space-y-3">
+              <button
+                type="button"
+                onclick={openOAuthAppCreator}
+                data-testid="github-oauth-create-btn"
+                class="btn btn-primary btn-sm text-xs"
+              >Create OAuth App on GitHub →</button>
+              <div class="text-xs text-tertiary">
+                Then copy the client ID and a freshly-generated client secret back here:
+              </div>
               <input
                 type="text"
                 bind:value={oauthClientId}
