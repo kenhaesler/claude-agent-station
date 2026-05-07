@@ -1,14 +1,16 @@
 <!-- dashboard/frontend/src/components/vision/VisionTab.svelte -->
 <script lang="ts">
-  import { getVision } from '../../lib/api';
+  import { getVision, findVisionGaps } from '../../lib/api';
   import type { VisionRead, Project } from '../../lib/types';
   import VisionChat from './VisionChat.svelte';
+  import { toastSuccess, toastError } from '../../lib/toast.svelte';
 
   let { project }: { project: Project } = $props();
 
   let vision = $state<VisionRead | null>(null);
   let loading = $state(true);
   let mode = $state<'view' | 'chat'>('view');
+  let findingGaps = $state(false);
 
   $effect(() => { load(); });
 
@@ -28,6 +30,18 @@
   function startChat() { mode = 'chat'; }
   function onApproved() { mode = 'view'; load(); }
   function onCancelled() { mode = 'view'; }
+
+  async function findGaps() {
+    findingGaps = true;
+    try {
+      await findVisionGaps(project.id);
+      toastSuccess('Gap analysis started — proposed issues will appear on GitHub shortly');
+    } catch (e: any) {
+      toastError(e.message);
+    } finally {
+      findingGaps = false;
+    }
+  }
 
   const githubBaseUrl = $derived(
     `https://github.com/${project.repo}/blob/${project.branch || 'main'}/docs/vision.md`,
@@ -65,6 +79,11 @@
       </div>
       <div class="flex gap-2">
         <button type="button" onclick={startChat} class="btn btn-primary btn-sm text-xs">Refine via chat</button>
+        <button type="button" onclick={findGaps} disabled={findingGaps}
+                data-testid="vision-find-gaps-btn"
+                class="btn btn-ghost btn-sm text-xs">
+          {findingGaps ? 'Finding…' : 'Find gaps'}
+        </button>
         <a href={githubBaseUrl} target="_blank" rel="noopener" class="btn btn-ghost btn-sm text-xs">View on GitHub →</a>
       </div>
     </div>

@@ -500,3 +500,6 @@ export const cancelVisionChat = (projectId: number) =>
 // SSE chat turn — see lib/vision-sse.ts for the streaming wrapper
 export const visionChatTurnUrl = (projectId: number) =>
   `${BASE}/api/projects/${projectId}/vision/chat`;
+
+export const findVisionGaps = (projectId: number) =>
+  request<{ status: string; pid?: number; log?: string }>(`/api/projects/${projectId}/vision/find-gaps`, { method: 'POST' });
