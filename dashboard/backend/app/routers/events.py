@@ -39,7 +39,11 @@ async def event_stream(request: Request) -> StreamingResponse:
                 if await request.is_disconnected():
                     break
 
-                event_type = event.get("type", "message")
+                # Sanitize event_type at the protocol boundary (issue #187):
+                # strip CR/LF so a publisher that bypassed the schema can
+                # never inject extra SSE protocol lines into the stream.
+                raw_type = event.get("type") or "message"
+                event_type = str(raw_type).replace("\r", "").replace("\n", "")
                 data = json.dumps(event.get("data", event), default=str)
 
                 yield f"event: {event_type}\ndata: {data}\n\n"
