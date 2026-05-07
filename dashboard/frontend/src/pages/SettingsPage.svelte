@@ -2,6 +2,7 @@
   import { getConfig, updateConfig, getSystemStatus, getAuthStatus, serviceAction,
            listPrompts, updatePrompt, resetPrompt, startOAuthLogin,
            getGitHubAppStatus, startGitHubAppManifest, disconnectGitHubApp,
+           setGitHubPAT, clearGitHubPAT,
            refreshOAuthToken } from '../lib/api';
   import type { GitHubAppStatus } from '../lib/api';
   import type { PromptInfo, SystemStatus, AuthStatus } from '../lib/types';
@@ -116,6 +117,37 @@
     }
     try {
       await disconnectGitHubApp();
+      githubStatus = await getGitHubAppStatus();
+    } catch (e: any) {
+      toastError(e.message);
+    }
+  }
+
+  // PAT (Personal Access Token) — alternative auth path. When set it
+  // takes precedence over the App on the agent's /token endpoint.
+  let patInput = $state('');
+  let patSaving = $state(false);
+
+  async function savePAT() {
+    if (!patInput.trim() || patSaving) return;
+    patSaving = true;
+    try {
+      await setGitHubPAT(patInput.trim());
+      patInput = '';
+      githubStatus = await getGitHubAppStatus();
+    } catch (e: any) {
+      toastError(e.message);
+    } finally {
+      patSaving = false;
+    }
+  }
+
+  async function clearPAT() {
+    if (!confirm('Clear the saved PAT? The agent will fall back to the GitHub App (if installed).')) {
+      return;
+    }
+    try {
+      await clearGitHubPAT();
       githubStatus = await getGitHubAppStatus();
     } catch (e: any) {
       toastError(e.message);
@@ -293,6 +325,51 @@
             class="btn btn-ghost btn-sm text-xs"
           >Disconnect</button>
         {/if}
+
+        <!-- PAT alternative — independent of the App flow. If both are set,
+             the PAT wins (treated as an explicit override). -->
+        <div class="mt-5 pt-4 border-t border-tertiary/20">
+          <h3 class="text-xs font-semibold text-primary mb-2">Personal Access Token</h3>
+          <div class="text-xs text-tertiary mb-3">
+            Alternative to the GitHub App — useful when the dashboard is on
+            localhost or a private VM where GitHub can't validate App URLs.
+            Create one at
+            <a href="https://github.com/settings/tokens" target="_blank" rel="noopener" class="text-accent-orange underline">github.com/settings/tokens</a>
+            with at least <code class="text-accent-orange">repo</code> and <code class="text-accent-orange">workflow</code> scopes.
+            When a PAT is saved it takes precedence over the App.
+          </div>
+
+          {#if githubStatus?.pat_set}
+            <div class="flex items-center gap-2 text-sm mb-3">
+              <span class="w-2 h-2 rounded-full bg-status-active"></span>
+              <span class="text-secondary">PAT saved (used by the agent)</span>
+            </div>
+            <button
+              type="button"
+              onclick={clearPAT}
+              data-testid="github-pat-clear-btn"
+              class="btn btn-ghost btn-sm text-xs"
+            >Clear PAT</button>
+          {:else}
+            <div class="flex gap-2">
+              <input
+                type="password"
+                bind:value={patInput}
+                placeholder="ghp_…"
+                data-testid="github-pat-input"
+                class="input flex-1 text-xs font-mono"
+                autocomplete="off"
+              />
+              <button
+                type="button"
+                onclick={savePAT}
+                disabled={patSaving || !patInput.trim()}
+                data-testid="github-pat-save-btn"
+                class="btn btn-primary btn-sm text-xs"
+              >{patSaving ? 'Saving…' : 'Save PAT'}</button>
+            </div>
+          {/if}
+        </div>
       </div>
     </div>
 

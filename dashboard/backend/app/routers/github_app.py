@@ -1,12 +1,14 @@
-"""HTTP surface for the GitHub App lifecycle.
+"""HTTP surface for the GitHub App lifecycle and PAT fallback.
 
 Endpoints:
-  POST /api/github/app/manifest/start    — issue a fresh state token, return manifest
-  GET  /api/github/app/manifest/exchange — receive code from GitHub, persist credentials
-  GET  /api/github/app/install/callback  — receive installation_id, persist
-  GET  /api/github/app/status            — return state (not_created / created_not_installed / installed)
-  DELETE /api/github/app                 — clear local credentials (App stays in GitHub)
-  GET  /api/github/app/token             — mint a fresh installation token (token-gated)
+  POST   /api/github/app/manifest/start    — issue a fresh state token, return manifest
+  GET    /api/github/app/manifest/exchange — receive code from GitHub, persist credentials
+  GET    /api/github/app/install/callback  — receive installation_id, persist
+  GET    /api/github/app/status            — return App state + whether a PAT is set
+  DELETE /api/github/app                   — clear App credentials (App stays in GitHub)
+  GET    /api/github/app/token             — return a usable token: PAT if set, else App
+  PUT    /api/github/app/pat               — store a Personal Access Token
+  DELETE /api/github/app/pat               — clear the stored PAT
 """
 
 from __future__ import annotations
@@ -18,8 +20,9 @@ import time
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
-from app.services import github_app
+from app.services import github_app, github_pat
 
 logger = logging.getLogger(__name__)
 
@@ -48,12 +51,11 @@ def _build_manifest() -> dict:
         "setup_on_update": False,
         "public": False,
         "request_oauth_on_install": False,
-        "hook_attributes": {
-            # Webhooks deliberately disabled in the MVP — installation events
-            # are captured via the setup_url redirect instead.
-            "url": f"{base}/api/github/app/webhook",
-            "active": False,
-        },
+        # hook_attributes intentionally omitted — GitHub validates the URL
+        # against its public-Internet checklist even when active=false, so
+        # any localhost or private-IP base URL would block App creation.
+        # Webhooks aren't used in the MVP anyway; if a future task wants
+        # them, set hook_attributes here behind a public-URL guard.
         "default_events": [],
         "default_permissions": {
             "contents": "write",
@@ -198,10 +200,16 @@ async def install_callback(installation_id: int, setup_action: str = "install") 
 
 @router.get("/status")
 async def status() -> dict[str, Any]:
-    """Three-state machine the UI consumes."""
+    """Three-state App machine plus a flag for whether a PAT is configured.
+
+    The PAT and App are independent: ``pat_set`` reflects only the PAT
+    file; the ``state`` field still describes the App lifecycle. The
+    ``/token`` endpoint resolves precedence (PAT wins when both are set).
+    """
+    pat_set = github_pat.read_pat() is not None
     creds = github_app.read_credentials()
     if not creds:
-        return {"state": "not_created"}
+        return {"state": "not_created", "pat_set": pat_set}
     if not creds.get("installation_id"):
         return {
             "state": "created_not_installed",
@@ -209,6 +217,7 @@ async def status() -> dict[str, Any]:
             "name": creds.get("name"),
             "owner": creds.get("owner"),
             "html_url": creds.get("html_url"),
+            "pat_set": pat_set,
         }
     return {
         "state": "installed",
@@ -217,6 +226,7 @@ async def status() -> dict[str, Any]:
         "owner": creds.get("owner"),
         "installation_id": creds["installation_id"],
         "html_url": creds.get("html_url"),
+        "pat_set": pat_set,
     }
 
 
@@ -237,23 +247,56 @@ from fastapi import Header
 
 @router.get("/token")
 async def token(x_launcher_token: str | None = Header(default=None)) -> dict[str, str]:
-    """Mint and return a fresh installation token.
+    """Return a usable GitHub auth secret.
+
+    Resolution order:
+      1. PAT (if the user explicitly configured one — counts as override)
+      2. App installation token (if the App is installed)
+      3. 404
 
     Token-gated when ``STATION_LAUNCHER_TOKEN`` is set so only the agent's
-    launcher (which already has the same shared secret) can fetch it.
+    launcher (which already has the same shared secret) can fetch it. The
+    response includes a ``source`` field so the caller can log/debug
+    which path produced the token.
     """
     expected = os.environ.get("STATION_LAUNCHER_TOKEN", "")
     if expected and x_launcher_token != expected:
         raise HTTPException(status_code=401, detail="invalid or missing launcher token")
 
+    pat = github_pat.read_pat()
+    if pat:
+        return {"token": pat, "source": "pat"}
+
     creds = github_app.read_credentials()
     if not creds or not creds.get("installation_id"):
         raise HTTPException(
             status_code=404,
-            detail="GitHub App not installed — finish setup at /settings",
+            detail="No GitHub auth configured — set a PAT or install the GitHub App at /settings",
         )
 
     tok = await github_app.get_installation_token()
     if not tok:
         raise HTTPException(status_code=502, detail="Failed to obtain installation credential")
-    return {"token": tok}
+    return {"token": tok, "source": "app"}
+
+
+class _PATBody(BaseModel):
+    token: str
+
+
+@router.put("/pat")
+async def set_pat(body: _PATBody) -> dict[str, str]:
+    """Save a Personal Access Token. Used as override/fallback for the App."""
+    cleaned = body.token.strip()
+    if not cleaned:
+        raise HTTPException(status_code=400, detail="PAT cannot be empty")
+    github_pat.write_pat(cleaned)
+    logger.info("GitHub PAT saved (length=%s)", len(cleaned))
+    return {"status": "saved"}
+
+
+@router.delete("/pat")
+async def clear_pat() -> dict[str, str]:
+    """Remove the persisted PAT. Idempotent."""
+    github_pat.delete_pat()
+    return {"status": "cleared"}

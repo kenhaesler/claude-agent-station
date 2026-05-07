@@ -253,7 +253,7 @@ export const submitOAuthCode = (code: string, state: string) =>
 export const refreshOAuthToken = () =>
   request<{ refreshed: boolean; error?: string; expires_at?: string }>('/api/oauth/refresh', { method: 'POST' });
 
-// --- GitHub App ---
+// --- GitHub App + PAT ---
 
 export interface GitHubAppStatus {
   state: 'not_created' | 'created_not_installed' | 'installed';
@@ -262,6 +262,7 @@ export interface GitHubAppStatus {
   owner?: string;
   installation_id?: number;
   html_url?: string;
+  pat_set: boolean;
 }
 
 export interface GitHubAppManifestStart {
@@ -278,6 +279,14 @@ export const startGitHubAppManifest = () =>
 
 export const disconnectGitHubApp = () =>
   requestWithToast<{ status: string }>('/api/github/app', { method: 'DELETE' });
+
+export const setGitHubPAT = (token: string) =>
+  requestWithToast<{ status: string }>('/api/github/app/pat', {
+    method: 'PUT', body: JSON.stringify({ token }),
+  });
+
+export const clearGitHubPAT = () =>
+  requestWithToast<{ status: string }>('/api/github/app/pat', { method: 'DELETE' });
 
 // --- Plans ---
 

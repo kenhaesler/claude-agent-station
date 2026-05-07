@@ -21,12 +21,14 @@ async def setup_db():
 @pytest_asyncio.fixture
 async def client(setup_db, monkeypatch, tmp_path):
     monkeypatch.setenv("STATION_GITHUB_APP_CREDENTIALS_PATH", str(tmp_path / "creds.json"))
+    monkeypatch.setenv("STATION_GITHUB_PAT_PATH", str(tmp_path / "pat.json"))
     monkeypatch.setenv("STATION_DASHBOARD_BASE_URL", "http://localhost:8420")
     # Reload so module-level constants pick up the env vars.
     import importlib
 
-    from app.services import github_app
+    from app.services import github_app, github_pat
     importlib.reload(github_app)
+    importlib.reload(github_pat)
 
     from app.main import app
     transport = ASGITransport(app=app)
@@ -182,7 +184,9 @@ async def test_install_callback_rejects_when_no_app_credentials(client):
 async def test_status_not_created(client):
     resp = await client.get("/api/github/app/status")
     assert resp.status_code == 200
-    assert resp.json() == {"state": "not_created"}
+    body = resp.json()
+    assert body["state"] == "not_created"
+    assert body["pat_set"] is False
 
 
 @pytest.mark.asyncio
@@ -299,3 +303,124 @@ async def test_token_endpoint_returns_404_when_app_not_installed(client):
 
     resp = await client.get("/api/github/app/token")
     assert resp.status_code == 404
+
+
+# --- PAT (Personal Access Token) endpoints ---
+
+
+@pytest.mark.asyncio
+async def test_set_pat_persists_and_status_reports_pat_set(client):
+    resp = await client.put(
+        "/api/github/app/pat",
+        json={"token": "ghp_user_pat_value"},
+    )
+    assert resp.status_code == 200
+
+    from app.services import github_pat
+    assert github_pat.read_pat() == "ghp_user_pat_value"
+
+    status = (await client.get("/api/github/app/status")).json()
+    assert status["pat_set"] is True
+
+
+@pytest.mark.asyncio
+async def test_set_pat_rejects_empty_value(client):
+    resp = await client.put("/api/github/app/pat", json={"token": "   "})
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_set_pat_strips_surrounding_whitespace(client):
+    resp = await client.put(
+        "/api/github/app/pat",
+        json={"token": "  ghp_padded  \n"},
+    )
+    assert resp.status_code == 200
+
+    from app.services import github_pat
+    assert github_pat.read_pat() == "ghp_padded"
+
+
+@pytest.mark.asyncio
+async def test_clear_pat_removes_persisted_value(client):
+    from app.services import github_pat
+    github_pat.write_pat("ghp_to_be_removed")
+
+    resp = await client.delete("/api/github/app/pat")
+    assert resp.status_code == 200
+
+    assert github_pat.read_pat() is None
+    status = (await client.get("/api/github/app/status")).json()
+    assert status["pat_set"] is False
+
+
+@pytest.mark.asyncio
+async def test_status_reports_pat_set_false_when_no_pat(client):
+    status = (await client.get("/api/github/app/status")).json()
+    assert status["pat_set"] is False
+
+
+@pytest.mark.asyncio
+async def test_token_endpoint_returns_pat_when_set_overrides_app(client, monkeypatch):
+    """When a PAT is configured, the /token endpoint returns it regardless of
+    App-installation state. Treats explicit PAT as the user's override."""
+    monkeypatch.delenv("STATION_LAUNCHER_TOKEN", raising=False)
+    from app.services import github_app, github_pat
+    github_pat.write_pat("ghp_override")
+    # Even if an App is installed, PAT wins
+    github_app.write_credentials({
+        "app_id": 1, "slug": "x", "pem": "PEM", "installation_id": 99,
+    })
+
+    resp = await client.get("/api/github/app/token")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["token"] == "ghp_override"
+    assert body["source"] == "pat"
+
+
+@pytest.mark.asyncio
+async def test_token_endpoint_falls_through_to_app_when_no_pat(client, monkeypatch, rsa_keypair):
+    """Without a PAT but with an installed App, /token mints from GitHub as before."""
+    monkeypatch.delenv("STATION_LAUNCHER_TOKEN", raising=False)
+    pem, _ = rsa_keypair
+    from app.services import github_app
+    github_app.write_credentials({
+        "app_id": 1, "slug": "x", "pem": pem, "installation_id": 99,
+    })
+    github_app._token_cache.clear()
+
+    with respx.mock() as mock:
+        mock.post(
+            "https://api.github.com/app/installations/99/access_tokens"
+        ).respond(201, json={
+            "token": "ghs_app_minted",
+            "expires_at": "2099-01-01T00:00:00Z",
+        })
+        resp = await client.get("/api/github/app/token")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["token"] == "ghs_app_minted"
+    assert body["source"] == "app"
+
+
+@pytest.mark.asyncio
+async def test_token_endpoint_404_when_neither_pat_nor_app_installed(client, monkeypatch):
+    """No PAT, no App → 404 with a message that mentions both options."""
+    monkeypatch.delenv("STATION_LAUNCHER_TOKEN", raising=False)
+    resp = await client.get("/api/github/app/token")
+    assert resp.status_code == 404
+    detail = resp.json()["detail"].lower()
+    assert "pat" in detail or "github app" in detail
+
+
+@pytest.mark.asyncio
+async def test_pat_set_requires_no_launcher_token_for_now(client, monkeypatch):
+    """The PUT /pat and DELETE /pat endpoints aren't launcher-token gated —
+    they're called from the dashboard UI, not the agent. Confirm a launcher
+    token mismatch doesn't block them (auth is a separate concern handled
+    at a higher layer when the dashboard becomes internet-exposed)."""
+    monkeypatch.setenv("STATION_LAUNCHER_TOKEN", "secret-only-affects-token-endpoint")
+    resp = await client.put("/api/github/app/pat", json={"token": "ghp_x"})
+    assert resp.status_code == 200
