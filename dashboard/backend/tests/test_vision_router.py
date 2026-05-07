@@ -167,3 +167,40 @@ async def test_post_vision_chat_409_when_session_already_active(project):
     detail = r.json()["detail"]
     assert detail["code"] == "session_exists"
     assert detail["session_id"]
+
+
+@pytest.mark.asyncio
+async def test_get_active_chat_session_returns_404_when_none(project):
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        r = await c.get(f"/api/projects/{project.id}/vision/chat")
+    assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_get_active_chat_session_returns_session(project):
+    from app.services import vision_chat as vc_service
+    async with async_session() as db:
+        await vc_service.create_session(db, project.id)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        r = await c.get(f"/api/projects/{project.id}/vision/chat")
+    assert r.status_code == 200
+    assert r.json()["state"] == "active"
+    assert r.json()["phase"] == "freeform"
+    assert r.json()["coverage"] == {}
+
+
+@pytest.mark.asyncio
+async def test_delete_chat_session_marks_cancelled(project):
+    from app.services import vision_chat as vc_service
+    async with async_session() as db:
+        s = await vc_service.create_session(db, project.id)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        r = await c.delete(f"/api/projects/{project.id}/vision/chat")
+    assert r.status_code == 204
+    async with async_session() as db:
+        from app.models import VisionChatSession
+        refreshed = await db.get(VisionChatSession, s.id)
+        assert refreshed.state == "cancelled"

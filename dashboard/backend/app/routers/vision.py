@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db
 from app.models import Project, VisionChatSession
-from app.schemas import VisionRead, VisionCommitIn, VisionCommitOut, VisionStaleSha, VisionChatTurnIn
+from app.schemas import VisionRead, VisionCommitIn, VisionCommitOut, VisionStaleSha, VisionChatTurnIn, VisionChatSessionOut
 from app.services import github_contents
 from app.services.vision_render import render_vision_doc
 from app.services import vision_chat as vc_service
@@ -198,3 +198,39 @@ async def chat_turn(
             "Connection": "keep-alive",
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# Session resume / cancel endpoints
+# ---------------------------------------------------------------------------
+
+from fastapi import status as http_status
+
+
+@router.get("/{project_id}/vision/chat", response_model=VisionChatSessionOut)
+async def get_chat_session(project_id: int, db: AsyncSession = Depends(get_db)):
+    """Return the active chat session for a project (for UI rehydration)."""
+    session = await get_active_session(db, project_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="no active session")
+    return VisionChatSessionOut(
+        id=session.id,
+        project_id=session.project_id,
+        state=session.state,
+        phase=session.phase,
+        coverage=json.loads(session.coverage),
+        messages=json.loads(session.messages),
+        assembled=json.loads(session.assembled) if session.assembled else None,
+        created_at=session.created_at.isoformat() if session.created_at else "",
+        updated_at=session.updated_at.isoformat() if session.updated_at else "",
+    )
+
+
+@router.delete("/{project_id}/vision/chat", status_code=http_status.HTTP_204_NO_CONTENT)
+async def delete_chat_session(project_id: int, db: AsyncSession = Depends(get_db)):
+    """Cancel the active chat session for a project."""
+    session = await get_active_session(db, project_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="no active session")
+    await mark_cancelled(db, session.id)
+    await db.commit()
