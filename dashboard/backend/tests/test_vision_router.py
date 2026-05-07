@@ -204,3 +204,19 @@ async def test_delete_chat_session_marks_cancelled(project):
         from app.models import VisionChatSession
         refreshed = await db.get(VisionChatSession, s.id)
         assert refreshed.state == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_find_gaps_calls_service_control(project):
+    async with async_session() as db:
+        proj = await db.get(Project, project.id)
+        proj.vision_cached_body = "# Vision — o/r\n\n## Problem\nP\n"
+        await db.commit()
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        with patch("app.services.service_control.start_vision_analyst",
+                   new=AsyncMock(return_value={"success": True, "status_code": 200, "pid": 99})):
+            r = await c.post(f"/api/projects/{project.id}/vision/find-gaps")
+    assert r.status_code == 200
+    assert r.json()["status"] == "triggered"

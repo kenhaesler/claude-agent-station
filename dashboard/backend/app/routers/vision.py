@@ -17,6 +17,7 @@ from app.schemas import VisionRead, VisionCommitIn, VisionCommitOut, VisionStale
 from app.services import github_contents
 from app.services.vision_render import render_vision_doc
 from app.services import vision_chat as vc_service
+from app.services import service_control
 from app.services.vision_chat import (
     create_session, get_active_session, mark_cancelled,
     SessionAlreadyActive, SessionNotFound,
@@ -234,3 +235,21 @@ async def delete_chat_session(project_id: int, db: AsyncSession = Depends(get_db
         raise HTTPException(status_code=404, detail="no active session")
     await mark_cancelled(db, session.id)
     await db.commit()
+
+
+@router.post("/{project_id}/vision/find-gaps")
+async def find_gaps(project_id: int, db: AsyncSession = Depends(get_db)):
+    """Dispatch the vision_analyst to find gaps in the project vision."""
+    project = await db.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="project not found")
+    if not project.vision_cached_body:
+        raise HTTPException(status_code=400, detail="project has no vision yet")
+
+    result = await service_control.start_vision_analyst(project_id)
+    if not result.get("success"):
+        raise HTTPException(
+            status_code=result.get("status_code") or 500,
+            detail=result.get("error") or result.get("stderr") or "failed to start vision-analyst",
+        )
+    return {"status": "triggered", **{k: v for k, v in result.items() if k not in {"success", "status_code"}}}
