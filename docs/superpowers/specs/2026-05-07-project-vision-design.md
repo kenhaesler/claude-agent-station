@@ -87,7 +87,7 @@ One new table for in-flight chat sessions:
 class VisionChatSession(Base):
     __tablename__ = "vision_chat_sessions"
     id:              Mapped[str]                    # UUID
-    project_id:      Mapped[int]                    # FK Project, unique (one active per project)
+    project_id:      Mapped[int]                    # FK Project (NOT unique — see "one active" rule below)
     state:           Mapped[Literal["active","approved","cancelled"]]
     phase:           Mapped[Literal["freeform","structured"]]
     coverage:        Mapped[dict]                   # {"problem": True, "users": False, ...}
@@ -96,9 +96,13 @@ class VisionChatSession(Base):
     assembled:       Mapped[dict | None]            # the structured vision once the model emits it
     created_at:      Mapped[datetime]
     updated_at:      Mapped[datetime]
+
+    __table_args__ = (Index("ix_vision_sessions_project_state", "project_id", "state"),)
 ```
 
-Sessions older than 24h with `state == "active"` are auto-cancelled by the existing periodic-cleanup loop (the same background-task surface used by `app/services/stale_run_reaper.py`).
+**"One active per project" is enforced in the application layer**, not at the schema level: SQLite (the project's DB) doesn't support partial unique indexes, and we want to preserve historic `approved` and `cancelled` rows alongside any new `active` one. On `POST /api/projects/{id}/vision/chat` (without `session_id`) the service issues `SELECT … WHERE project_id = ? AND state = 'active'`; if one exists the call returns 409 with `{ "code": "session_exists", "session_id": "..." }` and the UI prompts the user to resume or cancel it.
+
+Retention: completed (`approved`) and `cancelled` sessions are kept for **30 days** so the chat transcript is available for prompt-engineering iteration and operator audit, then pruned by a periodic cleanup loop. Sessions older than 24h with `state == "active"` are also auto-cancelled by the same loop. Both prunes share the background-task surface used by `app/services/stale_run_reaper.py`.
 
 Versioning of the vision itself is git. We deliberately do **not** create a `vision_history` table — the file's commit log is the history.
 
@@ -117,7 +121,12 @@ POST   /api/projects/{id}/vision
                              principles, horizons, anti_patterns } }
        Renders to markdown using the fixed template, commits to GitHub.
        Updates the cache, marks any open chat session as "approved".
-       409 on sha mismatch (concurrent external edit).
+       409 on sha mismatch (concurrent external edit), with body:
+         { "code": "stale_sha",
+           "current_sha": "<github sha>",
+           "current_body": "<latest markdown>" }
+       UI uses `current_body` to show the user a "the vision was edited
+       elsewhere" diff before they decide to retry.
 
 DELETE /api/projects/{id}/vision
        Removes docs/vision.md from the base branch (commit "docs(vision): remove").
@@ -213,6 +222,10 @@ The backend extracts this and emits a `vision_ready` SSE event. The frontend the
 
 If the model fails to emit `vision-meta` for two turns in a row, the backend injects a single reminder turn ("Please include the `vision-meta` JSON block at the end of your reply.") rather than blocking the conversation.
 
+### Resume strategy
+
+The chat backend stores `sdk_session_id` so the SDK's native resume path (`options.resume = sid; options.continue_conversation = True`) can be used when the user reopens the wizard or tab within 24h. **Caveat**: this resume path is well-exercised inside Agent Teams sessions but has not been verified for our chat-style usage (no agent definitions, no `can_use_tool`, just streaming text plus the `vision-meta` contract). Phase 1 must verify this works in a smoke test before the wizard ships; if SDK resume turns out to be incompatible, the fallback is to replay the stored `messages` transcript on every resume turn — slower (re-tokenises history) but always correct.
+
 ### System prompts
 
 Two system prompts ship with the feature, kept short and stored in `agent/prompts/vision_create.md` and `agent/prompts/vision_refine.md`. Both reference the seven sections, the `vision-meta` contract, and the `vision-doc` assembly contract. They differ only in opening behaviour:
@@ -236,16 +249,19 @@ def score_issues_against_vision(
     Falls back to score=0.5 for all issues on any failure."""
 ```
 
-One LLM call per orchestrator run using `models.analyst` (sonnet by default). Inputs: the seven vision sections + each issue's title and body (truncated to 500 chars). Output: a JSON list `[{number, score, why}]`.
+One LLM call per orchestrator run using `models.analyst` (sonnet by default). Inputs: the seven vision sections + each issue's title and body (truncated to 500 chars). Output: a JSON list `[{number, score, why}]` where `score ∈ [0, 1]` (higher = better aligned).
 
-Final ordering:
+Both signals are normalised to a 0–1 "higher is better" score, then weighted, then sorted descending:
 
 ```
-combined_rank = priority_label_rank * (1 - w) + (1 - vision_score) * w
-where w = config.vision.scoring_weight (default 0.4)
+N = len(PRIORITY_ORDER)                       # current size: 5
+priority_score = 1 - (priority_label_rank / (N - 1))   # critical=1.0, unlabeled=0.0
+combined_score = priority_score * (1 - w) + vision_score * w
+                 where w = config.vision.scoring_weight (default 0.4)
+sort issues by combined_score descending
 ```
 
-The `why` field is included in the lead's team prompt so it can tell teammates *why* an issue was picked.
+Issues with no vision (Hook 1 disabled or vision absent) keep `vision_score = 0.5` so the ranking collapses to pure priority — identical to today's behaviour. The `why` field is included in the lead's team prompt so it can tell teammates *why* an issue was picked.
 
 Estimated cost: ~$0.005 per run.
 
@@ -302,8 +318,12 @@ Steps:
 Trigger surfaces:
 
 - **Manual** — `POST /api/projects/{id}/vision/find-gaps` from the Vision tab.
-  - Compose mode: dashboard POSTs to `<launcher>/run` with a payload selecting `vision_analyst` instead of `run-manager.sh`.
   - Systemd mode: a transient unit `claude-agent-vision-analyst@<id>.service`.
+  - **Compose mode dispatch is unresolved.** The current launcher (`agent/launcher.py`) hardcodes `RUN_MANAGER` and serialises with a single `_current` slot, so it can't accept a "run vision_analyst instead" payload as written. The Phase 4 implementation plan must commit to one of:
+    - (a) extend `/run` with a `mode` field and add a separate `_current_analyst` slot so vision_analyst can run concurrently with the main run-manager;
+    - (b) add a dedicated `/vision-analyst` endpoint with its own slot;
+    - (c) accept that gap-find is queued behind any in-flight orchestrator run.
+    Until that decision is made, Phase 4 is **plan-blocked** in compose mode. Phases 1–3 are unaffected.
 - **Scheduled** — out of scope for V1. Add later via a per-project cron field.
 
 Estimated cost: ~$0.05 per gap check.
@@ -321,7 +341,7 @@ Each phase is a discrete, independently-shippable deliverable. Phases 2–4 are 
 | Prompts | `agent/prompts/vision_create.md`, `agent/prompts/vision_refine.md`. |
 | Frontend types/API | `Vision`, `VisionChatSession`, `VisionDoc` in `lib/types.ts`. New API client functions in `lib/api.ts`. |
 | Frontend UI | `AddProjectModal.svelte` becomes 2-step. New `VisionChat.svelte` (shared between wizard step 2 and tab). New `VisionTab.svelte` on Project Detail. |
-| Tests | Backend: chat-session state machine; `vision-meta` parser; GitHub Contents service with VCR fixtures; commit endpoint with sha conflict. Frontend: SSE handling; coverage update events; markdown rendering. |
+| Tests | Backend: chat-session state machine (active → approved / cancelled); "one active per project" 409 path; `vision-meta` parser (well-formed, malformed, missing for two turns triggers reminder); GitHub Contents service with VCR fixtures (read, write, sha conflict, missing `docs/` dir); commit endpoint with stale sha returns 409 envelope; SDK resume smoke test (or fallback if not viable). Frontend: SSE handling; **client disconnect mid-turn**; **reconnect-and-resume after page reload**; coverage-update events; markdown rendering. |
 
 **Done when:** a fresh project flows through the wizard, the user finishes the chat, `docs/vision.md` appears on GitHub on the base branch, the Vision tab shows it.
 
@@ -369,9 +389,15 @@ Each phase is a discrete, independently-shippable deliverable. Phases 2–4 are 
 | GitHub Contents API write fails | Chat session stays `active`; UI shows error toast | User can retry from the chat |
 | Concurrent external edit (sha mismatch) | API returns 409; UI prompts "external edit detected, please reload" | One-session-per-project mitigates the dashboard side; remaining race is GitHub-side, rare |
 | Repo has no `docs/` directory | Contents API auto-creates path on PUT | Smoke test in Phase 1 confirms |
+| GitHub App lacks `Contents: Write` permission (PAT path or under-scoped App install) | Commit returns 403; chat shows "Vision can't be saved — re-authorise the App with Contents:Write" | Manifest in `app/routers/github_app.py` must request `contents: write`; users with older installs are prompted to re-authorise |
+| Hook 2 prompt-injection (teammate plan contains "ignore the vision check") | Lead is required by prompt to cite a *specific quote* from the violated section before rejecting; the inverse "approve regardless" instruction is similarly bound | Soft mitigation — relies on lead-agent judgment. Treat false-negative misalignment as the dominant failure mode and tune via the prompt over time |
 | Hook 1 LLM call fails | All issues get `score=0.5`; falls back to label-priority sort | Run continues |
 | Hook 2 false positives (over-eager rejection) | Lead requires a *specific quote* from the violated section before rejecting | Tunable via prompt |
 | Hook 3 LLM call fails | "Find gaps" surfaces the error in the dashboard toast | User can retry; no partial state to clean up |
+
+## Deployment notes
+
+The `POST /api/projects/{id}/vision/chat` endpoint is Server-Sent Events. Reverse proxies (nginx, caddy, traefik) typically buffer responses by default, which makes SSE appear to hang from the client's perspective. The endpoint sets `X-Accel-Buffering: no` and `Cache-Control: no-cache, no-transform` on every response; deployments that put a proxy in front of the dashboard must propagate or honour those headers. Direct compose-mode access (uvicorn on port 8420) is unaffected.
 
 ## Compliance
 
