@@ -29,6 +29,10 @@ class Project(Base):
     # ADR-0001: autonomy level (manual/assisted/auto); default budget ceiling
     autonomy_level = Column(Text, default="assisted")
     max_budget_usd = Column(Float, nullable=True, default=None)
+    # Vision cache (Phase 1 — see docs/superpowers/specs/2026-05-07-project-vision-design.md)
+    vision_cached_sha = Column(Text, nullable=True, default=None)
+    vision_cached_body = Column(Text, nullable=True, default=None)
+    vision_cached_at = Column(DateTime, nullable=True, default=None)
     created_at = Column(DateTime, default=_utcnow)
     updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
 

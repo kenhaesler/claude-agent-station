@@ -83,6 +83,10 @@ async def _migrate_add_columns(conn) -> None:
         ("projects", "max_budget_usd", "ALTER TABLE projects ADD COLUMN max_budget_usd REAL"),
         ("runs", "autonomy_level", "ALTER TABLE runs ADD COLUMN autonomy_level TEXT DEFAULT 'assisted'"),
         ("runs", "max_budget_usd", "ALTER TABLE runs ADD COLUMN max_budget_usd REAL"),
+        # Project vision cache (Phase 1 — vision authoring)
+        ("projects", "vision_cached_sha",  "ALTER TABLE projects ADD COLUMN vision_cached_sha TEXT"),
+        ("projects", "vision_cached_body", "ALTER TABLE projects ADD COLUMN vision_cached_body TEXT"),
+        ("projects", "vision_cached_at",   "ALTER TABLE projects ADD COLUMN vision_cached_at DATETIME"),
     ]
     for table, column, sql in migrations:
         try:
