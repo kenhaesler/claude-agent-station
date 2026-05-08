@@ -445,6 +445,7 @@ export interface VisionRead {
 export interface VisionCommitOut {
   sha: string;
   html_url: string;
+  analyst_dispatched?: boolean;
 }
 
 export interface VisionStaleSha {

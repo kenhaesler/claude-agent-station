@@ -264,6 +264,8 @@ async def test_commit_vision_fires_analyst_when_sha_changes(project):
 
     analyst_mock.assert_called_once()
     analyst_mock2.assert_called_once()
+    assert r1.json()["analyst_dispatched"] is True
+    assert r2.json()["analyst_dispatched"] is True
 
 
 @pytest.mark.asyncio
@@ -294,6 +296,8 @@ async def test_commit_vision_skips_analyst_when_sha_unchanged(project):
         assert r2.status_code == 200
 
     analyst_mock.assert_called_once()
+    assert r1.json()["analyst_dispatched"] is True
+    assert r2.json()["analyst_dispatched"] is False
 
 
 @pytest.mark.asyncio
@@ -313,6 +317,8 @@ async def test_commit_vision_treats_409_as_success(project):
                    new=AsyncMock(return_value={"success": False, "status_code": 409, "error": "already running"})):
             r = await c.post(f"/api/projects/{project.id}/vision", json=_commit_body())
     assert r.status_code == 200
+
+    assert r.json()["analyst_dispatched"] is True
 
     # SHA must have been advanced so identical re-commits don't refire
     async with async_session() as db:

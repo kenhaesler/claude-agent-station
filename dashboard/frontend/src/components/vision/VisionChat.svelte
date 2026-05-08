@@ -106,9 +106,11 @@
   async function approveAndCommit() {
     if (!assembledDoc) return;
     try {
-      await commitVision(projectId, assembledDoc);
+      const result = await commitVision(projectId, assembledDoc);
       toastSuccess('Vision saved to GitHub');
-      addToast('info', 'Vision analyst running — proposals will appear in a few minutes.');
+      if (result.analyst_dispatched) {
+        addToast('info', 'Vision analyst running — proposals will appear in a few minutes.');
+      }
       onApproved();
     } catch (e: any) {
       toastError(e.message);

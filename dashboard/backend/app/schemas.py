@@ -827,6 +827,7 @@ class VisionCommitOut(BaseModel):
     """Response for POST /api/projects/{id}/vision."""
     sha: str
     html_url: str
+    analyst_dispatched: bool = False  # True when the SHA-gated dispatch fired (or 409'd)
 
 
 class VisionStaleSha(BaseModel):

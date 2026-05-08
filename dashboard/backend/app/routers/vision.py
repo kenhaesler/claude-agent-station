@@ -116,6 +116,7 @@ async def commit_vision(
     # fire the analyst when the vision SHA actually changed. We set
     # last_vision_analyzed_sha at *dispatch* time (not on completion) so a
     # failed analyst doesn't loop on identical re-commits.
+    dispatched: bool = False
     if fresh.sha != project.last_vision_analyzed_sha:
         try:
             result = await service_control.start_vision_analyst(project_id)
@@ -127,6 +128,7 @@ async def commit_vision(
             else:
                 # 200 or 409 — both mean "an analyst run will happen"
                 project.last_vision_analyzed_sha = fresh.sha
+                dispatched = True
         except Exception as exc:
             logger.warning("vision commit B-trigger dispatch exception: %s", exc)
 
@@ -136,7 +138,7 @@ async def commit_vision(
         await vc_service.mark_approved(db, active.id, assembled=body.vision_doc.model_dump())
 
     await db.commit()
-    return VisionCommitOut(sha=new_sha, html_url=fresh.html_url)
+    return VisionCommitOut(sha=new_sha, html_url=fresh.html_url, analyst_dispatched=dispatched)
 
 
 # ---------------------------------------------------------------------------
