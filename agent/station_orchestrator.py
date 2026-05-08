@@ -31,6 +31,7 @@ from claude_agent_sdk import query, ClaudeAgentOptions
 from claude_agent_sdk.types import (
     AgentDefinition,
     AssistantMessage,
+    HookMatcher,
     ResultMessage,
     SystemMessage,
     TaskNotificationMessage,
@@ -38,7 +39,11 @@ from claude_agent_sdk.types import (
     TaskStartedMessage,
 )
 
-from agent.audit_hook import make_audited_policy
+from agent.audit_hook import (
+    make_audited_policy,
+    make_post_tool_hook,
+    make_pre_tool_hook,
+)
 from agent.auto_mode import AutonomyLevel, _coerce_level
 from agent.run_control import (
     OrchestratorStopRequested,
@@ -1011,6 +1016,24 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
                             level=autonomy_level,
                             agent_id="lead",
                         ),
+                        # Issue #73: per-tool-call audit_log telemetry.
+                        # Pre-hook writes a 'started' row keyed by SDK tool_use_id;
+                        # Post-hook updates the same row with status + tails.
+                        hooks={
+                            "PreToolUse": [HookMatcher(hooks=[
+                                make_pre_tool_hook(
+                                    run_id=f"run-{run_id}",
+                                    actor="lead",
+                                    trace_id=f"run-{run_id}",
+                                ),
+                            ])],
+                            "PostToolUse": [HookMatcher(hooks=[
+                                make_post_tool_hook(
+                                    run_id=f"run-{run_id}",
+                                    actor="lead",
+                                ),
+                            ])],
+                        },
                         max_budget_usd=max_budget_usd,
                     )
                     if is_followup and session_id:
