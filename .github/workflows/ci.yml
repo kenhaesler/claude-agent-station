@@ -24,6 +24,34 @@ jobs:
       - name: Run install.sh test suite
         run: bash tests/test_install.sh
 
+  lockfile-drift:
+    name: requirements lockfile drift check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pip-tools
+        run: python -m pip install --upgrade pip pip-tools
+
+      - name: Verify requirements-lock.txt is in sync with requirements.txt
+        working-directory: dashboard/backend
+        run: |
+          # Re-compile and diff against the committed lock file. Any drift fails
+          # the job — if requirements.txt changed, regenerate the lock locally.
+          cp requirements-lock.txt /tmp/requirements-lock.committed
+          pip-compile --quiet --allow-unsafe --strip-extras -o requirements-lock.txt requirements.txt
+          if ! diff -u /tmp/requirements-lock.committed requirements-lock.txt; then
+            echo "::error::requirements-lock.txt is out of sync with requirements.txt."
+            echo "Run: cd dashboard/backend && pip-compile --allow-unsafe --strip-extras -o requirements-lock.txt requirements.txt"
+            exit 1
+          fi
+
   backend:
     name: backend (pytest)
     runs-on: ubuntu-latest
@@ -36,7 +64,7 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: dashboard/backend/requirements.txt
+          cache-dependency-path: dashboard/backend/requirements-lock.txt
 
       - name: Install backend dependencies
         working-directory: dashboard/backend
@@ -92,7 +120,7 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: dashboard/backend/requirements.txt
+          cache-dependency-path: dashboard/backend/requirements-lock.txt
 
       - name: Set up Node.js 20
         uses: actions/setup-node@v4
@@ -105,7 +133,7 @@ jobs:
         working-directory: dashboard/backend
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
+          python -m pip install -r requirements-lock.txt
 
       - name: Install frontend dependencies
         working-directory: dashboard/frontend

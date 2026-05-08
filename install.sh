@@ -401,13 +401,17 @@ setup_python_venv() {
     # Upgrade pip
     run "${VENV_DIR}/bin/pip" install --upgrade pip setuptools wheel
 
-    # Install backend dependencies
+    # Install backend dependencies — prefer pinned lock file for reproducible installs
+    local lock_file="${INSTALL_DIR}/dashboard/backend/requirements-lock.txt"
     local req_file="${INSTALL_DIR}/dashboard/backend/requirements.txt"
-    if [[ -f "$req_file" ]]; then
-        log_info "Installing Python dependencies from requirements.txt"
+    if [[ -f "$lock_file" ]]; then
+        log_info "Installing Python dependencies from requirements-lock.txt (pinned)"
+        run "${VENV_DIR}/bin/pip" install -r "$lock_file"
+    elif [[ -f "$req_file" ]]; then
+        log_warn "requirements-lock.txt not found — falling back to unpinned requirements.txt"
         run "${VENV_DIR}/bin/pip" install -r "$req_file"
     else
-        log_error "requirements.txt not found at ${req_file}"
+        log_error "Neither requirements-lock.txt nor requirements.txt found in ${INSTALL_DIR}/dashboard/backend/"
         exit 1
     fi
 
