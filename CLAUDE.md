@@ -1,7 +1,7 @@
 # Claude Agent Station
 
 ## Project Overview
-Self-hosted autonomous Claude Code agent with web dashboard. Uses **Agent Teams mode** (Claude Agent SDK) for multi-project GitHub automation. A lead agent coordinates teammates that each work on a single issue in isolated worktrees.
+Self-hosted autonomous Claude Code agent with web dashboard. Uses **Agent Teams mode** (Claude Agent SDK) for multi-project GitHub automation. A lead agent coordinates three role-specialized teammates (`backend`, `frontend`, `qa`) working in isolated worktrees; eligible issues are decomposed into tasks and distributed across them by specialty.
 
 ## Tech Stack
 - **Agent Core**: Claude Agent SDK (Python) + bash run-manager
@@ -12,9 +12,9 @@ Self-hosted autonomous Claude Code agent with web dashboard. Uses **Agent Teams 
 - **Deployment**: systemd (Rocky Linux 9 / RHEL-based)
 
 ## Architecture
-See `ARCHITECTURE.md` for full system design.
+See `docs/architecture.md` for full system design.
 
-**Agent Teams flow**: run-manager.sh → station_orchestrator.py → Claude Agent SDK → Lead spawns teammates → each teammate works one issue → Lead reviews → Manager reviews all work → verdicts (APPROVE/PR/REJECT)
+**Agent Teams flow**: run-manager.sh → station_orchestrator.py → Claude Agent SDK → Lead decomposes eligible issues and spawns three role-specialized teammates → tasks distributed by specialty → Lead reviews plans → Manager reviews all work → verdicts (APPROVE/PR/REJECT/SKIP)
 
 ## Conventions
 - Backend code in `dashboard/backend/app/`
@@ -28,6 +28,7 @@ See `ARCHITECTURE.md` for full system design.
 - Svelte components use TypeScript
 - SQLite database at `/var/lib/claude-agent-station/station.db`
 - Dashboard port: 8420
+- **Keep `docs/` in sync with code.** When you change models, env vars, DB tables, routers, or agent prompts, update the corresponding section in `docs/configuration.md`, `docs/architecture.md`, or the relevant doc. Drifted docs are a defect.
 
 ## Issue Rules
 - **NEVER work on issues or features labeled `backlog`.** Under no circumstances should the agent pick up, implement, plan, or research any issue/feature that carries the `backlog` label. Skip them entirely — no exceptions.
