@@ -97,7 +97,7 @@ claude-agent-station/
 │   │   │   ├── middleware/
 │   │   │   │   └── auth.py         # API key authentication middleware
 │   │   │   ├── routers/            # 21 API routers
-│   │   │   │   ├── agent_events.py # Agent event ingestion + query
+│   │   │   │   ├── agent_events.py # Workflow event log: append + query API
 │   │   │   │   ├── analytics.py    # Token usage charts, verdicts
 │   │   │   │   ├── audit.py        # Audit log query API
 │   │   │   │   ├── config_router.py# Agent configuration CRUD
@@ -117,7 +117,7 @@ claude-agent-station/
 │   │   │   │   ├── runs.py         # Run history, diffs, triggers
 │   │   │   │   ├── system.py       # systemd + auth status
 │   │   │   │   ├── vision.py       # Vision chat sessions
-│   │   │   │   └── webhook.py      # Agent event ingestion
+│   │   │   │   └── webhook.py      # Run event ingest from run-manager.sh
 │   │   │   └── services/           # Business logic
 │   │   │       ├── adapters/       # Notifier adapters (Slack, Discord, …)
 │   │   │       ├── adaptive_scheduler.py   # Dynamic scheduling
@@ -211,11 +211,11 @@ claude-agent-station/
 | `task_outcomes` | Adaptive scheduling learning | mode_used, model_used, success |
 | `brainstorm_sessions` | AI brainstorm conversations | project_id, persona, title |
 | `brainstorm_messages` | Brainstorm chat messages | session_id, role, content |
-| `integration_features` | Feature flag integration state | (feature tracking) |
+| `integration_features` | Features merged to integration (dev) branch | project_repo, branch, state, validation_status |
 | `prompt_versions` | Prompt A/B testing | prompt_name, version, content_hash |
 | `permission_requests` | Agent permission request queue | agent_id, action, status |
 | `run_controls` | Run pause/resume/stop signals | run_id, action, payload |
-| `station_control` | Station-wide control signals | (global state) |
+| `station_control` | Singleton row holding global intervention flags | global_pause, updated_at, updated_by |
 | `vision_chat_sessions` | Vision pipeline chat sessions | project_id, session state |
 
 ---
