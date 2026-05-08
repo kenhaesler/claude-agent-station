@@ -269,6 +269,45 @@ def test_pre_then_post_hooks_compose_end_to_end(tmp_path):
     assert r["finished_at"] is not None
 
 
+def test_pre_hook_attributes_to_teammate_when_agent_id_present(tmp_path):
+    """SDK populates agent_id on hook inputs from sub-agents — use it for actor."""
+    db = tmp_path / "test.db"
+    _init_audit_db(db)
+
+    pre = make_pre_tool_hook(run_id="run-h", actor="lead", db_path=str(db))
+    asyncio.run(pre(
+        {
+            "tool_name": "Bash",
+            "tool_input": {"command": "true"},
+            "tool_use_id": "tu_team",
+            "agent_id": "issue-worker",
+        },
+        None,
+        {"signal": None},
+    ))
+
+    rows = _rows(db)
+    assert len(rows) == 1
+    assert rows[0]["actor"] == "teammate-issue-worker"
+
+
+def test_pre_hook_falls_back_to_lead_when_agent_id_absent(tmp_path):
+    """Main-thread tool calls (no agent_id) keep the configured actor."""
+    db = tmp_path / "test.db"
+    _init_audit_db(db)
+
+    pre = make_pre_tool_hook(run_id="run-h", actor="lead", db_path=str(db))
+    asyncio.run(pre(
+        {"tool_name": "Bash", "tool_input": {}, "tool_use_id": "tu_lead"},
+        None,
+        {"signal": None},
+    ))
+
+    rows = _rows(db)
+    assert len(rows) == 1
+    assert rows[0]["actor"] == "lead"
+
+
 def test_hooks_are_silent_when_tool_use_id_missing(tmp_path):
     db = tmp_path / "test.db"
     _init_audit_db(db)
