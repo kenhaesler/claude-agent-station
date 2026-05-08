@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db
 from app.models import Project, VisionChatSession
-from app.schemas import VisionRead, VisionCommitIn, VisionCommitOut, VisionStaleSha, VisionChatTurnIn, VisionChatSessionOut
+from app.schemas import VisionRead, VisionCommitIn, VisionCommitOut, VisionStaleSha, VisionChatTurnIn, VisionChatSessionOut, VisionProposalsRead
 from app.services import github_contents
 from app.services.vision_render import render_vision_doc
 from app.services import vision_chat as vc_service
@@ -271,3 +271,67 @@ async def find_gaps(project_id: int, db: AsyncSession = Depends(get_db)):
             detail=result.get("error") or result.get("stderr") or "failed to start vision-analyst",
         )
     return {"status": "triggered", **{k: v for k, v in result.items() if k not in {"success", "status_code"}}}
+
+
+# ---------------------------------------------------------------------------
+# Vision proposals: open + recently-accepted vision-suggested issues
+# ---------------------------------------------------------------------------
+
+# Module-level cache: {project_id: (timestamp, payload)}.
+# 60-second TTL is enough to absorb dashboard re-renders without
+# overwhelming the rate-limited gh CLI.
+_PROPOSALS_CACHE: dict[int, tuple[float, dict]] = {}
+_PROPOSALS_TTL_S = 60
+
+
+def _count_issues(repo: str, *, state: str, label: str, days_back: int | None = None) -> int:
+    """Run `gh issue list` and count results. Returns 0 on any failure."""
+    import subprocess
+    import datetime as _dt
+
+    cmd = [
+        "gh", "issue", "list",
+        "--repo", repo,
+        "--state", state,
+        "--label", label,
+        "--limit", "100",
+        "--json", "number",
+    ]
+    if days_back is not None:
+        # Use gh's --search; resolve the date in Python to avoid shell expansion
+        # surprises.
+        cutoff = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=days_back)).strftime("%Y-%m-%d")
+        cmd += ["--search", f"closed:>={cutoff}"]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        if result.returncode != 0:
+            return 0
+        return len(json.loads(result.stdout or "[]"))
+    except Exception:
+        return 0
+
+
+@router.get("/{project_id}/vision/proposals", response_model=VisionProposalsRead)
+async def vision_proposals(project_id: int, db: AsyncSession = Depends(get_db)):
+    """Return open + recently-accepted proposal counts for the Vision tab."""
+    import time
+
+    project = await db.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="project not found")
+
+    cached = _PROPOSALS_CACHE.get(project_id)
+    if cached and (time.time() - cached[0]) < _PROPOSALS_TTL_S:
+        return VisionProposalsRead(**cached[1])
+
+    open_count = _count_issues(project.repo, state="open", label="vision-suggested")
+    # Accepted = closed within last 7 days that previously had vision-suggested.
+    # The label may have been removed when the issue was accepted, so this is
+    # an approximation — close enough for an info strip.
+    accepted = _count_issues(
+        project.repo, state="closed", label="vision-suggested", days_back=7,
+    )
+
+    payload = {"open": open_count, "accepted_recent": accepted}
+    _PROPOSALS_CACHE[project_id] = (time.time(), payload)
+    return VisionProposalsRead(**payload)

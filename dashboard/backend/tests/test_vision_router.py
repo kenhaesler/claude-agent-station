@@ -318,3 +318,38 @@ async def test_commit_vision_treats_409_as_success(project):
     async with async_session() as db:
         proj = await db.get(Project, project.id)
         assert proj.last_vision_analyzed_sha == "new-sha"
+
+
+@pytest.mark.asyncio
+async def test_vision_proposals_endpoint_returns_counts(project, monkeypatch):
+    """GET /api/projects/{id}/vision/proposals returns open + accepted_recent."""
+    import subprocess
+    from app.routers import vision as vision_router
+
+    # Clear the module-level cache so we don't get a stale hit
+    vision_router._PROPOSALS_CACHE.clear()
+
+    open_payload = '[{"number": 1}, {"number": 2}, {"number": 3}]'
+    closed_payload = '[{"number": 99}]'
+
+    def fake_run(cmd, *a, **k):
+        # Distinguish open vs closed by inspecting the --state flag
+        try:
+            state = cmd[cmd.index("--state") + 1]
+        except (ValueError, IndexError):
+            state = ""
+        if state == "open":
+            return type("R", (), {"returncode": 0, "stdout": open_payload, "stderr": ""})()
+        if state == "closed":
+            return type("R", (), {"returncode": 0, "stdout": closed_payload, "stderr": ""})()
+        return type("R", (), {"returncode": 0, "stdout": "[]", "stderr": ""})()
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        resp = await c.get(f"/api/projects/{project.id}/vision/proposals")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["open"] == 3
+    assert body["accepted_recent"] == 1
