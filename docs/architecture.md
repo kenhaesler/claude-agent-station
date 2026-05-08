@@ -281,6 +281,18 @@ See [`configuration.md`](configuration.md#environment-variables) for the full ta
 
 ---
 
+## Run Modes
+
+The orchestrator dispatches runs in different modes, each with distinct behavior and responsibilities:
+
+- **`agent-teams`** — full autonomous workflow: lead decomposes eligible issues into tasks, spawns three teammates in isolated worktrees, manager reviews each implementation, verdicts issued (APPROVE/PR/REJECT).
+- **`vision-bootstrap`** — single-shot run that dispatches `agent/vision_analyst.py` to propose new issues from `docs/vision.md`. Triggered automatically (orchestrator empty backlog, or vision commit with content-hash change) or manually from the Vision tab. Never spawns teammates, never opens PRs.
+- **`fix`** — single-issue repair mode for regressions and urgent bugs.
+- **`triage`** — issue classification and labeling without implementation.
+- **`review`** — security or code review mode for pull requests.
+
+---
+
 ## Deployment Model
 
 ### Hardlink Deployment

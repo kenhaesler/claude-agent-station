@@ -37,6 +37,7 @@ Defaults per role (from `agent/config/default-config.json`):
 | Analyst | `claude-sonnet-4-6` | `models.analyst` |
 | Planner | `claude-sonnet-4-6` | `models.planner` |
 | Router | `claude-haiku-4-5-20251001` | `models.router` |
+| Vision analyst | `claude-sonnet-4-6` | env: `STATION_VISION_ANALYST_MODEL` |
 
 To change a model, set the corresponding key via the dashboard Config page or `PATCH /api/config`. The orchestrator picks up the change on the next run.
 
@@ -123,3 +124,12 @@ Example JSON for the `POST /api/projects` request body:
   "setup_script": "pip install -r requirements.txt"
 }
 ```
+
+### Vision-driven issue bootstrap
+
+When a project has `docs/vision.md`, two automatic triggers fire the vision analyst:
+
+- **Trigger A (orchestrator):** triggered runs that find no eligible issues dispatch the analyst when no `vision-suggested` issues are already open. The triggering run terminates with `Run.skip_reason = no-eligible-issues-bootstrap-dispatched`.
+- **Trigger B (vision commit):** committing a new vision via the dashboard fires the analyst when the document SHA changes. Idempotent on identical re-commits via `Project.last_vision_analyzed_sha`.
+
+Both produce `Run.mode = vision-bootstrap` rows that surface in the Runs list and Mission Control. Issues land with the `vision-suggested` label; remove the label to accept (the orchestrator's `SKIP_LABELS` blocks autonomous implementation until then).
