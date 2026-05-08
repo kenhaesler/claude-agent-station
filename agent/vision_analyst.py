@@ -269,10 +269,14 @@ def _ensure_workspace(workspace: str, repo: str, branch: str = "main") -> bool:
     name = os.path.basename(workspace)
     if not os.path.isdir(os.path.join(workspace, ".git")):
         os.makedirs(parent, exist_ok=True)
-        clone = subprocess.run(
-            ["gh", "repo", "clone", repo, name],
-            cwd=parent, capture_output=True, text=True, timeout=120,
-        )
+        try:
+            clone = subprocess.run(
+                ["gh", "repo", "clone", repo, name],
+                cwd=parent, capture_output=True, text=True, timeout=120,
+            )
+        except subprocess.TimeoutExpired:
+            logger.warning("gh repo clone %s timed out", repo)
+            return False
         if clone.returncode != 0:
             logger.warning(
                 "gh repo clone %s failed: %s",
@@ -281,10 +285,15 @@ def _ensure_workspace(workspace: str, repo: str, branch: str = "main") -> bool:
             return False
 
     # Refresh the existing checkout to the tip of the configured branch.
-    fetch = subprocess.run(
-        ["git", "-C", workspace, "fetch", "--depth", "1", "origin", branch],
-        capture_output=True, text=True, timeout=60,
-    )
+    try:
+        fetch = subprocess.run(
+            ["git", "-C", workspace, "fetch", "--depth", "1", "origin", branch],
+            capture_output=True, text=True, timeout=60,
+        )
+    except subprocess.TimeoutExpired:
+        logger.warning("git fetch in %s timed out", workspace)
+        # Fall through — try to use whatever is on disk.
+        return True
     if fetch.returncode != 0:
         logger.warning(
             "git fetch in %s failed: %s",
@@ -294,10 +303,14 @@ def _ensure_workspace(workspace: str, repo: str, branch: str = "main") -> bool:
         return True
     logger.info("git fetch in %s: ok (origin/%s)", workspace, branch)
 
-    reset = subprocess.run(
-        ["git", "-C", workspace, "reset", "--hard", f"origin/{branch}"],
-        capture_output=True, text=True, timeout=30,
-    )
+    try:
+        reset = subprocess.run(
+            ["git", "-C", workspace, "reset", "--hard", f"origin/{branch}"],
+            capture_output=True, text=True, timeout=30,
+        )
+    except subprocess.TimeoutExpired:
+        logger.warning("git reset in %s timed out", workspace)
+        return True
     if reset.returncode != 0:
         logger.warning(
             "git reset in %s failed: %s",

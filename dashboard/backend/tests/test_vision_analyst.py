@@ -1,5 +1,4 @@
 import json
-import os
 import pytest
 from unittest.mock import patch, MagicMock
 from agent.vision_analyst import propose_gaps, format_proposal_body, _ensure_workspace

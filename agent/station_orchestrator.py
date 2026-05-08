@@ -52,6 +52,7 @@ from agent.run_control import (
     drain_pending_controls,
     set_run_paused,
 )
+from agent.vision_analyst import _ensure_workspace
 
 logger = logging.getLogger(__name__)
 
@@ -1035,7 +1036,6 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
         # docs/vision.md files (issue #271). Best-effort: clone-if-missing
         # plus fetch+reset; failures are logged but non-fatal.
         try:
-            from agent.vision_analyst import _ensure_workspace
             _ensure_workspace(workspace, repo, project_branch)
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning(
