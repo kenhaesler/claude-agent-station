@@ -1214,7 +1214,16 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
                             "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
                             "GITHUB_REPO": repo,
                         },
-                        allowed_tools=["Read", "Bash", "Glob", "Grep", "Edit", "Write", "Agent"],
+                        mcp_servers={
+                            "playwright": {
+                                "command": "npx",
+                                "args": ["-y", "@playwright/mcp@latest"],
+                            },
+                            "ref": {
+                                "url": "https://api.ref.tools/mcp",
+                            },
+                        },
+                        allowed_tools=["Read", "Bash", "Glob", "Grep", "Edit", "Write", "Agent", "mcp__playwright__*", "mcp__ref__*"],
                         max_turns=manager_turns,
                         model=manager_model,
                         agents=agents_dict,

@@ -148,6 +148,19 @@ async def policy_decide(
     if tool_name in SUBAGENT_TOOLS:
         return PermissionResultAllow()
 
+    # 3.2. MCP tools — allow at assisted+ level, refer at manual.
+    if tool_name.startswith("mcp__"):
+        if level is AutonomyLevel.MANUAL:
+            return await _defer_or_deny(
+                level=level,
+                tool_name=tool_name,
+                tool_input=tool_input,
+                run_id=run_id,
+                agent_id=agent_id,
+                reason="MCP tools require human approval at manual level",
+            )
+        return PermissionResultAllow()
+
     # 3.5. Mission Control kill-switch: operator-requested pause forces every
     #      non-readonly tool call to the permission tray, regardless of
     #      autonomy level. Checked AFTER read-only / subagent so a pause
