@@ -64,6 +64,8 @@ Symptom: agent timer fires but no run starts; logs mention the circuit breaker.
 
 `agent/scripts/circuit-breaker.sh` tracks consecutive failures per agent name in a JSON state file at `/var/lib/claude-agent-station/circuit-breaker.json` (override via `STATION_CIRCUIT_FILE`). After **3** consecutive failures the circuit opens and blocks further attempts.
 
+`<agent-name>` below is whatever string the caller passed to the script — inspect the JSON file to see the live keys: `sudo cat /var/lib/claude-agent-station/circuit-breaker.json`. Each top-level key is a tracked agent name.
+
 To inspect the current state:
 
 ```bash
@@ -90,7 +92,7 @@ Cause: `STATION_API_KEY` is set on the server but the request is missing the `Au
 
 ## Audit trail
 
-Every agent action is recorded in the `audit_log` table. To filter by run:
+Every agent action is recorded in the `audit_log` table. To filter by run (replace `<run-id>` with the actual run ID before running):
 
 ```bash
 sqlite3 /var/lib/claude-agent-station/station.db \
@@ -130,7 +132,7 @@ sudo systemctl start claude-station-dashboard.service
 
 ### Workspace cleanup
 
-Each run creates worktrees under `/home/claude-agent/workspaces/`. The directory contains both the main clone (`<repo>`) and its per-teammate worktrees (`<repo>-e1`, `<repo>-e2`, ...) as **siblings** at the same depth, not nested. They should be cleaned up automatically; to free space manually:
+Workspaces should be cleaned up automatically; to free space manually:
 
 ```bash
 sudo -u claude-agent find /home/claude-agent/workspaces/ -mindepth 1 -maxdepth 1 -mtime +7 -exec rm -rf {} +
