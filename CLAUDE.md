@@ -28,6 +28,7 @@ See `docs/architecture.md` for full system design.
 - Svelte components use TypeScript
 - SQLite database at `/var/lib/claude-agent-station/station.db`
 - Dashboard port: 8420
+- **Keep `docs/` in sync with code.** When you change models, env vars, DB tables, routers, or agent prompts, update the corresponding section in `docs/configuration.md`, `docs/architecture.md`, or the relevant doc. Drifted docs are a defect.
 
 ## Issue Rules
 - **NEVER work on issues or features labeled `backlog`.** Under no circumstances should the agent pick up, implement, plan, or research any issue/feature that carries the `backlog` label. Skip them entirely — no exceptions.
