@@ -999,6 +999,35 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
     manager_model = get_model(config, "manager", "claude-sonnet-4-6")
     manager_turns = get_limit(config, "max_manager_turns", 30)
 
+    # Issue #268: When no projects are configured (or every project is
+    # disabled), the per-project loop below silently no-ops. The bash
+    # launcher's EXIT trap eventually fires ``run_complete``, but in
+    # historical runs we've seen the placeholder Run row stranded with
+    # ``status='unknown'`` because the importer ingested its stream file
+    # before the launcher's terminal webhook landed. Emit an explicit
+    # ``finished`` webhook here so the dashboard always sees a terminal
+    # transition originating from the orchestrator itself.
+    #
+    # ``mode`` is intentionally omitted: the per-run mode comes from the
+    # specific project being processed (issue #266), and there is no
+    # project context here. ``handle_finished`` in the dashboard tolerates
+    # a missing/null mode (preserves whatever was already on the row).
+    enabled_projects = [p for p in projects if p.get("enabled", True)]
+    skipped = [p.get("repo", "<unnamed>") for p in projects if not p.get("enabled", True)]
+    for repo in skipped:
+        logger.info("Skipping disabled project: %s", repo)
+    if not enabled_projects:
+        logger.info(
+            "No enabled projects configured; emitting run_complete for run-%s",
+            run_id,
+        )
+        post_webhook(config, "finished", {
+            "run_id": f"run-{run_id}",
+            "status": "completed",
+            "skip_reason": "no-projects-configured",
+        })
+        return 0
+
     # Load issue-worker agent definition for SDK discovery
     agent_dir = Path(__file__).parent / "agents"
     worker_file = agent_dir / "issue-worker.md"
@@ -1021,10 +1050,12 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
     exit_code = 0
     max_reentries = 6  # Up to 6 re-entries if lead exits prematurely
 
-    for project in projects:
-        if not project.get("enabled", True):
-            continue
-
+    # Iterate the pre-filtered list so disabled projects are never picked
+    # up (issue #268 follow-up): the original ``projects`` list still
+    # contained the disabled entries, so a config with a mix of enabled +
+    # disabled projects was at risk of regressing if a future edit dropped
+    # the per-iteration ``enabled`` guard.
+    for project in enabled_projects:
         repo = project["repo"]
         repo_name = repo.split("/")[-1] if "/" in repo else repo
         workspace = os.path.join(workspaces_dir, repo_name)

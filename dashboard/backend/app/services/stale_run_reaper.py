@@ -8,13 +8,19 @@ whether the agent service is actually alive (via ``service_control``, which
 dispatches to systemd or the launcher's /status depending on
 ``STATION_DEPLOY_MODE``) and, if not, marks orphaned runs as 'interrupted'
 so the UI reflects reality.
+
+Also catches rows stuck in ``unknown`` (issue #268): when the orchestrator
+exits before any teammate runs (no eligible issues, preflight failure, etc.)
+``log_importer`` may insert a placeholder row whose status is ``unknown`` and
+``finished_at`` is NULL.  If the agent service is dead and the run is older
+than :data:`UNKNOWN_RUN_REAP_AGE_MINUTES`, we reap it the same way.
 """
 
 import logging
 import subprocess
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import CoordinatorTask, QueueItem, Run
@@ -23,6 +29,18 @@ from app.services.notifier import send_notification
 from app.services.service_control import deploy_mode, get_agent_status
 
 logger = logging.getLogger(__name__)
+
+# Conservative threshold: only reap ``unknown`` rows that have been in that
+# state for at least this many minutes.  The ``unknown`` state is normal for
+# the brief window between log_importer ingesting a freshly-started run's
+# stream file and the launcher firing the ``finished`` webhook; we don't want
+# to race-mark those.
+UNKNOWN_RUN_REAP_AGE_MINUTES = 30
+
+# Statuses we consider "still active" — rows in any of these states whose
+# orchestrator is dead are candidates for reaping.  ``unknown`` is included
+# only when the row is older than ``UNKNOWN_RUN_REAP_AGE_MINUTES``.
+_ACTIVE_STATUSES = ("running", "reviewing")
 
 
 def _is_orchestrator_process_alive() -> bool:
@@ -55,16 +73,38 @@ async def reap_stale_runs(db: AsyncSession) -> int:
     if deploy_mode() == "systemd" and _is_orchestrator_process_alive():
         return 0  # Orchestrator process is alive — nothing to reap
 
-    # Service is inactive — find any runs still marked as 'running'
+    # Service is inactive — find any runs still marked as 'running' /
+    # 'reviewing', or stuck in 'unknown' for too long.  ``unknown`` rows are
+    # only reaped when they have aged past ``UNKNOWN_RUN_REAP_AGE_MINUTES``
+    # so we don't race the launcher's normal ``finished`` webhook for a
+    # freshly-started run whose stream file was just imported.
+    now = datetime.now(timezone.utc)
+    unknown_cutoff = now - timedelta(minutes=UNKNOWN_RUN_REAP_AGE_MINUTES)
     result = await db.execute(
-        select(Run).where(Run.status.in_(["running", "reviewing"]))
+        select(Run).where(
+            Run.finished_at.is_(None),
+            or_(
+                Run.status.in_(_ACTIVE_STATUSES),
+                # ``started_at`` is generally non-null for rows the importer
+                # creates from log timestamps, but we tolerate a NULL by
+                # treating the row as old enough to reap (it's almost
+                # certainly leftover from a long-dead run if status is
+                # ``unknown`` and started_at was never set).
+                (
+                    (Run.status == "unknown")
+                    & (
+                        Run.started_at.is_(None)
+                        | (Run.started_at < unknown_cutoff)
+                    )
+                ),
+            ),
+        )
     )
     stale_runs = result.scalars().all()
 
     if not stale_runs:
         return 0
 
-    now = datetime.now(timezone.utc)
     for run in stale_runs:
         old_status = run.status
         run.status = "interrupted"
