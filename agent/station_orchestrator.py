@@ -233,6 +233,82 @@ def fetch_eligible_issues(repo: str, limit: int, workspace: str | None = None) -
     return eligible[:limit]
 
 
+def has_open_vision_proposals(repo: str) -> bool:
+    """True if any open issue carries the `vision-suggested` label.
+
+    Used by Trigger A to skip dispatch when prior proposals are pending.
+    A `gh` failure returns False — fail-safe; we'd rather miss a dispatch
+    than spam the operator.
+    """
+    cmd = [
+        "gh", "issue", "list",
+        "--repo", repo,
+        "--state", "open",
+        "--label", "vision-suggested",
+        "--limit", "1",
+        "--json", "number,labels",
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        if result.returncode != 0:
+            logger.warning("has_open_vision_proposals: gh failed: %s", result.stderr.strip())
+            return False
+        return len(json.loads(result.stdout or "[]")) > 0
+    except Exception as exc:
+        logger.warning("has_open_vision_proposals: %s", exc)
+        return False
+
+
+def dispatch_vision_bootstrap(project_id: int) -> str:
+    """Trigger a vision-analyst run for ``project_id``.
+
+    Tries the in-container launcher first (compose-mode path) and falls
+    back to spawning the worker via subprocess (systemd-mode path or any
+    failure where the launcher is unreachable).
+
+    Returns one of:
+      - "dispatched"      — analyst was started
+      - "already-running" — launcher reported 409
+    """
+    launcher_url = os.environ.get(
+        "STATION_AGENT_LAUNCHER_URL", "http://localhost:8421",
+    ).rstrip("/")
+    token = os.environ.get("STATION_LAUNCHER_TOKEN", "")
+    headers = {"X-Launcher-Token": token} if token else {}
+
+    try:
+        resp = httpx.post(
+            f"{launcher_url}/vision-analyst",
+            params={"project_id": project_id},
+            headers=headers,
+            timeout=5.0,
+        )
+        if resp.status_code == 409:
+            logger.info("vision-analyst already running (409)")
+            return "already-running"
+        if 200 <= resp.status_code < 300:
+            return "dispatched"
+        logger.warning(
+            "launcher /vision-analyst returned %s: %s",
+            resp.status_code, resp.text[:200],
+        )
+    except httpx.RequestError as exc:
+        logger.info("launcher unreachable (%s); falling back to subprocess", exc)
+
+    # Fallback: spawn the worker directly. No cross-process lock; best
+    # effort. Reached on systemd path (no launcher), connection failure,
+    # OR an unexpected launcher status code (e.g. 401/500) — we'd
+    # rather over-deliver than silently fail.
+    subprocess.Popen(
+        ["python", "-m", "agent.vision_analyst", "--project-id", str(project_id)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        stdin=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    return "dispatched"
+
+
 # ── Team Prompt Construction ──────────────────────────────────
 
 TEAMMATE_ROLES = ["backend", "frontend", "qa"]

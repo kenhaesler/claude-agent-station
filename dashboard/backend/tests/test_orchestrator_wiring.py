@@ -260,3 +260,107 @@ async def test_control_poll_loop_drains_messages_continuously(tmp_path, monkeypa
             except (asyncio.CancelledError, Exception):
                 pass
         conn.close()
+
+
+# --- Task 4: has_open_vision_proposals -----------------------------------
+
+
+def test_has_open_vision_proposals_true_when_label_present(monkeypatch):
+    from agent.station_orchestrator import has_open_vision_proposals
+
+    fake_stdout = '[{"number": 1, "labels": [{"name": "vision-suggested"}]}]'
+    monkeypatch.setattr(
+        "subprocess.run",
+        lambda *a, **k: type("R", (), {"returncode": 0, "stdout": fake_stdout, "stderr": ""}),
+    )
+    assert has_open_vision_proposals("x/y") is True
+
+
+def test_has_open_vision_proposals_false_when_no_matches(monkeypatch):
+    from agent.station_orchestrator import has_open_vision_proposals
+
+    monkeypatch.setattr(
+        "subprocess.run",
+        lambda *a, **k: type("R", (), {"returncode": 0, "stdout": "[]", "stderr": ""}),
+    )
+    assert has_open_vision_proposals("x/y") is False
+
+
+def test_has_open_vision_proposals_false_on_gh_failure(monkeypatch):
+    from agent.station_orchestrator import has_open_vision_proposals
+
+    monkeypatch.setattr(
+        "subprocess.run",
+        lambda *a, **k: type("R", (), {"returncode": 1, "stdout": "", "stderr": "boom"}),
+    )
+    assert has_open_vision_proposals("x/y") is False
+
+
+# --- Task 5: dispatch_vision_bootstrap -----------------------------------
+
+
+def test_dispatch_vision_bootstrap_returns_dispatched_on_200(monkeypatch):
+    import httpx
+
+    from agent.station_orchestrator import dispatch_vision_bootstrap
+
+    class R:
+        status_code = 200
+        text = ""
+
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: R())
+    monkeypatch.setenv("STATION_AGENT_LAUNCHER_URL", "http://launcher:8421")
+    monkeypatch.setenv("STATION_LAUNCHER_TOKEN", "tok")
+    assert dispatch_vision_bootstrap(42) == "dispatched"
+
+
+def test_dispatch_vision_bootstrap_returns_already_running_on_409(monkeypatch):
+    import httpx
+
+    from agent.station_orchestrator import dispatch_vision_bootstrap
+
+    class R:
+        status_code = 409
+        text = "vision-analyst already running"
+
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: R())
+    monkeypatch.setenv("STATION_AGENT_LAUNCHER_URL", "http://launcher:8421")
+    assert dispatch_vision_bootstrap(42) == "already-running"
+
+
+def test_dispatch_vision_bootstrap_falls_back_to_subprocess(monkeypatch):
+    """When launcher is unreachable, spawn directly via subprocess."""
+    import httpx
+
+    from agent.station_orchestrator import dispatch_vision_bootstrap
+
+    def boom(*a, **k):
+        raise httpx.RequestError("connection refused")
+
+    monkeypatch.setattr(httpx, "post", boom)
+    spawned = []
+    monkeypatch.setattr(
+        "subprocess.Popen",
+        lambda cmd, *a, **k: spawned.append(cmd) or type("P", (), {"pid": 1234})(),
+    )
+    monkeypatch.setenv("STATION_AGENT_LAUNCHER_URL", "http://launcher:8421")
+    assert dispatch_vision_bootstrap(42) == "dispatched"
+    assert spawned == [["python", "-m", "agent.vision_analyst", "--project-id", "42"]]
+
+
+def test_dispatch_vision_bootstrap_falls_back_on_unexpected_status(monkeypatch):
+    """Unexpected non-2xx, non-409 -> subprocess fallback (graceful degradation)."""
+    import httpx
+    from agent.station_orchestrator import dispatch_vision_bootstrap
+    class R:
+        status_code = 500
+        text = "internal server error"
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: R())
+    spawned = []
+    monkeypatch.setattr(
+        "subprocess.Popen",
+        lambda cmd, *a, **k: spawned.append(cmd) or type("P", (), {"pid": 1234})(),
+    )
+    monkeypatch.setenv("STATION_AGENT_LAUNCHER_URL", "http://launcher:8421")
+    assert dispatch_vision_bootstrap(42) == "dispatched"
+    assert spawned == [["python", "-m", "agent.vision_analyst", "--project-id", "42"]]
