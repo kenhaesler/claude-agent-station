@@ -143,25 +143,43 @@ Agent Teams orchestrator.
 #### Plan-review gate (`plan_only` only)
 
 `plan_only` introduces a pre-implementation gate between plan-writing and
-code:
+code. The gate is implemented by `agent/plan_review_gate.py` and invoked
+by `agent/scripts/run-manager.sh` after the manager review phase.
 
-- **APPROVE_PLAN** → orchestrator enqueues a follow-up `full` run on the
-  same issue with the approved plan path passed in `QueueItem.context.approved_plan_path`.
-  The implementing teammate reads it as `APPROVED_PLAN` guidance.
-- **REVISE_PLAN** → the same teammate is re-spawned with the manager's
-  feedback and the prior plan path. Bounded by `STATION_PLAN_REVISION_MAX`
-  (default `2`) — once exhausted, the gate downgrades to a soft reject.
-- **REJECT_PLAN** → the planning thread closes with a comment; no
-  follow-up run is enqueued.
+**Pipeline (per `plan_only` project):**
 
-Run statuses added to track the gate (additive — old code keeps working):
+1. `run-manager.sh` emits `plan_review_start` (→ `Run.status = plan_reviewing`) before invoking the manager review.
+2. Manager review runs and writes verdicts to `run-<id>-verdicts.json`.
+3. `run-manager.sh` invokes `python -m agent.plan_review_gate` for each plan_only project. The driver:
+   - POSTs `awaiting_plan_review` (→ `Run.status = awaiting_plan_review`) to mark the gate as engaged.
+   - Parses each plan verdict and dispatches per the table below.
+   - POSTs a terminal status event (`plan_approved` / `plan_rejected`) once all verdicts are processed.
+
+**Verdict actions:**
+
+| Verdict | Side effects | Run.status (terminal) |
+|---------|-------------|------------------------|
+| `APPROVE_PLAN` | POSTs a new `QueueItem` to `/api/queue` with `mode=full`, `state=pending`, and `context={"approved_plan_path": ..., "from_plan_only_run": true}`. The follow-up `full` run picks this up on the next cycle and the implementing teammate reads the approved plan as `APPROVED_PLAN` guidance. | `plan_approved` |
+| `REVISE_PLAN` (within budget) | Writes the manager feedback to `<workspace>/.claude-plan-revision-feedback-<index>.json` for the next teammate spawn to consume. **The live re-spawn loop is a documented TODO** — feedback is durably persisted but the orchestrator does not yet re-inject it into a running SDK session. Expect a manual trigger or follow-up issue. | stays at `awaiting_plan_review` |
+| `REVISE_PLAN` (past budget) | Treated as a soft reject. | `plan_rejected` |
+| `REJECT_PLAN` | Logged. No queue POST, no follow-up run. | `plan_rejected` |
+
+If the queue POST for `APPROVE_PLAN` fails (network error, dashboard
+down, dedup hit), the run is **not** flipped to `plan_approved` —
+it stays in `awaiting_plan_review` so an operator can re-run the gate
+manually. The gate is best-effort by design.
+
+**Run statuses added** (additive — old code keeps working):
 `awaiting_plan_review`, `plan_approved`, `plan_rejected`. The dashboard
-surfaces the gate via a banner on Mission Control and the Agent Teams
+surfaces these via a banner on Mission Control and the Agent Teams
 canvas.
 
 | Env var | Default | Description |
 |---------|---------|-------------|
-| `STATION_PLAN_REVISION_MAX` | `2` | Maximum REVISE_PLAN iterations before the gate auto-rejects. Read at gate-evaluation time. |
+| `STATION_PLAN_REVISION_MAX` | `2` | Maximum `REVISE_PLAN` iterations before the gate auto-rejects. Read at gate-evaluation time so changes apply on the next gate run. |
+| `STATION_DASHBOARD_URL` | `http://127.0.0.1:8420` | Dashboard base URL the gate POSTs to. Falls back to `STATION_WEBHOOK_URL` (with `/api/webhook/...` stripped) and finally the default. |
+| `STATION_API_KEY` | _(unset)_ | When set, the gate adds `Authorization: Bearer <key>` on `/api/queue` POSTs. |
+| `STATION_WEBHOOK_SECRET` | _(unset)_ | When set, the gate adds `X-Webhook-Token: <secret>` on `/api/webhook/run-event` POSTs. |
 
 ### Vision-driven issue bootstrap
 

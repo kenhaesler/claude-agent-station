@@ -310,18 +310,43 @@ review-criteria branching.
 ### Plan-review gate
 
 The `plan_only` mode adds a manual checkpoint between plan-writing and
-implementation. The flow:
+implementation. The gate is implemented by `agent/plan_review_gate.py`
+and invoked by `agent/scripts/run-manager.sh` after the manager review
+phase. Run-status transitions are driven by webhook events handled in
+`app/services/run_lifecycle.py`.
 
 ```
-plan_only run finishes → manager reviews plan
-  ├── APPROVE_PLAN → enqueue follow-up `full` run (passes plan path as APPROVED_PLAN)
-  ├── REVISE_PLAN  → re-spawn same teammate with feedback (loop bounded by STATION_PLAN_REVISION_MAX)
-  └── REJECT_PLAN  → close planning thread, no follow-up
+plan_only employee writes plan
+   │  (Run.status = running)
+   ▼
+run-manager.sh emits plan_review_start
+   │  (Run.status = plan_reviewing)
+   ▼
+manager reviews plan → run-<id>-verdicts.json
+   │
+   ▼
+run-manager.sh: python -m agent.plan_review_gate
+   │  emits awaiting_plan_review
+   │  (Run.status = awaiting_plan_review)
+   │
+   ├── APPROVE_PLAN → POST /api/queue { mode: "full", context.approved_plan_path }
+   │                  → emit plan_approved (Run.status = plan_approved, finished_at set)
+   │                  → next cycle picks up the follow-up full run
+   │
+   ├── REVISE_PLAN within budget → write feedback file, stay at awaiting_plan_review
+   │                               (TODO: live re-spawn loop)
+   │
+   ├── REVISE_PLAN past STATION_PLAN_REVISION_MAX → emit plan_rejected
+   │
+   └── REJECT_PLAN → emit plan_rejected (Run.status = plan_rejected, finished_at set)
 ```
 
-Run-state additions: `awaiting_plan_review` → `plan_approved` /
-`plan_rejected`. The dashboard surfaces the gate via banners on Mission
-Control and the Agent Teams canvas. Implementation: `agent/plan_review_gate.py`.
+If the queue POST fails the run stays in `awaiting_plan_review` instead
+of flipping to `plan_approved` — losing the approved plan would be
+worse than leaving the gate engaged for manual recovery. The dashboard
+surfaces every gate state via banners on Mission Control and the Agent
+Teams canvas. See `docs/configuration.md#plan-review-gate-plan_only-only`
+for the full env-var matrix and verdict-action table.
 
 ---
 

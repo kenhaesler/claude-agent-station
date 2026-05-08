@@ -846,6 +846,469 @@ def test_run_manager_emits_mode_headers():
     assert 'project_mode" = "plan_only"' in text
 
 
+# --- Plan-review gate live wiring (issue #266 review feedback) -------------
+
+
+def test_apply_plan_review_gate_skips_non_plan_only_modes(monkeypatch, tmp_path):
+    """The gate is a no-op for full / analyze / plan — it must never POST
+    when the project mode is not plan_only.
+    """
+    from agent import plan_review_gate as g
+
+    posted: list[tuple[str, dict]] = []
+    monkeypatch.setattr(g, "post_queue_item", lambda *a, **k: posted.append(("queue", a)) or {"id": 999})
+    monkeypatch.setattr(g, "post_run_event", lambda ev, rid, **k: posted.append(("event", {"event": ev, "rid": rid})) or True)
+
+    for mode in ("full", "analyze", "plan", "garbage"):
+        outcomes = g.apply_plan_review_gate(
+            project_mode=mode,
+            verdicts_path=tmp_path / "doesnt-exist.json",
+            project_repo="x/y",
+            run_id="run-skip",
+        )
+        assert outcomes == []
+
+    assert posted == [], f"Gate must not POST for non-plan_only modes, got {posted}"
+
+
+def test_apply_plan_review_gate_approve_posts_queue_and_status(monkeypatch, tmp_path):
+    """APPROVE_PLAN end-to-end: parse verdicts → POST /api/queue → POST
+    plan_approved run-event.
+    """
+    import json
+    from agent import plan_review_gate as g
+
+    verdicts_file = tmp_path / "verdicts.json"
+    verdicts_file.write_text(json.dumps({
+        "run_id": "run-1",
+        "plan_verdicts": [
+            {
+                "project": "x/y", "verdict": "APPROVE_PLAN",
+                "employee_index": 0, "issue_number": 42,
+                "plan_path": "/ws/.claude-employee-plan-0.json",
+                "plan_quality_score": 90, "feedback": "ok",
+            }
+        ],
+    }))
+
+    queue_calls: list[dict] = []
+    event_calls: list[tuple[str, str, dict]] = []
+
+    monkeypatch.setattr(
+        g, "post_queue_item",
+        lambda payload, **kw: queue_calls.append(payload) or {"id": 7, "state": "pending"},
+    )
+    monkeypatch.setattr(
+        g, "post_run_event",
+        lambda ev, rid, **kw: event_calls.append((ev, rid, kw.get("extra") or {})) or True,
+    )
+
+    outcomes = g.apply_plan_review_gate(
+        project_mode="plan_only",
+        verdicts_path=verdicts_file,
+        project_repo="x/y",
+        run_id="run-1",
+    )
+
+    assert len(outcomes) == 1
+    assert outcomes[0].action_kind == "enqueue_full_run"
+    assert outcomes[0].queue_item_id == 7
+    assert outcomes[0].posted_status_event is True
+
+    # Queue payload shape
+    assert len(queue_calls) == 1
+    payload = queue_calls[0]
+    assert payload["mode"] == "full"
+    assert payload["state"] == "pending"
+    assert payload["project_repo"] == "x/y"
+    assert payload["issue_number"] == 42
+    # context is JSON-encoded (single-encoded — schema column is str | None)
+    assert isinstance(payload["context"], str)
+    ctx = json.loads(payload["context"])
+    assert ctx["approved_plan_path"] == "/ws/.claude-employee-plan-0.json"
+    assert ctx["from_plan_only_run"] is True
+
+    # Event sequence: awaiting_plan_review FIRST, then plan_approved
+    events = [e[0] for e in event_calls]
+    assert events == ["awaiting_plan_review", "plan_approved"]
+    # Both events must reference the same run_id and mode
+    for _ev, rid, extra in event_calls:
+        assert rid == "run-1"
+        assert extra["mode"] == "plan_only"
+        assert extra["project"] == "x/y"
+
+
+def test_apply_plan_review_gate_reject_does_not_post_queue(monkeypatch, tmp_path):
+    """REJECT_PLAN end-to-end: NO POST to /api/queue, status flips to
+    plan_rejected.
+    """
+    import json
+    from agent import plan_review_gate as g
+
+    verdicts_file = tmp_path / "verdicts.json"
+    verdicts_file.write_text(json.dumps({
+        "plan_verdicts": [
+            {"verdict": "REJECT_PLAN", "employee_index": 0, "issue_number": 7,
+             "feedback": "fundamentally broken approach"},
+        ],
+    }))
+
+    queue_calls: list = []
+    event_calls: list[str] = []
+    monkeypatch.setattr(g, "post_queue_item", lambda *a, **kw: queue_calls.append(a) or {"id": 99})
+    monkeypatch.setattr(g, "post_run_event", lambda ev, rid, **kw: event_calls.append(ev) or True)
+
+    outcomes = g.apply_plan_review_gate(
+        project_mode="plan_only",
+        verdicts_path=verdicts_file,
+        project_repo="x/y",
+        run_id="run-2",
+    )
+
+    assert len(outcomes) == 1
+    assert outcomes[0].action_kind == "reject"
+    assert outcomes[0].queue_item_id is None
+    # CRITICAL: no queue POST on reject.
+    assert queue_calls == []
+    # Status flips: awaiting_plan_review (initial) → plan_rejected (terminal).
+    assert event_calls == ["awaiting_plan_review", "plan_rejected"]
+
+
+def test_apply_plan_review_gate_revise_writes_feedback_no_queue_post(monkeypatch, tmp_path):
+    """REVISE_PLAN within budget: NO queue POST, feedback is written to
+    workspace, run stays in awaiting_plan_review (not flipped to a
+    terminal state).
+    """
+    import json
+    from pathlib import Path
+    from agent import plan_review_gate as g
+
+    monkeypatch.setenv("STATION_PLAN_REVISION_MAX", "3")
+    verdicts_file = tmp_path / "verdicts.json"
+    verdicts_file.write_text(json.dumps({
+        "plan_verdicts": [
+            {"verdict": "REVISE_PLAN", "employee_index": 0, "issue_number": 9,
+             "plan_path": "/ws/.claude-employee-plan-0.json",
+             "feedback": "Add error handling for null inputs"},
+        ],
+    }))
+
+    workspace = tmp_path / "ws"
+
+    queue_calls: list = []
+    event_calls: list[str] = []
+    monkeypatch.setattr(g, "post_queue_item", lambda *a, **kw: queue_calls.append(a) or {"id": 99})
+    monkeypatch.setattr(g, "post_run_event", lambda ev, rid, **kw: event_calls.append(ev) or True)
+
+    outcomes = g.apply_plan_review_gate(
+        project_mode="plan_only",
+        verdicts_path=verdicts_file,
+        project_repo="x/y",
+        run_id="run-3",
+        workspace=workspace,
+        revision_count=0,
+    )
+
+    assert len(outcomes) == 1
+    assert outcomes[0].action_kind == "revise"
+    # No queue POST on revise.
+    assert queue_calls == []
+    # Run stays in awaiting_plan_review (not plan_approved or plan_rejected).
+    assert event_calls == ["awaiting_plan_review", "awaiting_plan_review"]
+    # Feedback file exists and contains the manager's text.
+    fb_path = outcomes[0].feedback_path
+    assert fb_path is not None
+    fb_data = json.loads(Path(fb_path).read_text())
+    assert fb_data["feedback"] == "Add error handling for null inputs"
+    assert fb_data["prior_plan_path"] == "/ws/.claude-employee-plan-0.json"
+    assert fb_data["revision_count"] == 1
+
+
+def test_apply_plan_review_gate_revise_past_budget_rejects(monkeypatch, tmp_path):
+    """REVISE_PLAN past STATION_PLAN_REVISION_MAX → halt → terminal
+    plan_rejected event, no queue POST.
+    """
+    import json
+    from agent import plan_review_gate as g
+
+    monkeypatch.setenv("STATION_PLAN_REVISION_MAX", "2")
+    verdicts_file = tmp_path / "verdicts.json"
+    verdicts_file.write_text(json.dumps({
+        "plan_verdicts": [
+            {"verdict": "REVISE_PLAN", "employee_index": 0, "issue_number": 9,
+             "plan_path": "/ws/p.json", "feedback": "still no good"},
+        ],
+    }))
+
+    queue_calls: list = []
+    event_calls: list[str] = []
+    monkeypatch.setattr(g, "post_queue_item", lambda *a, **kw: queue_calls.append(a) or {"id": 99})
+    monkeypatch.setattr(g, "post_run_event", lambda ev, rid, **kw: event_calls.append(ev) or True)
+
+    outcomes = g.apply_plan_review_gate(
+        project_mode="plan_only",
+        verdicts_path=verdicts_file,
+        project_repo="x/y",
+        run_id="run-4",
+        revision_count=2,  # already at the budget
+    )
+
+    assert len(outcomes) == 1
+    assert outcomes[0].action_kind == "halt_revisions_exhausted"
+    assert queue_calls == []
+    assert event_calls == ["awaiting_plan_review", "plan_rejected"]
+
+
+def test_apply_plan_review_gate_queue_post_failure_does_not_flip_to_approved(
+    monkeypatch, tmp_path,
+):
+    """When the queue POST fails, the run must NOT be marked plan_approved
+    (that would silently lose work). Stay in awaiting_plan_review.
+    """
+    import json
+    from agent import plan_review_gate as g
+
+    verdicts_file = tmp_path / "verdicts.json"
+    verdicts_file.write_text(json.dumps({
+        "plan_verdicts": [
+            {"verdict": "APPROVE_PLAN", "employee_index": 0, "issue_number": 42,
+             "plan_path": "/ws/p.json", "feedback": "ok"},
+        ],
+    }))
+
+    event_calls: list[str] = []
+    monkeypatch.setattr(g, "post_queue_item", lambda *a, **kw: None)  # simulate failure
+    monkeypatch.setattr(g, "post_run_event", lambda ev, rid, **kw: event_calls.append(ev) or True)
+
+    outcomes = g.apply_plan_review_gate(
+        project_mode="plan_only",
+        verdicts_path=verdicts_file,
+        project_repo="x/y",
+        run_id="run-fail",
+    )
+
+    assert len(outcomes) == 1
+    assert outcomes[0].queue_item_id is None
+    assert outcomes[0].action_kind == "enqueue_full_run"
+    # Initial awaiting + a final awaiting — never plan_approved.
+    assert "plan_approved" not in event_calls
+
+
+def test_apply_plan_review_gate_missing_verdicts_file_keeps_awaiting(
+    monkeypatch, tmp_path,
+):
+    """Malformed/missing verdicts file: run stays in awaiting_plan_review
+    for manual operator resolution; no queue POST.
+    """
+    from agent import plan_review_gate as g
+
+    queue_calls: list = []
+    event_calls: list[str] = []
+    monkeypatch.setattr(g, "post_queue_item", lambda *a, **kw: queue_calls.append(a) or {"id": 99})
+    monkeypatch.setattr(g, "post_run_event", lambda ev, rid, **kw: event_calls.append(ev) or True)
+
+    outcomes = g.apply_plan_review_gate(
+        project_mode="plan_only",
+        verdicts_path=tmp_path / "missing.json",
+        project_repo="x/y",
+        run_id="run-missing",
+    )
+
+    assert outcomes == []
+    assert queue_calls == []
+    # Just the initial awaiting_plan_review event — no terminal flip.
+    assert event_calls == ["awaiting_plan_review"]
+
+
+def test_post_queue_item_uses_dashboard_url_and_bearer_auth(monkeypatch):
+    """post_queue_item respects STATION_DASHBOARD_URL and STATION_API_KEY."""
+    import httpx
+    from agent import plan_review_gate as g
+
+    monkeypatch.setenv("STATION_DASHBOARD_URL", "http://dash:9999")
+    monkeypatch.setenv("STATION_API_KEY", "tok-xyz")
+
+    captured = {}
+
+    class _StubClient:
+        def __init__(self, *a, **kw): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def post(self, url, json, headers):
+            captured["url"] = url
+            captured["headers"] = headers
+            captured["body"] = json
+            class R:
+                status_code = 201
+                def json(self): return {"id": 11}
+            return R()
+
+    monkeypatch.setattr(httpx, "Client", _StubClient)
+
+    out = g.post_queue_item({"project_repo": "x/y", "mode": "full", "state": "pending"})
+    assert out == {"id": 11}
+    assert captured["url"] == "http://dash:9999/api/queue"
+    assert captured["headers"]["Authorization"] == "Bearer tok-xyz"
+    assert captured["body"]["mode"] == "full"
+
+
+def test_post_queue_item_returns_none_on_network_error(monkeypatch):
+    """Network failure must be swallowed — gate is best-effort."""
+    import httpx
+    from agent import plan_review_gate as g
+
+    class _StubClient:
+        def __init__(self, *a, **kw): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def post(self, *a, **kw):
+            raise httpx.RequestError("connection refused")
+
+    monkeypatch.setattr(httpx, "Client", _StubClient)
+    assert g.post_queue_item({"project_repo": "x/y"}) is None
+
+
+def test_post_run_event_uses_webhook_secret_when_configured(monkeypatch):
+    """post_run_event sends X-Webhook-Token when STATION_WEBHOOK_SECRET is set."""
+    import httpx
+    from agent import plan_review_gate as g
+
+    monkeypatch.setenv("STATION_WEBHOOK_SECRET", "wh-tok")
+    monkeypatch.delenv("STATION_DASHBOARD_URL", raising=False)
+    monkeypatch.setenv("STATION_WEBHOOK_URL", "http://wh:8420/api/webhook/run-event")
+
+    captured = {}
+
+    class _StubClient:
+        def __init__(self, *a, **kw): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def post(self, url, json, headers):
+            captured["url"] = url
+            captured["headers"] = headers
+            captured["body"] = json
+            class R:
+                status_code = 200
+                text = ""
+            return R()
+
+    monkeypatch.setattr(httpx, "Client", _StubClient)
+
+    ok = g.post_run_event("plan_approved", "run-1", extra={"project": "x/y"})
+    assert ok is True
+    # URL is the dashboard base + /api/webhook/run-event
+    assert captured["url"] == "http://wh:8420/api/webhook/run-event"
+    assert captured["headers"]["X-Webhook-Token"] == "wh-tok"
+    assert captured["body"]["event"] == "plan_approved"
+    assert captured["body"]["run_id"] == "run-1"
+    assert captured["body"]["project"] == "x/y"
+
+
+# --- Webhook-side handlers (issue #266) ------------------------------------
+
+
+async def test_handle_awaiting_plan_review_sets_status():
+    """The webhook lifecycle handler flips Run.status to awaiting_plan_review."""
+    from datetime import datetime, timezone
+    from app.models import Run
+    from app.schemas import WebhookRunEvent
+    from app.services import run_lifecycle
+
+    class _StubDb:
+        def __init__(self): self.added = []
+        def add(self, o): self.added.append(o)
+
+    db = _StubDb()
+    event = WebhookRunEvent(event="awaiting_plan_review", run_id="run-1", project="x/y")
+    run = Run(run_id="run-1", project_id=1, status="reviewing",
+              started_at=datetime.now(timezone.utc))
+    out = await run_lifecycle.handle_awaiting_plan_review(db, event, 1, run)
+    assert out.status == "awaiting_plan_review"
+
+
+async def test_handle_plan_approved_sets_terminal():
+    from datetime import datetime, timezone
+    from app.models import Run
+    from app.schemas import WebhookRunEvent
+    from app.services import run_lifecycle
+
+    class _StubDb:
+        def __init__(self): self.added = []
+        def add(self, o): self.added.append(o)
+
+    db = _StubDb()
+    event = WebhookRunEvent(event="plan_approved", run_id="run-2", project="x/y")
+    run = Run(run_id="run-2", project_id=1, status="awaiting_plan_review",
+              started_at=datetime.now(timezone.utc))
+    out = await run_lifecycle.handle_plan_approved(db, event, 1, run)
+    assert out.status == "plan_approved"
+    assert out.finished_at is not None
+
+
+async def test_handle_plan_rejected_sets_terminal():
+    from datetime import datetime, timezone
+    from app.models import Run
+    from app.schemas import WebhookRunEvent
+    from app.services import run_lifecycle
+
+    class _StubDb:
+        def __init__(self): self.added = []
+        def add(self, o): self.added.append(o)
+
+    db = _StubDb()
+    event = WebhookRunEvent(event="plan_rejected", run_id="run-3", project="x/y")
+    run = Run(run_id="run-3", project_id=1, status="awaiting_plan_review",
+              started_at=datetime.now(timezone.utc))
+    out = await run_lifecycle.handle_plan_rejected(db, event, 1, run)
+    assert out.status == "plan_rejected"
+    assert out.finished_at is not None
+
+
+def test_webhook_router_registers_plan_review_handlers():
+    """Regression guard: the three new run lifecycle events must be wired
+    into the webhook router's _RUN_HANDLERS dispatch table.
+    """
+    from app.routers import webhook
+    for ev in ("awaiting_plan_review", "plan_approved", "plan_rejected"):
+        assert ev in webhook._RUN_HANDLERS, (
+            f"webhook router missing handler for {ev}"
+        )
+
+
+# --- Run-manager.sh emits plan_review_start for plan_only ------------------
+
+
+def test_run_manager_emits_plan_review_start_for_plan_only_projects():
+    """The shell driver must emit plan_review_start when any project is in
+    plan_only mode so the dashboard banner reflects plan_reviewing during
+    the manager-review window.
+    """
+    import pathlib
+    script = pathlib.Path(__file__).parents[3] / "agent" / "scripts" / "run-manager.sh"
+    text = script.read_text()
+    assert 'webhook_event "plan_review_start"' in text
+    assert '_pm" = "plan_only"' in text
+
+
+# --- Plan-review gate is invoked from run-manager.sh -----------------------
+
+
+def test_run_manager_invokes_plan_review_gate():
+    """The shell driver must invoke `python -m agent.plan_review_gate` after
+    execute_verdicts for plan_only projects. Without this the gate is dead
+    code and acceptance criterion #5 (approve plan_only enqueues follow-up)
+    fails at runtime.
+    """
+    import pathlib
+    script = pathlib.Path(__file__).parents[3] / "agent" / "scripts" / "run-manager.sh"
+    text = script.read_text()
+    assert "agent.plan_review_gate" in text, (
+        "run-manager.sh must invoke python -m agent.plan_review_gate"
+    )
+    # Must be gated on plan_only projects, not run unconditionally.
+    assert '"plan_only"' in text
+
+
 # --- Frontend dropdown values match backend (issue #266) -------------------
 
 

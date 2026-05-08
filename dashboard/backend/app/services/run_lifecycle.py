@@ -332,6 +332,74 @@ async def handle_plan_review_done(
     return run
 
 
+async def handle_awaiting_plan_review(
+    db: AsyncSession, event: WebhookRunEvent, project_id: int | None, run: Run | None
+) -> Run:
+    """Plan-review gate (issue #266): plan_only run finished, manager verdict
+    not yet applied. Set status to ``awaiting_plan_review`` so the dashboard
+    banner can surface the gate.
+    """
+    if not run:
+        run = Run(
+            run_id=event.run_id,
+            project_id=project_id,
+            status="awaiting_plan_review",
+            started_at=datetime.now(timezone.utc),
+            trace_id=event.trace_id,
+        )
+        db.add(run)
+    else:
+        run.status = "awaiting_plan_review"
+        run.trace_id = event.trace_id or run.trace_id
+    return run
+
+
+async def handle_plan_approved(
+    db: AsyncSession, event: WebhookRunEvent, project_id: int | None, run: Run | None
+) -> Run:
+    """Plan-review gate: APPROVE_PLAN — a follow-up ``full`` run has been
+    enqueued. Terminal status for the plan_only run itself.
+    """
+    if not run:
+        run = Run(
+            run_id=event.run_id,
+            project_id=project_id,
+            status="plan_approved",
+            started_at=datetime.now(timezone.utc),
+            trace_id=event.trace_id,
+        )
+        db.add(run)
+    else:
+        run.status = "plan_approved"
+        run.trace_id = event.trace_id or run.trace_id
+        if not run.finished_at:
+            run.finished_at = datetime.now(timezone.utc)
+    return run
+
+
+async def handle_plan_rejected(
+    db: AsyncSession, event: WebhookRunEvent, project_id: int | None, run: Run | None
+) -> Run:
+    """Plan-review gate: REJECT_PLAN or revisions exhausted — no follow-up
+    run will be enqueued. Terminal status.
+    """
+    if not run:
+        run = Run(
+            run_id=event.run_id,
+            project_id=project_id,
+            status="plan_rejected",
+            started_at=datetime.now(timezone.utc),
+            trace_id=event.trace_id,
+        )
+        db.add(run)
+    else:
+        run.status = "plan_rejected"
+        run.trace_id = event.trace_id or run.trace_id
+        if not run.finished_at:
+            run.finished_at = datetime.now(timezone.utc)
+    return run
+
+
 async def handle_progress_update(run: Run, event: WebhookRunEvent) -> None:
     """Update token/turn counts without changing run status."""
     if event.tokens_input is not None:

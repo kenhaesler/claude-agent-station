@@ -1721,6 +1721,25 @@ run_manager_review() {
     log_info "MANAGER: Reviewing employee work" >&2
     log_info "==========================================" >&2
 
+    # Issue #266: if any project is plan_only, also emit plan_review_start so
+    # the dashboard banner reflects the plan_reviewing state during this
+    # window. The standard manager_review event still fires for full-mode
+    # consumers; the two are additive.
+    local _has_plan_only="false"
+    local _project_count
+    _project_count=$(json_get "$CONFIG_FILE" "projects" 2>/dev/null | python3 -c "import json,sys; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "0")
+    for ((_pi = 0; _pi < _project_count; _pi++)); do
+        local _pm
+        _pm=$(get_project_field "$_pi" "mode" 2>/dev/null || echo "full")
+        if [ "$_pm" = "plan_only" ]; then
+            _has_plan_only="true"
+            break
+        fi
+    done
+    if [ "$_has_plan_only" = "true" ]; then
+        webhook_event "plan_review_start" review_package "$review_package" >&2
+    fi
+
     webhook_event "manager_review" review_package "$review_package" >&2
 
     local model max_turns
@@ -2820,6 +2839,39 @@ print(json.dumps(result))
 
     # ---- PHASE 3: Execute verdicts ----
     execute_verdicts "$verdicts_file"
+
+    # ---- PHASE 3.5: Plan-review gate (issue #266) ----
+    # For each plan_only project, drive the gate: parse the manager's
+    # plan_verdicts, enqueue follow-up full runs on APPROVE_PLAN, write
+    # revision feedback on REVISE_PLAN, log REJECT_PLAN. The Python
+    # driver flips the Run row's status via the dashboard webhook.
+    for ((i = 0; i < project_count; i++)); do
+        local repo_pg enabled_pg mode_pg
+        repo_pg=$(get_project_field "$i" "repo")
+        enabled_pg=$(get_project_field "$i" "enabled" 2>/dev/null || echo "true")
+        [ "$enabled_pg" = "false" ] && continue
+        mode_pg=$(get_project_field "$i" "mode" 2>/dev/null || echo "full")
+        [ -z "$mode_pg" ] && mode_pg="full"
+        if [ "$mode_pg" != "plan_only" ]; then
+            continue
+        fi
+
+        local name_pg
+        name_pg=$(repo_name "$repo_pg")
+        local workspace_pg="$WORKSPACES_DIR/$name_pg"
+
+        log_info "Plan-review gate: applying for $repo_pg (run-$RUN_ID)"
+        local agent_dir_pg
+        agent_dir_pg="$(cd "$SCRIPT_DIR/.." && pwd)"
+        PYTHONPATH="$agent_dir_pg/.." python3 -m agent.plan_review_gate \
+            --project-mode "plan_only" \
+            --verdicts "$verdicts_file" \
+            --project-repo "$repo_pg" \
+            --run-id "run-$RUN_ID" \
+            --workspace "$workspace_pg" \
+            2>&1 | while IFS= read -r line; do log_info "  gate: $line"; done || \
+            log_warn "Plan-review gate exited non-zero for $repo_pg"
+    done
 
     # ---- PHASE 3a: Clean up approved plan files and assignment files (no longer needed after verdicts) ----
     for ((i = 0; i < project_count; i++)); do
