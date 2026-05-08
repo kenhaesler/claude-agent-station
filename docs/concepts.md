@@ -30,7 +30,7 @@ After the manager reviews completed work, every run terminates with one verdict:
 The lead picks issues that pass these filters:
 - Repository is enabled in the dashboard.
 - Issue is open.
-- Issue has no label in the skip set. The full skip set (from `agent/station_orchestrator.py` `SKIP_LABELS`) is: `autonomous-agent/in-progress`, `autonomous-agent/needs-help`, `NO AI`, `backlog`, `wontfix`, `vision-suggested`. **Issues labeled `backlog` are skipped without exception** — see `CLAUDE.md`.
+- Issue has no label in the skip set. The full skip set (from `agent/station_orchestrator.py` `SKIP_LABELS`) is: `autonomous-agent/in-progress`, `autonomous-agent/needs-help`, `NO AI`, `backlog`, `wontfix`, `vision-suggested`. Issues labeled `backlog` are never picked up.
 
 Eligible issues are then decomposed into tasks and distributed across the three teammates by specialty. A single issue may produce work for multiple teammates (e.g. a backend change plus a frontend update plus QA coverage), and multiple issues feed the same three teammates within one run. Each teammate works inside its own git worktree under `/home/claude-agent/workspaces/` so concurrent teammates do not collide.
 
@@ -44,7 +44,7 @@ This sequencing prevents two teammates from racing into incompatible changes.
 
 ## Plan-usage throttling
 
-Claude usage is bounded by the active plan tier. The system tracks weekly token consumption in the `plan_usage_history` table. When usage approaches the tier limit, the orchestrator can fall back to a smaller model for non-critical work. The dashboard surfaces current usage and the active throttle state on the Command Center page.
+Claude usage is bounded by the active plan tier. The system tracks weekly token consumption in the `plan_usage_history` table and exposes a throttle decision via the dashboard API. When weekly usage (or any single model's usage) crosses the configured threshold, `run-manager.sh` short-circuits before launching a new run rather than starting work it cannot finish. Independent of throttling, every Claude invocation passes a `--fallback-model` to the SDK so primary-model errors don't kill the run: Opus 4.7 falls back to Sonnet 4.6, and Sonnet 4.6 falls back to Haiku 4.5. The dashboard surfaces current usage and the active throttle state on the Command Center page.
 
 ## Audit log
 
@@ -59,7 +59,7 @@ The `audit_log` table records every action taken by an agent. Key fields:
 | `run_id` | Links the row to the workflow run |
 | `started_at` / `finished_at` | Wall-clock timing for the tool call |
 
-The log is append-only: rows are never updated or deleted (the pre-tool hook inserts a `status='started'` row; the post-tool hook fills in the result fields on the same row via the unique `idempotency_key`). Use the audit log to reconstruct what a teammate did and when.
+Each tool call produces exactly one row, written in two phases: the pre-tool hook does `INSERT OR IGNORE` keyed by `idempotency_key` (the SDK's `tool_use_id`) with `status='started'`; the post-tool hook then `UPDATE`s that same row with the final status, exit code, output tails, and `finished_at`. The unique `idempotency_key` makes both phases retry-safe — a re-fired pre-tool hook is ignored, and the row is finalized only when the tool completes. Rows are never deleted (a background retention task trims old rows by age, default 30 days). Use the audit log to reconstruct what a teammate did and when.
 
 ## Worktrees and isolation
 
