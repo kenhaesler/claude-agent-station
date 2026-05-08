@@ -96,7 +96,7 @@ claude-agent-station/
 │   │   │   ├── dependencies.py     # FastAPI dependency injection
 │   │   │   ├── middleware/
 │   │   │   │   └── auth.py         # API key authentication middleware
-│   │   │   ├── routers/            # 22 API routers
+│   │   │   ├── routers/            # 21 API routers
 │   │   │   │   ├── agent_events.py # Agent event ingestion + query
 │   │   │   │   ├── analytics.py    # Token usage charts, verdicts
 │   │   │   │   ├── audit.py        # Audit log query API
