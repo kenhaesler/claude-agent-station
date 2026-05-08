@@ -125,6 +125,63 @@ async def test_migration_is_idempotent(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_runs_indexes_added_to_existing_database(tmp_path):
+    """An older DB without indexes on runs filter columns should gain them after migration (issue #191)."""
+    db_path = tmp_path / "indexes_test.db"
+
+    # Create a runs table without any of the target indexes.
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("""
+        CREATE TABLE runs (
+            id INTEGER PRIMARY KEY,
+            run_id TEXT NOT NULL UNIQUE,
+            project_id INTEGER,
+            status TEXT,
+            verdict TEXT,
+            started_at DATETIME,
+            concurrent_group_id TEXT
+        )
+    """)
+    conn.commit()
+
+    cursor = conn.execute("PRAGMA index_list(runs)")
+    existing = {row[1] for row in cursor.fetchall()}
+    expected = {
+        "ix_runs_status",
+        "ix_runs_project_id",
+        "ix_runs_verdict",
+        "ix_runs_started_at",
+        "ix_runs_concurrent_group_id",
+    }
+    assert expected.isdisjoint(existing)
+    conn.close()
+
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    test_engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", echo=False)
+
+    # Run migration twice to confirm idempotency.
+    async with test_engine.begin() as aconn:
+        await _migrate_add_columns(aconn)
+    async with test_engine.begin() as aconn:
+        await _migrate_add_columns(aconn)
+
+    await test_engine.dispose()
+
+    conn = sqlite3.connect(str(db_path))
+    cursor = conn.execute("PRAGMA index_list(runs)")
+    found = {row[1] for row in cursor.fetchall()}
+    assert expected.issubset(found), f"missing indexes: {expected - found}"
+
+    # EXPLAIN QUERY PLAN should report an index scan, not a full table scan,
+    # for a status filter on the runs table.
+    cursor = conn.execute("EXPLAIN QUERY PLAN SELECT * FROM runs WHERE status = 'running'")
+    plan = " ".join(str(row) for row in cursor.fetchall())
+    assert "ix_runs_status" in plan, f"expected index scan, got plan: {plan}"
+    conn.close()
+
+
+@pytest.mark.asyncio
 async def test_dag_json_read_write_after_migration(tmp_path):
     """After migration, CoordinatorTask.dag_json should be readable/writable."""
     db_path = tmp_path / "rw_test.db"
