@@ -44,6 +44,7 @@ from app.services import service_control
 from app.services.diff_parser import DiffResult, parse_unified_diff
 from app.services.event_bus import publish
 from app.services.log_importer import import_historical_runs
+from app.services.systemd import systemctl
 
 logger = logging.getLogger(__name__)
 

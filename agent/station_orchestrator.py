@@ -37,6 +37,8 @@ from claude_agent_sdk.types import (
     TaskNotificationMessage,
     TaskProgressMessage,
     TaskStartedMessage,
+    TextBlock,
+    ToolUseBlock,
 )
 
 from agent.audit_hook import (
@@ -710,19 +712,23 @@ def handle_stream_event(
         # are emitted as `narration` webhooks so the operator sees the lead's
         # stated intent in real time. The lead's prompt asks for one
         # present-tense sentence; we cap at 500 chars for safety.
+        #
+        # Block-type discrimination: the SDK delivers ``TextBlock`` /
+        # ``ToolUseBlock`` dataclass instances (see
+        # ``claude_agent_sdk._internal.message_parser``) — these have no
+        # ``.type`` attribute, so ``isinstance`` is the only correct check.
+        # The dict fallback is kept for raw-passthrough cases.
         if message.content:
             pending_narration: str | None = None
             for block in (message.content if isinstance(message.content, list) else [message.content]):
-                bt = getattr(block, "type", None) or (block.get("type") if isinstance(block, dict) else None)
-                if bt == "text":
-                    text = getattr(block, "text", None) or (block.get("text") if isinstance(block, dict) else None)
+                if isinstance(block, TextBlock):
+                    text = block.text
                     if text and text.strip():
                         pending_narration = text.strip()
-                elif bt == "tool_use":
+                elif isinstance(block, ToolUseBlock):
                     if state:
                         state.tool_calls += 1
-                    name = getattr(block, "name", None) or (block.get("name") if isinstance(block, dict) else None)
-                    logger.info("Lead agent tool call: %s", name)
+                    logger.info("Lead agent tool call: %s", block.name)
                     if pending_narration:
                         post_webhook(config, "narration", {
                             "run_id": f"run-{run_id}",
@@ -731,6 +737,24 @@ def handle_stream_event(
                             "narration_kind": "directive",
                         })
                         pending_narration = None
+                elif isinstance(block, dict):
+                    bt = block.get("type")
+                    if bt == "text":
+                        text = block.get("text")
+                        if text and text.strip():
+                            pending_narration = text.strip()
+                    elif bt == "tool_use":
+                        if state:
+                            state.tool_calls += 1
+                        logger.info("Lead agent tool call: %s", block.get("name"))
+                        if pending_narration:
+                            post_webhook(config, "narration", {
+                                "run_id": f"run-{run_id}",
+                                "agent_name": "Lead",
+                                "narration": pending_narration[:500],
+                                "narration_kind": "directive",
+                            })
+                            pending_narration = None
             # Flush trailing narration (lead spoke but no tool followed)
             if pending_narration:
                 post_webhook(config, "narration", {
