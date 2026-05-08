@@ -324,12 +324,15 @@ async def vision_proposals(project_id: int, db: AsyncSession = Depends(get_db)):
     if cached and (time.time() - cached[0]) < _PROPOSALS_TTL_S:
         return VisionProposalsRead(**cached[1])
 
-    open_count = _count_issues(project.repo, state="open", label="vision-suggested")
+    import asyncio as _asyncio
+    open_count = await _asyncio.to_thread(
+        _count_issues, project.repo, state="open", label="vision-suggested"
+    )
     # Accepted = closed within last 7 days that previously had vision-suggested.
     # The label may have been removed when the issue was accepted, so this is
     # an approximation — close enough for an info strip.
-    accepted = _count_issues(
-        project.repo, state="closed", label="vision-suggested", days_back=7,
+    accepted = await _asyncio.to_thread(
+        _count_issues, project.repo, state="closed", label="vision-suggested", days_back=7,
     )
 
     payload = {"open": open_count, "accepted_recent": accepted}
