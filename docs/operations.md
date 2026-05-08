@@ -130,8 +130,10 @@ sudo systemctl start claude-station-dashboard.service
 
 ### Workspace cleanup
 
-Each run creates worktrees under `/home/claude-agent/workspaces/`. They should be cleaned up automatically; to free space manually:
+Each run creates worktrees under `/home/claude-agent/workspaces/`. The directory contains both the main clone (`<repo>`) and its per-teammate worktrees (`<repo>-e1`, `<repo>-e2`, ...) as **siblings** at the same depth, not nested. They should be cleaned up automatically; to free space manually:
 
 ```bash
-sudo -u claude-agent find /home/claude-agent/workspaces/ -mindepth 1 -maxdepth 2 -mtime +7 -exec rm -rf {} +
+sudo -u claude-agent find /home/claude-agent/workspaces/ -mindepth 1 -maxdepth 1 -mtime +7 -exec rm -rf {} +
 ```
+
+Keep `-maxdepth 1` — descending into a repo would risk matching old subdirectories inside a live clone.
