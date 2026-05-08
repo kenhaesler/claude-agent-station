@@ -1,7 +1,7 @@
 <!-- dashboard/frontend/src/components/vision/VisionTab.svelte -->
 <script lang="ts">
-  import { getVision, findVisionGaps } from '../../lib/api';
-  import type { VisionRead, Project } from '../../lib/types';
+  import { getVision, findVisionGaps, getVisionProposals } from '../../lib/api';
+  import type { VisionRead, Project, VisionProposals } from '../../lib/types';
   import VisionChat from './VisionChat.svelte';
   import { toastSuccess, toastError } from '../../lib/toast.svelte';
 
@@ -11,8 +11,18 @@
   let loading = $state(true);
   let mode = $state<'view' | 'chat'>('view');
   let findingGaps = $state(false);
+  let proposals = $state<VisionProposals | null>(null);
 
   $effect(() => { load(); });
+
+  $effect(() => {
+    if (!project?.id) return;
+    let cancelled = false;
+    getVisionProposals(project.id)
+      .then(p => { if (!cancelled) proposals = p; })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  });
 
   async function load() {
     loading = true;
@@ -43,10 +53,37 @@
     }
   }
 
+  function rerunAnalyst() {
+    fetch(`/api/projects/${project.id}/vision/find-gaps`, { method: 'POST' })
+      .then(r => { if (!r.ok) console.warn('vision-analyst rerun failed', r.status); });
+  }
+
   const githubBaseUrl = $derived(
     `https://github.com/${project.repo}/blob/${project.branch || 'main'}/docs/vision.md`,
   );
+
+  const githubProposalsUrl = $derived(
+    `https://github.com/${project.repo}/issues?q=is:open+label:vision-suggested`,
+  );
 </script>
+
+<!-- Vision analyst info strip -->
+<div class="card p-3 mb-3 flex gap-3 items-center flex-wrap">
+  <strong class="text-sm">Vision analyst</strong>
+  <span class="text-xs text-tertiary">
+    {#if proposals}
+      {proposals.open} proposal{proposals.open === 1 ? '' : 's'} open
+      · {proposals.accepted_recent} accepted last week
+    {:else}
+      Loading…
+    {/if}
+  </span>
+  <span class="flex-1"></span>
+  <button type="button" class="btn btn-ghost btn-sm text-xs" onclick={rerunAnalyst}>Re-run analyst</button>
+  <a class="btn btn-ghost btn-sm text-xs"
+     href={githubProposalsUrl}
+     target="_blank" rel="noopener">View on GitHub →</a>
+</div>
 
 {#if loading}
   <div class="text-sm text-tertiary">Loading…</div>

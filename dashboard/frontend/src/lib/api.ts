@@ -13,7 +13,7 @@ import type {
   AnalyticsResponse, DiffResult, PlanUsage,
   PromptInfo, StationConfig, TokenUsage,
   AgentEvent, Notification,
-  VisionRead, VisionDoc, VisionCommitOut, VisionChatSession,
+  VisionRead, VisionDoc, VisionCommitOut, VisionChatSession, VisionProposals,
 } from './types';
 
 import { toastError } from './toast.svelte';
