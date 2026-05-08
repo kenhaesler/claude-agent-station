@@ -49,14 +49,38 @@ claude-agent-station/
 │   ├── agents/                     # Agent Teams definitions
 │   │   └── issue-worker.md         # Teammate: implements a single issue
 │   ├── prompts/                    # System prompts (markdown)
+│   │   ├── analyst.md              # Analyst role prompt
+│   │   ├── assigner.md             # Assigner role prompt
+│   │   ├── employee.md             # Employee role prompt
 │   │   ├── manager.md              # Manager: reviews work, issues verdicts
-│   │   └── custom/                 # User overrides (dashboard-managed)
+│   │   ├── planner.md              # Planner role prompt
+│   │   ├── REPORT-SCHEMAS.md       # Structured report schemas
+│   │   ├── reviewer.md             # Reviewer role prompt
+│   │   ├── roles/                  # Persona overlays (architect, designer, …)
+│   │   ├── security-reviewer.md    # Security reviewer prompt
+│   │   ├── triager.md              # Triager role prompt
+│   │   ├── vision_create.md        # Vision creation prompt
+│   │   └── vision_refine.md        # Vision refinement prompt
 │   ├── scripts/
 │   │   ├── run-manager.sh          # Entry point + manager review phase
 │   │   ├── circuit-breaker.sh      # Failure tracking (3-strike rule)
 │   │   ├── detect_plan_usage.py    # Claude plan usage detection
-│   │   └── refresh-token.py        # OAuth token refresh
+│   │   ├── integration-branch.sh   # Integration branch management
+│   │   ├── lib/                    # Shared shell library
+│   │   ├── promote.sh              # Branch promotion helper
+│   │   ├── refresh-token.py        # OAuth token refresh
+│   │   ├── sprint-cycle.sh         # Sprint cycle automation
+│   │   └── tests/                  # Script unit tests
+│   ├── skills/                     # Reusable agent skills
+│   ├── audit_hook.py               # SDK PreToolUse/PostToolUse audit hook
+│   ├── auto_mode.py                # Autonomous mode controller
+│   ├── launcher.py                 # Agent launch helper
+│   ├── run_control.py              # Run pause/resume/stop control
 │   ├── station_orchestrator.py     # Agent Teams orchestrator (Claude Agent SDK)
+│   ├── tray_referral.py            # Tray notification referral
+│   ├── vision.py                   # Vision pipeline entry point
+│   ├── vision_analyst.py           # Vision analysis worker
+│   ├── vision_scoring.py           # Vision scoring logic
 │   ├── systemd/                    # Service definitions
 │   ├── selinux/                    # SELinux policy
 │   └── config/                     # Default configuration template
@@ -67,19 +91,24 @@ claude-agent-station/
 │   │   │   ├── main.py             # App, lifespan, router registration
 │   │   │   ├── config.py           # pydantic-settings (STATION_ prefix)
 │   │   │   ├── database.py         # Async SQLAlchemy + migrations
-│   │   │   ├── models.py           # ORM models (14 tables)
+│   │   │   ├── models.py           # ORM models (20 tables)
 │   │   │   ├── schemas.py          # Pydantic request/response schemas
 │   │   │   ├── dependencies.py     # FastAPI dependency injection
 │   │   │   ├── middleware/
 │   │   │   │   └── auth.py         # API key authentication middleware
-│   │   │   ├── routers/            # 20 API routers
+│   │   │   ├── routers/            # 22 API routers
+│   │   │   │   ├── agent_events.py # Agent event ingestion + query
 │   │   │   │   ├── analytics.py    # Token usage charts, verdicts
+│   │   │   │   ├── audit.py        # Audit log query API
 │   │   │   │   ├── config_router.py# Agent configuration CRUD
 │   │   │   │   ├── coordinator.py  # DAG, tasks, guidance API
 │   │   │   │   ├── events.py       # SSE real-time event stream
+│   │   │   │   ├── github_app.py   # GitHub App installation
+│   │   │   │   ├── github_webhook.py # GitHub webhook intake
 │   │   │   │   ├── health.py       # Health check endpoint
 │   │   │   │   ├── logs.py         # WebSocket log streaming + search
 │   │   │   │   ├── oauth.py        # Claude OAuth PKCE flow
+│   │   │   │   ├── permissions.py  # Permission request management
 │   │   │   │   ├── plans.py        # Implementation plan management
 │   │   │   │   ├── plan_usage.py   # Plan tier usage tracking
 │   │   │   │   ├── prompts.py      # System prompt management
@@ -87,19 +116,35 @@ claude-agent-station/
 │   │   │   │   ├── queue.py        # Task queue management
 │   │   │   │   ├── runs.py         # Run history, diffs, triggers
 │   │   │   │   ├── system.py       # systemd + auth status
+│   │   │   │   ├── vision.py       # Vision chat sessions
 │   │   │   │   └── webhook.py      # Agent event ingestion
 │   │   │   └── services/           # Business logic
-│   │   │       ├── config_sync.py  # JSON ↔ DB bidirectional sync
-│   │   │       ├── diff_parser.py  # Git diff parsing
-│   │   │       ├── event_bus.py    # In-memory pub/sub for SSE
-│   │   │       ├── idempotency.py  # Webhook deduplication
-│   │   │       ├── log_importer.py # Historical log ingestion
-│   │   │       ├── log_parser.py   # Stream JSONL parsing
-│   │   │       ├── log_streamer.py # File tailing for WebSocket
-│   │   │       ├── notifier.py     # Slack/Discord/Telegram webhooks
-│   │   │       ├── stale_run_reaper.py # Orphan run recovery
-│   │   │       └── systemd.py      # systemctl wrapper
-│   │   ├── tests/                  # 21 test files, 325+ tests
+│   │   │       ├── adapters/       # Notifier adapters (Slack, Discord, …)
+│   │   │       ├── adaptive_scheduler.py   # Dynamic scheduling
+│   │   │       ├── audit_retention.py      # Audit log retention policy
+│   │   │       ├── backpressure.py         # Queue backpressure control
+│   │   │       ├── config_sync.py          # JSON ↔ DB bidirectional sync
+│   │   │       ├── coordinator_service.py  # Coordinator business logic
+│   │   │       ├── diff_parser.py          # Git diff parsing
+│   │   │       ├── event_bus.py            # In-memory pub/sub for SSE
+│   │   │       ├── github_app.py           # GitHub App API client
+│   │   │       ├── github_contents.py      # GitHub file content fetching
+│   │   │       ├── github_pat.py           # GitHub PAT management
+│   │   │       ├── idempotency.py          # Webhook deduplication
+│   │   │       ├── log_importer.py         # Historical log ingestion
+│   │   │       ├── log_parser.py           # Stream JSONL parsing
+│   │   │       ├── log_streamer.py         # File tailing for WebSocket
+│   │   │       ├── notifier.py             # Slack/Discord/Telegram webhooks
+│   │   │       ├── queue_service.py        # Task queue business logic
+│   │   │       ├── run_lifecycle.py        # Run state machine
+│   │   │       ├── service_control.py      # systemd service control
+│   │   │       ├── stale_run_reaper.py     # Orphan run recovery
+│   │   │       ├── systemd.py              # systemctl wrapper
+│   │   │       ├── vision_chat.py          # Vision chat session logic
+│   │   │       ├── vision_chat_parser.py   # Vision chat message parsing
+│   │   │       ├── vision_cleanup.py       # Vision session cleanup
+│   │   │       └── vision_render.py        # Vision output rendering
+│   │   ├── tests/                  # 61 test files, 929 tests
 │   │   ├── migrations/             # Config schema migrations
 │   │   ├── requirements.txt        # Runtime dependencies
 │   │   └── requirements-dev.txt    # Dev/test dependencies
@@ -107,12 +152,18 @@ claude-agent-station/
 │   └── frontend/                   # Svelte 5 SPA
 │       ├── src/
 │       │   ├── App.svelte          # Root + hash-based routing
-│       │   ├── pages/              # 4 page components
-│       │   │   ├── CommandCenterPage.svelte  # Overview dashboard
-│       │   │   ├── WorkStreamPage.svelte     # Run history + details
-│       │   │   ├── DecisionsPage.svelte      # Verdict review
-│       │   │   └── ConfigPage.svelte         # Settings + system
-│       │   ├── components/         # 38 reusable components
+│       │   ├── pages/              # 10 page components
+│       │   │   ├── AgentTeamsCanvas.svelte  # Agent Teams live view
+│       │   │   ├── AutonomyAudit.svelte     # Audit log browser
+│       │   │   ├── CommandCenter.svelte     # Overview dashboard
+│       │   │   ├── MissionControl.svelte    # Mission control panel
+│       │   │   ├── ProjectDetail.svelte     # Single-project view
+│       │   │   ├── ProjectsPage.svelte      # Projects list
+│       │   │   ├── QueueBoard.svelte        # Task queue kanban
+│       │   │   ├── RunDetail.svelte         # Run detail + diffs
+│       │   │   ├── RunsPage.svelte          # Run history
+│       │   │   └── SettingsPage.svelte      # Settings + system
+│       │   ├── components/         # 56 reusable components (grouped by domain)
 │       │   └── lib/                # TypeScript modules
 │       │       ├── api.ts          # API client (typed, with auth + timeout)
 │       │       ├── types.ts        # TypeScript interfaces
@@ -126,17 +177,23 @@ claude-agent-station/
 │       │       └── workspace-renderer.ts     # Workspace visualization
 │       └── package.json
 │
+├── docs/
+│   ├── adr/                        # Architecture Decision Records
+│   ├── architecture.md             # This file
+│   ├── prototypes/                 # Prototype docs
+│   └── superpowers/                # Agent skill documentation
+│
 ├── .github/workflows/ci.yml       # GitHub Actions CI/CD
 ├── pyproject.toml                  # Project config (pytest, ruff, coverage)
 ├── install.sh                      # One-command installer
-├── ARCHITECTURE.md                 # This file
+├── ARCHITECTURE.md                 # Stub → docs/architecture.md
 ├── CLAUDE.md                       # Project conventions
 └── README.md
 ```
 
 ---
 
-## Database Schema (14 tables)
+## Database Schema (20 tables)
 
 | Table | Purpose | Key fields |
 |-------|---------|------------|
@@ -149,11 +206,17 @@ claude-agent-station/
 | `notifications` | Run completion alerts | type (approve/reject/pr/error) |
 | `task_queue` | Work queue with state machine | state, priority, retry_count |
 | `plan_usage_history` | Token usage tracking | plan_tier, weekly_tokens_used |
+| `audit_log` | Append-only action audit (per tool call) | run_id, actor, action_kind, action_detail, status |
 | `agent_events` | Structured audit trail (ESAA) | workflow_id, agent_id, event_type |
 | `task_outcomes` | Adaptive scheduling learning | mode_used, model_used, success |
 | `brainstorm_sessions` | AI brainstorm conversations | project_id, persona, title |
 | `brainstorm_messages` | Brainstorm chat messages | session_id, role, content |
+| `integration_features` | Feature flag integration state | (feature tracking) |
 | `prompt_versions` | Prompt A/B testing | prompt_name, version, content_hash |
+| `permission_requests` | Agent permission request queue | agent_id, action, status |
+| `run_controls` | Run pause/resume/stop signals | run_id, action, payload |
+| `station_control` | Station-wide control signals | (global state) |
+| `vision_chat_sessions` | Vision pipeline chat sessions | project_id, session state |
 
 ---
 
@@ -223,7 +286,7 @@ python -m pytest tests/ --cov=app --cov-report=term-missing
 | Process management | systemd | Native to target platform |
 | CI/CD | GitHub Actions | pytest + ruff + frontend build |
 | Linting | ruff | Fast Python linter/formatter |
-| Testing | pytest + pytest-asyncio | 325+ tests, async support |
+| Testing | pytest + pytest-asyncio | 929 tests, async support |
 
 ---
 
