@@ -254,18 +254,58 @@ def create_proposed_issues(repo: str, proposals: list[dict]) -> list[tuple[int, 
     return created
 
 
-def _ensure_workspace(workspace: str, repo: str) -> bool:
-    """Clone the repo into workspace if not already present."""
-    if os.path.isdir(os.path.join(workspace, ".git")):
-        return True
+def _ensure_workspace(workspace: str, repo: str, branch: str = "main") -> bool:
+    """Clone the repo into workspace if not already present, then refresh
+    the checkout to the tip of ``branch``.
+
+    The refresh is best-effort: if ``git fetch`` or ``git reset --hard`` fails
+    we still return ``True`` so the caller can attempt to read whatever is on
+    disk. ``load_vision`` will surface a clear error if the file is missing.
+
+    Logs each git step so operators can ``grep`` worker output for stale-
+    workspace symptoms without inspecting the volume.
+    """
     parent = os.path.dirname(workspace)
     name = os.path.basename(workspace)
-    os.makedirs(parent, exist_ok=True)
-    result = subprocess.run(
-        ["gh", "repo", "clone", repo, name],
-        cwd=parent, capture_output=True, text=True, timeout=120,
+    if not os.path.isdir(os.path.join(workspace, ".git")):
+        os.makedirs(parent, exist_ok=True)
+        clone = subprocess.run(
+            ["gh", "repo", "clone", repo, name],
+            cwd=parent, capture_output=True, text=True, timeout=120,
+        )
+        if clone.returncode != 0:
+            logger.warning(
+                "gh repo clone %s failed: %s",
+                repo, clone.stderr.strip(),
+            )
+            return False
+
+    # Refresh the existing checkout to the tip of the configured branch.
+    fetch = subprocess.run(
+        ["git", "-C", workspace, "fetch", "--depth", "1", "origin", branch],
+        capture_output=True, text=True, timeout=60,
     )
-    return result.returncode == 0
+    if fetch.returncode != 0:
+        logger.warning(
+            "git fetch in %s failed: %s",
+            workspace, fetch.stderr.strip(),
+        )
+        # Fall through — try to use whatever is on disk.
+        return True
+    logger.info("git fetch in %s: ok (origin/%s)", workspace, branch)
+
+    reset = subprocess.run(
+        ["git", "-C", workspace, "reset", "--hard", f"origin/{branch}"],
+        capture_output=True, text=True, timeout=30,
+    )
+    if reset.returncode != 0:
+        logger.warning(
+            "git reset in %s failed: %s",
+            workspace, reset.stderr.strip(),
+        )
+    else:
+        logger.info("git reset in %s: ok (origin/%s)", workspace, branch)
+    return True
 
 
 async def run_for_project(project_id: int) -> dict:
@@ -283,6 +323,7 @@ async def run_for_project(project_id: int) -> dict:
         if not project:
             return {"ok": False, "error": "project not found"}
         repo = project.repo
+        branch = project.branch or "main"
 
     workspaces_dir = os.environ.get("STATION_WORKSPACES", "/var/lib/claude-agent-station/workspaces")
     name = repo.split("/")[-1]
@@ -306,7 +347,7 @@ async def run_for_project(project_id: int) -> dict:
             **extra,
         })
 
-    if not _ensure_workspace(workspace, repo):
+    if not _ensure_workspace(workspace, repo, branch):
         _finish("error")
         return {"ok": False, "error": f"could not clone {repo}"}
 

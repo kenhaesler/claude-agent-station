@@ -1027,6 +1027,21 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
         repo = project["repo"]
         repo_name = repo.split("/")[-1] if "/" in repo else repo
         workspace = os.path.join(workspaces_dir, repo_name)
+        project_branch = project.get("branch") or "main"
+
+        # Refresh the workspace to the tip of the project's default branch
+        # before deciding eligibility. Without this, persistent compose
+        # volumes keep stale checkouts that hide newly-committed
+        # docs/vision.md files (issue #271). Best-effort: clone-if-missing
+        # plus fetch+reset; failures are logged but non-fatal.
+        try:
+            from agent.vision_analyst import _ensure_workspace
+            _ensure_workspace(workspace, repo, project_branch)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning(
+                "workspace refresh for %s failed: %s",
+                workspace, exc,
+            )
 
         # Resolve autonomy per ADR-0001. Level comes from project config
         # (falls back to config-level default, then to 'assisted'). The
