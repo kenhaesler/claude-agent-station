@@ -124,6 +124,7 @@ async def init_db():
     async with engine.begin() as conn:
         from app.models import (  # noqa: F401
             AgentEvent,
+            AuditEntry,
             BrainstormMessage,
             BrainstormSession,
             ConfigEntry,

@@ -19,6 +19,7 @@ from app.dependencies import verify_api_key
 from app.routers import (
     agent_events,
     analytics,
+    audit,
     config_router,
     coordinator,
     events,
@@ -38,6 +39,7 @@ from app.routers import (
 )
 from app.routers import github_app as github_app_router
 from app.routers import vision as vision_router
+from app.services.audit_retention import prune_audit_log, retention_days
 from app.services.config_sync import sync_config_to_db
 from app.services.log_importer import import_historical_runs
 from app.services.stale_run_reaper import reap_stale_runs
@@ -60,6 +62,9 @@ TOKEN_REFRESH_INTERVAL = 1800  # 30 minutes
 
 # Interval (seconds) between vision session cleanup sweeps
 VISION_CLEANUP_INTERVAL = 1800  # 30 minutes
+
+# Interval (seconds) between audit_log retention sweeps (issue #73)
+AUDIT_RETENTION_INTERVAL = 3600  # 1 hour
 
 
 async def _periodic_log_import() -> None:
@@ -89,6 +94,19 @@ async def _periodic_token_refresh() -> None:
                 logger.warning("Periodic OAuth refresh error: %s", result.error)
         except Exception:
             logger.exception("Error in periodic token refresh")
+
+
+async def _periodic_audit_retention() -> None:
+    """Background task: prune ``audit_log`` rows older than the retention window."""
+    while True:
+        await asyncio.sleep(AUDIT_RETENTION_INTERVAL)
+        try:
+            async with async_session() as db:
+                pruned = await prune_audit_log(db)
+                if pruned > 0:
+                    logger.info("Audit retention: pruned %d rows older than %dd", pruned, retention_days())
+        except Exception:
+            logger.exception("Error in audit retention sweep")
 
 
 async def _periodic_stale_run_check() -> None:
@@ -137,10 +155,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     reaper_task = asyncio.create_task(_periodic_stale_run_check())
     token_task = asyncio.create_task(_periodic_token_refresh())
     vision_cleanup_task = asyncio.create_task(run_vision_cleanup_loop())
+    audit_retention_task = asyncio.create_task(_periodic_audit_retention())
     logger.info("Started periodic log rescan (every %ds)", LOG_RESCAN_INTERVAL)
     logger.info("Started stale run reaper (every %ds)", STALE_RUN_CHECK_INTERVAL)
     logger.info("Started periodic token refresh (every %ds)", TOKEN_REFRESH_INTERVAL)
     logger.info("Started vision session cleanup (every %ds)", VISION_CLEANUP_INTERVAL)
+    logger.info("Started audit retention (every %ds, %dd window)", AUDIT_RETENTION_INTERVAL, retention_days())
 
     yield
 
@@ -149,7 +169,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     reaper_task.cancel()
     token_task.cancel()
     vision_cleanup_task.cancel()
-    for task in (rescan_task, reaper_task, token_task, vision_cleanup_task):
+    audit_retention_task.cancel()
+    for task in (rescan_task, reaper_task, token_task, vision_cleanup_task, audit_retention_task):
         with suppress(asyncio.CancelledError):
             await task
     logger.info("Shutting down dashboard backend")
@@ -194,6 +215,7 @@ app.include_router(plan_usage.router, dependencies=_auth)
 app.include_router(prompts.router, dependencies=_auth)
 app.include_router(queue.router, dependencies=_auth)
 app.include_router(agent_events.router, dependencies=_auth)
+app.include_router(audit.router, dependencies=_auth)
 app.include_router(permissions.router, dependencies=_auth)
 app.include_router(vision_router.router, dependencies=_auth)
 

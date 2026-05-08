@@ -228,6 +228,37 @@ class PlanUsageHistory(Base):
     created_at = Column(DateTime, default=_utcnow)
 
 
+class AuditEntry(Base):
+    """Per-tool-call telemetry: append-only audit trail of actions executed.
+
+    Boundary vs. ``agent_events``: ``agent_events`` records orchestration-level
+    decisions and workflow state transitions (e.g., ``auto_mode_decision``,
+    ``employee_started``). ``audit_log`` records the *actions* an employee
+    actually executed — tool calls, file edits, git operations, test runs —
+    along with their outcome (status, exit code, stdout/stderr tails, timing).
+
+    Rows are written in two phases: the SDK ``PreToolUse`` hook inserts a
+    ``status='started'`` row keyed by ``idempotency_key`` (= SDK ``tool_use_id``);
+    ``PostToolUse`` updates the same row with the result. The unique constraint
+    on ``idempotency_key`` makes both phases idempotent under retries.
+    """
+    __tablename__ = "audit_log"
+
+    id = Column(Integer, primary_key=True)
+    trace_id = Column(Text, nullable=True, index=True)
+    idempotency_key = Column(Text, nullable=False, unique=True)
+    run_id = Column(Text, nullable=False, index=True)
+    actor = Column(Text, nullable=False)  # "lead", "teammate-{name}", "manager"
+    action_kind = Column(Text, nullable=False, index=True)  # "tool.bash", "tool.edit", ...
+    action_detail = Column(Text, nullable=True)  # JSON: command, file path, etc.
+    status = Column(Text, nullable=False, index=True)  # "started" | "ok" | "error" | "timeout"
+    exit_code = Column(Integer, nullable=True)
+    stdout_tail = Column(Text, nullable=True)
+    stderr_tail = Column(Text, nullable=True)
+    started_at = Column(DateTime, nullable=False, index=True)
+    finished_at = Column(DateTime, nullable=True)
+
+
 class AgentEvent(Base):
     """Append-only event log for structured audit trail (ESAA pattern)."""
     __tablename__ = "agent_events"

@@ -562,6 +562,34 @@ class AgentEventOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+# --- Audit Log (issue #73) ---
+
+class AuditEntryOut(BaseModel):
+    id: int
+    trace_id: str | None = None
+    idempotency_key: str
+    run_id: str
+    actor: str
+    action_kind: str
+    action_detail: str | None = None
+    status: str
+    exit_code: int | None = None
+    stdout_tail: str | None = None
+    stderr_tail: str | None = None
+    started_at: datetime
+    finished_at: datetime | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AuditStats(BaseModel):
+    days: int
+    total: int
+    by_kind: dict[str, int]
+    error_rate: float  # 0.0–1.0
+    avg_duration_ms: float | None = None
+
+
 # --- Task Outcomes ---
 
 class TaskOutcomeCreate(BaseModel):
