@@ -18,11 +18,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # NOTE: tests/test_install.sh is currently failing on main for
-      # unrelated reasons and is intentionally not run here. Wire it in
-      # via a separate PR once those failures are fixed.
       - name: Run setup_script validator test suite
         run: bash tests/test_setup_script_validation.sh
+
+      - name: Run install.sh test suite
+        run: bash tests/test_install.sh
 
   backend:
     name: backend (pytest)
