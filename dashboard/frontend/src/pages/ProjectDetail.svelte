@@ -114,7 +114,7 @@
           </div>
           <div class="flex items-end">
             <Toggle checked={project.enabled} label="Enabled"
-              onclick={() => { project!.enabled = !project!.enabled; save('enabled', project!.enabled); }} />
+              onchange={(v) => { project!.enabled = v; save('enabled', v); }} />
           </div>
         </div>
       </div>
