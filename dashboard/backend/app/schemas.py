@@ -258,6 +258,30 @@ class WebhookRunEvent(BaseModel):
     verdict: str | None = None
     issue_number: int | None = None
 
+    @field_validator("event")
+    @classmethod
+    def _validate_event_name(cls, v: str) -> str:
+        """Reject event names that could break the SSE protocol (issue #187).
+
+        The event name is interpolated into the SSE ``event: <name>\\n`` frame
+        line, so any control character (CR/LF, null, etc.) would let an
+        attacker inject extra protocol lines. We require a non-empty
+        single-line identifier under 100 chars; legitimate event names from
+        ``run-manager.sh`` are short snake_case strings well within this.
+        """
+        if not isinstance(v, str) or not v:
+            raise ValueError("event must be a non-empty string")
+        if len(v) > 100:
+            raise ValueError("event exceeds 100 characters")
+        # Reject any C0 control char (0x00-0x1F) and DEL (0x7F).
+        # Tab (0x09) is also rejected — event names should be plain identifiers.
+        for ch in v:
+            if ord(ch) < 0x20 or ord(ch) == 0x7F:
+                raise ValueError(
+                    "event must not contain control characters"
+                )
+        return v
+
     @field_validator("issue_number", mode="before")
     @classmethod
     def coerce_issue_number(cls, v: object) -> int | None:
