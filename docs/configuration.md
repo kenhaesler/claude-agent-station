@@ -8,7 +8,7 @@ The canonical configuration store is the `config` table in `station.db` (key/val
 
 ## Environment variables
 
-Every variable below is prefixed with `STATION_`. They can also be placed in a `.env` file at the project root.
+Every variable below is prefixed with `STATION_`. They can also be placed in a `.env` file at the project root — see `.env.example` for a copyable template covering every var.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -24,6 +24,7 @@ Every variable below is prefixed with `STATION_`. They can also be placed in a `
 | `STATION_WEBHOOK_SECRET` | _(none)_ | Shared secret for authenticating webhook requests from the agent. When set, all `POST /api/webhook/*` requests must include a matching `X-Webhook-Token` header. When unset, no auth is required. |
 | `STATION_GITHUB_WEBHOOK_SECRET` | _(none)_ | Secret for verifying GitHub webhook HMAC-SHA256 signatures. |
 | `STATION_ALLOWED_ORIGINS` | `["http://localhost:5173", "http://localhost:4173", "http://127.0.0.1:5173", "http://127.0.0.1:4173"]` | CORS allowed origins. Override with a JSON list or comma-separated string. Extend this when the frontend is served from a different origin than the API. |
+| `STATION_LAUNCHER_TOKEN` | _(none — required for compose)_ | Shared secret authenticating dashboard → agent-launcher calls. **`compose.yml` fails fast if unset.** Generate with `openssl rand -hex 32` and put it in `.env` at the repo root. Bare-metal (systemd) deployments only need this when the dashboard and agent run on different hosts. |
 
 ## Models
 

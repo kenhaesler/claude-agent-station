@@ -8,7 +8,8 @@ Covers:
   reviewer, triager) have corresponding .md files
 - Each prompt contains an <identity> section
 - PROMPT_ROLES in the prompts router stays in sync with actual files
-- MODE_REGISTRY prompt_file references point to real files
+- Agent Teams agent-definition files exist and the orchestrator's
+  TEAMMATE_ROLES constant is in sync
 - Prompt files are non-trivially sized (not stubs)
 """
 
@@ -160,55 +161,70 @@ class TestPromptRouterSync:
         )
 
 
-@pytest.mark.skip(
-    reason="legacy agent.coordinator.modes removed; see TODO below",
-)
-class TestModeRegistryPromptSync:
-    """Verify MODE_REGISTRY prompt_file references point to real files.
+_AGENTS_DIR = _PROJECT_ROOT / "agent" / "agents"
 
-    TODO: `agent.coordinator.modes.MODE_REGISTRY` was removed when the legacy
-    coordinator was replaced by `agent.station_orchestrator`. Rewrite these
-    tests against the current mode registry (or drop them if the registry
-    concept no longer applies under Agent Teams).
+
+class TestAgentTeamsDefinitions:
+    """Verify the Agent Teams agent-definition contract.
+
+    Replaces the legacy `MODE_REGISTRY` test class. Under Agent Teams
+    (Claude Agent SDK), there is no per-mode prompt registry — instead
+    a single ``issue-worker`` agent definition is loaded by
+    ``agent.station_orchestrator`` and parameterised with one of the
+    fixed teammate roles (``backend`` / ``frontend`` / ``qa``).
+
+    These tests pin down the on-disk contract that the orchestrator
+    depends on:
+
+    - ``agent/agents/`` exists and contains ``issue-worker.md``
+    - The orchestrator's ``TEAMMATE_ROLES`` constant matches the
+      ``backend``/``frontend``/``qa`` trio the lead-agent prompt
+      describes.
     """
 
-    def test_all_mode_prompt_files_exist(self):
-        """Every mode's prompt_file must exist in agent/prompts/."""
-        from agent.coordinator.modes import MODE_REGISTRY
+    EXPECTED_AGENT_FILES = ["issue-worker.md"]
+    EXPECTED_TEAMMATE_ROLES = ["backend", "frontend", "qa"]
 
-        for mode_name, spec in MODE_REGISTRY.items():
-            path = _PROMPTS_DIR / spec.prompt_file
-            assert path.is_file(), (
-                f"MODE_REGISTRY['{mode_name}'].prompt_file = '{spec.prompt_file}' "
-                f"but file does not exist at {path}"
-            )
+    def test_agents_directory_exists(self):
+        """The agent/agents/ directory must exist."""
+        assert _AGENTS_DIR.is_dir(), (
+            f"Agents directory missing: {_AGENTS_DIR}. "
+            f"station_orchestrator loads SDK agent definitions from this path."
+        )
 
-    def test_mode_prompt_files_are_known_roles(self):
-        """Mode prompt files should reference one of the known prompt roles."""
-        from agent.coordinator.modes import MODE_REGISTRY
+    @pytest.mark.parametrize("filename", EXPECTED_AGENT_FILES)
+    def test_required_agent_definition_file_exists(self, filename: str):
+        """Each required agent definition file must be present on disk."""
+        path = _AGENTS_DIR / filename
+        assert path.is_file(), (
+            f"Missing agent definition file: {path}. "
+            f"station_orchestrator.orchestrate() loads this file at startup."
+        )
 
-        known_files = {f"{role}.md" for role in ALL_PROMPT_ROLES}
-        for mode_name, spec in MODE_REGISTRY.items():
-            assert spec.prompt_file in known_files, (
-                f"MODE_REGISTRY['{mode_name}'].prompt_file = '{spec.prompt_file}' "
-                f"is not a known prompt file. Known: {sorted(known_files)}"
-            )
+    def test_issue_worker_definition_has_yaml_front_matter(self):
+        """The issue-worker definition must declare its name and model.
 
-    def test_employee_runner_prompt_map_covers_modes(self):
-        """The prompt_map in employee_runner.py should be consistent with modes."""
-        # The prompt_map in employee_runner hardcodes mode -> prompt file mappings.
-        # Verify it matches the MODE_REGISTRY.
-        from agent.coordinator.modes import MODE_REGISTRY
+        ``load_agent_definition`` in the SDK parses YAML front matter
+        and fails closed if name/description are missing.
+        """
+        content = (_AGENTS_DIR / "issue-worker.md").read_text()
+        assert content.startswith("---"), (
+            "issue-worker.md must start with YAML front matter (---)"
+        )
+        # name: issue-worker is what the orchestrator passes through to the SDK
+        assert "name: issue-worker" in content, (
+            "issue-worker.md front matter must declare `name: issue-worker`"
+        )
 
-        # These are the modes that have explicit prompt_map entries in employee_runner.py
-        # (analyze, plan, triage, review). All others fall through to employee.md.
-        explicit_modes = {"analyze": "analyst.md", "plan": "planner.md",
-                          "triage": "triager.md", "review": "reviewer.md"}
+    def test_teammate_roles_match_orchestrator(self):
+        """station_orchestrator.TEAMMATE_ROLES must match the documented trio.
 
-        for mode_name, expected_file in explicit_modes.items():
-            if mode_name in MODE_REGISTRY:
-                assert MODE_REGISTRY[mode_name].prompt_file == expected_file, (
-                    f"MODE_REGISTRY['{mode_name}'].prompt_file "
-                    f"= '{MODE_REGISTRY[mode_name].prompt_file}' "
-                    f"but employee_runner prompt_map expects '{expected_file}'"
-                )
+        The lead-agent system prompt and worktree creation both depend
+        on these three role names — drift here breaks coordination.
+        """
+        from agent.station_orchestrator import TEAMMATE_ROLES
+
+        assert list(TEAMMATE_ROLES) == self.EXPECTED_TEAMMATE_ROLES, (
+            f"TEAMMATE_ROLES drifted: orchestrator has {list(TEAMMATE_ROLES)}, "
+            f"expected {self.EXPECTED_TEAMMATE_ROLES}."
+        )
