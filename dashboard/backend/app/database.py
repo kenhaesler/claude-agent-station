@@ -88,15 +88,35 @@ async def _migrate_add_columns(conn) -> None:
         ("projects", "vision_cached_body", "ALTER TABLE projects ADD COLUMN vision_cached_body TEXT"),
         ("projects", "vision_cached_at",   "ALTER TABLE projects ADD COLUMN vision_cached_at DATETIME"),
     ]
+    # `table` and `sql` below are hardcoded literals from the migrations tuple
+    # list above; PRAGMA + ALTER TABLE do not support bound parameters for
+    # identifiers, so f-strings are required.
     for table, column, sql in migrations:
         try:
-            result = await conn.execute(text(f"PRAGMA table_info({table})"))
+            result = await conn.execute(text(f"PRAGMA table_info({table})"))  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
             columns = [row[1] for row in result.fetchall()]
             if column not in columns:
-                await conn.execute(text(sql))
+                await conn.execute(text(sql))  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
                 logger.info("Migration: added %s.%s", table, column)
         except Exception as e:
             logger.debug("Migration skip %s.%s: %s", table, column, e)
+
+    # Indexes on runs columns used by list/filter/analytics queries (issue #191).
+    # SQLAlchemy's create_all creates indexes from model declarations on fresh
+    # databases, but columns added later via ALTER TABLE never get indexed
+    # unless we do it explicitly here. CREATE INDEX IF NOT EXISTS is idempotent.
+    index_migrations = [
+        "CREATE INDEX IF NOT EXISTS ix_runs_status ON runs(status)",
+        "CREATE INDEX IF NOT EXISTS ix_runs_project_id ON runs(project_id)",
+        "CREATE INDEX IF NOT EXISTS ix_runs_verdict ON runs(verdict)",
+        "CREATE INDEX IF NOT EXISTS ix_runs_started_at ON runs(started_at)",
+        "CREATE INDEX IF NOT EXISTS ix_runs_concurrent_group_id ON runs(concurrent_group_id)",
+    ]
+    for sql in index_migrations:
+        try:
+            await conn.execute(text(sql))  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+        except Exception as e:
+            logger.debug("Index migration skip: %s: %s", sql, e)
 
 
 async def init_db():

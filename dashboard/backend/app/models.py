@@ -48,11 +48,11 @@ class Run(Base):
 
     id = Column(Integer, primary_key=True)
     run_id = Column(Text, nullable=False, unique=True)
-    project_id = Column(Integer, ForeignKey("projects.id"), nullable=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=True, index=True)
     mode = Column(Text, nullable=True)
     model = Column(Text, nullable=True)
-    status = Column(Text, nullable=True)  # running/success/failed
-    verdict = Column(Text, nullable=True)  # APPROVE/PR/REJECT/null
+    status = Column(Text, nullable=True, index=True)  # running/success/failed
+    verdict = Column(Text, nullable=True, index=True)  # APPROVE/PR/REJECT/null
     issue_number = Column(Integer, nullable=True)
     branch = Column(Text, nullable=True)
     cost_usd = Column(Float, nullable=True)  # Deprecated: kept for historical data
@@ -61,14 +61,14 @@ class Run(Base):
     tokens_total = Column(Integer, nullable=True)
     turns = Column(Integer, nullable=True)
     duration_ms = Column(Integer, nullable=True)
-    started_at = Column(DateTime, nullable=True)
+    started_at = Column(DateTime, nullable=True, index=True)
     finished_at = Column(DateTime, nullable=True)
     employee_report = Column(Text, nullable=True)  # JSON as text
     verdict_detail = Column(Text, nullable=True)  # JSON as text
     log_file = Column(Text, nullable=True)
     trace_id = Column(Text, nullable=True)
     employee_index = Column(Integer, nullable=True, default=0)
-    concurrent_group_id = Column(Text, nullable=True)
+    concurrent_group_id = Column(Text, nullable=True, index=True)
     # Agent Teams fields
     team_name = Column(Text, nullable=True)
     team_members = Column(Text, nullable=True)  # JSON: [{agent_id, name, status}]
