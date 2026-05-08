@@ -6,7 +6,7 @@
     visionChatTurnUrl, getVisionChatSession, cancelVisionChat,
     commitVision, getStoredApiKey,
   } from '../../lib/api';
-  import { toastError, toastSuccess } from '../../lib/toast.svelte';
+  import { toastError, toastSuccess, addToast } from '../../lib/toast.svelte';
   import type { VisionDoc, VisionSseEvent } from '../../lib/types';
   import CoverageChecklist from './CoverageChecklist.svelte';
 
@@ -108,6 +108,7 @@
     try {
       await commitVision(projectId, assembledDoc);
       toastSuccess('Vision saved to GitHub');
+      addToast('info', 'Vision analyst running — proposals will appear in a few minutes.');
       onApproved();
     } catch (e: any) {
       toastError(e.message);

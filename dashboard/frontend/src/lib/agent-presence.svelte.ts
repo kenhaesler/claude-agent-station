@@ -11,6 +11,7 @@ import { getActiveEmployees, getLatestRun, listPlans, listRuns, getStoredApiKey 
 import type { ActiveEmployee, Run } from './types';
 import { AgentEventStream } from './event-stream';
 import { handleStreamEvent as permissionTrayHandleEvent } from './permission-tray.svelte';
+import { addToast } from './toast.svelte';
 
 // --- Agent Identity ---
 
@@ -472,6 +473,20 @@ function handleSSEEvent(data: any) {
           : (eventType === 'orchestrator_error' ? 'Run failed' : 'Run completed'),
         isError: interrupted || eventType === 'orchestrator_error',
       });
+      // Vision-bootstrap completion toast
+      const runMode = data.mode ?? data.data?.mode;
+      const runStatus = data.status ?? data.data?.status;
+      if (runMode === 'vision-bootstrap' && !interrupted &&
+          (runStatus === 'success' || runStatus === 'completed') &&
+          eventType !== 'orchestrator_error') {
+        const n = (data.vision_bootstrap_count ?? data.data?.vision_bootstrap_count) ?? 0;
+        addToast(
+          'success',
+          n === 0
+            ? 'Vision analyzed — no gaps found.'
+            : `${n} issue${n === 1 ? '' : 's'} created from vision.`,
+        );
+      }
       refreshActiveRuns();
       break;
     }
