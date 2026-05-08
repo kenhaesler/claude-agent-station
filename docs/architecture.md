@@ -4,7 +4,7 @@
 
 A standalone, self-hosted autonomous Claude Code agent with a web dashboard. Runs on a Linux VM, manages multiple GitHub repositories, and provides full observability through a browser UI.
 
-**Core idea**: Agent Teams architecture powered by Claude Agent SDK. A lead agent coordinates teammates (one per issue) working in isolated worktrees, with a manager review phase for verdicts. Web dashboard provides real-time visibility into team activity.
+**Core idea**: Agent Teams architecture powered by Claude Agent SDK. A lead agent coordinates three role-specialized teammates (`backend`, `frontend`, `qa`) working in isolated worktrees; eligible issues are decomposed into tasks and distributed across them by specialty. A separate manager review phase issues verdicts. Web dashboard provides real-time visibility into team activity.
 
 ---
 
@@ -261,16 +261,7 @@ python -m pytest tests/ --cov=app --cov-report=term-missing
 
 ### Environment Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `STATION_DB_PATH` | `/opt/git/.../station.db` | SQLite database path |
-| `STATION_LOG_DIR` | `/var/log/claude-agent` | Agent log directory |
-| `STATION_CONFIG_PATH` | `~/.claude/.../manager-config.json` | Agent config JSON |
-| `STATION_WORKSPACES_DIR` | `/home/claude-agent/workspaces` | Git workspace root |
-| `STATION_API_KEY` | (none) | API authentication key |
-| `STATION_WEBHOOK_SECRET` | (none) | Webhook authentication token |
-| `STATION_CREDENTIALS_PATH` | `~/.claude/.credentials.json` | Claude CLI credentials |
-| `STATION_ALLOWED_ORIGINS` | localhost:5173,4173 | CORS allowed origins |
+See [`configuration.md`](configuration.md#environment-variables) for the full table of `STATION_*` settings, defaults, and descriptions.
 
 ---
 

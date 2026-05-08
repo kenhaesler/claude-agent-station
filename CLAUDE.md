@@ -1,7 +1,7 @@
 # Claude Agent Station
 
 ## Project Overview
-Self-hosted autonomous Claude Code agent with web dashboard. Uses **Agent Teams mode** (Claude Agent SDK) for multi-project GitHub automation. A lead agent coordinates teammates that each work on a single issue in isolated worktrees.
+Self-hosted autonomous Claude Code agent with web dashboard. Uses **Agent Teams mode** (Claude Agent SDK) for multi-project GitHub automation. A lead agent coordinates three role-specialized teammates (`backend`, `frontend`, `qa`) working in isolated worktrees; eligible issues are decomposed into tasks and distributed across them by specialty.
 
 ## Tech Stack
 - **Agent Core**: Claude Agent SDK (Python) + bash run-manager
@@ -14,7 +14,7 @@ Self-hosted autonomous Claude Code agent with web dashboard. Uses **Agent Teams 
 ## Architecture
 See `docs/architecture.md` for full system design.
 
-**Agent Teams flow**: run-manager.sh → station_orchestrator.py → Claude Agent SDK → Lead spawns teammates → each teammate works one issue → Lead reviews → Manager reviews all work → verdicts (APPROVE/PR/REJECT)
+**Agent Teams flow**: run-manager.sh → station_orchestrator.py → Claude Agent SDK → Lead decomposes eligible issues and spawns three role-specialized teammates → tasks distributed by specialty → Lead reviews plans → Manager reviews all work → verdicts (APPROVE/PR/REJECT/SKIP)
 
 ## Conventions
 - Backend code in `dashboard/backend/app/`
