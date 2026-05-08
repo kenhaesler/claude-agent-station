@@ -30,6 +30,8 @@ Powered by the [Claude Agent SDK](https://docs.anthropic.com/en/docs/claude-code
 
 ## Quick start
 
+Requires a Linux host with systemd and a Claude Code CLI install. See the [Install guide](docs/install.md) for the full prerequisite list.
+
 ```bash
 git clone https://github.com/kenhaesler/claude-agent-station.git /opt/claude-agent-station
 cd /opt/claude-agent-station
@@ -41,7 +43,7 @@ Full prerequisites and manual install steps: [Install guide](docs/install.md).
 
 ## Documentation
 
-| | |
+| Doc | Covers |
 |---|---|
 | [Install](docs/install.md) | Deploy on a fresh VM |
 | [Configuration](docs/configuration.md) | Env vars, models, budgets, project config |
