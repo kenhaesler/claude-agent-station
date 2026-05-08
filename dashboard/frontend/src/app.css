@@ -369,6 +369,8 @@ code, .font-mono {
 .badge-triage { background: rgba(176,96,48,0.08); color: #B06030; }
 .badge-review { background: rgba(99,102,180,0.10); color: rgba(80,82,150,1); }
 .badge-fix { background: rgba(46,125,50,0.10); color: #2E7D32; }
+.badge-vision-bootstrap { background: rgba(176,96,48,0.12); color: #B06030; }
+.badge-agent-teams { background: rgba(99,102,180,0.10); color: rgba(80,82,150,1); }
 
 /* --- Card — warm neumorphic --- */
 .card {

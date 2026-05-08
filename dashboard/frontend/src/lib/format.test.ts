@@ -125,7 +125,25 @@ describe('timeAgo', () => {
   });
 });
 
-import { formatRunMode } from './format';
+import { formatRunMode, formatSkipReason } from './format';
+
+describe('formatSkipReason', () => {
+  it('maps the four canned reasons', () => {
+    expect(formatSkipReason('no-eligible-issues-no-vision')).toContain('Vision tab');
+    expect(formatSkipReason('no-eligible-issues-bootstrap-dispatched')).toContain('dispatched');
+    expect(formatSkipReason('no-eligible-issues-bootstrap-already-running')).toContain('already running');
+    expect(formatSkipReason('no-eligible-issues-proposals-pending')).toContain('await');
+  });
+
+  it('returns empty for null/undefined', () => {
+    expect(formatSkipReason(null)).toBe('');
+    expect(formatSkipReason(undefined)).toBe('');
+  });
+
+  it('falls back to raw value for unknown reasons', () => {
+    expect(formatSkipReason('weird-thing')).toBe('weird-thing');
+  });
+});
 
 describe('formatRunMode', () => {
   it('returns vision-bootstrap descriptor', () => {
