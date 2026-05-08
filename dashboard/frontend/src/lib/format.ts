@@ -80,3 +80,21 @@ export function formatCost(usd: number | null): string {
   if (usd < 0.01) return `$${usd.toFixed(4)}`;
   return `$${usd.toFixed(2)}`;
 }
+
+export interface RunModeDescriptor {
+  label: string;
+  icon: string;
+  accent: 'default' | 'violet';
+}
+
+/** Map a Run.mode value to its UI descriptor. */
+export function formatRunMode(mode: string | null | undefined): RunModeDescriptor {
+  switch (mode) {
+    case 'vision-bootstrap':
+      return { label: 'Vision bootstrap', icon: '✨', accent: 'violet' };
+    case 'agent-teams':
+      return { label: 'Agent Teams', icon: '◆', accent: 'default' };
+    default:
+      return { label: 'Run', icon: '◆', accent: 'default' };
+  }
+}

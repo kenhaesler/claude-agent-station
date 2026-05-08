@@ -7,6 +7,7 @@ import {
   shortRepo,
   shortRunId,
   formatPercent,
+  formatRunMode,
 } from './format';
 
 describe('formatTokens', () => {
@@ -121,5 +122,28 @@ describe('timeAgo', () => {
     vi.setSystemTime(now);
     const future = new Date(now.getTime() + 60_000).toISOString();
     expect(timeAgo(future)).toBe('just now');
+  });
+});
+
+import { formatRunMode } from './format';
+
+describe('formatRunMode', () => {
+  it('returns vision-bootstrap descriptor', () => {
+    const m = formatRunMode('vision-bootstrap');
+    expect(m.label).toBe('Vision bootstrap');
+    expect(m.icon).toBe('✨');
+    expect(m.accent).toBe('violet');
+  });
+
+  it('returns agent-teams descriptor', () => {
+    const m = formatRunMode('agent-teams');
+    expect(m.label).toBe('Agent Teams');
+    expect(m.accent).toBe('default');
+  });
+
+  it('falls back for unknown modes', () => {
+    const m = formatRunMode(null);
+    expect(m.label).toBe('Run');
+    expect(m.accent).toBe('default');
   });
 });

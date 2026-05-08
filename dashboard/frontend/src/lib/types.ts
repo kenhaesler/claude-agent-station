@@ -71,6 +71,9 @@ export interface Run {
   team_members: string | null;
   autonomy_level: AutonomyLevel | null;
   max_budget_usd: number | null;
+  skip_reason?: string | null;
+  vision_bootstrap_count?: number | null;
+  vision_bootstrap_proposals?: { number: number; title: string; url: string }[] | null;
 }
 
 export interface RunList {
@@ -469,3 +472,8 @@ export type VisionSseEvent =
   | { type: 'vision_ready'; vision_doc: VisionDoc }
   | { type: 'error'; code: string; message: string }
   | { type: 'done' };
+
+export interface VisionProposals {
+  open: number;
+  accepted_recent: number;
+}
