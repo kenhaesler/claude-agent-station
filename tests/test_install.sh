@@ -40,7 +40,10 @@ assert_contains() {
     local haystack="$2"
     local needle="$3"
     TOTAL=$((TOTAL + 1))
-    if echo "$haystack" | grep -q "$needle"; then
+    # Why here-string: under `set -o pipefail`, `echo "$haystack" | grep -q ...`
+    # can return non-zero when grep exits on its first match and echo dies with
+    # SIGPIPE — turning a real PASS into a spurious FAIL.
+    if grep -q -- "$needle" <<<"$haystack"; then
         PASS=$((PASS + 1))
         echo -e "${GREEN}PASS${NC}: ${test_name}"
     else

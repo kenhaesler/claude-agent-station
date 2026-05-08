@@ -1,5 +1,7 @@
 # Claude Agent Station
 
+[![ci](https://github.com/kenhaesler/claude-agent-station/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/kenhaesler/claude-agent-station/actions/workflows/ci.yml)
+
 Self-hosted autonomous Claude Code agent with a web dashboard.
 
 **What it does**: Runs Claude Code agent teams on a schedule to work on your GitHub repositories — implementing features, fixing bugs, and creating issues. A lead agent coordinates teammates that each tackle a single issue. A web dashboard provides real-time visibility into team activity.
