@@ -102,7 +102,7 @@ Each managed repository is one row in the `projects` table. The dashboard's Proj
 |-------|------|---------|-------------|
 | `repo` | string | _(required)_ | GitHub repository in `owner/repo` format. |
 | `priority` | string | `"medium"` | Scheduling priority: `high`, `medium`, or `low`. |
-| `mode` | string | `"full"` | Agent operating mode: `full`, `analyze`, `plan`, `fix`, `triage`, or `review`. |
+| `mode` | string | `"full"` | Project mode — see [Project mode](#project-mode) below. |
 | `enabled` | boolean | `true` | Whether the project is picked up by the scheduler. |
 | `branch` | string | `"main"` | Default branch the agent targets. |
 | `custom_instructions` | string | _(none)_ | Extra instructions appended to the agent prompt for this project. |
@@ -124,6 +124,62 @@ Example JSON for the `POST /api/projects` request body:
   "setup_script": "pip install -r requirements.txt"
 }
 ```
+
+### Project mode
+
+Each project picks one of four modes. The orchestrator branches on this
+value to shape both the teammate spawn prompt and the manager review
+package (issue #266). Out-of-scope values (`triage`, `review`, `fix`)
+exist on the schema for legacy reasons but are coerced to `full` by the
+Agent Teams orchestrator.
+
+| Mode | Spawn-prompt block | Worker behavior | Manager review |
+|------|--------------------|-----------------|----------------|
+| `full` | _(none)_ | Plan + implement + push branch. | Full Mode Review (default). |
+| `analyze` | `ANALYZE_MODE` | Read-only investigation; writes findings to `.claude-analyze-report-{index}.json`; never modifies source, never branches, never commits. | `MODE: ANALYZE` header → Analyze Mode Review. Never rejects for "no code changes". |
+| `plan` | _(none)_ | Plan-quality output; source must be untouched. | `MODE: PLAN` header → Plan Mode Review. Rejects if any source file was modified. |
+| `plan_only` | `PLAN_ONLY_MODE` | Writes a plan to `.claude-employee-plan-{index}.json` and stops; no branch, no commit, no push. | `MODE: PLAN_REVIEW` header → Plan Review Mode. Verdicts: `APPROVE_PLAN` / `REVISE_PLAN` / `REJECT_PLAN`. |
+
+#### Plan-review gate (`plan_only` only)
+
+`plan_only` introduces a pre-implementation gate between plan-writing and
+code. The gate is implemented by `agent/plan_review_gate.py` and invoked
+by `agent/scripts/run-manager.sh` after the manager review phase.
+
+**Pipeline (per `plan_only` project):**
+
+1. `run-manager.sh` emits `plan_review_start` (→ `Run.status = plan_reviewing`) before invoking the manager review.
+2. Manager review runs and writes verdicts to `run-<id>-verdicts.json`.
+3. `run-manager.sh` invokes `python -m agent.plan_review_gate` for each plan_only project. The driver:
+   - POSTs `awaiting_plan_review` (→ `Run.status = awaiting_plan_review`) to mark the gate as engaged.
+   - Parses each plan verdict and dispatches per the table below.
+   - POSTs a terminal status event (`plan_approved` / `plan_rejected`) once all verdicts are processed.
+
+**Verdict actions:**
+
+| Verdict | Side effects | Run.status (terminal) |
+|---------|-------------|------------------------|
+| `APPROVE_PLAN` | POSTs a new `QueueItem` to `/api/queue` with `mode=full`, `state=pending`, and `context={"approved_plan_path": ..., "from_plan_only_run": true}`. The follow-up `full` run picks this up on the next cycle and the implementing teammate reads the approved plan as `APPROVED_PLAN` guidance. | `plan_approved` |
+| `REVISE_PLAN` (within budget) | Writes the manager feedback to `<workspace>/.claude-plan-revision-feedback-<index>.json` for the next teammate spawn to consume. **The live re-spawn loop is a documented TODO** — feedback is durably persisted but the orchestrator does not yet re-inject it into a running SDK session. Expect a manual trigger or follow-up issue. | stays at `awaiting_plan_review` |
+| `REVISE_PLAN` (past budget) | Treated as a soft reject. | `plan_rejected` |
+| `REJECT_PLAN` | Logged. No queue POST, no follow-up run. | `plan_rejected` |
+
+If the queue POST for `APPROVE_PLAN` fails (network error, dashboard
+down, dedup hit), the run is **not** flipped to `plan_approved` —
+it stays in `awaiting_plan_review` so an operator can re-run the gate
+manually. The gate is best-effort by design.
+
+**Run statuses added** (additive — old code keeps working):
+`awaiting_plan_review`, `plan_approved`, `plan_rejected`. The dashboard
+surfaces these via a banner on Mission Control and the Agent Teams
+canvas.
+
+| Env var | Default | Description |
+|---------|---------|-------------|
+| `STATION_PLAN_REVISION_MAX` | `2` | Maximum `REVISE_PLAN` iterations before the gate auto-rejects. Read at gate-evaluation time so changes apply on the next gate run. |
+| `STATION_DASHBOARD_URL` | `http://127.0.0.1:8420` | Dashboard base URL the gate POSTs to. Falls back to `STATION_WEBHOOK_URL` (with `/api/webhook/...` stripped) and finally the default. |
+| `STATION_API_KEY` | _(unset)_ | When set, the gate adds `Authorization: Bearer <key>` on `/api/queue` POSTs. |
+| `STATION_WEBHOOK_SECRET` | _(unset)_ | When set, the gate adds `X-Webhook-Token: <secret>` on `/api/webhook/run-event` POSTs. |
 
 ### Vision-driven issue bootstrap
 

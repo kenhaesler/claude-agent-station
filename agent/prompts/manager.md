@@ -224,6 +224,7 @@ Write your verdicts to the file path provided in your prompt:
       "verdict": "APPROVE_PLAN|REVISE_PLAN|REJECT_PLAN",
       "employee_index": 0,
       "issue_number": 42,
+      "plan_path": "/path/to/.claude-employee-plan-0.json",
       "plan_quality_score": 85,
       "feedback": "Specific feedback for the employee (required for REVISE_PLAN)",
       "missing_requirements": [],
@@ -234,6 +235,7 @@ Write your verdicts to the file path provided in your prompt:
 ```
 
 - `verdict`: one of `APPROVE_PLAN`, `REVISE_PLAN`, `REJECT_PLAN`
+- `plan_path`: absolute path to the `.claude-employee-plan-{index}.json` file you reviewed. The orchestrator uses this to pass the approved plan into the follow-up `full` run as `APPROVED_PLAN` context.
 - `feedback`: required for `REVISE_PLAN` — must be specific and actionable
 - `plan_quality_score`: 0-100 score for plan quality
 - `missing_requirements`: list of requirements from the issue not covered by the plan

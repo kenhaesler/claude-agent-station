@@ -4,8 +4,8 @@
 // ============================================
 
 // --- Enums ---
-export type AgentMode = 'full' | 'analyze' | 'plan' | 'triage' | 'review' | 'fix';
-export type RunStatus = 'started' | 'employee_done' | 'reviewing' | 'finished' | 'verdict' | 'plan_reviewing' | 'plan_review_done' | string;
+export type AgentMode = 'full' | 'analyze' | 'plan' | 'plan_only' | 'triage' | 'review' | 'fix';
+export type RunStatus = 'started' | 'employee_done' | 'reviewing' | 'finished' | 'verdict' | 'plan_reviewing' | 'plan_review_done' | 'awaiting_plan_review' | 'plan_approved' | 'plan_rejected' | string;
 export type Verdict = 'APPROVE' | 'PR' | 'REJECT';
 export type QueueState = 'pending' | 'assigned' | 'claimed' | 'planning' | 'in_progress' | 'review' | 'verifying' | 'approved' | 'rejected' | 'escalated' | 'paused' | 'failed' | 'cancelled' | 'completed';
 export type PlanStatus = 'draft' | 'approved' | 'implementing' | 'completed' | 'rejected';

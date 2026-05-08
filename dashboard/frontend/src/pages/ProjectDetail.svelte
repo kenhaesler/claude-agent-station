@@ -91,6 +91,17 @@
               <option value="plan">Plan</option>
               <option value="plan_only">Plan Only</option>
             </select>
+            <p class="mt-1 text-[11px] leading-snug text-tertiary">
+              {#if project.mode === 'full'}
+                Plan and implement: teammates write code, run tests, and push a feature branch for the manager to review.
+              {:else if project.mode === 'analyze'}
+                Read-only investigation: teammates inspect code and write findings to a report file. No source changes, no branches, no commits.
+              {:else if project.mode === 'plan'}
+                Plan-quality output, source untouched: teammates produce inline-rich plans; the manager rejects any source modification.
+              {:else if project.mode === 'plan_only'}
+                Pre-implementation gate: teammates write a plan and stop. The manager approves, requests revisions, or rejects before any code is written.
+              {/if}
+            </p>
           </div>
           <div>
             <label class="text-xs text-tertiary mb-1 block">Priority</label>

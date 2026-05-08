@@ -285,11 +285,68 @@ See [`configuration.md`](configuration.md#environment-variables) for the full ta
 
 The orchestrator dispatches runs in different modes, each with distinct behavior and responsibilities:
 
-- **`agent-teams`** — full autonomous workflow: lead decomposes eligible issues into tasks, spawns three teammates in isolated worktrees, manager reviews each implementation, verdicts issued (APPROVE/PR/REJECT).
+### Project mode (per-project, set via UI)
+
+Each project picks one of four modes (`Project.mode`). The Agent Teams
+orchestrator branches on this value to shape both the spawn prompt and
+the manager review package — see [`configuration.md` §
+Project mode](configuration.md#project-mode) for the full table and
+[`agent/prompts/manager.md`](../agent/prompts/manager.md) for the
+review-criteria branching.
+
+- **`full`** — plan + implement + push branch. Manager review under Full Mode Review.
+- **`analyze`** — read-only investigation; teammates write findings to a report file. Reviewed under Analyze Mode Review.
+- **`plan`** — plan-quality output, source untouched. Reviewed under Plan Mode Review.
+- **`plan_only`** — pre-implementation gate. Teammates write a plan and stop. Reviewed under Plan Review Mode (`APPROVE_PLAN` / `REVISE_PLAN` / `REJECT_PLAN`). On approve, a follow-up `full` run is enqueued referencing the approved plan.
+
+### Run-level run kinds
+
+- **Agent Teams flow** (the default for `full`/`analyze`/`plan`/`plan_only`) — lead decomposes eligible issues into tasks, spawns three teammates in isolated worktrees, manager reviews each implementation, verdicts issued (APPROVE/PR/REJECT for `full`; APPROVE_PLAN/REVISE_PLAN/REJECT_PLAN for `plan_only`).
 - **`vision-bootstrap`** — single-shot run that dispatches `agent/vision_analyst.py` to propose new issues from `docs/vision.md`. Triggered automatically (orchestrator empty backlog, or vision commit with content-hash change) or manually from the Vision tab. Never spawns teammates, never opens PRs.
-- **`fix`** — single-issue repair mode for regressions and urgent bugs.
-- **`triage`** — issue classification and labeling without implementation.
-- **`review`** — security or code review mode for pull requests.
+- **`fix`** — single-issue repair mode for regressions and urgent bugs (legacy; not exposed in the project mode dropdown).
+- **`triage`** — issue classification and labeling without implementation (legacy).
+- **`review`** — security or code review mode for pull requests (legacy).
+
+### Plan-review gate
+
+The `plan_only` mode adds a manual checkpoint between plan-writing and
+implementation. The gate is implemented by `agent/plan_review_gate.py`
+and invoked by `agent/scripts/run-manager.sh` after the manager review
+phase. Run-status transitions are driven by webhook events handled in
+`app/services/run_lifecycle.py`.
+
+```
+plan_only employee writes plan
+   │  (Run.status = running)
+   ▼
+run-manager.sh emits plan_review_start
+   │  (Run.status = plan_reviewing)
+   ▼
+manager reviews plan → run-<id>-verdicts.json
+   │
+   ▼
+run-manager.sh: python -m agent.plan_review_gate
+   │  emits awaiting_plan_review
+   │  (Run.status = awaiting_plan_review)
+   │
+   ├── APPROVE_PLAN → POST /api/queue { mode: "full", context.approved_plan_path }
+   │                  → emit plan_approved (Run.status = plan_approved, finished_at set)
+   │                  → next cycle picks up the follow-up full run
+   │
+   ├── REVISE_PLAN within budget → write feedback file, stay at awaiting_plan_review
+   │                               (TODO: live re-spawn loop)
+   │
+   ├── REVISE_PLAN past STATION_PLAN_REVISION_MAX → emit plan_rejected
+   │
+   └── REJECT_PLAN → emit plan_rejected (Run.status = plan_rejected, finished_at set)
+```
+
+If the queue POST fails the run stays in `awaiting_plan_review` instead
+of flipping to `plan_approved` — losing the approved plan would be
+worse than leaving the gate engaged for manual recovery. The dashboard
+surfaces every gate state via banners on Mission Control and the Agent
+Teams canvas. See `docs/configuration.md#plan-review-gate-plan_only-only`
+for the full env-var matrix and verdict-action table.
 
 ---
 

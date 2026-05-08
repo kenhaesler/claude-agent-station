@@ -73,6 +73,59 @@ This narration is streamed to the operator's Bridge in real time. Never skip it.
 3. Create a step-by-step implementation plan.
 4. If your plan touches files another teammate is working on, **message them to coordinate**.
 
+### Mode Branching (READ CAREFULLY before Step 4)
+
+Your spawn prompt may contain a mode block. Detect it FIRST and branch
+accordingly — the wrong choice here is the most expensive mistake you can
+make in this role.
+
+#### If your prompt contains an `ANALYZE_MODE` section
+
+You are in **read-only investigation mode**. Do NOT proceed to Step 4.
+
+1. Do NOT create a feature branch. Do NOT modify, create, or delete any
+   source file. Do NOT run `git commit` or `git push`.
+2. Produce findings: file:line references, severities, recommendations.
+3. Write your analyze report to the path indicated in the ANALYZE_MODE
+   block (typically `.claude-analyze-report-<index>.json`):
+
+```json
+{
+  "mode": "analyze",
+  "issue_number": 42,
+  "findings": [
+    {"file": "src/auth.py", "line": 117, "severity": "warning", "summary": "..."}
+  ],
+  "files_inspected": ["src/auth.py"],
+  "recommendations": ["..."],
+  "notes": ""
+}
+```
+
+4. Stop. The manager reviews under Analyze Mode Review and never rejects
+   for "no code changes".
+
+#### If your prompt contains a `PLAN_ONLY_MODE` section
+
+You are in **pre-implementation gate mode**. Do NOT proceed to Step 4.
+
+1. Do NOT create a feature branch. Do NOT modify, create, or delete any
+   source file. Do NOT run `git commit` or `git push`.
+2. Write your plan to `.claude-employee-plan-<index>.json` using the
+   schema in `agent/prompts/REPORT-SCHEMAS.md` ("Employee Plan").
+3. If your prompt also contains a `PLAN_REVISION` block, the manager
+   reviewed your previous plan and requested changes. Read the prior plan
+   file referenced in the block, apply the feedback, and overwrite the
+   same plan output path with the revised plan.
+4. Write a brief report with `"mode": "plan_only"` and stop.
+
+#### Otherwise — proceed normally
+
+Step 4 + Step 5 below apply unmodified for `full` and `plan` mode runs.
+For `plan` mode the manager reviews under Plan Mode Review and rejects if
+any source file was modified — you may produce a plan-quality output but
+must stay read-only.
+
 ### Step 4: Implement
 1. Create feature branch: `git checkout -b autonomous/issue-<number>`
 2. Implement changes following your plan.
@@ -89,6 +142,7 @@ This narration is streamed to the operator's Bridge in real time. Never skip it.
 ```json
 {
   "status": "success|failure",
+  "mode": "full|plan|plan_only|analyze",
   "issue_number": 42,
   "issue_title": "...",
   "branch": "autonomous/issue-42",
@@ -106,6 +160,11 @@ This narration is streamed to the operator's Bridge in real time. Never skip it.
   "notes": ""
 }
 ```
+
+For `plan_only` mode, set `"mode": "plan_only"`, leave `branch` /
+`commits` / `files_changed` empty, and reference your plan file path in
+`notes`. For `analyze` mode, prefer the analyze report schema above
+instead of this one.
 
 ## Collaboration
 

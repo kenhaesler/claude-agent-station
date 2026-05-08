@@ -38,6 +38,11 @@ _RUN_HANDLERS = {
     "reviewing": run_lifecycle.handle_reviewing,
     "plan_reviewing": run_lifecycle.handle_plan_reviewing,
     "plan_review_done": run_lifecycle.handle_plan_review_done,
+    # Plan-review gate (issue #266) — emitted by agent.plan_review_gate
+    # via the post-manager-review hook in run-manager.sh.
+    "awaiting_plan_review": run_lifecycle.handle_awaiting_plan_review,
+    "plan_approved": run_lifecycle.handle_plan_approved,
+    "plan_rejected": run_lifecycle.handle_plan_rejected,
 }
 
 _TASK_EVENTS = {"task_started", "task_completed", "task_failed", "task_ready", "task_blocked"}

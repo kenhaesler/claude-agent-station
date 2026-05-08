@@ -47,9 +47,14 @@ Written to the file path specified in the user prompt.
 
 ---
 
-## Employee Plan (`employee.md` — plan_only mode)
+## Employee Plan (`employee.md` and `agents/issue-worker.md` — plan_only mode)
 
-Written to the plan output file path specified in the user prompt (`.claude-employee-plan-{index}.json`).
+Written to the plan output file path specified in the user prompt
+(`.claude-employee-plan-{index}.json`). This is the artifact the manager
+reviews under **Plan Review Mode** (`MODE: PLAN_REVIEW` header). An
+APPROVE_PLAN verdict triggers a follow-up `full` run that reads this file
+as `APPROVED_PLAN` guidance; REVISE_PLAN re-spawns the same teammate
+with manager feedback; REJECT_PLAN closes the planning thread.
 
 ```json
 {
@@ -109,6 +114,7 @@ Written to the verdict file path provided in the user prompt.
       "verdict": "APPROVE_PLAN|REVISE_PLAN|REJECT_PLAN",
       "employee_index": 0,
       "issue_number": 42,
+      "plan_path": "/path/to/.claude-employee-plan-0.json",
       "plan_quality_score": 85,
       "feedback": "Specific feedback for the employee",
       "missing_requirements": [],
@@ -123,10 +129,50 @@ Written to the verdict file path provided in the user prompt.
 | `verdict` | `"APPROVE_PLAN"\|"REVISE_PLAN"\|"REJECT_PLAN"` | yes | |
 | `employee_index` | int | yes | 0-based |
 | `issue_number` | int | yes | |
+| `plan_path` | string | yes | Absolute path to the `.claude-employee-plan-{index}.json` file. The plan-review gate (issue #266) reads this back when enqueuing the follow-up `full` run on APPROVE_PLAN. |
 | `plan_quality_score` | int | yes | 0-100 |
 | `feedback` | string | yes | Required for REVISE_PLAN; specific and actionable |
 | `missing_requirements` | string[] | yes | Requirements not covered by the plan |
 | `suggested_changes` | string[] | yes | Specific changes to make |
+
+---
+
+## Issue-Worker Analyze Report (`agents/issue-worker.md` — analyze mode)
+
+Written to `.claude-analyze-report-{index}.json` when the teammate's
+spawn prompt contains an `ANALYZE_MODE` block. Distinct from the
+`analyst.md` analyst report below: this is a per-teammate read-only
+investigation of a single issue, not a backlog-grooming pass.
+
+```json
+{
+  "mode": "analyze",
+  "issue_number": 42,
+  "findings": [
+    {"file": "src/auth.py", "line": 117, "severity": "warning", "summary": "Null cookie path is unhandled"},
+    {"file": "src/login.tsx", "line": 42, "severity": "info", "summary": "Hover state is hardcoded"}
+  ],
+  "files_inspected": ["src/auth.py", "src/login.tsx"],
+  "recommendations": [
+    "Add unit test for the null-cookie path",
+    "Refactor `validate_token()` into smaller pieces"
+  ],
+  "notes": ""
+}
+```
+
+| Field | Type | Required | Notes |
+|-------|------|----------|-------|
+| `mode` | `"analyze"` | yes | Always `"analyze"` |
+| `issue_number` | int | yes | The issue this analysis covers |
+| `findings` | array | yes | Each: `file`, `line`, `severity`, `summary` |
+| `findings[].severity` | `"info"\|"warning"\|"critical"` | yes | |
+| `files_inspected` | string[] | yes | All files read during investigation |
+| `recommendations` | string[] | yes | Concrete next-action recommendations |
+| `notes` | string | no | |
+
+Reviewed under **Analyze Mode Review** — never rejected for "no code
+changes" / "no diff" / "no branch" (that is the expected output).
 
 ---
 

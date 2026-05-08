@@ -1510,19 +1510,41 @@ collect_employee_reports() {
         echo "## Project: $repo" >> "$review_package"
         echo "" >> "$review_package"
 
-        # Detect project mode from config
+        # Detect project mode from config and emit the matching MODE header.
+        # The manager prompt (agent/prompts/manager.md:23-33) keys its
+        # review-criteria branching off these exact headers — keep them in
+        # lockstep with that contract. Issue #266: cover all four modes,
+        # not just analyze.
         local project_mode
         project_mode=$(get_project_field "$i" "mode" 2>/dev/null || echo "full")
         [ -z "$project_mode" ] && project_mode="full"
         if [ "$project_mode" = "analyze" ]; then
+            echo "MODE: ANALYZE" >> "$review_package"
+            echo "" >> "$review_package"
             echo "### ⚠️ MODE: ANALYZE — No code changes expected" >> "$review_package"
             echo "" >> "$review_package"
             echo "This project is running in **analyze mode**. The employee was instructed to read code and create/refine GitHub issues ONLY — not to make any code changes. **Do NOT reject for absence of code changes.** Review the quality of created/refined issues instead." >> "$review_package"
             echo "" >> "$review_package"
+        elif [ "$project_mode" = "plan" ]; then
+            echo "MODE: PLAN" >> "$review_package"
+            echo "" >> "$review_package"
+            echo "### ⚠️ MODE: PLAN — Plan-quality output expected, source must be untouched" >> "$review_package"
+            echo "" >> "$review_package"
+            echo "This project is running in **plan mode**. The employee was instructed to produce plan-quality output (rich, file:line-referenced plans). Apply **Plan Mode Review** criteria. **Reject** if any source file was modified." >> "$review_package"
+            echo "" >> "$review_package"
+        elif [ "$project_mode" = "plan_only" ]; then
+            echo "MODE: PLAN_REVIEW" >> "$review_package"
+            echo "" >> "$review_package"
+            echo "### ⚠️ MODE: PLAN_REVIEW — Pre-implementation plan gate" >> "$review_package"
+            echo "" >> "$review_package"
+            echo "This project is running in **plan_only mode**. The employee wrote an implementation plan and stopped — no code, no branch, no commits. Apply **Plan Review Mode** criteria and verdict APPROVE_PLAN / REVISE_PLAN / REJECT_PLAN. Approve only if the plan covers all issue requirements and the approach is sound." >> "$review_package"
+            echo "" >> "$review_package"
         fi
 
-        # Verify no source files were modified in analyze/plan modes (defense in depth)
-        if [ "$project_mode" = "analyze" ] || [ "$project_mode" = "plan" ]; then
+        # Verify no source files were modified in analyze / plan / plan_only modes
+        # (defense in depth). plan_only stops before Step 4 — any non-plan-file
+        # change is a violation.
+        if [ "$project_mode" = "analyze" ] || [ "$project_mode" = "plan" ] || [ "$project_mode" = "plan_only" ]; then
             local dirty_files
             dirty_files=$(cd "$workspace" && { git diff --name-only 2>/dev/null; git ls-files --others --exclude-standard 2>/dev/null; } | grep -v '\.claude-' | grep -v 'node_modules')
             if [ -n "$dirty_files" ]; then
@@ -1590,6 +1612,29 @@ collect_employee_reports() {
                 echo "" >> "$review_package"
             fi
 
+            # Issue #266: surface the plan_only plan file so the manager can
+            # actually evaluate it under Plan Review Mode. Without this the
+            # review package contains only the report stub and the manager
+            # has nothing to score.
+            local plan_only_f="$workspace/.claude-employee-plan-${report_idx}.json"
+            if [ -f "$plan_only_f" ] && [ "$project_mode" = "plan_only" ]; then
+                echo "### ${employee_label} Plan (plan_only mode — review THIS, not a diff)" >> "$review_package"
+                echo '```json' >> "$review_package"
+                cat "$plan_only_f" >> "$review_package"
+                echo '```' >> "$review_package"
+                echo "" >> "$review_package"
+            fi
+
+            # Issue #266: surface the analyze report file similarly.
+            local analyze_f="$workspace/.claude-analyze-report-${report_idx}.json"
+            if [ -f "$analyze_f" ] && [ "$project_mode" = "analyze" ]; then
+                echo "### ${employee_label} Analyze Report" >> "$review_package"
+                echo '```json' >> "$review_package"
+                cat "$analyze_f" >> "$review_package"
+                echo '```' >> "$review_package"
+                echo "" >> "$review_package"
+            fi
+
             # Git diff (main vs current branch)
             cd "$workspace"
 
@@ -1651,6 +1696,10 @@ with open('$report_file') as f:
 
                 if [ "$project_mode" = "analyze" ] || [ "$report_mode" = "analyze" ]; then
                     echo "### ${employee_label}: Analyze mode — no code changes expected (this is correct behavior)" >> "$review_package"
+                elif [ "$project_mode" = "plan_only" ] || [ "$report_mode" = "plan_only" ]; then
+                    echo "### ${employee_label}: Plan-only mode — plan written, no code changes expected (this is correct behavior)" >> "$review_package"
+                elif [ "$project_mode" = "plan" ] || [ "$report_mode" = "plan" ]; then
+                    echo "### ${employee_label}: Plan mode — no code changes expected (review plan-quality output)" >> "$review_package"
                 else
                     echo "### ${employee_label}: No changes (employee stayed on $report_base_branch)" >> "$review_package"
                 fi
@@ -1671,6 +1720,25 @@ run_manager_review() {
     log_info "==========================================" >&2
     log_info "MANAGER: Reviewing employee work" >&2
     log_info "==========================================" >&2
+
+    # Issue #266: if any project is plan_only, also emit plan_review_start so
+    # the dashboard banner reflects the plan_reviewing state during this
+    # window. The standard manager_review event still fires for full-mode
+    # consumers; the two are additive.
+    local _has_plan_only="false"
+    local _project_count
+    _project_count=$(json_get "$CONFIG_FILE" "projects" 2>/dev/null | python3 -c "import json,sys; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "0")
+    for ((_pi = 0; _pi < _project_count; _pi++)); do
+        local _pm
+        _pm=$(get_project_field "$_pi" "mode" 2>/dev/null || echo "full")
+        if [ "$_pm" = "plan_only" ]; then
+            _has_plan_only="true"
+            break
+        fi
+    done
+    if [ "$_has_plan_only" = "true" ]; then
+        webhook_event "plan_review_start" review_package "$review_package" >&2
+    fi
 
     webhook_event "manager_review" review_package "$review_package" >&2
 
@@ -2771,6 +2839,39 @@ print(json.dumps(result))
 
     # ---- PHASE 3: Execute verdicts ----
     execute_verdicts "$verdicts_file"
+
+    # ---- PHASE 3.5: Plan-review gate (issue #266) ----
+    # For each plan_only project, drive the gate: parse the manager's
+    # plan_verdicts, enqueue follow-up full runs on APPROVE_PLAN, write
+    # revision feedback on REVISE_PLAN, log REJECT_PLAN. The Python
+    # driver flips the Run row's status via the dashboard webhook.
+    for ((i = 0; i < project_count; i++)); do
+        local repo_pg enabled_pg mode_pg
+        repo_pg=$(get_project_field "$i" "repo")
+        enabled_pg=$(get_project_field "$i" "enabled" 2>/dev/null || echo "true")
+        [ "$enabled_pg" = "false" ] && continue
+        mode_pg=$(get_project_field "$i" "mode" 2>/dev/null || echo "full")
+        [ -z "$mode_pg" ] && mode_pg="full"
+        if [ "$mode_pg" != "plan_only" ]; then
+            continue
+        fi
+
+        local name_pg
+        name_pg=$(repo_name "$repo_pg")
+        local workspace_pg="$WORKSPACES_DIR/$name_pg"
+
+        log_info "Plan-review gate: applying for $repo_pg (run-$RUN_ID)"
+        local agent_dir_pg
+        agent_dir_pg="$(cd "$SCRIPT_DIR/.." && pwd)"
+        PYTHONPATH="$agent_dir_pg/.." python3 -m agent.plan_review_gate \
+            --project-mode "plan_only" \
+            --verdicts "$verdicts_file" \
+            --project-repo "$repo_pg" \
+            --run-id "run-$RUN_ID" \
+            --workspace "$workspace_pg" \
+            2>&1 | while IFS= read -r line; do log_info "  gate: $line"; done || \
+            log_warn "Plan-review gate exited non-zero for $repo_pg"
+    done
 
     # ---- PHASE 3a: Clean up approved plan files and assignment files (no longer needed after verdicts) ----
     for ((i = 0; i < project_count; i++)); do

@@ -21,6 +21,18 @@
   let isLive = $derived(agentPresence.activeRuns.length > 0);
   let runPaused = $derived(!!agentPresence.pausedRuns[currentRunId]);
   let pendingDecisions = $derived(agentPresence.pendingDecisionCount);
+  // Issue #266: surface the plan-review gate so operators can see when a
+  // plan_only run is waiting on the manager (or has been approved/rejected).
+  let planReviewStatus = $derived<string | null>(
+    currentRun && (
+      currentRun.status === 'awaiting_plan_review' ||
+      currentRun.status === 'plan_approved' ||
+      currentRun.status === 'plan_rejected' ||
+      currentRun.status === 'plan_reviewing'
+    )
+      ? (currentRun.status as string)
+      : null
+  );
 
   // Operator message input — goes straight to the agent's next turn.
   let messageText = $state('');
@@ -136,6 +148,28 @@
 
   <!-- Intervention bar -->
   <InterventionBar runId={currentRunId} />
+
+  <!-- Plan-review gate banner (issue #266) -->
+  {#if planReviewStatus}
+    <div
+      class="px-4 py-2 text-xs border-b border-border"
+      class:bg-amber-500={planReviewStatus === 'awaiting_plan_review' || planReviewStatus === 'plan_reviewing'}
+      class:bg-green-600={planReviewStatus === 'plan_approved'}
+      class:bg-red-600={planReviewStatus === 'plan_rejected'}
+      class:text-white={true}
+      data-testid="plan-review-banner"
+    >
+      {#if planReviewStatus === 'awaiting_plan_review'}
+        <strong>Plan awaiting review.</strong> The teammate has written an implementation plan; the manager will approve, request revisions, or reject it before any code is written.
+      {:else if planReviewStatus === 'plan_reviewing'}
+        <strong>Manager reviewing plan…</strong>
+      {:else if planReviewStatus === 'plan_approved'}
+        <strong>Plan approved.</strong> A follow-up full run has been enqueued to implement the approved plan.
+      {:else if planReviewStatus === 'plan_rejected'}
+        <strong>Plan rejected.</strong> No follow-up run will be queued. See the manager verdict for reasoning.
+      {/if}
+    </div>
+  {/if}
 
   <!-- Main content -->
   <div class="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-0">
