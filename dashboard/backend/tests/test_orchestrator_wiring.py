@@ -469,6 +469,10 @@ async def test_orchestrate_emits_finished_when_no_projects(monkeypatch, tmp_path
     assert data["run_id"] == "run-empty-cfg-1"
     assert data["status"] == "completed"
     assert data["skip_reason"] == "no-projects-configured"
+    # Issue #266: ``mode`` must not be hard-coded in the no-projects
+    # webhook — there's no project context to derive it from. Either the
+    # key is absent or its value is None.
+    assert data.get("mode") in (None,), f"mode must be omitted/null, got {data.get('mode')!r}"
 
 
 @pytest.mark.asyncio
@@ -500,3 +504,44 @@ async def test_orchestrate_emits_finished_when_all_projects_disabled(monkeypatch
     assert len(finished) == 1
     assert finished[0][1]["status"] == "completed"
     assert finished[0][1]["skip_reason"] == "no-projects-configured"
+
+
+@pytest.mark.asyncio
+async def test_orchestrate_skips_disabled_projects_in_mixed_config(monkeypatch, tmp_path):
+    """Issue #268 follow-up: a config that mixes enabled and disabled
+    projects must process ONLY the enabled ones. Regressing this check
+    silently runs disabled projects (which is precisely the asymmetry
+    the original PR review caught).
+    """
+    from agent import station_orchestrator as so
+
+    fetched: list[str] = []
+    monkeypatch.setattr(
+        so, "fetch_eligible_issues",
+        lambda repo, _limit, _ws: fetched.append(repo) or [],
+    )
+    # Stub the empty-backlog branch so we don't dispatch vision work
+    # during the test.
+    monkeypatch.setattr(
+        so, "handle_empty_backlog",
+        lambda **_kw: "no-eligible-issues-no-vision",
+    )
+    monkeypatch.setattr(so, "post_webhook", lambda *_a, **_kw: None)
+
+    config = {
+        "projects": [
+            {"repo": "x/enabled-a", "enabled": True},
+            {"repo": "x/disabled-b", "enabled": False},
+            {"repo": "x/enabled-c"},  # default enabled=True
+        ],
+    }
+    exit_code = await so.orchestrate(
+        config=config,
+        run_id="mixed-1",
+        workspaces_dir=str(tmp_path),
+    )
+
+    assert exit_code == 0
+    assert fetched == ["x/enabled-a", "x/enabled-c"], (
+        f"disabled project must not be processed; fetched={fetched}"
+    )
