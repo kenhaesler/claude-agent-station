@@ -35,12 +35,12 @@ services:
       # /api/runs/trigger POSTs to this URL instead of calling systemctl, which
       # isn't available in the dashboard container.
       STATION_AGENT_LAUNCHER_URL: http://agent:8421
-      # NOTE: the default token below is published in this repo and is
-      # intended only for single-host dev stacks. Override via the
-      # STATION_LAUNCHER_TOKEN env (e.g. ``STATION_LAUNCHER_TOKEN=$(openssl
-      # rand -hex 32) docker compose up -d``) before exposing the launcher
-      # to anything beyond localhost.
-      STATION_LAUNCHER_TOKEN: ${STATION_LAUNCHER_TOKEN:-cas-dev-launcher-token}
+      # Required. Generate one with ``openssl rand -hex 32`` and put it in
+      # ``.env`` at the repo root (compose auto-loads it) or export it before
+      # ``docker compose up``. Compose will fail fast if it's missing — we no
+      # longer ship a published default because it leaked into prod-shaped
+      # stacks where it was never overridden.
+      STATION_LAUNCHER_TOKEN: ${STATION_LAUNCHER_TOKEN:?STATION_LAUNCHER_TOKEN must be set — generate with: openssl rand -hex 32}
       STATION_SERVICE_USER: root
       # GitHub App credentials persist in the named volume so they survive
       # container rebuilds. The credentials file holds the App's RSA private
@@ -93,9 +93,8 @@ services:
       # to localhost, which inside the agent container is the agent itself.
       STATION_WEBHOOK_URL: http://dashboard:8420/api/webhook/run-event
       # Shared secret authenticating dashboard → launcher calls. Both ends
-      # read this same env. Override with a strong token in production-shaped
-      # deployments; the default below is fine for a single-host dev stack.
-      STATION_LAUNCHER_TOKEN: ${STATION_LAUNCHER_TOKEN:-cas-dev-launcher-token}
+      # read the same value from the environment / .env at the repo root.
+      STATION_LAUNCHER_TOKEN: ${STATION_LAUNCHER_TOKEN:?STATION_LAUNCHER_TOKEN must be set — generate with: openssl rand -hex 32}
       # Where the agent fetches a fresh GitHub App installation token before
       # spawning run-manager.sh. The token gets exported as GH_TOKEN so `gh`
       # CLI calls authenticate as the App installation. Different host than

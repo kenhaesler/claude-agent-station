@@ -3,14 +3,12 @@
 Validates that:
 1. Reporter event payloads match the WebhookRunEvent schema
 2. Status normalization in the webhook router handles all known values
-3. Rate limit detection patterns match real signals and reject false positives
 
 These are pure contract tests — no database, no HTTP, no async.
 """
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
 import pytest
@@ -368,175 +366,16 @@ class TestStatusNormalization:
 
 
 # ===================================================================
-# 3. Rate limit detection pattern tests
+# 3. Cross-contract consistency
 # ===================================================================
-
-@pytest.mark.skip(
-    reason="legacy agent.coordinator.employee_runner removed; see TODO below",
-)
-class TestRateLimitPatterns:
-    """Validate RATE_LIMIT_PATTERNS from employee_runner.py against
-    realistic log lines — both true positives and false positives.
-
-    TODO: `agent.coordinator.employee_runner` was removed when the legacy
-    coordinator was replaced by `agent.station_orchestrator`. Rewrite these
-    tests against whichever module now owns rate-limit pattern detection
-    under the Agent Teams flow (or drop them if that detection moved into
-    the SDK layer).
-    """
-
-    @pytest.fixture(autouse=True)
-    def _import_patterns(self):
-        from agent.coordinator.employee_runner import (
-            RATE_LIMIT_PATTERNS,
-            RATE_LIMIT_EXIT_CODES,
-            detect_rate_limit_in_text,
-        )
-        self.patterns = RATE_LIMIT_PATTERNS
-        self.exit_codes = RATE_LIMIT_EXIT_CODES
-        self.detect = detect_rate_limit_in_text
-
-    # -- True positive: lines that SHOULD trigger detection -------------
-
-    @pytest.mark.parametrize("line", [
-        "HTTP 429 Too Many Requests",
-        "Error: 429 rate limit exceeded",
-        "API rate limit reached. Please slow down.",
-        "rate-limit hit, retrying in 30s",
-        "Error: Service overloaded, try again later",
-        "too many requests in the last minute",
-        "Your plan limit has been reached",
-        "Plan usage limit exceeded for this billing period",
-        "Usage limit exhausted — upgrade your plan",
-        "credit exhausted for org_abc123",
-        "credits depleted, no further API calls allowed",
-        "budget exceeded for this session",
-        "budget exhausted: $5.00 / $5.00 used",
-        "Insufficient capacity to process request",
-        "Request throttled by upstream provider",
-        "Sie haben 100% verwendet",  # German: "You have used 100%"
-        "100% verwendet der verfuegbaren Kapazitaet",  # German variant
-    ])
-    def test_true_positive_detection(self, line: str):
-        """Lines containing rate-limit signals must be detected."""
-        found, reason = self.detect(line)
-        assert found, f"Expected rate limit detection for: {line!r}, got reason={reason!r}"
-        assert reason, "Reason should be non-empty for a match"
-
-    # -- False positive: lines that should NOT trigger detection ---------
-
-    @pytest.mark.parametrize("line", [
-        "Running tests... 429 assertions passed",
-        "File: test_rate_handler.py",
-        "Processing batch of 429 records",
-        "Build completed in 42.9 seconds",
-        "Deployed version 4.2.9 to production",
-        "INFO: Server listening on port 8420",
-        "Committed 15 files, 429 lines changed",
-        "Employee 3 completed task successfully",
-        "Tests passed: 429/429",
-    ])
-    def test_false_positive_rejection(self, line: str):
-        """Normal log lines must NOT be detected as rate limits.
-
-        Note: Some of these will match because '429' alone is a pattern.
-        This test documents the known false-positive surface of the
-        current pattern set.
-        """
-        found, _reason = self.detect(line)
-        # The '429' pattern is intentionally broad — it will match lines
-        # containing the literal "429" even in non-rate-limit contexts.
-        # We document which false positives exist rather than asserting
-        # they don't match, since the broad pattern is a deliberate
-        # tradeoff for catching rate limits from diverse API providers.
-        if found:
-            # Verify it's the broad "429" pattern that matched
-            assert any(
-                p.pattern == "429" and p.search(line)
-                for p in self.patterns
-            ), f"Unexpected pattern matched for: {line!r}"
-
-    # -- Lines that must NOT match (no false-positive risk) -------------
-
-    @pytest.mark.parametrize("line", [
-        "INFO: Server started successfully",
-        "DEBUG: Processing webhook event",
-        "Employee 0 working on issue #42",
-        "git commit -m 'fix: resolve merge conflict'",
-        "npm install completed in 12s",
-        "All 150 tests passed",
-        "Database migration applied successfully",
-        "",
-    ])
-    def test_clean_lines_never_match(self, line: str):
-        """Completely unrelated lines must never trigger detection."""
-        found, _reason = self.detect(line)
-        assert not found, f"False positive for: {line!r}"
-
-    # -- Empty/None input -----------------------------------------------
-
-    def test_empty_text_returns_false(self):
-        """Empty string returns (False, '')."""
-        found, reason = self.detect("")
-        assert not found
-        assert reason == ""
-
-    # -- Rate limit exit codes ------------------------------------------
-
-    def test_known_exit_codes(self):
-        """Exit codes 2, 75, 69 are in the rate limit set."""
-        assert 2 in self.exit_codes   # generic API error
-        assert 75 in self.exit_codes  # tempfail
-        assert 69 in self.exit_codes  # unavailable
-
-    def test_normal_exit_codes_not_flagged(self):
-        """Exit code 0 (success) and 1 (normal failure) are not rate-limit codes."""
-        assert 0 not in self.exit_codes
-        assert 1 not in self.exit_codes
-
-    # -- Pattern completeness -------------------------------------------
-
-    def test_pattern_count(self):
-        """Document the current pattern count.
-
-        If patterns are added or removed, this test reminds you to update
-        the true/false positive test cases above.
-        """
-        assert len(self.patterns) == 12, (
-            f"RATE_LIMIT_PATTERNS has {len(self.patterns)} entries. "
-            f"If you added/removed patterns, update the test cases above."
-        )
-
-    def test_all_patterns_are_case_insensitive(self):
-        """Every pattern should use re.IGNORECASE for robustness."""
-        for pattern in self.patterns:
-            assert pattern.flags & re.IGNORECASE, (
-                f"Pattern '{pattern.pattern}' is missing re.IGNORECASE flag"
-            )
-
-    # -- Context extraction in reason string ----------------------------
-
-    def test_detection_provides_context(self):
-        """The reason string should include surrounding text for debugging."""
-        text = "ERROR: API returned 429 Too Many Requests at 2026-03-15T12:00:00Z"
-        found, reason = self.detect(text)
-        assert found
-        # Reason should contain the matched pattern and surrounding text
-        assert "429" in reason
-
-    # -- Multi-pattern text (first match wins) --------------------------
-
-    def test_first_pattern_wins(self):
-        """When multiple patterns match, the first one in the list wins."""
-        text = "429 rate limit exceeded due to throttling"
-        found, reason = self.detect(text)
-        assert found
-        # The "429" pattern comes first in RATE_LIMIT_PATTERNS
-        assert "429" in reason
-
-
-# ===================================================================
-# 4. Cross-contract consistency
+#
+# (The former rate-limit pattern tests were removed when
+# `agent.coordinator.employee_runner` and its `RATE_LIMIT_PATTERNS` /
+# `detect_rate_limit_in_text` helpers were deleted. Under the Agent
+# Teams flow rate-limit handling no longer lives in this codebase as a
+# regex-against-log-lines contract — it is owned by the SDK layer and
+# by `agent/scripts/detect_plan_usage.py`, which has its own tests in
+# `agent/scripts/`. There is nothing for this file to assert.)
 # ===================================================================
 
 class TestCrossContractConsistency:

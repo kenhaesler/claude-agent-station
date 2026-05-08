@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,7 +28,7 @@ async def sweep_stale_sessions(db: AsyncSession) -> tuple[int, int]:
 
     SQLite stores naive UTC datetimes — compare against a naive ``now``.
     """
-    now = datetime.utcnow()  # naive UTC, matches SQLite storage
+    now = datetime.now(timezone.utc).replace(tzinfo=None)  # naive UTC, matches SQLite storage
     active_cutoff = now - ACTIVE_TTL
     completed_cutoff = now - COMPLETED_TTL
 

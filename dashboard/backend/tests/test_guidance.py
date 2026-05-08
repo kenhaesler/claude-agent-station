@@ -1,36 +1,30 @@
 """Tests for POST /api/coordinator/guidance endpoint.
 
+The legacy ``agent.coordinator.guidance`` module was removed when the
+project moved to Claude Agent SDK Agent Teams mode. The endpoint now
+acts as a shim that translates legacy guidance payloads into a
+``RunControl`` row on the Mission Control control queue and emits an
+event via ``app.services.event_bus.publish``.
+
 Covers:
-- Successful guidance send with valid workspace
-- 422 when workspace is NULL / not provided
-- 422 when workspace directory does not exist
-- 422 when no active task found for the employee
-- FileNotFoundError from send_guidance -> 422
-- PermissionError from send_guidance -> 403
-- OSError from send_guidance -> 500
+- 200 on a successful guidance message against a running run
+- 200 with ``guidance_type='stop'`` mapping to a ``stop`` action
+- 400 when ``content`` is empty or whitespace
+- 404 when ``run_id`` does not exist
+- 409 when the run is in a terminal state / has ``finished_at`` set
 """
 
-import json
-import tempfile
 from datetime import datetime, timezone
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
-
-# The `agent.coordinator.guidance` module was removed when the legacy
-# coordinator was replaced by `agent.station_orchestrator`. These tests still
-# patch the old import path, so they fail at collection time. Skip the whole
-# module until the guidance router is retested against the current code path.
-# TODO: rewrite against `dashboard/backend/app/routers/coordinator.py:send_guidance_api`.
-pytestmark = pytest.mark.skip(
-    reason="legacy agent.coordinator.guidance removed; see TODO above",
-)
+from sqlalchemy import select
 
 from app.main import app
 from app.database import engine, Base, async_session
-from app.models import CoordinatorTask, Project
+from app.models import Project, Run, RunControl
 
 
 @pytest_asyncio.fixture
@@ -51,103 +45,42 @@ async def client(setup_db):
         yield ac
 
 
-@pytest_asyncio.fixture
-async def workspace_dir():
-    """Provide a temporary directory to use as a workspace."""
-    with tempfile.TemporaryDirectory() as d:
-        yield d
-
-
-@pytest_asyncio.fixture
-async def task_with_workspace(setup_db, workspace_dir):
-    """Insert a running task with a valid workspace."""
+async def _seed_project(repo: str = "test/repo") -> int:
     async with async_session() as session:
         project = Project(
-            repo="test/repo",
+            repo=repo,
             priority="medium",
             mode="full",
             enabled=True,
             branch="main",
         )
         session.add(project)
-        await session.flush()
+        await session.commit()
+        await session.refresh(project)
+        return project.id
 
-        task = CoordinatorTask(
-            id="task-guidance-0",
-            run_id="run-guidance-test",
-            project_repo="test/repo",
-            title="Test task",
-            description="A task for guidance tests",
-            status="running",
+
+async def _seed_run(
+    run_id: str,
+    status: str = "running",
+    finished_at: datetime | None = None,
+    project_id: int | None = None,
+) -> None:
+    """Insert a Run row with the given status."""
+    async with async_session() as session:
+        run = Run(
+            run_id=run_id,
+            project_id=project_id,
+            status=status,
             employee_index=0,
-            workspace=workspace_dir,
-            created_at=datetime(2026, 3, 14, 12, 0, 0, tzinfo=timezone.utc),
             started_at=datetime(2026, 3, 14, 12, 0, 0, tzinfo=timezone.utc),
+            finished_at=finished_at,
         )
-        session.add(task)
+        session.add(run)
         await session.commit()
 
 
-@pytest_asyncio.fixture
-async def task_with_null_workspace(setup_db):
-    """Insert a running task with NULL workspace."""
-    async with async_session() as session:
-        project = Project(
-            repo="test/repo",
-            priority="medium",
-            mode="full",
-            enabled=True,
-            branch="main",
-        )
-        session.add(project)
-        await session.flush()
-
-        task = CoordinatorTask(
-            id="task-guidance-null-ws",
-            run_id="run-guidance-null",
-            project_repo="test/repo",
-            title="Null workspace task",
-            description="Task with no workspace",
-            status="running",
-            employee_index=0,
-            workspace=None,
-            created_at=datetime(2026, 3, 14, 12, 0, 0, tzinfo=timezone.utc),
-            started_at=datetime(2026, 3, 14, 12, 0, 0, tzinfo=timezone.utc),
-        )
-        session.add(task)
-        await session.commit()
-
-
-@pytest_asyncio.fixture
-async def planning_task_with_workspace(setup_db, workspace_dir):
-    """Insert a planning task with a valid workspace."""
-    async with async_session() as session:
-        project = Project(
-            repo="test/repo",
-            priority="medium",
-            mode="full",
-            enabled=True,
-            branch="main",
-        )
-        session.add(project)
-        await session.flush()
-
-        task = CoordinatorTask(
-            id="task-guidance-planning",
-            run_id="run-guidance-planning",
-            project_repo="test/repo",
-            title="Planning task",
-            description="A task in planning phase",
-            status="planning",
-            employee_index=0,
-            workspace=workspace_dir,
-            created_at=datetime(2026, 3, 14, 12, 0, 0, tzinfo=timezone.utc),
-        )
-        session.add(task)
-        await session.commit()
-
-
-def _guidance_payload(run_id: str, **overrides) -> dict:
+def _payload(run_id: str, **overrides) -> dict:
     """Build a guidance request payload."""
     payload = {
         "run_id": run_id,
@@ -160,107 +93,142 @@ def _guidance_payload(run_id: str, **overrides) -> dict:
 
 
 @pytest.mark.asyncio
-async def test_send_guidance_with_valid_workspace(client, task_with_workspace, workspace_dir):
-    """POST /api/coordinator/guidance succeeds when workspace is valid."""
-    with patch("agent.coordinator.guidance.send_guidance") as mock_send:
-        payload = _guidance_payload("run-guidance-test")
-        resp = await client.post("/api/coordinator/guidance", json=payload)
+async def test_guidance_success_message(client):
+    """A valid guidance message against a running run returns 200,
+    inserts a RunControl row with action='message', and publishes."""
+    await _seed_project()
+    await _seed_run("run-success")
+
+    with patch(
+        "app.services.event_bus.publish",
+        new_callable=AsyncMock,
+    ) as mock_publish:
+        resp = await client.post(
+            "/api/coordinator/guidance",
+            json=_payload("run-success"),
+        )
 
     assert resp.status_code == 200
-    data = resp.json()
-    assert data["status"] == "ok"
-    mock_send.assert_called_once_with(workspace_dir, 0, "info", "Focus on tests")
+    body = resp.json()
+    assert body["status"] == "ok"
+    assert body["action"] == "message"
+    assert isinstance(body["control_id"], int)
+
+    # RunControl row was written with the prefixed message
+    async with async_session() as session:
+        rows = (await session.execute(
+            select(RunControl).where(RunControl.run_id == "run-success")
+        )).scalars().all()
+    assert len(rows) == 1
+    assert rows[0].action == "message"
+    assert rows[0].payload is not None
+    assert "[operator-info]" in rows[0].payload
+    assert "Focus on tests" in rows[0].payload
+    assert rows[0].requested_by == "guidance"
+
+    # An event was published
+    mock_publish.assert_awaited_once()
+    event = mock_publish.await_args.args[0]
+    assert event["type"] == "run_control_message"
+    assert event["data"]["run_id"] == "run-success"
 
 
 @pytest.mark.asyncio
-async def test_send_guidance_with_explicit_workspace(client, setup_db, workspace_dir):
-    """POST /api/coordinator/guidance succeeds when workspace is provided in payload."""
-    with patch("agent.coordinator.guidance.send_guidance") as mock_send:
-        payload = _guidance_payload("run-any", workspace=workspace_dir)
-        resp = await client.post("/api/coordinator/guidance", json=payload)
+async def test_guidance_stop_maps_to_stop_action(client):
+    """guidance_type='stop' is mapped to action='stop' with a NULL payload."""
+    await _seed_project()
+    await _seed_run("run-stop")
+
+    with patch(
+        "app.services.event_bus.publish",
+        new_callable=AsyncMock,
+    ) as mock_publish:
+        resp = await client.post(
+            "/api/coordinator/guidance",
+            json=_payload("run-stop", guidance_type="stop", content="halt now"),
+        )
 
     assert resp.status_code == 200
-    mock_send.assert_called_once()
+    body = resp.json()
+    assert body["action"] == "stop"
+
+    async with async_session() as session:
+        row = (await session.execute(
+            select(RunControl).where(RunControl.run_id == "run-stop")
+        )).scalar_one()
+    assert row.action == "stop"
+    assert row.payload is None
+
+    mock_publish.assert_awaited_once()
+    assert mock_publish.await_args.args[0]["type"] == "run_control_stop"
 
 
 @pytest.mark.asyncio
-async def test_send_guidance_null_workspace_422(client, task_with_null_workspace):
-    """POST /api/coordinator/guidance returns 422 when task has NULL workspace."""
-    payload = _guidance_payload("run-guidance-null")
-    resp = await client.post("/api/coordinator/guidance", json=payload)
+async def test_guidance_empty_content_400(client):
+    """Whitespace-only content is rejected with 400."""
+    await _seed_project()
+    await _seed_run("run-empty")
 
-    assert resp.status_code == 422
-    assert "workspace" in resp.json()["detail"].lower()
+    resp = await client.post(
+        "/api/coordinator/guidance",
+        json=_payload("run-empty", content="   "),
+    )
 
-
-@pytest.mark.asyncio
-async def test_send_guidance_nonexistent_workspace_422(client, setup_db):
-    """POST /api/coordinator/guidance returns 422 when explicit workspace path doesn't exist."""
-    payload = _guidance_payload("run-any", workspace="/nonexistent/path/to/workspace")
-    resp = await client.post("/api/coordinator/guidance", json=payload)
-
-    assert resp.status_code == 422
-    assert "not ready" in resp.json()["detail"].lower()
+    assert resp.status_code == 400
+    assert "content" in resp.json()["detail"].lower()
 
 
 @pytest.mark.asyncio
-async def test_send_guidance_no_task_found_422(client, setup_db):
-    """POST /api/coordinator/guidance returns 422 when no matching task exists."""
-    payload = _guidance_payload("run-nonexistent")
-    resp = await client.post("/api/coordinator/guidance", json=payload)
+async def test_guidance_unknown_run_404(client):
+    """Guidance against a non-existent run_id returns 404."""
+    await _seed_project()  # no Run row inserted
 
-    assert resp.status_code == 422
-    assert "workspace" in resp.json()["detail"].lower()
+    resp = await client.post(
+        "/api/coordinator/guidance",
+        json=_payload("run-nonexistent"),
+    )
 
-
-@pytest.mark.asyncio
-async def test_send_guidance_file_not_found_422(client, task_with_workspace, workspace_dir):
-    """POST /api/coordinator/guidance returns 422 when send_guidance raises FileNotFoundError."""
-    with patch(
-        "agent.coordinator.guidance.send_guidance",
-        side_effect=FileNotFoundError("workspace gone"),
-    ):
-        payload = _guidance_payload("run-guidance-test")
-        resp = await client.post("/api/coordinator/guidance", json=payload)
-
-    assert resp.status_code == 422
-    assert "disappeared" in resp.json()["detail"].lower()
+    assert resp.status_code == 404
+    assert "run not found" in resp.json()["detail"].lower()
 
 
 @pytest.mark.asyncio
-async def test_send_guidance_permission_error_403(client, task_with_workspace, workspace_dir):
-    """POST /api/coordinator/guidance returns 403 when send_guidance raises PermissionError."""
-    with patch(
-        "agent.coordinator.guidance.send_guidance",
-        side_effect=PermissionError("access denied"),
-    ):
-        payload = _guidance_payload("run-guidance-test")
-        resp = await client.post("/api/coordinator/guidance", json=payload)
+@pytest.mark.parametrize("terminal_status", ["completed", "failed", "interrupted"])
+async def test_guidance_terminal_run_409(client, terminal_status: str):
+    """Guidance against a terminal run returns 409 — the orchestrator is
+    no longer draining its control queue."""
+    await _seed_project()
+    await _seed_run(
+        f"run-{terminal_status}",
+        status=terminal_status,
+        finished_at=datetime(2026, 3, 14, 13, 0, 0, tzinfo=timezone.utc),
+    )
 
-    assert resp.status_code == 403
-    assert "permission" in resp.json()["detail"].lower()
+    resp = await client.post(
+        "/api/coordinator/guidance",
+        json=_payload(f"run-{terminal_status}"),
+    )
 
-
-@pytest.mark.asyncio
-async def test_send_guidance_os_error_500(client, task_with_workspace, workspace_dir):
-    """POST /api/coordinator/guidance returns 500 with detail on OSError."""
-    with patch(
-        "agent.coordinator.guidance.send_guidance",
-        side_effect=OSError("disk full"),
-    ):
-        payload = _guidance_payload("run-guidance-test")
-        resp = await client.post("/api/coordinator/guidance", json=payload)
-
-    assert resp.status_code == 500
-    assert "disk full" in resp.json()["detail"].lower()
+    assert resp.status_code == 409
+    detail = resp.json()["detail"].lower()
+    assert "no longer active" in detail
+    assert terminal_status in detail
 
 
 @pytest.mark.asyncio
-async def test_send_guidance_planning_task(client, planning_task_with_workspace, workspace_dir):
-    """POST /api/coordinator/guidance works for tasks in 'planning' status."""
-    with patch("agent.coordinator.guidance.send_guidance") as mock_send:
-        payload = _guidance_payload("run-guidance-planning")
-        resp = await client.post("/api/coordinator/guidance", json=payload)
+async def test_guidance_finished_at_set_409(client):
+    """A run with finished_at set is treated as terminal even if its
+    status string is something else (defence in depth)."""
+    await _seed_project()
+    await _seed_run(
+        "run-finished",
+        status="running",  # status string disagrees with finished_at
+        finished_at=datetime(2026, 3, 14, 13, 0, 0, tzinfo=timezone.utc),
+    )
 
-    assert resp.status_code == 200
-    mock_send.assert_called_once()
+    resp = await client.post(
+        "/api/coordinator/guidance",
+        json=_payload("run-finished"),
+    )
+
+    assert resp.status_code == 409
