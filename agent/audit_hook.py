@@ -332,6 +332,17 @@ def make_pre_tool_hook(
             tool_name = input_data.get("tool_name") if isinstance(input_data, dict) else getattr(input_data, "tool_name", "")
             tool_input = input_data.get("tool_input") if isinstance(input_data, dict) else getattr(input_data, "tool_input", {})
             tool_use_id = input_data.get("tool_use_id") if isinstance(input_data, dict) else getattr(input_data, "tool_use_id", None)
+            # Sub-agent attribution: the SDK populates ``agent_id`` on tool-
+            # lifecycle hook inputs when the call originated inside an Agent
+            # Teams teammate. Use it to label the audit row correctly so the
+            # timeline can distinguish lead vs. teammate work. Falls back to
+            # the configured ``actor`` for main-thread tool calls.
+            sub_agent_id = (
+                input_data.get("agent_id")
+                if isinstance(input_data, dict)
+                else getattr(input_data, "agent_id", None)
+            )
+            row_actor = f"teammate-{sub_agent_id}" if sub_agent_id else actor
             if tool_use_id:
                 # Off-load the blocking sqlite3 write so the orchestrator's
                 # event loop is not held up by WAL contention.
@@ -339,7 +350,7 @@ def make_pre_tool_hook(
                     write_audit_start,
                     idempotency_key=str(tool_use_id),
                     run_id=run_id,
-                    actor=actor,
+                    actor=row_actor,
                     tool_name=str(tool_name or ""),
                     tool_input=tool_input or {},
                     trace_id=trace_id,
