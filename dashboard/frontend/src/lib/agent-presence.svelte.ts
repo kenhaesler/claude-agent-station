@@ -361,6 +361,19 @@ function visionBootstrapCompletionToast(data: any): void {
   );
 }
 
+function visionBootstrapFailureToast(data: any): void {
+  // Failure path for vision-bootstrap runs. The success handler above only
+  // fires when status indicates completion; without this the operator sees
+  // a silent no-op when the worker dies (stale workspace, gh auth invalid,
+  // etc) and has to dig through /var/log/claude-agent to find out why.
+  // See issue #272.
+  const runId: string = (
+    data.run_id ?? data.data?.run_id ?? ''
+  ).toString();
+  const suffix = runId ? ` — see run ${runId}` : '';
+  addToast('error', `Vision analyst failed${suffix}`);
+}
+
 function handleSSEEvent(data: any) {
   const eventType = data.event ?? data.type;
   const agentColor = getRoleColors().manager;
@@ -471,13 +484,20 @@ function handleSSEEvent(data: any) {
       const vbRunMode = data.mode ?? data.data?.mode;
       if (vbRunMode !== 'vision-bootstrap') break;
       agentPresence.phase = 'idle';
+      const vbStatus: string = (data.status ?? data.data?.status ?? '').toString();
+      const vbFailed = vbStatus === 'failed' || vbStatus === 'error';
       addConversationEntry({
         agentName: 'Manager',
         agentColor,
         type: 'phase',
-        content: 'Run completed',
+        content: vbFailed ? 'Run failed' : 'Run completed',
+        isError: vbFailed,
       });
-      visionBootstrapCompletionToast(data);
+      if (vbFailed) {
+        visionBootstrapFailureToast(data);
+      } else {
+        visionBootstrapCompletionToast(data);
+      }
       refreshActiveRuns();
       break;
     }
@@ -503,10 +523,16 @@ function handleSSEEvent(data: any) {
       // Vision-bootstrap completion toast
       const runMode = data.mode ?? data.data?.mode;
       const runStatus = data.status ?? data.data?.status;
-      if (runMode === 'vision-bootstrap' && !interrupted &&
-          (runStatus === 'success' || runStatus === 'completed') &&
-          eventType !== 'orchestrator_error') {
-        visionBootstrapCompletionToast(data);
+      if (runMode === 'vision-bootstrap' && !interrupted) {
+        if ((runStatus === 'success' || runStatus === 'completed') &&
+            eventType !== 'orchestrator_error') {
+          visionBootstrapCompletionToast(data);
+        } else if (eventType === 'orchestrator_error' ||
+                   runStatus === 'failed' || runStatus === 'error') {
+          // Issue #272: surface vision-bootstrap failures so the operator
+          // doesn't have to notice the failed run row themselves.
+          visionBootstrapFailureToast(data);
+        }
       }
       refreshActiveRuns();
       break;
