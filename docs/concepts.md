@@ -8,8 +8,8 @@ Three roles, each running a different model:
 
 | Role | Default model | Responsibility |
 |------|---------------|----------------|
-| Lead | `claude-sonnet-4-6` | Fetches eligible issues, spawns one teammate per issue, reviews plans for conflicts, monitors until all work completes |
-| Teammates | `claude-opus-4-7` | Each works on a single GitHub issue in an isolated git worktree — reads code, plans, implements, tests, commits locally |
+| Lead | `claude-sonnet-4-6` | Fetches eligible issues, decomposes them into tasks, spawns exactly three role-specialized teammates (`backend`, `frontend`, `qa`), reviews plans for conflicts, monitors until all work completes |
+| Teammates | `claude-opus-4-7` | Three role specialists per run; each works in its own git worktree on the tasks routed to its specialty — reads code, plans, implements, tests, commits locally |
 | Manager | `claude-sonnet-4-6` | Reviews all teammate work post-completion and issues a verdict |
 
 The lead and teammates run inside a single Claude Agent SDK Agent Teams session driven by `agent/station_orchestrator.py`. The manager is a separate review pass invoked by `agent/scripts/run-manager.sh` after teammates finish.
@@ -23,16 +23,16 @@ After the manager reviews completed work, every run terminates with one verdict:
 | `APPROVE` | Branch is pushed and merged into `dev` |
 | `PR`      | Pull request is opened against `dev` for human review |
 | `REJECT`  | Branch is discarded, run marked failed |
+| `SKIP`    | Manager declined to act — no eligible work for this project; queue item marked completed (not failed), no branch changes |
 
 ## Issue lifecycle
 
 The lead picks issues that pass these filters:
 - Repository is enabled in the dashboard.
 - Issue is open.
-- Issue has no label in the skip set. The full skip set (from `agent/station_orchestrator.py`) is: `autonomous-agent/in-progress`, `autonomous-agent/needs-help`, `NO AI`, `backlog`, `wontfix`, `vision-suggested`. **Issues labeled `backlog` are skipped without exception** — see `CLAUDE.md`.
-- The analyst applies `autonomous-agent/refined` to issues it has already analyzed; that label is also in the skip set, so the lead does not re-assign already-refined issues.
+- Issue has no label in the skip set. The full skip set (from `agent/station_orchestrator.py` `SKIP_LABELS`) is: `autonomous-agent/in-progress`, `autonomous-agent/needs-help`, `NO AI`, `backlog`, `wontfix`, `vision-suggested`. **Issues labeled `backlog` are skipped without exception** — see `CLAUDE.md`.
 
-Each picked issue is handed to its own teammate. Teammates work inside dedicated git worktrees under `/home/claude-agent/workspaces/` so concurrent teammates do not collide.
+Eligible issues are then decomposed into tasks and distributed across the three teammates by specialty. A single issue may produce work for multiple teammates (e.g. a backend change plus a frontend update plus QA coverage), and multiple issues feed the same three teammates within one run. Each teammate works inside its own git worktree under `/home/claude-agent/workspaces/` so concurrent teammates do not collide.
 
 ## Plans
 
