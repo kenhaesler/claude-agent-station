@@ -545,3 +545,330 @@ async def test_orchestrate_skips_disabled_projects_in_mixed_config(monkeypatch, 
     assert fetched == ["x/enabled-a", "x/enabled-c"], (
         f"disabled project must not be processed; fetched={fetched}"
     )
+
+
+# --- Issue #266: project-mode wiring ---------------------------------------
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        (None, "full"),
+        ("", "full"),
+        ("full", "full"),
+        ("FULL", "full"),
+        ("analyze", "analyze"),
+        ("plan", "plan"),
+        ("plan_only", "plan_only"),
+        ("triage", "full"),  # out-of-scope mode coerced to full
+        ("garbage", "full"),
+    ],
+)
+def test_normalize_project_mode(raw, expected):
+    """All four valid modes survive; everything else falls back to 'full'."""
+    assert station_orchestrator._normalize_project_mode(raw) == expected
+
+
+def test_build_mode_block_full_is_empty():
+    """'full' must inject no block — that's the contract."""
+    assert station_orchestrator.build_mode_block("full", "/tmp/ws") == ""
+
+
+def test_build_mode_block_plan_is_empty():
+    """'plan' has no spawn-prompt block; it's enforced at manager review."""
+    assert station_orchestrator.build_mode_block("plan", "/tmp/ws") == ""
+
+
+def test_build_mode_block_analyze_contains_strict_rules():
+    block = station_orchestrator.build_mode_block("analyze", "/var/ws/repo")
+    assert "ANALYZE_MODE" in block
+    assert "READ-ONLY" in block
+    # Must point at the analyze report file path inside the workspace.
+    assert "/var/ws/repo/.claude-analyze-report-" in block
+    # Must explicitly forbid branches and pushes.
+    assert "Do NOT create a feature branch" in block
+
+
+def test_build_mode_block_plan_only_contains_plan_path():
+    block = station_orchestrator.build_mode_block("plan_only", "/var/ws/repo")
+    assert "PLAN_ONLY_MODE" in block
+    assert "PRE-IMPLEMENTATION GATE" in block
+    # Must point at the plan output file path.
+    assert "/var/ws/repo/.claude-employee-plan-" in block
+    # Must explicitly forbid Step 4.
+    assert "STOP" in block
+
+
+def test_build_mode_block_plan_only_with_revision_includes_feedback():
+    block = station_orchestrator.build_mode_block(
+        "plan_only", "/ws", plan_revision_feedback="Add error handling for null inputs",
+        prior_plan_path="/ws/.claude-employee-plan-0.json",
+    )
+    assert "PLAN_REVISION" in block
+    assert "Add error handling for null inputs" in block
+    assert "/ws/.claude-employee-plan-0.json" in block
+
+
+def test_build_team_prompt_full_has_no_mode_section():
+    """'full' team prompt does NOT contain ANALYZE_MODE / PLAN_ONLY_MODE blocks."""
+    prompt = station_orchestrator.build_team_prompt(
+        repo="x/y",
+        issues=[{"number": 1, "title": "t", "body": "b", "labels": []}],
+        config={},
+        run_id="run-x",
+        workspace="/ws",
+        worktree_paths={"backend": "/ws-b"},
+        project_mode="full",
+    )
+    assert "ANALYZE_MODE" not in prompt
+    assert "PLAN_ONLY_MODE" not in prompt
+    # No Project Mode banner for full mode.
+    assert "Project Mode:" not in prompt
+
+
+def test_build_team_prompt_analyze_injects_block_and_banner():
+    prompt = station_orchestrator.build_team_prompt(
+        repo="x/y",
+        issues=[{"number": 1, "title": "t", "body": "b", "labels": []}],
+        config={},
+        run_id="run-x",
+        workspace="/ws",
+        worktree_paths={"backend": "/ws-b"},
+        project_mode="analyze",
+    )
+    assert "ANALYZE_MODE" in prompt
+    assert "Project Mode: ANALYZE" in prompt
+    assert "PLAN_ONLY_MODE" not in prompt
+
+
+def test_build_team_prompt_plan_only_injects_block_and_banner():
+    prompt = station_orchestrator.build_team_prompt(
+        repo="x/y",
+        issues=[{"number": 1, "title": "t", "body": "b", "labels": []}],
+        config={},
+        run_id="run-x",
+        workspace="/ws",
+        worktree_paths={"backend": "/ws-b"},
+        project_mode="plan_only",
+    )
+    assert "PLAN_ONLY_MODE" in prompt
+    assert "Project Mode: PLAN_ONLY" in prompt
+    assert "ANALYZE_MODE" not in prompt
+
+
+def test_build_team_prompt_plan_has_banner_but_no_extra_block():
+    """'plan' mode needs an instruction banner so the lead enforces it,
+    even though there is no ANALYZE_MODE/PLAN_ONLY_MODE spawn-prompt block.
+    """
+    prompt = station_orchestrator.build_team_prompt(
+        repo="x/y",
+        issues=[{"number": 1, "title": "t", "body": "b", "labels": []}],
+        config={},
+        run_id="run-x",
+        workspace="/ws",
+        worktree_paths={"backend": "/ws-b"},
+        project_mode="plan",
+    )
+    assert "Project Mode: PLAN" in prompt
+    assert "ANALYZE_MODE" not in prompt
+    assert "PLAN_ONLY_MODE" not in prompt
+
+
+# --- Plan review gate (issue #266) -----------------------------------------
+
+
+def test_plan_review_gate_approve_enqueues_full_run():
+    from agent.plan_review_gate import (
+        PlanVerdict, apply_plan_verdict, build_followup_queue_item,
+        RUN_STATE_PLAN_APPROVED,
+    )
+    verdict = PlanVerdict(
+        verdict="APPROVE_PLAN",
+        employee_index=0,
+        issue_number=42,
+        plan_path="/ws/.claude-employee-plan-0.json",
+        feedback="LGTM",
+    )
+    action = apply_plan_verdict(verdict, project_repo="x/y")
+    assert action.kind == "enqueue_full_run"
+    assert action.next_run_state == RUN_STATE_PLAN_APPROVED
+    assert action.follow_up_context["approved_plan_path"] == "/ws/.claude-employee-plan-0.json"
+
+    item = build_followup_queue_item(action)
+    assert item["mode"] == "full"
+    assert item["state"] == "pending"
+    assert item["project_repo"] == "x/y"
+    assert item["issue_number"] == 42
+    import json
+    ctx = json.loads(item["context"])
+    assert ctx["approved_plan_path"] == "/ws/.claude-employee-plan-0.json"
+    assert ctx["from_plan_only_run"] is True
+
+
+def test_plan_review_gate_revise_within_budget_loops():
+    from agent.plan_review_gate import (
+        PlanVerdict, apply_plan_verdict, RUN_STATE_AWAITING_PLAN_REVIEW,
+    )
+    v = PlanVerdict(
+        verdict="REVISE_PLAN",
+        employee_index=0,
+        issue_number=42,
+        plan_path="/ws/.claude-employee-plan-0.json",
+        feedback="Add more detail on error handling",
+    )
+    action = apply_plan_verdict(v, project_repo="x/y", revision_count=0)
+    assert action.kind == "revise"
+    assert action.next_run_state == RUN_STATE_AWAITING_PLAN_REVIEW
+    assert action.follow_up_context["plan_revision_feedback"] == "Add more detail on error handling"
+    assert action.follow_up_context["revision_count"] == 1
+
+
+def test_plan_review_gate_revise_past_budget_halts(monkeypatch):
+    from agent.plan_review_gate import (
+        PlanVerdict, apply_plan_verdict, RUN_STATE_PLAN_REJECTED,
+    )
+    monkeypatch.setenv("STATION_PLAN_REVISION_MAX", "2")
+    v = PlanVerdict(
+        verdict="REVISE_PLAN",
+        employee_index=0,
+        issue_number=42,
+        plan_path="/ws/.claude-employee-plan-0.json",
+        feedback="still no good",
+    )
+    action = apply_plan_verdict(v, project_repo="x/y", revision_count=2)
+    assert action.kind == "halt_revisions_exhausted"
+    assert action.next_run_state == RUN_STATE_PLAN_REJECTED
+
+
+def test_plan_review_gate_reject_no_followup():
+    from agent.plan_review_gate import (
+        PlanVerdict, apply_plan_verdict, build_followup_queue_item,
+        RUN_STATE_PLAN_REJECTED,
+    )
+    v = PlanVerdict(
+        verdict="REJECT_PLAN",
+        employee_index=0,
+        issue_number=42,
+        plan_path=None,
+        feedback="issue is not viable",
+    )
+    action = apply_plan_verdict(v, project_repo="x/y")
+    assert action.kind == "reject"
+    assert action.next_run_state == RUN_STATE_PLAN_REJECTED
+    # build_followup_queue_item refuses to build for non-enqueue actions.
+    import pytest as _pt
+    with _pt.raises(ValueError):
+        build_followup_queue_item(action)
+
+
+def test_parse_plan_verdicts_reads_manager_output(tmp_path):
+    """parse_plan_verdicts handles the schema in REPORT-SCHEMAS.md."""
+    from agent.plan_review_gate import parse_plan_verdicts
+    f = tmp_path / "verdicts.json"
+    f.write_text("""{
+      "run_id": "run-1",
+      "plan_verdicts": [
+        {"verdict": "APPROVE_PLAN", "employee_index": 0, "issue_number": 42,
+         "plan_quality_score": 90, "feedback": "ok",
+         "plan_path": "/ws/.claude-employee-plan-0.json"}
+      ]
+    }""")
+    rows = parse_plan_verdicts(f)
+    assert len(rows) == 1
+    assert rows[0].verdict == "APPROVE_PLAN"
+    assert rows[0].issue_number == 42
+    assert rows[0].plan_quality_score == 90
+
+
+def test_parse_plan_verdicts_skips_unknown_verdict(tmp_path):
+    from agent.plan_review_gate import parse_plan_verdicts
+    f = tmp_path / "verdicts.json"
+    f.write_text("""{
+      "plan_verdicts": [
+        {"verdict": "GARBAGE", "employee_index": 0},
+        {"verdict": "REJECT_PLAN", "employee_index": 1, "issue_number": 7,
+         "feedback": "bad"}
+      ]
+    }""")
+    rows = parse_plan_verdicts(f)
+    assert len(rows) == 1
+    assert rows[0].verdict == "REJECT_PLAN"
+
+
+def test_parse_plan_verdicts_missing_file_returns_empty(tmp_path):
+    from agent.plan_review_gate import parse_plan_verdicts
+    assert parse_plan_verdicts(tmp_path / "nope.json") == []
+
+
+def test_get_plan_revision_max_default():
+    from agent.plan_review_gate import (
+        get_plan_revision_max, DEFAULT_PLAN_REVISION_MAX,
+    )
+    import os
+    os.environ.pop("STATION_PLAN_REVISION_MAX", None)
+    assert get_plan_revision_max() == DEFAULT_PLAN_REVISION_MAX
+    assert DEFAULT_PLAN_REVISION_MAX == 2
+
+
+def test_get_plan_revision_max_env_override(monkeypatch):
+    from agent.plan_review_gate import get_plan_revision_max
+    monkeypatch.setenv("STATION_PLAN_REVISION_MAX", "5")
+    assert get_plan_revision_max() == 5
+
+
+def test_get_plan_revision_max_invalid_falls_back(monkeypatch):
+    from agent.plan_review_gate import (
+        get_plan_revision_max, DEFAULT_PLAN_REVISION_MAX,
+    )
+    monkeypatch.setenv("STATION_PLAN_REVISION_MAX", "garbage")
+    assert get_plan_revision_max() == DEFAULT_PLAN_REVISION_MAX
+
+
+# --- Manager review package: MODE: header (issue #266) ---------------------
+
+
+def test_run_manager_emits_mode_headers():
+    """Verify run-manager.sh emits MODE: ANALYZE / MODE: PLAN / MODE: PLAN_REVIEW
+    headers in the review package per project mode. This is a string-level
+    assertion against the shell script — we don't actually run the script
+    in tests because it's a long pipeline.
+    """
+    import pathlib
+    script = pathlib.Path(__file__).parents[3] / "agent" / "scripts" / "run-manager.sh"
+    text = script.read_text()
+    # Each header must be emitted with the exact substring that manager.md
+    # detects (lines 26-31).
+    assert 'echo "MODE: ANALYZE"' in text
+    assert 'echo "MODE: PLAN"' in text
+    assert 'echo "MODE: PLAN_REVIEW"' in text
+    # And only the analyze-mode banner emoji line was present before this
+    # change — guard against accidental removal.
+    assert 'project_mode" = "plan_only"' in text
+
+
+# --- Frontend dropdown values match backend (issue #266) -------------------
+
+
+def test_frontend_dropdown_values_match_backend_modes():
+    """Smoke test: the four <option value="..."> entries in ProjectDetail
+    and ProjectsPage must match VALID_PROJECT_MODES on the backend.
+    Drift in either direction is a defect.
+    """
+    import pathlib
+    valid = set(station_orchestrator.VALID_PROJECT_MODES)
+
+    pd = pathlib.Path(__file__).parents[3] / "dashboard" / "frontend" / "src" / "pages" / "ProjectDetail.svelte"
+    pp = pathlib.Path(__file__).parents[3] / "dashboard" / "frontend" / "src" / "pages" / "ProjectsPage.svelte"
+    pd_text = pd.read_text()
+    pp_text = pp.read_text()
+
+    for mode in valid:
+        assert f'value="{mode}"' in pd_text, f"ProjectDetail missing dropdown option for mode {mode}"
+        assert f'value="{mode}"' in pp_text, f"ProjectsPage missing dropdown option for mode {mode}"
+
+    # ProjectDetail must have inline help text under the dropdown.
+    # We assert the existence of one short phrase per mode.
+    assert "Read-only investigation" in pd_text  # analyze
+    assert "Pre-implementation gate" in pd_text  # plan_only
+    assert "Plan-quality output" in pd_text  # plan
+    assert "Plan and implement" in pd_text  # full

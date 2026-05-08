@@ -102,7 +102,7 @@ Each managed repository is one row in the `projects` table. The dashboard's Proj
 |-------|------|---------|-------------|
 | `repo` | string | _(required)_ | GitHub repository in `owner/repo` format. |
 | `priority` | string | `"medium"` | Scheduling priority: `high`, `medium`, or `low`. |
-| `mode` | string | `"full"` | Agent operating mode: `full`, `analyze`, `plan`, `fix`, `triage`, or `review`. |
+| `mode` | string | `"full"` | Project mode — see [Project mode](#project-mode) below. |
 | `enabled` | boolean | `true` | Whether the project is picked up by the scheduler. |
 | `branch` | string | `"main"` | Default branch the agent targets. |
 | `custom_instructions` | string | _(none)_ | Extra instructions appended to the agent prompt for this project. |
@@ -124,6 +124,44 @@ Example JSON for the `POST /api/projects` request body:
   "setup_script": "pip install -r requirements.txt"
 }
 ```
+
+### Project mode
+
+Each project picks one of four modes. The orchestrator branches on this
+value to shape both the teammate spawn prompt and the manager review
+package (issue #266). Out-of-scope values (`triage`, `review`, `fix`)
+exist on the schema for legacy reasons but are coerced to `full` by the
+Agent Teams orchestrator.
+
+| Mode | Spawn-prompt block | Worker behavior | Manager review |
+|------|--------------------|-----------------|----------------|
+| `full` | _(none)_ | Plan + implement + push branch. | Full Mode Review (default). |
+| `analyze` | `ANALYZE_MODE` | Read-only investigation; writes findings to `.claude-analyze-report-{index}.json`; never modifies source, never branches, never commits. | `MODE: ANALYZE` header → Analyze Mode Review. Never rejects for "no code changes". |
+| `plan` | _(none)_ | Plan-quality output; source must be untouched. | `MODE: PLAN` header → Plan Mode Review. Rejects if any source file was modified. |
+| `plan_only` | `PLAN_ONLY_MODE` | Writes a plan to `.claude-employee-plan-{index}.json` and stops; no branch, no commit, no push. | `MODE: PLAN_REVIEW` header → Plan Review Mode. Verdicts: `APPROVE_PLAN` / `REVISE_PLAN` / `REJECT_PLAN`. |
+
+#### Plan-review gate (`plan_only` only)
+
+`plan_only` introduces a pre-implementation gate between plan-writing and
+code:
+
+- **APPROVE_PLAN** → orchestrator enqueues a follow-up `full` run on the
+  same issue with the approved plan path passed in `QueueItem.context.approved_plan_path`.
+  The implementing teammate reads it as `APPROVED_PLAN` guidance.
+- **REVISE_PLAN** → the same teammate is re-spawned with the manager's
+  feedback and the prior plan path. Bounded by `STATION_PLAN_REVISION_MAX`
+  (default `2`) — once exhausted, the gate downgrades to a soft reject.
+- **REJECT_PLAN** → the planning thread closes with a comment; no
+  follow-up run is enqueued.
+
+Run statuses added to track the gate (additive — old code keeps working):
+`awaiting_plan_review`, `plan_approved`, `plan_rejected`. The dashboard
+surfaces the gate via a banner on Mission Control and the Agent Teams
+canvas.
+
+| Env var | Default | Description |
+|---------|---------|-------------|
+| `STATION_PLAN_REVISION_MAX` | `2` | Maximum REVISE_PLAN iterations before the gate auto-rejects. Read at gate-evaluation time. |
 
 ### Vision-driven issue bootstrap
 

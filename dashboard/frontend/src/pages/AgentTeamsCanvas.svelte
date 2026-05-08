@@ -17,6 +17,19 @@
   let latestRunId = $derived(agentPresence.latestRunId);
   let agents = $derived(agentPresence.agents);
   let isActive = $derived(agents.length > 0 || employees.length > 0);
+  // Issue #266: surface the plan-review gate so the team canvas shows
+  // when a plan_only run is awaiting manager review.
+  let activeRun = $derived(agentPresence.activeRuns.find((r) => r.run_id === latestRunId) ?? null);
+  let planReviewStatus = $derived<string | null>(
+    activeRun && (
+      activeRun.status === 'awaiting_plan_review' ||
+      activeRun.status === 'plan_approved' ||
+      activeRun.status === 'plan_rejected' ||
+      activeRun.status === 'plan_reviewing'
+    )
+      ? (activeRun.status as string)
+      : null
+  );
 
   // Fetch coordinator data
   $effect(() => {
@@ -158,6 +171,22 @@
   </div>
 
 {:else}
+  {#if planReviewStatus}
+    <div
+      style="position: fixed; top: 54px; left: 0; right: 0; padding: 8px 16px; font-size: 12px; z-index: 2; color: white; background: {planReviewStatus === 'plan_approved' ? '#16a34a' : planReviewStatus === 'plan_rejected' ? '#dc2626' : '#d97706'};"
+      data-testid="plan-review-banner"
+    >
+      {#if planReviewStatus === 'awaiting_plan_review'}
+        <strong>Plan awaiting review.</strong> The teammate has written a plan; the manager will approve, request revisions, or reject it before any code is written.
+      {:else if planReviewStatus === 'plan_reviewing'}
+        <strong>Manager reviewing plan…</strong>
+      {:else if planReviewStatus === 'plan_approved'}
+        <strong>Plan approved.</strong> A follow-up full run has been enqueued.
+      {:else if planReviewStatus === 'plan_rejected'}
+        <strong>Plan rejected.</strong> No follow-up run will be queued.
+      {/if}
+    </div>
+  {/if}
   <!-- Active team canvas -->
   <div style="position: fixed; top: 54px; left: 0; right: 0; bottom: 0; z-index: 1; display: grid; grid-template-columns: 1fr 280px;">
 

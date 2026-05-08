@@ -341,10 +341,12 @@ def handle_empty_backlog(
             else "no-eligible-issues-bootstrap-already-running"
         )
 
+    # Empty-backlog skip: mode is unknown here (no project context loaded
+    # at this layer); leave as None so handle_finished doesn't overwrite an
+    # earlier project-mode value with a stale "agent-teams" sentinel.
     post_webhook(config, "finished", {
         "run_id": f"run-{run_id}",
         "project": repo,
-        "mode": "agent-teams",
         "status": "completed",
         "skip_reason": skip_reason,
     })
@@ -357,6 +359,129 @@ def handle_empty_backlog(
 TEAMMATE_ROLES = ["backend", "frontend", "qa"]
 
 
+VALID_PROJECT_MODES = ("full", "analyze", "plan", "plan_only")
+
+
+def _normalize_project_mode(raw: str | None) -> str:
+    """Coerce a project.mode value to one of VALID_PROJECT_MODES.
+
+    Issue #266: legacy/unknown values default to ``"full"`` so the
+    orchestrator never silently misinterprets a typo. ``triage`` and
+    ``review`` are out-of-scope for this gate (see github_webhook router)
+    and are also coerced to ``"full"`` here — they take a different
+    code path.
+    """
+    if not raw:
+        return "full"
+    raw = str(raw).strip().lower()
+    return raw if raw in VALID_PROJECT_MODES else "full"
+
+
+def build_mode_block(
+    project_mode: str,
+    workspace: str,
+    plan_revision_feedback: str | None = None,
+    prior_plan_path: str | None = None,
+) -> str:
+    """Build the mode-specific block to inject into a teammate spawn prompt.
+
+    Returns an empty string for ``full`` and ``plan`` (no extra block — the
+    worker proceeds normally; for ``plan`` the manager reviews under Plan
+    Mode Review and rejects any source modification).
+
+    For ``analyze`` returns an ``ANALYZE_MODE`` block instructing read-only
+    investigation and pointing at the analyze-report file.
+
+    For ``plan_only`` returns a ``PLAN_ONLY_MODE`` block matching the
+    contract documented in ``agent/prompts/employee.md:72-109`` —
+    teammate writes a plan to ``.claude-employee-plan-{index}.json`` and
+    stops before any branch / commit / push.
+
+    When ``plan_revision_feedback`` is provided (REVISE_PLAN loop), append
+    a ``PLAN_REVISION`` section with the manager's feedback and the prior
+    plan path so the teammate revises rather than starts from scratch.
+    """
+    if project_mode == "analyze":
+        return f"""
+
+## ANALYZE_MODE — READ-ONLY INVESTIGATION
+
+You are in **analyze mode**. Your role is investigation, not implementation.
+
+**STRICT RULES:**
+- Do NOT modify, create, or delete any source file under any circumstance.
+- Do NOT create a feature branch, commit, or push.
+- Do NOT run `gh issue edit ... --add-label autonomous-agent/in-progress` or any GitHub
+  state-changing command on production code.
+- The ONLY file you may write is your analyze report at
+  ``{workspace}/.claude-analyze-report-{{index}}.json``.
+
+**WHAT TO PRODUCE** (JSON shape):
+```json
+{{
+  "mode": "analyze",
+  "issue_number": 42,
+  "findings": [
+    {{"file": "src/auth.py", "line": 117, "severity": "warning", "summary": "..."}}
+  ],
+  "files_inspected": ["src/auth.py", "src/login.tsx"],
+  "recommendations": [
+    "Add unit test for the null-cookie path",
+    "Refactor `validate_token()` into smaller pieces"
+  ],
+  "notes": ""
+}}
+```
+
+The manager reviews under **Analyze Mode Review** — never rejects for
+"no code changes". Stay strictly read-only.
+"""
+
+    if project_mode == "plan_only":
+        revision_block = ""
+        if plan_revision_feedback and prior_plan_path:
+            revision_block = f"""
+
+### PLAN_REVISION — manager requested changes
+
+The manager reviewed your previous plan and requested revisions.
+
+Prior plan file: ``{prior_plan_path}``
+
+Manager feedback:
+{plan_revision_feedback}
+
+Read the prior plan, apply the feedback, and write the **updated** plan
+to the same plan output path below. Do not start from scratch — improve
+the existing plan.
+"""
+        return f"""
+
+## PLAN_ONLY_MODE — PRE-IMPLEMENTATION GATE
+
+You are in **plan-only mode**. Produce an implementation plan and stop —
+do NOT write any code, do NOT create a branch, do NOT commit, do NOT push.
+
+**STRICT RULES:**
+- After Step 3 (Plan), STOP. Do not proceed to Step 4 (Implement).
+- Write the plan to ``{workspace}/.claude-employee-plan-{{index}}.json``
+  using the Plan JSON schema in ``agent/prompts/REPORT-SCHEMAS.md``.
+- Write your final report with ``"mode": "plan_only"`` (not ``"full"``).
+- Leave the working tree clean: no source changes, no new files except
+  the plan file.
+
+After the manager reviews the plan, an **APPROVE_PLAN** verdict triggers a
+follow-up run that implements your plan. **REVISE_PLAN** sends you back
+with feedback. **REJECT_PLAN** stops the issue entirely. Treat the plan
+as a real deliverable — depth matters.{revision_block}
+"""
+
+    # full / plan / unknown → no extra block. The 'plan' path runs the
+    # standard worker flow but is reviewed under Plan Mode Review by the
+    # manager (which rejects if any source was modified).
+    return ""
+
+
 def build_team_prompt(
     repo: str,
     issues: list[dict],
@@ -365,6 +490,7 @@ def build_team_prompt(
     workspace: str = "",
     worktree_paths: dict[str, str] | None = None,
     vision: dict | None = None,
+    project_mode: str = "full",
 ) -> str:
     """Build the lead agent prompt that creates and manages the team."""
     issue_entries = []
@@ -391,6 +517,34 @@ def build_team_prompt(
     if worktree_paths:
         wt_lines = [f"- **{role}** specialist → `{path}`" for role, path in worktree_paths.items()]
         wt_section = "\n".join(wt_lines)
+
+    project_mode = _normalize_project_mode(project_mode)
+    mode_block = build_mode_block(project_mode, workspace)
+    mode_instruction = ""
+    if project_mode == "analyze":
+        mode_instruction = (
+            "\n## Project Mode: ANALYZE (read-only)\n\n"
+            "This project is in **analyze mode**. Each teammate must operate read-only — "
+            "no source edits, no branches, no commits, no pushes. They write findings to "
+            "`.claude-analyze-report-<index>.json` and stop. Include the ANALYZE_MODE block "
+            "below verbatim in every teammate spawn prompt.\n"
+        )
+    elif project_mode == "plan":
+        mode_instruction = (
+            "\n## Project Mode: PLAN (read-only plan output)\n\n"
+            "This project is in **plan mode**. Teammates produce plan-quality output but "
+            "must NOT modify any source file. The manager reviews under Plan Mode Review "
+            "and will reject any read-only violation.\n"
+        )
+    elif project_mode == "plan_only":
+        mode_instruction = (
+            "\n## Project Mode: PLAN_ONLY (pre-implementation gate)\n\n"
+            "This project is in **plan-only mode**. Each teammate writes an implementation "
+            "plan to `.claude-employee-plan-<index>.json` and STOPS — no branch, no commit, "
+            "no push. The manager will review the plan and decide APPROVE_PLAN / REVISE_PLAN "
+            "/ REJECT_PLAN. Include the PLAN_ONLY_MODE block below verbatim in every "
+            "teammate spawn prompt.\n"
+        )
 
     vision_section = ""
     if vision is not None:
@@ -431,7 +585,7 @@ plan does not violate the non-goals or anti-patterns below. If it does:
 """
 
     return f"""You are the lead of an agent team implementing GitHub issues for **{repo}**.
-
+{mode_instruction}
 ## Your Workflow
 
 1. **Create a team** called "{repo.split('/')[-1]}-{run_id[:8]}"
@@ -527,7 +681,8 @@ and your teammates lose their work. You must keep making tool calls to stay aliv
 - Workspace: {workspace}
 - Base branch: `{base_branch}` (teammates must branch FROM this)
 - GH_TOKEN is available for GitHub CLI operations
-{vision_section}"""
+{vision_section}
+{mode_block}"""
 
 
 def build_followup_prompt(
@@ -1085,6 +1240,10 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
         default_level = config.get("autonomy", {}).get("default_level", "assisted")
         autonomy_level = _coerce_level(project.get("autonomy_level") or default_level)
         max_budget_usd = project.get("max_budget_usd")
+        # Issue #266: read project mode and propagate to spawn prompt + webhooks.
+        # Falls back to "full" for legacy projects without an explicit mode.
+        project_mode = _normalize_project_mode(project.get("mode"))
+        logger.info("Project mode for %s: %s", repo, project_mode)
 
         logger.info(
             "Processing project: %s (autonomy=%s, budget=%s)",
@@ -1176,11 +1335,15 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
             else:
                 logger.warning("Failed to create worktree for %s: %s", role, result.stderr.strip())
 
-        # Notify dashboard
+        # Notify dashboard. Issue #266: webhook 'mode' carries the project's
+        # configured mode (full/analyze/plan/plan_only) so the dashboard,
+        # manager, and downstream consumers can branch on it. The Agent
+        # Teams flow is implied by the orchestrator emitting these events
+        # at all — no separate "agent-teams" sentinel is needed.
         post_webhook(config, "run_start", {
             "run_id": f"run-{run_id}",
             "project": repo,
-            "mode": "agent-teams",
+            "mode": project_mode,
             "employee_count": len(issues),
             "concurrent_group_id": f"group-{run_id}",
         })
@@ -1193,7 +1356,7 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
         post_webhook(config, "employee_start", {
             "run_id": f"run-{run_id}",
             "project": repo,
-            "mode": "agent-teams",
+            "mode": project_mode,
             "employee_index": 0,
             "concurrent_group_id": f"group-{run_id}",
         })
@@ -1248,7 +1411,10 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
                             iteration + 1, max_reentries, session_id,
                         )
                     else:
-                        prompt = build_team_prompt(repo, issues, config, run_id, workspace, worktree_paths, vision=vision)
+                        prompt = build_team_prompt(
+                            repo, issues, config, run_id, workspace, worktree_paths,
+                            vision=vision, project_mode=project_mode,
+                        )
 
                     # Build options — use resume for follow-up iterations.
                     # Auto Mode (ADR-0001) is wired here: can_use_tool runs
@@ -1313,7 +1479,7 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
                             if not first_init_sent:
                                 post_webhook(config, "orchestrator_start", {
                                     "run_id": f"run-{run_id}",
-                                    "mode": "agent-teams",
+                                    "mode": project_mode,
                                 })
                                 first_init_sent = True
 

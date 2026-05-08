@@ -1510,19 +1510,41 @@ collect_employee_reports() {
         echo "## Project: $repo" >> "$review_package"
         echo "" >> "$review_package"
 
-        # Detect project mode from config
+        # Detect project mode from config and emit the matching MODE header.
+        # The manager prompt (agent/prompts/manager.md:23-33) keys its
+        # review-criteria branching off these exact headers — keep them in
+        # lockstep with that contract. Issue #266: cover all four modes,
+        # not just analyze.
         local project_mode
         project_mode=$(get_project_field "$i" "mode" 2>/dev/null || echo "full")
         [ -z "$project_mode" ] && project_mode="full"
         if [ "$project_mode" = "analyze" ]; then
+            echo "MODE: ANALYZE" >> "$review_package"
+            echo "" >> "$review_package"
             echo "### ⚠️ MODE: ANALYZE — No code changes expected" >> "$review_package"
             echo "" >> "$review_package"
             echo "This project is running in **analyze mode**. The employee was instructed to read code and create/refine GitHub issues ONLY — not to make any code changes. **Do NOT reject for absence of code changes.** Review the quality of created/refined issues instead." >> "$review_package"
             echo "" >> "$review_package"
+        elif [ "$project_mode" = "plan" ]; then
+            echo "MODE: PLAN" >> "$review_package"
+            echo "" >> "$review_package"
+            echo "### ⚠️ MODE: PLAN — Plan-quality output expected, source must be untouched" >> "$review_package"
+            echo "" >> "$review_package"
+            echo "This project is running in **plan mode**. The employee was instructed to produce plan-quality output (rich, file:line-referenced plans). Apply **Plan Mode Review** criteria. **Reject** if any source file was modified." >> "$review_package"
+            echo "" >> "$review_package"
+        elif [ "$project_mode" = "plan_only" ]; then
+            echo "MODE: PLAN_REVIEW" >> "$review_package"
+            echo "" >> "$review_package"
+            echo "### ⚠️ MODE: PLAN_REVIEW — Pre-implementation plan gate" >> "$review_package"
+            echo "" >> "$review_package"
+            echo "This project is running in **plan_only mode**. The employee wrote an implementation plan and stopped — no code, no branch, no commits. Apply **Plan Review Mode** criteria and verdict APPROVE_PLAN / REVISE_PLAN / REJECT_PLAN. Approve only if the plan covers all issue requirements and the approach is sound." >> "$review_package"
+            echo "" >> "$review_package"
         fi
 
-        # Verify no source files were modified in analyze/plan modes (defense in depth)
-        if [ "$project_mode" = "analyze" ] || [ "$project_mode" = "plan" ]; then
+        # Verify no source files were modified in analyze / plan / plan_only modes
+        # (defense in depth). plan_only stops before Step 4 — any non-plan-file
+        # change is a violation.
+        if [ "$project_mode" = "analyze" ] || [ "$project_mode" = "plan" ] || [ "$project_mode" = "plan_only" ]; then
             local dirty_files
             dirty_files=$(cd "$workspace" && { git diff --name-only 2>/dev/null; git ls-files --others --exclude-standard 2>/dev/null; } | grep -v '\.claude-' | grep -v 'node_modules')
             if [ -n "$dirty_files" ]; then
@@ -1590,6 +1612,29 @@ collect_employee_reports() {
                 echo "" >> "$review_package"
             fi
 
+            # Issue #266: surface the plan_only plan file so the manager can
+            # actually evaluate it under Plan Review Mode. Without this the
+            # review package contains only the report stub and the manager
+            # has nothing to score.
+            local plan_only_f="$workspace/.claude-employee-plan-${report_idx}.json"
+            if [ -f "$plan_only_f" ] && [ "$project_mode" = "plan_only" ]; then
+                echo "### ${employee_label} Plan (plan_only mode — review THIS, not a diff)" >> "$review_package"
+                echo '```json' >> "$review_package"
+                cat "$plan_only_f" >> "$review_package"
+                echo '```' >> "$review_package"
+                echo "" >> "$review_package"
+            fi
+
+            # Issue #266: surface the analyze report file similarly.
+            local analyze_f="$workspace/.claude-analyze-report-${report_idx}.json"
+            if [ -f "$analyze_f" ] && [ "$project_mode" = "analyze" ]; then
+                echo "### ${employee_label} Analyze Report" >> "$review_package"
+                echo '```json' >> "$review_package"
+                cat "$analyze_f" >> "$review_package"
+                echo '```' >> "$review_package"
+                echo "" >> "$review_package"
+            fi
+
             # Git diff (main vs current branch)
             cd "$workspace"
 
@@ -1651,6 +1696,10 @@ with open('$report_file') as f:
 
                 if [ "$project_mode" = "analyze" ] || [ "$report_mode" = "analyze" ]; then
                     echo "### ${employee_label}: Analyze mode — no code changes expected (this is correct behavior)" >> "$review_package"
+                elif [ "$project_mode" = "plan_only" ] || [ "$report_mode" = "plan_only" ]; then
+                    echo "### ${employee_label}: Plan-only mode — plan written, no code changes expected (this is correct behavior)" >> "$review_package"
+                elif [ "$project_mode" = "plan" ] || [ "$report_mode" = "plan" ]; then
+                    echo "### ${employee_label}: Plan mode — no code changes expected (review plan-quality output)" >> "$review_package"
                 else
                     echo "### ${employee_label}: No changes (employee stayed on $report_base_branch)" >> "$review_package"
                 fi

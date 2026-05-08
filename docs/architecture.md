@@ -285,11 +285,43 @@ See [`configuration.md`](configuration.md#environment-variables) for the full ta
 
 The orchestrator dispatches runs in different modes, each with distinct behavior and responsibilities:
 
-- **`agent-teams`** — full autonomous workflow: lead decomposes eligible issues into tasks, spawns three teammates in isolated worktrees, manager reviews each implementation, verdicts issued (APPROVE/PR/REJECT).
+### Project mode (per-project, set via UI)
+
+Each project picks one of four modes (`Project.mode`). The Agent Teams
+orchestrator branches on this value to shape both the spawn prompt and
+the manager review package — see [`configuration.md` §
+Project mode](configuration.md#project-mode) for the full table and
+[`agent/prompts/manager.md`](../agent/prompts/manager.md) for the
+review-criteria branching.
+
+- **`full`** — plan + implement + push branch. Manager review under Full Mode Review.
+- **`analyze`** — read-only investigation; teammates write findings to a report file. Reviewed under Analyze Mode Review.
+- **`plan`** — plan-quality output, source untouched. Reviewed under Plan Mode Review.
+- **`plan_only`** — pre-implementation gate. Teammates write a plan and stop. Reviewed under Plan Review Mode (`APPROVE_PLAN` / `REVISE_PLAN` / `REJECT_PLAN`). On approve, a follow-up `full` run is enqueued referencing the approved plan.
+
+### Run-level run kinds
+
+- **Agent Teams flow** (the default for `full`/`analyze`/`plan`/`plan_only`) — lead decomposes eligible issues into tasks, spawns three teammates in isolated worktrees, manager reviews each implementation, verdicts issued (APPROVE/PR/REJECT for `full`; APPROVE_PLAN/REVISE_PLAN/REJECT_PLAN for `plan_only`).
 - **`vision-bootstrap`** — single-shot run that dispatches `agent/vision_analyst.py` to propose new issues from `docs/vision.md`. Triggered automatically (orchestrator empty backlog, or vision commit with content-hash change) or manually from the Vision tab. Never spawns teammates, never opens PRs.
-- **`fix`** — single-issue repair mode for regressions and urgent bugs.
-- **`triage`** — issue classification and labeling without implementation.
-- **`review`** — security or code review mode for pull requests.
+- **`fix`** — single-issue repair mode for regressions and urgent bugs (legacy; not exposed in the project mode dropdown).
+- **`triage`** — issue classification and labeling without implementation (legacy).
+- **`review`** — security or code review mode for pull requests (legacy).
+
+### Plan-review gate
+
+The `plan_only` mode adds a manual checkpoint between plan-writing and
+implementation. The flow:
+
+```
+plan_only run finishes → manager reviews plan
+  ├── APPROVE_PLAN → enqueue follow-up `full` run (passes plan path as APPROVED_PLAN)
+  ├── REVISE_PLAN  → re-spawn same teammate with feedback (loop bounded by STATION_PLAN_REVISION_MAX)
+  └── REJECT_PLAN  → close planning thread, no follow-up
+```
+
+Run-state additions: `awaiting_plan_review` → `plan_approved` /
+`plan_rejected`. The dashboard surfaces the gate via banners on Mission
+Control and the Agent Teams canvas. Implementation: `agent/plan_review_gate.py`.
 
 ---
 
