@@ -87,6 +87,11 @@ async def _migrate_add_columns(conn) -> None:
         ("projects", "vision_cached_sha",  "ALTER TABLE projects ADD COLUMN vision_cached_sha TEXT"),
         ("projects", "vision_cached_body", "ALTER TABLE projects ADD COLUMN vision_cached_body TEXT"),
         ("projects", "vision_cached_at",   "ALTER TABLE projects ADD COLUMN vision_cached_at DATETIME"),
+        # Vision-bootstrap columns (spec 2026-05-08-vision-issue-bootstrap-design.md)
+        ("runs", "skip_reason", "ALTER TABLE runs ADD COLUMN skip_reason TEXT"),
+        ("runs", "vision_bootstrap_count", "ALTER TABLE runs ADD COLUMN vision_bootstrap_count INTEGER"),
+        ("runs", "vision_bootstrap_proposals", "ALTER TABLE runs ADD COLUMN vision_bootstrap_proposals TEXT"),
+        ("projects", "last_vision_analyzed_sha", "ALTER TABLE projects ADD COLUMN last_vision_analyzed_sha TEXT"),
     ]
     # `table` and `sql` below are hardcoded literals from the migrations tuple
     # list above; PRAGMA + ALTER TABLE do not support bound parameters for
