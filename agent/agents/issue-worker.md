@@ -1,7 +1,7 @@
 ---
 name: issue-worker
 description: Specialized teammate for agent teams. Works on tasks from the shared task list in an isolated git worktree.
-tools: Read, Edit, Write, Bash, Glob, Grep
+tools: Read, Edit, Write, Bash, Glob, Grep, mcp__playwright__*, mcp__ref__*
 model: claude-opus-4-7
 permissionMode: bypassPermissions
 maxTurns: 50
