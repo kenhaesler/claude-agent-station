@@ -158,14 +158,20 @@ GH_TOKEN=ghp_your_token_here
 
 ### 9. Install systemd units
 
-The installer writes `claude-station-dashboard.service` inline with the correct paths. Copy the other two units from the repo:
+`agent/systemd/` ships five unit files: `claude-agent.service`, `claude-agent.timer`, `claude-agent-validate.service`, `claude-agent-validate.timer`, and `claude-station-dashboard.service`.
+
+The repo's `claude-station-dashboard.service` exists on disk, but it ships with hardcoded paths from a different layout (`/opt/git/claude-agent-station/...`). `install.sh` does not edit it in place — it overwrites `/etc/systemd/system/claude-station-dashboard.service` with a freshly-rendered version pointing at the canonical `/opt/claude-agent-station` install. For a manual install you must do the same: do not just `cp` the repo file unless you also rewrite the paths inside it (e.g. `sudo sed -i 's|/opt/git/claude-agent-station|/opt/claude-agent-station|g' /etc/systemd/system/claude-station-dashboard.service`). The inline template below is authoritative.
+
+Copy the four agent units (these contain no installer-substituted values):
 
 ```bash
-sudo cp /opt/claude-agent-station/agent/systemd/claude-agent.service /etc/systemd/system/
-sudo cp /opt/claude-agent-station/agent/systemd/claude-agent.timer    /etc/systemd/system/
+sudo cp /opt/claude-agent-station/agent/systemd/claude-agent.service          /etc/systemd/system/
+sudo cp /opt/claude-agent-station/agent/systemd/claude-agent.timer            /etc/systemd/system/
+sudo cp /opt/claude-agent-station/agent/systemd/claude-agent-validate.service /etc/systemd/system/
+sudo cp /opt/claude-agent-station/agent/systemd/claude-agent-validate.timer   /etc/systemd/system/
 ```
 
-Write `/etc/systemd/system/claude-station-dashboard.service`:
+Write `/etc/systemd/system/claude-station-dashboard.service` (this matches what the installer renders):
 
 ```ini
 [Unit]
@@ -224,6 +230,14 @@ sudo systemctl enable claude-agent.timer
 ```
 
 The agent timer is enabled (fires hourly) but not started yet — start it when you are ready for the first automated run.
+
+### Optional: enable the validate timer
+
+The `claude-agent-validate.timer` unit fires daily at 06:00 to run validate-and-promote checks. The automated installer does not enable it — neither does the manual flow above. Enable it explicitly if you want the daily validation pass:
+
+```bash
+sudo systemctl enable --now claude-agent-validate.timer
+```
 
 ## First-run walkthrough
 
@@ -302,15 +316,24 @@ sudo bash install.sh --uninstall
 Or manually:
 
 ```bash
-sudo systemctl disable --now claude-station-dashboard.service claude-agent.timer claude-agent.service
+sudo systemctl disable --now \
+    claude-station-dashboard.service \
+    claude-agent.timer \
+    claude-agent.service \
+    claude-agent-validate.timer \
+    claude-agent-validate.service
 sudo rm -f /etc/systemd/system/claude-station-dashboard.service \
            /etc/systemd/system/claude-agent.service \
-           /etc/systemd/system/claude-agent.timer
+           /etc/systemd/system/claude-agent.timer \
+           /etc/systemd/system/claude-agent-validate.service \
+           /etc/systemd/system/claude-agent-validate.timer
 sudo systemctl daemon-reload
 sudo rm -rf /opt/claude-agent-station
 # Close firewall port
 sudo firewall-cmd --permanent --remove-port=8420/tcp && sudo firewall-cmd --reload
 ```
+
+(`install.sh --uninstall` itself only removes the three units it installed — the validate units are silently left behind. The manual command above is more thorough.)
 
 Data and logs are preserved by default. To remove them completely:
 
