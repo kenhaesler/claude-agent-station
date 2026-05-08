@@ -39,7 +39,7 @@ Defaults per role (from `agent/config/default-config.json`):
 
 To change a model, set the corresponding key via the dashboard Config page or `PATCH /api/config`. The orchestrator picks up the change on the next run.
 
-A fallback model can also be configured via `--fallback-model` on the CLI; when the primary model is throttled, the system falls back one tier (Opus 4.7 → Sonnet 4.6, Sonnet 4.6 → Haiku 4.5) rather than silently degrading the primary model.
+A fallback model is also configured via `--fallback-model` on every Claude CLI invocation; when the primary model returns an API error, the SDK falls back one tier (Opus 4.7 → Sonnet 4.6, Sonnet 4.6 → Haiku 4.5). This is independent of plan-usage throttling, which short-circuits the run before it starts.
 
 ## Budgets and rate limits
 
@@ -92,7 +92,7 @@ Agent behaviour is gated by a per-project autonomy-level setting. See [`adr/0001
 
 If none of these are set, the dashboard and webhook endpoints run unauthenticated — only suitable for a fully isolated host.
 
-Exempt from `STATION_API_KEY` auth (verified in `dashboard/backend/app/main.py`): the health router, the internal agent webhook router, the GitHub webhook router, and GitHub App lifecycle endpoints.
+Exempt from `STATION_API_KEY` auth (verified in `dashboard/backend/app/main.py`): the health router, the internal agent webhook router, the WebSocket log-streaming router (`logs.ws_router` at `/api/logs/ws`, which has its own inline WebSocket auth), the GitHub webhook router, and GitHub App lifecycle endpoints.
 
 ## Project config
 
