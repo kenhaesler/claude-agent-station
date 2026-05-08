@@ -7,7 +7,8 @@ import tempfile
 import pytest
 
 # Override DB path before any app imports
-_tmp_db = tempfile.mktemp(suffix=".db")
+_fd, _tmp_db = tempfile.mkstemp(suffix=".db")
+os.close(_fd)
 os.environ["STATION_DB_PATH"] = _tmp_db
 
 
