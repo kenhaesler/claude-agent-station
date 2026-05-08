@@ -212,6 +212,63 @@ assert_json_valid "build_webhook_json odd-kv tail is still valid JSON" "$trail_o
 assert_contains "build_webhook_json odd-kv keeps prior pair" '"key1": "v1"' "$trail_out"
 
 # ---------------------------------------------------------------------------
+# Employee event shapes (follow-up to #255)
+# ---------------------------------------------------------------------------
+echo "[#255 follow-up] employee_start / employee_complete event shapes"
+
+# employee_start: spaces in project, numeric employee_index
+emp_start="$(build_webhook_json "employee_start" "run-X" \
+    project "owner/repo with spaces" \
+    mode "auto" \
+    employee_index 2 \
+    concurrent_group_id "grp-1")"
+assert_json_valid "employee_start valid JSON" "$emp_start"
+assert_contains "employee_start event field" '"event": "employee_start"' "$emp_start"
+assert_contains "employee_start run_id field" '"run_id": "run-X"' "$emp_start"
+assert_eq "employee_start employee_index is number" \
+    "2" \
+    "$(printf '%s' "$emp_start" | python3 -c "import json,sys; v=json.load(sys.stdin)['employee_index']; print(type(v).__name__, v)" | awk '{print $2}')"
+emp_start_project="$(printf '%s' "$emp_start" | python3 -c "import json,sys; print(json.load(sys.stdin)['project'])")"
+assert_eq "employee_start project round-trips spaces" "owner/repo with spaces" "$emp_start_project"
+
+# Confirm employee_index is JSON int, not string
+emp_idx_type="$(printf '%s' "$emp_start" | python3 -c "import json,sys; v=json.load(sys.stdin)['employee_index']; print(type(v).__name__)")"
+assert_eq "employee_start employee_index is JSON int type" "int" "$emp_idx_type"
+
+# project with quotes, backslash, dollar sign, and newline — must round-trip exactly
+NASTY_PROJECT=$'"owner/repo" with \\backslash $dollar\nand newline'
+nasty_start="$(build_webhook_json "employee_start" "run-X" \
+    project "$NASTY_PROJECT" \
+    mode "auto" \
+    employee_index 0 \
+    concurrent_group_id "grp-1")"
+assert_json_valid "employee_start nasty project is valid JSON" "$nasty_start"
+nasty_project_rt="$(printf '%s' "$nasty_start" | python3 -c "import json,sys; print(json.load(sys.stdin)['project'])")"
+assert_eq "employee_start nasty project round-trips" "$NASTY_PROJECT" "$nasty_project_rt"
+
+# tokens_total edge cases: 0, large value, negative -1
+tok_zero="$(build_webhook_json "employee_complete" "run-X" \
+    project "owner/repo" exit_code 0 employee_index 0 \
+    concurrent_group_id "grp-1" \
+    tokens_input 0 tokens_output 0 tokens_total 0 turns 0)"
+assert_json_valid "employee_complete tokens_total=0 valid JSON" "$tok_zero"
+assert_contains "employee_complete tokens_total 0 is number" '"tokens_total": 0' "$tok_zero"
+
+tok_large="$(build_webhook_json "employee_complete" "run-X" \
+    project "owner/repo" exit_code 0 employee_index 0 \
+    concurrent_group_id "grp-1" \
+    tokens_input 1000000 tokens_output 234567 tokens_total 1234567890 turns 42)"
+assert_json_valid "employee_complete large tokens valid JSON" "$tok_large"
+assert_contains "employee_complete tokens_total large is number" '"tokens_total": 1234567890' "$tok_large"
+
+tok_neg="$(build_webhook_json "employee_complete" "run-X" \
+    project "owner/repo" exit_code 0 employee_index 0 \
+    concurrent_group_id "grp-1" \
+    tokens_input 0 tokens_output 0 tokens_total -1 turns 0)"
+assert_json_valid "employee_complete tokens_total=-1 valid JSON" "$tok_neg"
+assert_contains "employee_complete tokens_total -1 is number" '"tokens_total": -1' "$tok_neg"
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo

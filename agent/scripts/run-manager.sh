@@ -931,10 +931,16 @@ run_employee() {
     _ewh_secret="${STATION_WEBHOOK_SECRET:-$(json_get "$CONFIG_FILE" "dashboard.webhook_secret" 2>/dev/null || echo "")}"
     local -a _ewh_auth=()
     [ -n "$_ewh_secret" ] && _ewh_auth=(-H "X-Webhook-Token: $_ewh_secret")
+    local _emp_start_payload
+    _emp_start_payload=$(build_webhook_json "employee_start" "$employee_run_id" \
+        project "$repo" \
+        mode "$mode" \
+        employee_index "$employee_index" \
+        concurrent_group_id "${CONCURRENT_GROUP_ID:-run-$RUN_ID}")
     curl -s --max-time 3 -X POST "$_ewh_url" \
         -H "Content-Type: application/json" \
         "${_ewh_auth[@]}" \
-        -d "{\"event\":\"employee_start\",\"run_id\":\"$employee_run_id\",\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"project\":\"$repo\",\"mode\":\"$mode\",\"employee_index\":$employee_index,\"concurrent_group_id\":\"${CONCURRENT_GROUP_ID:-run-$RUN_ID}\"}" \
+        -d "$_emp_start_payload" \
         2>/dev/null || true
     # Emit role-specific presence event for planner mode
     if [ "$mode" = "plan" ]; then
@@ -1431,10 +1437,20 @@ print(f'{t:,}')
     fi
 
     # Use employee-specific run_id to complete the correct Run record
+    local _emp_complete_payload
+    _emp_complete_payload=$(build_webhook_json "employee_complete" "$employee_run_id" \
+        project "$repo" \
+        exit_code "$exit_code" \
+        employee_index "$employee_index" \
+        concurrent_group_id "${CONCURRENT_GROUP_ID:-run-$RUN_ID}" \
+        tokens_input "$_et_in" \
+        tokens_output "$_et_out" \
+        tokens_total "$_et_total" \
+        turns "$_et_turns")
     curl -s --max-time 3 -X POST "$_ewh_url" \
         -H "Content-Type: application/json" \
         "${_ewh_auth[@]}" \
-        -d "{\"event\":\"employee_complete\",\"run_id\":\"$employee_run_id\",\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"project\":\"$repo\",\"exit_code\":$exit_code,\"employee_index\":$employee_index,\"concurrent_group_id\":\"${CONCURRENT_GROUP_ID:-run-$RUN_ID}\",\"tokens_input\":$_et_in,\"tokens_output\":$_et_out,\"tokens_total\":$_et_total,\"turns\":$_et_turns}" \
+        -d "$_emp_complete_payload" \
         2>/dev/null || true
 
     # Transition queue item to review
