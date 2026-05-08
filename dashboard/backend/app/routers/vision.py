@@ -112,6 +112,24 @@ async def commit_vision(
     project.vision_cached_body = fresh.body
     project.vision_cached_at = now
 
+    # Trigger B (spec 2026-05-08-vision-issue-bootstrap-design.md):
+    # fire the analyst when the vision SHA actually changed. We set
+    # last_vision_analyzed_sha at *dispatch* time (not on completion) so a
+    # failed analyst doesn't loop on identical re-commits.
+    if fresh.sha != project.last_vision_analyzed_sha:
+        try:
+            result = await service_control.start_vision_analyst(project_id)
+            if not result.get("success") and result.get("status_code") != 409:
+                logger.warning(
+                    "vision commit B-trigger dispatch failed: %s",
+                    result.get("error") or result.get("stderr"),
+                )
+            else:
+                # 200 or 409 — both mean "an analyst run will happen"
+                project.last_vision_analyzed_sha = fresh.sha
+        except Exception as exc:
+            logger.warning("vision commit B-trigger dispatch exception: %s", exc)
+
     # Mark any active chat session as approved with the assembled doc
     active = await vc_service.get_active_session(db, project_id)
     if active:

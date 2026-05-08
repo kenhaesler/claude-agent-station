@@ -220,3 +220,101 @@ async def test_find_gaps_calls_service_control(project):
             r = await c.post(f"/api/projects/{project.id}/vision/find-gaps")
     assert r.status_code == 200
     assert r.json()["status"] == "triggered"
+
+
+# ---------------------------------------------------------------------------
+# Trigger B — auto-fire analyst on vision commit
+# ---------------------------------------------------------------------------
+
+def _commit_body():
+    return {
+        "vision_doc": {
+            "problem": "P", "users": "U", "end_state": "E", "non_goals": "N",
+            "principles": "Pr", "horizons": "H", "anti_patterns": "A",
+        }
+    }
+
+
+@pytest.mark.asyncio
+async def test_commit_vision_fires_analyst_when_sha_changes(project):
+    """Two commits with different fresh.sha values → start_vision_analyst called twice."""
+    async with async_session() as db:
+        proj = await db.get(Project, project.id)
+        proj.vision_cached_sha = "old-sha"
+        await db.commit()
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        analyst_mock = AsyncMock(return_value={"success": True, "status_code": 200, "pid": 1})
+        with patch("app.services.github_contents.write_file", new=AsyncMock(return_value="sha-1")), \
+             patch("app.services.github_contents.read_file",
+                   new=AsyncMock(return_value=ContentsResult(sha="sha-1", body="# v1", html_url="http://x"))), \
+             patch("app.services.service_control.start_vision_analyst", new=analyst_mock):
+            r1 = await c.post(f"/api/projects/{project.id}/vision", json=_commit_body())
+        assert r1.status_code == 200
+
+        # Second commit with a different SHA
+        analyst_mock2 = AsyncMock(return_value={"success": True, "status_code": 200, "pid": 2})
+        with patch("app.services.github_contents.write_file", new=AsyncMock(return_value="sha-2")), \
+             patch("app.services.github_contents.read_file",
+                   new=AsyncMock(return_value=ContentsResult(sha="sha-2", body="# v2", html_url="http://x"))), \
+             patch("app.services.service_control.start_vision_analyst", new=analyst_mock2):
+            r2 = await c.post(f"/api/projects/{project.id}/vision", json=_commit_body())
+        assert r2.status_code == 200
+
+    analyst_mock.assert_called_once()
+    analyst_mock2.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_commit_vision_skips_analyst_when_sha_unchanged(project):
+    """Second commit returns the same fresh.sha → analyst called only once total."""
+    async with async_session() as db:
+        proj = await db.get(Project, project.id)
+        proj.vision_cached_sha = "old-sha"
+        await db.commit()
+
+    transport = ASGITransport(app=app)
+    analyst_mock = AsyncMock(return_value={"success": True, "status_code": 200, "pid": 1})
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        # First commit — new SHA → analyst fires
+        with patch("app.services.github_contents.write_file", new=AsyncMock(return_value="same-sha")), \
+             patch("app.services.github_contents.read_file",
+                   new=AsyncMock(return_value=ContentsResult(sha="same-sha", body="# v1", html_url="http://x"))), \
+             patch("app.services.service_control.start_vision_analyst", new=analyst_mock):
+            r1 = await c.post(f"/api/projects/{project.id}/vision", json=_commit_body())
+        assert r1.status_code == 200
+
+        # Second commit — same SHA returned → analyst must NOT fire again
+        with patch("app.services.github_contents.write_file", new=AsyncMock(return_value="same-sha")), \
+             patch("app.services.github_contents.read_file",
+                   new=AsyncMock(return_value=ContentsResult(sha="same-sha", body="# v1", html_url="http://x"))), \
+             patch("app.services.service_control.start_vision_analyst", new=analyst_mock):
+            r2 = await c.post(f"/api/projects/{project.id}/vision", json=_commit_body())
+        assert r2.status_code == 200
+
+    analyst_mock.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_commit_vision_treats_409_as_success(project):
+    """409 from launcher is treated as success: commit returns 200 and SHA is advanced."""
+    async with async_session() as db:
+        proj = await db.get(Project, project.id)
+        proj.vision_cached_sha = "old-sha"
+        await db.commit()
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        with patch("app.services.github_contents.write_file", new=AsyncMock(return_value="new-sha")), \
+             patch("app.services.github_contents.read_file",
+                   new=AsyncMock(return_value=ContentsResult(sha="new-sha", body="# v", html_url="http://x"))), \
+             patch("app.services.service_control.start_vision_analyst",
+                   new=AsyncMock(return_value={"success": False, "status_code": 409, "error": "already running"})):
+            r = await c.post(f"/api/projects/{project.id}/vision", json=_commit_body())
+    assert r.status_code == 200
+
+    # SHA must have been advanced so identical re-commits don't refire
+    async with async_session() as db:
+        proj = await db.get(Project, project.id)
+        assert proj.last_vision_analyzed_sha == "new-sha"
