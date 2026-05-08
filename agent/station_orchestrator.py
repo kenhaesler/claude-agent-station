@@ -309,6 +309,48 @@ def dispatch_vision_bootstrap(project_id: int) -> str:
     return "dispatched"
 
 
+def handle_empty_backlog(
+    config: dict,
+    repo: str,
+    project_id: int | None,
+    workspace: str,
+    run_id: str,
+) -> str:
+    """Decide what to do when a project's backlog is empty.
+
+    Returns the skip_reason string. Side-effects:
+      - posts a `finished` webhook for the regular run with skip_reason
+      - dispatches the vision_analyst when conditions match (Trigger A)
+    """
+    has_vision = os.path.isfile(os.path.join(workspace, "docs", "vision.md"))
+    proposals_pending = has_vision and has_open_vision_proposals(repo)
+
+    if not has_vision:
+        skip_reason = "no-eligible-issues-no-vision"
+    elif proposals_pending:
+        skip_reason = "no-eligible-issues-proposals-pending"
+    elif project_id is None:
+        # Can't dispatch without a project_id (manager-config drift).
+        skip_reason = "no-eligible-issues-no-vision"
+    else:
+        outcome = dispatch_vision_bootstrap(project_id)
+        skip_reason = (
+            "no-eligible-issues-bootstrap-dispatched"
+            if outcome == "dispatched"
+            else "no-eligible-issues-bootstrap-already-running"
+        )
+
+    post_webhook(config, "finished", {
+        "run_id": f"run-{run_id}",
+        "project": repo,
+        "mode": "agent-teams",
+        "status": "completed",
+        "skip_reason": skip_reason,
+    })
+    logger.info("Empty backlog for %s: %s", repo, skip_reason)
+    return skip_reason
+
+
 # ── Team Prompt Construction ──────────────────────────────────
 
 TEAMMATE_ROLES = ["backend", "frontend", "qa"]
@@ -1006,7 +1048,13 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
         # Fetch and filter issues
         issues = fetch_eligible_issues(repo, max_per_project, workspace)
         if not issues:
-            logger.info("No eligible issues for %s, skipping", repo)
+            handle_empty_backlog(
+                config=config,
+                repo=repo,
+                project_id=project.get("id"),
+                workspace=workspace,
+                run_id=run_id,
+            )
             continue
 
         # Hook 1: vision-aware prioritisation

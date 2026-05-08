@@ -364,3 +364,76 @@ def test_dispatch_vision_bootstrap_falls_back_on_unexpected_status(monkeypatch):
     monkeypatch.setenv("STATION_AGENT_LAUNCHER_URL", "http://launcher:8421")
     assert dispatch_vision_bootstrap(42) == "dispatched"
     assert spawned == [["python", "-m", "agent.vision_analyst", "--project-id", "42"]]
+
+
+# --- Task 6: handle_empty_backlog -------------------------------------------
+
+
+def test_handle_empty_backlog_dispatches_when_vision_and_no_proposals(monkeypatch, tmp_path):
+    """Trigger A: dispatches and reports skip_reason=bootstrap-dispatched."""
+    from agent import station_orchestrator as so
+
+    ws = tmp_path / "repo"
+    ws.mkdir()
+    (ws / "docs").mkdir()
+    (ws / "docs" / "vision.md").write_text("## Problem\np\n## Users\nu\n## End-state\ne\n## Non-goals\nn\n## Principles\npr\n## Horizons\nh\n## Anti-patterns\na\n")
+
+    monkeypatch.setattr(so, "has_open_vision_proposals", lambda r: False)
+    dispatched = []
+    monkeypatch.setattr(so, "dispatch_vision_bootstrap", lambda pid: dispatched.append(pid) or "dispatched")
+    posted = []
+    monkeypatch.setattr(so, "post_webhook", lambda cfg, ev, data: posted.append((ev, data)))
+
+    skip_reason = so.handle_empty_backlog(
+        config={}, repo="x/y", project_id=42, workspace=str(ws), run_id="r-1",
+    )
+    assert skip_reason == "no-eligible-issues-bootstrap-dispatched"
+    assert dispatched == [42]
+    assert any(ev == "finished" and d.get("skip_reason") == skip_reason for ev, d in posted)
+
+
+def test_handle_empty_backlog_no_vision(monkeypatch, tmp_path):
+    from agent import station_orchestrator as so
+    ws = tmp_path / "repo"
+    ws.mkdir()  # no docs/vision.md
+    monkeypatch.setattr(so, "has_open_vision_proposals", lambda r: False)
+    dispatched = []
+    monkeypatch.setattr(so, "dispatch_vision_bootstrap", lambda pid: dispatched.append(pid) or "dispatched")
+    monkeypatch.setattr(so, "post_webhook", lambda *a, **k: None)
+    skip_reason = so.handle_empty_backlog(
+        config={}, repo="x/y", project_id=42, workspace=str(ws), run_id="r-1",
+    )
+    assert skip_reason == "no-eligible-issues-no-vision"
+    assert dispatched == []
+
+
+def test_handle_empty_backlog_proposals_pending(monkeypatch, tmp_path):
+    from agent import station_orchestrator as so
+    ws = tmp_path / "repo"
+    ws.mkdir()
+    (ws / "docs").mkdir()
+    (ws / "docs" / "vision.md").write_text("## Problem\np\n")
+    monkeypatch.setattr(so, "has_open_vision_proposals", lambda r: True)
+    dispatched = []
+    monkeypatch.setattr(so, "dispatch_vision_bootstrap", lambda pid: dispatched.append(pid) or "dispatched")
+    monkeypatch.setattr(so, "post_webhook", lambda *a, **k: None)
+    skip_reason = so.handle_empty_backlog(
+        config={}, repo="x/y", project_id=42, workspace=str(ws), run_id="r-1",
+    )
+    assert skip_reason == "no-eligible-issues-proposals-pending"
+    assert dispatched == []
+
+
+def test_handle_empty_backlog_already_running(monkeypatch, tmp_path):
+    from agent import station_orchestrator as so
+    ws = tmp_path / "repo"
+    ws.mkdir()
+    (ws / "docs").mkdir()
+    (ws / "docs" / "vision.md").write_text("## Problem\np\n")
+    monkeypatch.setattr(so, "has_open_vision_proposals", lambda r: False)
+    monkeypatch.setattr(so, "dispatch_vision_bootstrap", lambda pid: "already-running")
+    monkeypatch.setattr(so, "post_webhook", lambda *a, **k: None)
+    skip_reason = so.handle_empty_backlog(
+        config={}, repo="x/y", project_id=42, workspace=str(ws), run_id="r-1",
+    )
+    assert skip_reason == "no-eligible-issues-bootstrap-already-running"
