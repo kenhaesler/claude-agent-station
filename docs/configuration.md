@@ -4,11 +4,11 @@
 
 ## Where config lives
 
-The canonical configuration store is the `config` table in `station.db` (key/value, JSON-encoded values). The dashboard writes here directly. A JSON view of the same config is materialised at `STATION_CONFIG_PATH` for the agent process to read; the dashboard's `config_sync` service keeps the two in sync. **Always edit through the dashboard or the `/api/config` endpoint** — direct edits to the JSON file are overwritten on the next sync.
+The canonical configuration store is the `config` table in `station.db` (key/value, JSON-encoded values). The dashboard writes here directly. A JSON view of the same config is materialized at `STATION_CONFIG_PATH` for the agent process to read; the dashboard's `config_sync` service keeps the two in sync. **Always edit through the dashboard or the `/api/config` endpoint** — direct edits to the JSON file are overwritten on the next sync.
 
 ## Environment variables
 
-All variables use the `STATION_` prefix (set by `SettingsConfigDict(env_prefix="STATION_")`). They can also be placed in a `.env` file at the project root.
+Every variable below is prefixed with `STATION_`. They can also be placed in a `.env` file at the project root.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -39,7 +39,7 @@ Defaults per role (from `agent/config/default-config.json`):
 
 To change a model, set the corresponding key via the dashboard Config page or `PATCH /api/config`. The orchestrator picks up the change on the next run.
 
-A fallback model is also configured via `--fallback-model` on every Claude CLI invocation; when the primary model returns an API error, the SDK falls back one tier (Opus 4.7 → Sonnet 4.6, Sonnet 4.6 → Haiku 4.5). This is independent of plan-usage throttling, which short-circuits the run before it starts.
+Fallback behavior on primary-model API errors is described in [`concepts.md`](concepts.md#plan-usage-throttling) — there is no separate config key.
 
 ## Budgets and rate limits
 
@@ -80,17 +80,15 @@ sudo systemctl restart claude-agent.timer
 
 ## Autonomy levels
 
-Agent behaviour is gated by a per-project autonomy-level setting. See [`adr/0001-autonomy-levels.md`](adr/0001-autonomy-levels.md) for the model and the level definitions. The default for new projects is `assisted`.
+Agent behavior is gated by a per-project autonomy-level setting. See [`adr/0001-autonomy-levels.md`](adr/0001-autonomy-levels.md) for the model and the level definitions. The default for new projects is `assisted`.
 
 ## API key and webhook secret
 
-| Setting | Purpose |
-|---------|---------|
-| `STATION_API_KEY` | Required for all `/api/*` requests except the health router and the internal webhook router. Pass as a Bearer token (`Authorization: Bearer <key>`) or the `?token=` query parameter (the query parameter is provided as a fallback for SSE clients that cannot set custom headers). |
-| `STATION_WEBHOOK_SECRET` | Required on `POST /api/webhook/*` requests via the `X-Webhook-Token` header. Prevents external sources from injecting fake agent events. |
-| `STATION_GITHUB_WEBHOOK_SECRET` | Used to verify HMAC-SHA256 signatures on incoming GitHub webhook payloads. Required when GitHub webhook integration is enabled. |
+Authentication settings are listed in the env-vars table above. Additional behavior:
 
-If none of these are set, the dashboard and webhook endpoints run unauthenticated — only suitable for a fully isolated host.
+- `STATION_API_KEY` is sent as `Authorization: Bearer <key>`, or as `?token=<key>` for SSE clients that cannot set custom headers.
+- `STATION_WEBHOOK_SECRET` is sent as the `X-Webhook-Token` header on `POST /api/webhook/*`.
+- `STATION_GITHUB_WEBHOOK_SECRET` verifies HMAC-SHA256 signatures on incoming GitHub webhooks.
 
 Exempt from `STATION_API_KEY` auth (verified in `dashboard/backend/app/main.py`): the health router, the internal agent webhook router, the WebSocket log-streaming router (`logs.ws_router` at `/api/logs/ws`, which has its own inline WebSocket auth), the GitHub webhook router, and GitHub App lifecycle endpoints.
 
