@@ -133,6 +133,45 @@ async def test_get_plan_usage_per_model_breakdown(client, sample_runs):
 
 
 @pytest.mark.asyncio
+async def test_is_throttled_matches_should_throttle_above_threshold(client):
+    """Regression for issue #195: is_throttled and should_throttle must agree.
+
+    The GET endpoint previously used a hardcoded 95% threshold for is_throttled
+    while should_throttle used the configurable max_usage_percent (default 85%).
+    For weekly usage between max_usage_percent and 95%, the two booleans
+    disagreed — should_throttle=True but is_throttled=False.
+    """
+    # Pro tier weekly default limit = 180_000_000. 88% = 158_400_000 tokens.
+    target_tokens = 158_400_000
+    async with async_session() as session:
+        project = Project(repo="owner/throttle-repo", enabled=True)
+        session.add(project)
+        await session.flush()
+        session.add(
+            Run(
+                run_id="throttle-run-001",
+                project_id=project.id,
+                status="completed",
+                model="claude-sonnet-4-6",
+                tokens_input=target_tokens // 2,
+                tokens_output=target_tokens // 2,
+                tokens_total=target_tokens,
+                started_at=datetime.now(timezone.utc) - timedelta(hours=1),
+            )
+        )
+        await session.commit()
+
+    resp = await client.get("/api/plan-usage?plan_tier=pro&max_usage_percent=85")
+    assert resp.status_code == 200
+    data = resp.json()
+    # Sanity: weekly_pct landed in the previously-buggy band (85% <= pct < 95%).
+    assert 85.0 <= data["weekly_usage_percent"] < 95.0
+    assert data["should_throttle"] is True
+    assert data["is_throttled"] is True
+    assert data["is_throttled"] == data["should_throttle"]
+
+
+@pytest.mark.asyncio
 async def test_get_plan_usage_weekly_reset(client):
     """GET /api/plan-usage should include weekly_reset_at timestamp."""
     resp = await client.get("/api/plan-usage")

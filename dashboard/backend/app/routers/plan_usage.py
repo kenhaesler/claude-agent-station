@@ -203,7 +203,10 @@ async def get_plan_usage(
         weekly_usage_percent=round(weekly_pct, 2),
         weekly_reset_at=next_reset.isoformat(),
         per_model=per_model,
-        is_throttled=should_throttle and weekly_pct >= 95.0,
+        # is_throttled mirrors should_throttle. They previously diverged because
+        # is_throttled used a hardcoded 95% threshold while should_throttle used
+        # the configurable max_usage_percent (default 85%) — see issue #195.
+        is_throttled=should_throttle,
         should_throttle=should_throttle,
         throttle_reason=throttle_reason,
     )
@@ -226,6 +229,7 @@ async def get_plan_usage_history(
 @router.post("/snapshot")
 async def record_usage_snapshot(
     plan_tier: str = Query("max_5x"),
+    max_usage_percent: float = Query(85.0, description="Threshold for throttle warning"),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Record a usage snapshot to history (called periodically or on-demand)."""
@@ -285,7 +289,7 @@ async def record_usage_snapshot(
         weekly_usage_percent=round(weekly_pct, 2),
         weekly_reset_at=next_reset.isoformat(),
         per_model_json=json.dumps(per_model_data),
-        is_throttled=weekly_pct >= 95.0,
+        is_throttled=weekly_pct >= max_usage_percent,
     )
     db.add(snapshot)
     await db.commit()
