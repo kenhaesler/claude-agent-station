@@ -107,9 +107,9 @@ sudo -u claude-agent /opt/claude-agent-station/venv/bin/pip install \
 ### 5. Build the frontend
 
 ```bash
-cd /opt/claude-agent-station/dashboard/frontend
-sudo -u claude-agent npm install --production=false
-sudo -u claude-agent npm run build
+cd /opt/claude-agent-station/dashboard/frontend && \
+    sudo -u claude-agent npm install --production=false && \
+    sudo -u claude-agent npm run build
 ```
 
 ### 6. Create data and log directories
@@ -246,10 +246,9 @@ sudo systemctl enable --now claude-agent-validate.timer
    ```bash
    sudo -u claude-agent claude login
    ```
-3. Add your GitHub token to the environment file:
+3. Add your GitHub token to the environment file (see manual install step 8 for the file format), then restart the dashboard:
    ```bash
    sudo -e /home/claude-agent/.config/claude-agent/environment
-   # Set: GH_TOKEN=ghp_your_token_here
    sudo systemctl restart claude-station-dashboard.service
    ```
 4. Add your first project on the Projects page of the dashboard.
@@ -271,8 +270,14 @@ cd /opt/claude-agent-station
 sudo -u claude-agent git pull --ff-only
 sudo -u claude-agent /opt/claude-agent-station/venv/bin/pip install \
     -r dashboard/backend/requirements-lock.txt
+# Rebuild the frontend bundle — required if anything under dashboard/frontend/ changed
+cd /opt/claude-agent-station/dashboard/frontend && \
+    sudo -u claude-agent npm install --production=false && \
+    sudo -u claude-agent npm run build
 sudo systemctl restart claude-station-dashboard.service
 ```
+
+This mirrors what `install.sh --upgrade` does: pull source, reinstall pinned deps, rebuild the frontend, restart the dashboard. Skipping the rebuild after a frontend-touching pull leaves a stale bundle served from `dashboard/frontend/dist`.
 
 Or use the built-in upgrade flag:
 
@@ -313,6 +318,8 @@ Use the installer's built-in flag (preserves data):
 sudo bash install.sh --uninstall
 ```
 
+**Note:** `install.sh --uninstall` only removes the three units it installed (`claude-station-dashboard.service`, `claude-agent.service`, `claude-agent.timer`). If you enabled the validate timer (`claude-agent-validate.service` / `.timer`), it is silently left behind. Use the manual command below for a thorough cleanup.
+
 Or manually:
 
 ```bash
@@ -332,8 +339,6 @@ sudo rm -rf /opt/claude-agent-station
 # Close firewall port
 sudo firewall-cmd --permanent --remove-port=8420/tcp && sudo firewall-cmd --reload
 ```
-
-(`install.sh --uninstall` itself only removes the three units it installed — the validate units are silently left behind. The manual command above is more thorough.)
 
 Data and logs are preserved by default. To remove them completely:
 
