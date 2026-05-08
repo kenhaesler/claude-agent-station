@@ -225,9 +225,10 @@ def propose_gaps(workspace: str, vision: dict, repo: str, model: str) -> list[di
     return proposals[:MAX_PROPOSALS]
 
 
-def create_proposed_issues(repo: str, proposals: list[dict]) -> list[int]:
-    """Create issues via `gh`. Returns list of created issue numbers."""
-    created = []
+def create_proposed_issues(repo: str, proposals: list[dict]) -> list[tuple[int, dict]]:
+    """Create issues via `gh`. Returns list of (issue_number, proposal) tuples
+    for the proposals that actually succeeded."""
+    created: list[tuple[int, dict]] = []
     for p in proposals:
         labels = ["vision-suggested"]
         priority = (p.get("priority") or "low").lower()
@@ -246,7 +247,7 @@ def create_proposed_issues(repo: str, proposals: list[dict]) -> list[int]:
                 continue
             url = result.stdout.strip()
             num = int(url.rstrip("/").rsplit("/", 1)[1])
-            created.append(num)
+            created.append((num, p))
             logger.info("Proposed issue #%d: %s", num, p["title"])
         except Exception as e:
             logger.warning("gh issue create failed: %s", e)
@@ -320,21 +321,22 @@ async def run_for_project(project_id: int) -> dict:
         _finish("success", vision_bootstrap_count=0, vision_bootstrap_proposals=[])
         return {"ok": True, "proposals": [], "created": []}
 
-    created = create_proposed_issues(repo, proposals)
+    created_pairs = create_proposed_issues(repo, proposals)
     proposal_records = [
         {
             "number": num,
             "title": p.get("title", ""),
             "url": f"https://github.com/{repo}/issues/{num}",
         }
-        for num, p in zip(created, proposals)
+        for num, p in created_pairs
     ]
+    created_numbers = [num for num, _ in created_pairs]
     _finish(
         "success",
-        vision_bootstrap_count=len(created),
+        vision_bootstrap_count=len(created_pairs),
         vision_bootstrap_proposals=proposal_records,
     )
-    return {"ok": True, "proposals": proposals, "created": created}
+    return {"ok": True, "proposals": proposals, "created": created_numbers}
 
 
 def _main():
