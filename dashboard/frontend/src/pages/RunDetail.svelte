@@ -1,6 +1,6 @@
 <script lang="ts">
   import { getRunFullContext, getRunDiff, getCoordinatorMessages } from '../lib/api';
-  import { formatTokens, formatDuration, timeAgo, formatRunMode } from '../lib/format';
+  import { formatTokens, formatDuration, timeAgo, formatRunMode, formatSkipReason } from '../lib/format';
   import { getAgentName, getAgentColor } from '../lib/agent-presence.svelte';
   import type { RunFullContext, DiffResult, CoordinatorMessage } from '../lib/types';
   import { navigate } from '../lib/router.svelte';
@@ -118,6 +118,11 @@
           {#if run.mode}
             {@const m = formatRunMode(run.mode)}
             <span class="badge badge-{run.mode}">{m.icon} {m.label}</span>
+          {/if}
+          {#if run.skip_reason}
+            <div class="text-sm" style="color: var(--color-text-secondary, #6b6b6b); margin-top: 0.25rem;">
+              {formatSkipReason(run.skip_reason)}
+            </div>
           {/if}
           {#if run.model}
             <span>{run.model}</span>
