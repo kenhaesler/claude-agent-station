@@ -32,21 +32,4 @@
       connections={tm.connections}
     />
   {/each}
-
-  <!-- Spawn placeholder -->
-  {#if teammates.length < 6}
-    <div
-      style="padding: 18px 20px; border-radius: 16px;
-        background: rgba(255,251,247,0.35); border: 1px dashed rgba(240,220,200,0.40);
-        display: flex; flex-direction: column; justify-content: center; align-items: center;
-        text-align: center; gap: 10px; cursor: pointer;
-        transition: background 0.2s;"
-      onmouseenter={(e) => e.currentTarget.style.background = 'rgba(255,251,247,0.50)'}
-      onmouseleave={(e) => e.currentTarget.style.background = 'rgba(255,251,247,0.35)'}
-    >
-      <div style="font-size: 28px; opacity: 0.3;">+</div>
-      <div style="font-size: 15px; color: #8C7A66; font-weight: 600;">Spawn teammate</div>
-      <div style="font-size: 13px; color: #A08E7A;">Or let lead auto-scale</div>
-    </div>
-  {/if}
 </div>
