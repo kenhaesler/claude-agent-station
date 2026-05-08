@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import subprocess
+import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
@@ -192,9 +195,8 @@ async def chat_turn(
         system_prompt = _load_prompt("vision_create.md")
 
     # Pick the model — read the station config JSON directly
-    import asyncio as _asyncio
     from app.services.config_sync import _read_config_json
-    config = await _asyncio.to_thread(_read_config_json)
+    config = await asyncio.to_thread(_read_config_json)
     model = (config.get("models") or {}).get("planner") or "claude-sonnet-4-6"
 
     async def event_stream():
@@ -288,9 +290,6 @@ _PROPOSALS_TTL_S = 60
 
 def _count_issues(repo: str, *, state: str, label: str, days_back: int | None = None) -> int:
     """Run `gh issue list` and count results. Returns 0 on any failure."""
-    import subprocess
-    import datetime as _dt
-
     cmd = [
         "gh", "issue", "list",
         "--repo", repo,
@@ -302,7 +301,7 @@ def _count_issues(repo: str, *, state: str, label: str, days_back: int | None = 
     if days_back is not None:
         # Use gh's --search; resolve the date in Python to avoid shell expansion
         # surprises.
-        cutoff = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=days_back)).strftime("%Y-%m-%d")
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days_back)).strftime("%Y-%m-%d")
         cmd += ["--search", f"closed:>={cutoff}"]
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
@@ -316,8 +315,6 @@ def _count_issues(repo: str, *, state: str, label: str, days_back: int | None = 
 @router.get("/{project_id}/vision/proposals", response_model=VisionProposalsRead)
 async def vision_proposals(project_id: int, db: AsyncSession = Depends(get_db)):
     """Return open + recently-accepted proposal counts for the Vision tab."""
-    import time
-
     project = await db.get(Project, project_id)
     if not project:
         raise HTTPException(status_code=404, detail="project not found")
@@ -326,14 +323,13 @@ async def vision_proposals(project_id: int, db: AsyncSession = Depends(get_db)):
     if cached and (time.time() - cached[0]) < _PROPOSALS_TTL_S:
         return VisionProposalsRead(**cached[1])
 
-    import asyncio as _asyncio
-    open_count = await _asyncio.to_thread(
+    open_count = await asyncio.to_thread(
         _count_issues, project.repo, state="open", label="vision-suggested"
     )
     # Accepted = closed within last 7 days that previously had vision-suggested.
     # The label may have been removed when the issue was accepted, so this is
     # an approximation — close enough for an info strip.
-    accepted = await _asyncio.to_thread(
+    accepted = await asyncio.to_thread(
         _count_issues, project.repo, state="closed", label="vision-suggested", days_back=7,
     )
 
