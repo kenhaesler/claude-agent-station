@@ -351,6 +351,16 @@ function connectSSE() {
   sse.connect();
 }
 
+function visionBootstrapCompletionToast(data: any): void {
+  const n = (data.vision_bootstrap_count ?? data.data?.vision_bootstrap_count) ?? 0;
+  addToast(
+    'success',
+    n === 0
+      ? 'Vision analyzed — no gaps found.'
+      : `${n} issue${n === 1 ? '' : 's'} created from vision.`,
+  );
+}
+
 function handleSSEEvent(data: any) {
   const eventType = data.event ?? data.type;
   const agentColor = getRoleColors().manager;
@@ -467,13 +477,7 @@ function handleSSEEvent(data: any) {
         type: 'phase',
         content: 'Run completed',
       });
-      const vbCount = (data.vision_bootstrap_count ?? data.data?.vision_bootstrap_count) ?? 0;
-      addToast(
-        'success',
-        vbCount === 0
-          ? 'Vision analyzed — no gaps found.'
-          : `${vbCount} issue${vbCount === 1 ? '' : 's'} created from vision.`,
-      );
+      visionBootstrapCompletionToast(data);
       refreshActiveRuns();
       break;
     }
@@ -502,13 +506,7 @@ function handleSSEEvent(data: any) {
       if (runMode === 'vision-bootstrap' && !interrupted &&
           (runStatus === 'success' || runStatus === 'completed') &&
           eventType !== 'orchestrator_error') {
-        const n = (data.vision_bootstrap_count ?? data.data?.vision_bootstrap_count) ?? 0;
-        addToast(
-          'success',
-          n === 0
-            ? 'Vision analyzed — no gaps found.'
-            : `${n} issue${n === 1 ? '' : 's'} created from vision.`,
-        );
+        visionBootstrapCompletionToast(data);
       }
       refreshActiveRuns();
       break;
