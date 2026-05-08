@@ -36,9 +36,9 @@ sudo systemctl status claude-agent-validate.timer
 
 ### Stuck run / orphan recovery
 
-Symptom: a run shows `running` indefinitely after the agent has crashed or been killed.
+Symptom: a run shows `running` indefinitely after the agent has crashed or been killed. Or a run shows `unknown` indefinitely after the orchestrator exited without firing a terminal webhook (issue #268 — for example, no eligible issues + dashboard's importer ingested the stream file before the launcher's terminal webhook landed).
 
-The dashboard runs a background reaper that checks every 15 seconds. On startup it also runs once immediately. If the agent service is inactive and a run is still in `running` or `reviewing` state, the reaper marks it `interrupted` and pushes a live SSE update to the frontend.
+The dashboard runs a background reaper that checks every 15 seconds. On startup it also runs once immediately. If the agent service is inactive and a run is still in `running` or `reviewing` state, the reaper marks it `interrupted` and pushes a live SSE update to the frontend. The same reaper also catches `unknown` rows whose `started_at` is older than 30 minutes (`UNKNOWN_RUN_REAP_AGE_MINUTES` in `dashboard/backend/app/services/stale_run_reaper.py`) — the conservative threshold prevents racing the launcher's normal `finished` webhook.
 
 No manual command is needed in normal operation. If the dashboard itself was down while the agent crashed, restarting the dashboard triggers the startup reaper:
 

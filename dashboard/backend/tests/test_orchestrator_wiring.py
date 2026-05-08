@@ -437,3 +437,66 @@ def test_handle_empty_backlog_already_running(monkeypatch, tmp_path):
         config={}, repo="x/y", project_id=42, workspace=str(ws), run_id="r-1",
     )
     assert skip_reason == "no-eligible-issues-bootstrap-already-running"
+
+
+# --- Issue #268: orchestrator early-exit must emit run_complete ----------
+
+
+@pytest.mark.asyncio
+async def test_orchestrate_emits_finished_when_no_projects(monkeypatch, tmp_path):
+    """Issue #268: when ``config.projects`` is empty, the orchestrator must
+    still emit a terminal ``finished`` webhook so the dashboard's placeholder
+    Run row can transition out of ``unknown``.
+    """
+    from agent import station_orchestrator as so
+
+    posted: list[tuple[str, dict]] = []
+    monkeypatch.setattr(
+        so, "post_webhook",
+        lambda _config, event, data=None: posted.append((event, data or {})),
+    )
+
+    exit_code = await so.orchestrate(
+        config={"projects": []},
+        run_id="empty-cfg-1",
+        workspaces_dir=str(tmp_path),
+    )
+
+    assert exit_code == 0
+    finished = [(ev, d) for ev, d in posted if ev == "finished"]
+    assert len(finished) == 1, f"expected one finished event, got {posted}"
+    _, data = finished[0]
+    assert data["run_id"] == "run-empty-cfg-1"
+    assert data["status"] == "completed"
+    assert data["skip_reason"] == "no-projects-configured"
+
+
+@pytest.mark.asyncio
+async def test_orchestrate_emits_finished_when_all_projects_disabled(monkeypatch, tmp_path):
+    """All projects ``enabled=False`` is functionally identical to no
+    projects — must still emit a terminal webhook."""
+    from agent import station_orchestrator as so
+
+    posted: list[tuple[str, dict]] = []
+    monkeypatch.setattr(
+        so, "post_webhook",
+        lambda _config, event, data=None: posted.append((event, data or {})),
+    )
+
+    config = {
+        "projects": [
+            {"repo": "x/a", "enabled": False},
+            {"repo": "x/b", "enabled": False},
+        ],
+    }
+    exit_code = await so.orchestrate(
+        config=config,
+        run_id="all-disabled-1",
+        workspaces_dir=str(tmp_path),
+    )
+
+    assert exit_code == 0
+    finished = [(ev, d) for ev, d in posted if ev == "finished"]
+    assert len(finished) == 1
+    assert finished[0][1]["status"] == "completed"
+    assert finished[0][1]["skip_reason"] == "no-projects-configured"

@@ -998,6 +998,28 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
     manager_model = get_model(config, "manager", "claude-sonnet-4-6")
     manager_turns = get_limit(config, "max_manager_turns", 30)
 
+    # Issue #268: When no projects are configured (or every project is
+    # disabled), the per-project loop below silently no-ops. The bash
+    # launcher's EXIT trap eventually fires ``run_complete``, but in
+    # historical runs we've seen the placeholder Run row stranded with
+    # ``status='unknown'`` because the importer ingested its stream file
+    # before the launcher's terminal webhook landed. Emit an explicit
+    # ``finished`` webhook here so the dashboard always sees a terminal
+    # transition originating from the orchestrator itself.
+    enabled_projects = [p for p in projects if p.get("enabled", True)]
+    if not enabled_projects:
+        logger.info(
+            "No enabled projects configured; emitting run_complete for run-%s",
+            run_id,
+        )
+        post_webhook(config, "finished", {
+            "run_id": f"run-{run_id}",
+            "mode": "agent-teams",
+            "status": "completed",
+            "skip_reason": "no-projects-configured",
+        })
+        return 0
+
     # Load issue-worker agent definition for SDK discovery
     agent_dir = Path(__file__).parent / "agents"
     worker_file = agent_dir / "issue-worker.md"
