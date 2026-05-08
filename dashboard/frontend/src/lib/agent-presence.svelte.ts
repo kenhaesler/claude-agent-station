@@ -454,6 +454,29 @@ function handleSSEEvent(data: any) {
         content: `Verdict: ${data.verdict ?? data.action ?? 'UNKNOWN'}`,
       });
       break;
+    case 'finished': {
+      // The vision_analyst worker emits event="finished" when the vision-bootstrap
+      // run completes. Only act on this for vision-bootstrap mode — all other
+      // terminal events use run_complete / orchestrator_complete below.
+      const vbRunMode = data.mode ?? data.data?.mode;
+      if (vbRunMode !== 'vision-bootstrap') break;
+      agentPresence.phase = 'idle';
+      addConversationEntry({
+        agentName: 'Manager',
+        agentColor,
+        type: 'phase',
+        content: 'Run completed',
+      });
+      const vbCount = (data.vision_bootstrap_count ?? data.data?.vision_bootstrap_count) ?? 0;
+      addToast(
+        'success',
+        vbCount === 0
+          ? 'Vision analyzed — no gaps found.'
+          : `${vbCount} issue${vbCount === 1 ? '' : 's'} created from vision.`,
+      );
+      refreshActiveRuns();
+      break;
+    }
     case 'run_complete':
     case 'orchestrator_complete':
     case 'orchestrator_error': {
