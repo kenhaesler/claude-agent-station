@@ -23,6 +23,7 @@ Design:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -204,7 +205,12 @@ def _extract_outcome(tool_response: Any) -> tuple[str, int | None, str | None, s
         exit_code = tool_response.get("exit_code")
         if not isinstance(exit_code, int):
             exit_code = None
-        stdout = tool_response.get("stdout") or tool_response.get("output")
+        # Use sentinel default so that an explicit ``stdout=""`` is preserved
+        # rather than falling through to ``output``.
+        _missing = object()
+        stdout = tool_response.get("stdout", _missing)
+        if stdout is _missing:
+            stdout = tool_response.get("output")
         stderr = tool_response.get("stderr")
         # If the response is a single-field dict with a non-stdout key, capture it.
         if stdout is None and stderr is None and "is_error" not in tool_response:
@@ -327,7 +333,10 @@ def make_pre_tool_hook(
             tool_input = input_data.get("tool_input") if isinstance(input_data, dict) else getattr(input_data, "tool_input", {})
             tool_use_id = input_data.get("tool_use_id") if isinstance(input_data, dict) else getattr(input_data, "tool_use_id", None)
             if tool_use_id:
-                write_audit_start(
+                # Off-load the blocking sqlite3 write so the orchestrator's
+                # event loop is not held up by WAL contention.
+                await asyncio.to_thread(
+                    write_audit_start,
                     idempotency_key=str(tool_use_id),
                     run_id=run_id,
                     actor=actor,
@@ -356,7 +365,10 @@ def make_post_tool_hook(
             tool_use_id = input_data.get("tool_use_id") if isinstance(input_data, dict) else getattr(input_data, "tool_use_id", None)
             tool_response = input_data.get("tool_response") if isinstance(input_data, dict) else getattr(input_data, "tool_response", None)
             if tool_use_id:
-                write_audit_finish(
+                # Off-load the blocking sqlite3 write so the orchestrator's
+                # event loop is not held up by WAL contention.
+                await asyncio.to_thread(
+                    write_audit_finish,
                     idempotency_key=str(tool_use_id),
                     tool_response=tool_response,
                     db_path=db_path,

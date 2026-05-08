@@ -205,6 +205,17 @@ def test_extract_outcome_handles_bash_dict():
     assert err == ""
 
 
+def test_extract_outcome_preserves_explicit_empty_stdout():
+    """An explicit ``stdout=""`` must not fall through to ``output``."""
+    s, ec, out, err = _extract_outcome(
+        {"stdout": "", "output": "should-not-be-used", "exit_code": 0, "is_error": False}
+    )
+    assert s == "ok"
+    assert ec == 0
+    assert out == ""
+    assert err is None
+
+
 def test_extract_outcome_handles_non_dict_string():
     s, ec, out, err = _extract_outcome("file contents…")
     assert s == "ok"

@@ -41,6 +41,12 @@ async def client(setup_db):
         yield ac
 
 
+# Sentinel marker so the factory can distinguish "caller passed None
+# explicitly" from "caller did not pass anything"; the defaults for
+# finished_at and exit_code depend on whether status is terminal.
+_UNSET: object = object()
+
+
 def _entry(
     *,
     key: str,
@@ -50,11 +56,17 @@ def _entry(
     action_kind: str = "tool.bash",
     status: str = "ok",
     started_at: datetime | None = None,
-    finished_at: datetime | None = None,
-    exit_code: int | None = 0,
+    finished_at: object = _UNSET,
+    exit_code: object = _UNSET,
 ) -> AuditEntry:
     started = started_at or datetime.now(timezone.utc)
-    finished = finished_at or (started + timedelta(milliseconds=120))
+    # 'started' rows have not finished yet — finished_at and exit_code
+    # are NULL until PostToolUse fires.
+    is_terminal = status != "started"
+    if finished_at is _UNSET:
+        finished_at = started + timedelta(milliseconds=120) if is_terminal else None
+    if exit_code is _UNSET:
+        exit_code = 0 if is_terminal else None
     return AuditEntry(
         idempotency_key=key,
         trace_id=trace_id,
@@ -64,10 +76,10 @@ def _entry(
         action_detail='{"tool_name": "Bash"}',
         status=status,
         exit_code=exit_code,
-        stdout_tail="ok",
+        stdout_tail="ok" if is_terminal else None,
         stderr_tail=None,
         started_at=started,
-        finished_at=finished,
+        finished_at=finished_at,
     )
 
 
