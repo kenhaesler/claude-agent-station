@@ -1,5 +1,7 @@
 <script lang="ts">
   import { route, navigate } from '../../lib/router.svelte';
+  import { agentPresence } from '../../lib/agent-presence.svelte';
+  import { formatTokens } from '../../lib/format';
 
   let {
     onTrigger,
@@ -12,6 +14,13 @@
     sseConnected?: boolean;
     activeCount?: number;
   } = $props();
+
+  // Phase 1 of "The Bridge": an always-visible live token meter. Prefers the
+  // current run's accumulated total; falls back to cumulative burn so the
+  // counter has something to show between runs.
+  let liveTokens = $derived(
+    agentPresence.activeRuns[0]?.tokens_total ?? agentPresence.tokensBurned ?? 0
+  );
 
   const navItems = [
     { label: 'Overview', page: 'command-center', path: '/' },
@@ -75,6 +84,14 @@
         </div>
         <span>{activeCount > 0 ? `Working (${activeCount})` : 'Idle'}</span>
       </div>
+      {#if liveTokens > 0}
+        <span style="color: #A08E7A;">·</span>
+        <span
+          data-testid="topnav-live-tokens"
+          title="Tokens burned on the live (or last) run"
+          style="font-variant-numeric: tabular-nums; color: #4E3A26; font-weight: 600;"
+        >{formatTokens(liveTokens)} tok</span>
+      {/if}
       <span style="color: #A08E7A;">·</span>
       <span style="color: {sseConnected ? '#2E7D32' : '#D06050'}; font-weight: 600;">SSE</span>
     </div>

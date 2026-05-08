@@ -37,6 +37,8 @@ from claude_agent_sdk.types import (
     TaskNotificationMessage,
     TaskProgressMessage,
     TaskStartedMessage,
+    TextBlock,
+    ToolUseBlock,
 )
 
 from agent.audit_hook import (
@@ -324,6 +326,19 @@ plan does not violate the non-goals or anti-patterns below. If it does:
 6. Review plans — reject if they conflict with another teammate's work
 7. **Actively monitor** teammates until ALL tasks are completed (see monitoring rules)
 8. After all work is done, **synthesize a final JSON summary**
+
+## Narration (MANDATORY — ends operator silence)
+
+**Before every single tool call**, emit one short present-tense sentence of plain text
+describing what you are about to do and why. Eight to twenty words. No headings, no
+markdown, no lists. One sentence, then the tool call.
+
+Good: "Checking whether the backend teammate has written a report yet so I can move on."
+Good: "Sleeping 60 seconds to let teammates make progress before the next status sweep."
+Bad: (silent tool call), "Now I will...", multi-paragraph explanations, JSON dumps.
+
+This narration is surfaced on the operator's Bridge so they can follow your reasoning
+in real time. Silent tool calls break their trust in the system. Never skip this.
 
 ## Issues to Work On ({len(issues)} total)
 
@@ -691,15 +706,63 @@ def handle_stream_event(
         if state and message.usage:
             state.tokens_in += message.usage.get("input_tokens", 0)
             state.tokens_out += message.usage.get("output_tokens", 0)
-        # Count tool calls and log them
+        # Walk content blocks: narrate text, count tool calls.
+        #
+        # Phase 1 of "The Bridge": text blocks immediately before a tool_use
+        # are emitted as `narration` webhooks so the operator sees the lead's
+        # stated intent in real time. The lead's prompt asks for one
+        # present-tense sentence; we cap at 500 chars for safety.
+        #
+        # Block-type discrimination: the SDK delivers ``TextBlock`` /
+        # ``ToolUseBlock`` dataclass instances (see
+        # ``claude_agent_sdk._internal.message_parser``) — these have no
+        # ``.type`` attribute, so ``isinstance`` is the only correct check.
+        # The dict fallback is kept for raw-passthrough cases.
         if message.content:
+            pending_narration: str | None = None
             for block in (message.content if isinstance(message.content, list) else [message.content]):
-                bt = getattr(block, "type", None) or (block.get("type") if isinstance(block, dict) else None)
-                if bt == "tool_use":
+                if isinstance(block, TextBlock):
+                    text = block.text
+                    if text and text.strip():
+                        pending_narration = text.strip()
+                elif isinstance(block, ToolUseBlock):
                     if state:
                         state.tool_calls += 1
-                    name = getattr(block, "name", None) or (block.get("name") if isinstance(block, dict) else None)
-                    logger.info("Lead agent tool call: %s", name)
+                    logger.info("Lead agent tool call: %s", block.name)
+                    if pending_narration:
+                        post_webhook(config, "narration", {
+                            "run_id": f"run-{run_id}",
+                            "agent_name": "Lead",
+                            "narration": pending_narration[:500],
+                            "narration_kind": "directive",
+                        })
+                        pending_narration = None
+                elif isinstance(block, dict):
+                    bt = block.get("type")
+                    if bt == "text":
+                        text = block.get("text")
+                        if text and text.strip():
+                            pending_narration = text.strip()
+                    elif bt == "tool_use":
+                        if state:
+                            state.tool_calls += 1
+                        logger.info("Lead agent tool call: %s", block.get("name"))
+                        if pending_narration:
+                            post_webhook(config, "narration", {
+                                "run_id": f"run-{run_id}",
+                                "agent_name": "Lead",
+                                "narration": pending_narration[:500],
+                                "narration_kind": "directive",
+                            })
+                            pending_narration = None
+            # Flush trailing narration (lead spoke but no tool followed)
+            if pending_narration:
+                post_webhook(config, "narration", {
+                    "run_id": f"run-{run_id}",
+                    "agent_name": "Lead",
+                    "narration": pending_narration[:500],
+                    "narration_kind": "directive",
+                })
         # Batch-send progress webhook every BATCH_INTERVAL seconds
         if state:
             now = time.monotonic()
@@ -720,6 +783,12 @@ def handle_stream_event(
             "task_id": message.task_id,
             "agent_name": message.description,
         })
+        post_webhook(config, "narration", {
+            "run_id": f"run-{run_id}",
+            "agent_name": "Lead",
+            "narration": f"Spawning teammate: {(message.description or message.task_id)[:300]}",
+            "narration_kind": "system",
+        })
 
     elif isinstance(message, TaskProgressMessage):
         if state and message.usage:
@@ -737,6 +806,13 @@ def handle_stream_event(
             "tokens_total": _usage_val(message.usage, "total_tokens", 0) if message.usage else 0,
             "turns": _usage_val(message.usage, "tool_uses", 0) if message.usage else 0,
         })
+        if message.last_tool_name:
+            post_webhook(config, "narration", {
+                "run_id": f"run-{run_id}",
+                "agent_name": f"Teammate {message.task_id}",
+                "narration": f"Running {message.last_tool_name}",
+                "narration_kind": "step",
+            })
 
     elif isinstance(message, TaskNotificationMessage):
         logger.info("Teammate finished: task=%s status=%s", message.task_id, message.status)
@@ -747,6 +823,13 @@ def handle_stream_event(
             "agent_name": message.summary[:100] if message.summary else "",
             "tokens_total": _usage_val(message.usage, "total_tokens", 0) if message.usage else 0,
             "turns": _usage_val(message.usage, "tool_uses", 0) if message.usage else 0,
+        })
+        summary_text = (message.summary or "").strip()
+        post_webhook(config, "narration", {
+            "run_id": f"run-{run_id}",
+            "agent_name": f"Teammate {message.task_id}",
+            "narration": f"Finished ({message.status})" + (f": {summary_text[:300]}" if summary_text else ""),
+            "narration_kind": "step",
         })
 
     elif isinstance(message, ResultMessage):

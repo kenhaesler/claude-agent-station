@@ -168,6 +168,8 @@ async def receive_run_event(
             "tokens_output": event.tokens_output,
             "tokens_total": event.tokens_total,
             "turns": event.turns,
+            "narration": event.narration,
+            "narration_kind": event.narration_kind,
         },
     })
 

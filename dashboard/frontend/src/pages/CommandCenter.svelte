@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { listRuns, getQueueStats, getTokenUsage, getPlanUsage, getSystemStatus, getAnalytics, getBackpressure, getActiveEmployees, listQueue } from '../lib/api';
+  import { listRuns, getQueueStats, getTokenUsage, getPlanUsage, getSystemStatus, getAnalytics, getBackpressure, getActiveEmployees, listQueue, listProjects } from '../lib/api';
   import { navigate } from '../lib/router.svelte';
   import { agentPresence } from '../lib/agent-presence.svelte';
   import { formatTokens, formatDuration, timeAgo, formatPercent } from '../lib/format';
@@ -18,10 +18,32 @@
     if (usedMb == null || totalMb == null) return '—';
     return `${(usedMb / 1024).toFixed(1)} / ${(totalMb / 1024).toFixed(1)} GB`;
   }
-  import type { Run, QueueStats, TokenUsage, PlanUsage, SystemStatus, AnalyticsResponse, BackpressureStatus, ActiveEmployee, QueueItem } from '../lib/types';
+  import type { Run, QueueStats, TokenUsage, PlanUsage, SystemStatus, AnalyticsResponse, BackpressureStatus, ActiveEmployee, QueueItem, Project } from '../lib/types';
   import VaporCard from '../components/vapor/VaporCard.svelte';
   import VaporBadge from '../components/vapor/VaporBadge.svelte';
   import SkeletonLoader from '../components/data-display/SkeletonLoader.svelte';
+  import AgentActivityFeed from '../components/agents/AgentActivityFeed.svelte';
+  import { stopRun } from '../lib/api';
+  import { addToast } from '../lib/toast.svelte';
+
+  let stopping = $state(false);
+
+  async function handleStopActiveRun() {
+    const active = agentPresence.activeRuns[0];
+    if (!active?.run_id || stopping) return;
+    const ok = confirm(`Stop the agent NOW?\n\nThis will kill the claude-agent service and mark run ${active.run_id} as interrupted. All active work halts immediately.`);
+    if (!ok) return;
+    stopping = true;
+    try {
+      await stopRun(active.run_id);
+      addToast('success', 'Hard stop issued — service stopping, run interrupted');
+    } catch (e) {
+      const raw = e instanceof Error ? e.message : 'Stop failed';
+      addToast('error', raw.startsWith('409:') ? raw.slice(4).trim() : raw);
+    } finally {
+      stopping = false;
+    }
+  }
 
   let {
     triggering = false,
@@ -36,6 +58,7 @@
   let activeEmployees = $state<ActiveEmployee[]>([]);
   let queueStats = $state<QueueStats | null>(null);
   let queueItems = $state<QueueItem[]>([]);
+  let projects = $state<Project[]>([]);
   let tokenUsage = $state<TokenUsage | null>(null);
   let planUsage = $state<PlanUsage | null>(null);
   let systemStatus = $state<SystemStatus | null>(null);
@@ -90,7 +113,7 @@
 
   // Fetch data
   async function loadData() {
-    const [runsRes, empRes, qRes, tRes, pRes, sRes, aRes, bRes, qiRes] = await Promise.allSettled([
+    const [runsRes, empRes, qRes, tRes, pRes, sRes, aRes, bRes, qiRes, projRes] = await Promise.allSettled([
       listRuns({ limit: 15 }),
       getActiveEmployees(),
       getQueueStats(),
@@ -100,6 +123,7 @@
       getAnalytics({ days: 7 }),
       getBackpressure(),
       listQueue({ limit: 50 }),
+      listProjects(),
     ]);
     if (runsRes.status === 'fulfilled') recentRuns = runsRes.value.runs;
     if (empRes.status === 'fulfilled') activeEmployees = empRes.value;
@@ -110,6 +134,7 @@
     if (aRes.status === 'fulfilled') analyticsData = aRes.value;
     if (bRes.status === 'fulfilled') backpressure = bRes.value;
     if (qiRes.status === 'fulfilled') queueItems = qiRes.value.items;
+    if (projRes.status === 'fulfilled') projects = projRes.value;
     loading = false;
   }
 
@@ -126,29 +151,72 @@
     return 'Good evening';
   }
 
+  function getProjectRepo(projectId: number | null | undefined): string | null {
+    if (projectId == null) return null;
+    const proj = projects.find((p) => p.id === projectId);
+    if (!proj) return null;
+    const repo = proj.repo ?? '';
+    return repo.includes('/') ? repo.split('/').pop()! : repo;
+  }
+
+  function getIssueTitle(run: Run): string | null {
+    if (!run.employee_report) return null;
+    try {
+      const report = typeof run.employee_report === 'string'
+        ? JSON.parse(run.employee_report)
+        : run.employee_report;
+      return report?.issue_title ?? null;
+    } catch {
+      return null;
+    }
+  }
+
   function getRunLabel(run: Run): string {
-    if (run.issue_number) return `#${run.issue_number}`;
+    const repo = getProjectRepo(run.project_id);
+    const issue = run.issue_number ? `#${run.issue_number}` : null;
+    if (repo && issue) return `${repo} ${issue}`;
+    if (repo) return repo;
+    if (issue) return issue;
     return run.run_id?.slice(0, 20) ?? `Run #${run.id}`;
   }
 
   function getRowTint(run: Run): string {
-    if (run.verdict === 'APPROVE' || run.verdict === 'PR') return 'background: rgba(46,125,50,0.03);';
-    if (run.verdict === 'REJECT') return 'background: rgba(208,96,80,0.03);';
-    if (run.status === 'started') return 'background: rgba(46,125,50,0.02);';
+    if (run.verdict === 'APPROVE' || run.verdict === 'PR') return 'background: rgba(46,125,50,0.04);';
+    if (run.verdict === 'REJECT') return 'background: rgba(208,96,80,0.04);';
+    if (run.status === 'running' || run.status === 'started' || run.status === 'reviewing' || run.status === 'plan_reviewing') return 'background: rgba(46,125,50,0.03);';
+    if (run.status === 'interrupted') return 'background: rgba(176,96,48,0.04);';
+    if (run.status === 'failed') return 'background: rgba(208,96,80,0.03);';
     return '';
   }
 
   function getVerdictBadge(verdict: string | null): string {
     if (!verdict) return '';
-    const map: Record<string, string> = { 'APPROVE': 'badge-approve', 'PR': 'badge-pr', 'REJECT': 'badge-reject' };
+    const map: Record<string, string> = { 'APPROVE': 'badge-approve', 'PR': 'badge-pr', 'REJECT': 'badge-reject', 'SKIP': 'badge-pending' };
     return map[verdict] ?? '';
   }
 
   function getStatusBadge(run: Run): { label: string; cls: string } {
+    // Priority: live > terminal
+    const s = (run.status ?? '').toLowerCase();
+    if (s === 'running' || s === 'started') return { label: 'RUNNING', cls: 'badge-running' };
+    if (s === 'reviewing') return { label: 'REVIEWING', cls: 'badge-running' };
+    if (s === 'plan_reviewing') return { label: 'PLAN REVIEW', cls: 'badge-running' };
     if (run.verdict) return { label: run.verdict, cls: getVerdictBadge(run.verdict) };
-    if (run.status === 'started') return { label: 'RUNNING', cls: 'badge-running' };
-    if (run.status === 'finished') return { label: 'DONE', cls: 'badge-completed' };
-    return { label: 'PENDING', cls: 'badge-pending' };
+    if (s === 'completed' || s === 'finished' || s === 'success') return { label: 'DONE', cls: 'badge-completed' };
+    if (s === 'failed' || s === 'error') return { label: 'FAILED', cls: 'badge-reject' };
+    if (s === 'interrupted') return { label: 'STOPPED', cls: 'badge-pending' };
+    if (!run.status && !run.finished_at) return { label: 'QUEUED', cls: 'badge-pending' };
+    return { label: (run.status ?? 'unknown').toUpperCase(), cls: 'badge-pending' };
+  }
+
+  function getStatusDot(run: Run): string {
+    if (run.verdict === 'APPROVE' || run.verdict === 'PR') return 'background: #2E7D32; box-shadow: 0 0 6px rgba(46,125,50,0.35);';
+    if (run.verdict === 'REJECT') return 'background: #D06050;';
+    const s = (run.status ?? '').toLowerCase();
+    if (s === 'running' || s === 'started' || s === 'reviewing' || s === 'plan_reviewing') return 'background: #2E7D32; box-shadow: 0 0 6px rgba(46,125,50,0.35);';
+    if (s === 'failed' || s === 'error') return 'background: #D06050;';
+    if (s === 'interrupted') return 'background: #B06030;';
+    return 'background: #C4AA90;';
   }
 </script>
 
@@ -170,12 +238,74 @@
         {#if stationPhase === 'working'}
           <span style="color: #2E7D32; font-weight: 600;">{stationSummary}</span>
           <span> · </span>
-          <button onclick={() => navigate('/agent-teams')} style="color: #B06030; font-weight: 600; cursor: pointer; border: none; background: none; font-family: inherit; font-size: inherit; text-decoration: underline; text-underline-offset: 2px;">Watch Team →</button>
+          <button onclick={() => navigate('/mission-control')} style="color: #B06030; font-weight: 600; cursor: pointer; border: none; background: none; font-family: inherit; font-size: inherit; text-decoration: underline; text-underline-offset: 2px;">Mission Control →</button>
         {:else}
           {stationSummary}
         {/if}
       </div>
     </div>
+
+    <!--
+      Live Activity — Phase 1 of "The Bridge".
+      Replaces the silent landing page with a stream of agent narration, tool
+      calls, and phase transitions. Pulled straight from agentPresence so the
+      same data any page could already access now surfaces on home. Renders
+      whenever we have activity — otherwise yields an idle hint instead of
+      dead whitespace.
+    -->
+    {#if agentPresence.activeRuns.length > 0 || agentPresence.conversationLog.length > 0}
+      <div
+        data-testid="bridge-activity"
+        style="background: rgba(255,251,247,0.65); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border: 1px solid rgba(240,220,200,0.6); border-radius: 18px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.04), 0 12px 32px rgba(0,0,0,0.07); margin-bottom: 28px; animation: card-in 0.6s cubic-bezier(0.16, 1, 0.3, 1) 0.10s both;"
+      >
+        <div style="padding: 14px 24px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(0,0,0,0.04);">
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <div
+              style="width: 8px; height: 8px; border-radius: 50%; {agentPresence.activeRuns.length > 0 ? 'background: #2E7D32; box-shadow: 0 0 8px rgba(46,125,50,0.45);' : 'background: #C4AA90;'}"
+            ></div>
+            <span style="font-size: 15px; font-weight: 700; color: #3D2A1A;">
+              {agentPresence.activeRuns.length > 0 ? 'Live' : 'Last activity'}
+            </span>
+            {#if agentPresence.phase && agentPresence.phase !== 'idle'}
+              <span style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: #7A6652; font-weight: 600;">· {agentPresence.phase}</span>
+            {/if}
+            {#if agentPresence.tokensBurned > 0}
+              <span style="font-size: 12px; color: #4E3A26; font-variant-numeric: tabular-nums;">· {formatTokens(agentPresence.tokensBurned)} tokens</span>
+            {/if}
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            {#if agentPresence.activeRuns.length > 0}
+              <button
+                onclick={handleStopActiveRun}
+                disabled={stopping}
+                data-testid="bridge-stop-btn"
+                title="Hard stop: kill the agent service and mark active runs interrupted"
+                style="font-size: 12px; font-weight: 700; color: #8B1A1A; background: rgba(208,80,80,0.10); border: 1px solid rgba(208,80,80,0.30); padding: 6px 12px; border-radius: 8px; cursor: pointer; font-family: inherit; transition: background 0.15s ease;"
+              >{stopping ? '…' : '⏹ Stop agent'}</button>
+            {/if}
+            <button
+              onclick={() => navigate('/mission-control')}
+              style="font-size: 13px; color: #B06030; font-weight: 600; cursor: pointer; border: none; background: none; font-family: inherit;"
+            >Open Mission Control →</button>
+          </div>
+        </div>
+        <div style="position: relative; height: 260px; padding: 6px 14px;">
+          <AgentActivityFeed maxEntries={120} />
+        </div>
+      </div>
+    {:else}
+      <div
+        data-testid="bridge-idle"
+        style="background: rgba(255,251,247,0.45); border: 1px dashed rgba(240,220,200,0.8); border-radius: 14px; padding: 16px 20px; margin-bottom: 28px; font-size: 13px; color: #8C7A66; display: flex; align-items: center; justify-content: space-between;"
+      >
+        <span>No live activity. Trigger a run to watch the agent work here, in real time.</span>
+        <button
+          onclick={onTrigger}
+          disabled={triggering}
+          style="font-size: 13px; font-weight: 600; color: #B06030; cursor: pointer; border: none; background: none; font-family: inherit;"
+        >{triggering ? 'Triggering…' : 'Trigger run →'}</button>
+      </div>
+    {/if}
 
     <!-- 4 Metric Cards -->
     <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 28px;">
@@ -240,15 +370,39 @@
       </div>
       {#each recentRuns.slice(0, 10) as run (run.id)}
         {@const status = getStatusBadge(run)}
+        {@const title = getIssueTitle(run)}
         <button
           onclick={() => navigate(`/runs/${run.run_id}`)}
-          style="display: flex; align-items: center; padding: 16px 24px; border-bottom: 1px solid rgba(0,0,0,0.03); transition: background 0.2s ease; cursor: pointer; width: 100%; text-align: left; border: none; font-family: inherit; {getRowTint(run)}"
+          title="Open {run.run_id}"
+          style="display: flex; align-items: center; gap: 14px; padding: 14px 24px; border-bottom: 1px solid rgba(0,0,0,0.04); transition: background 0.2s ease; cursor: pointer; width: 100%; text-align: left; border: none; font-family: inherit; {getRowTint(run)}"
         >
-          <div style="width: 8px; height: 8px; border-radius: 50%; margin-right: 14px; flex-shrink: 0; {run.verdict === 'APPROVE' || run.verdict === 'PR' ? 'background: #2E7D32; box-shadow: 0 0 6px rgba(46,125,50,0.35);' : run.verdict === 'REJECT' ? 'background: #D06050;' : run.status === 'started' ? 'background: #2E7D32; box-shadow: 0 0 6px rgba(46,125,50,0.35);' : 'background: #C4AA90;'}"></div>
-          <span style="font-size: 15px; font-weight: 600; flex: 1; color: {run.verdict === 'APPROVE' || run.verdict === 'PR' || run.status === 'started' ? '#3D2A1A' : '#8C7A66'};">{getRunLabel(run)}</span>
-          <span class="badge {status.cls}">{status.label}</span>
-          <span style="font-size: 13px; color: #8C7A66; margin-left: 16px;">{run.tokens_total ? formatTokens(run.tokens_total) : '—'}</span>
-          <span style="font-size: 13px; color: #8C7A66; margin-left: 16px; min-width: 54px; text-align: right;">{timeAgo(run.started_at)}</span>
+          <div style="width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; {getStatusDot(run)}"></div>
+
+          <!-- Left: project/#issue + title -->
+          <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px;">
+            <div style="display: flex; align-items: baseline; gap: 8px; min-width: 0;">
+              <span style="font-size: 14px; font-weight: 700; color: #2A1C0E; white-space: nowrap;">{getRunLabel(run)}</span>
+              {#if title}
+                <span style="font-size: 13px; color: #4E3A26; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;">{title}</span>
+              {/if}
+            </div>
+            <div style="display: flex; align-items: center; gap: 10px; font-size: 12px; color: #6B5743;">
+              {#if run.turns != null}<span>{run.turns} turns</span>{/if}
+              {#if run.duration_ms}<span>·</span><span>{formatDuration(run.duration_ms)}</span>{/if}
+              {#if run.branch}<span>·</span><span style="font-family: var(--font-mono); font-size: 11px;">{run.branch}</span>{/if}
+              {#if run.autonomy_level}<span>·</span><span style="text-transform: uppercase; letter-spacing: 0.05em; font-size: 10px; font-weight: 600;">{run.autonomy_level}</span>{/if}
+            </div>
+          </div>
+
+          <!-- Right: status + verdict + tokens + time -->
+          <div style="display: flex; align-items: center; gap: 10px; flex-shrink: 0;">
+            <span class="badge {status.cls}">{status.label}</span>
+            {#if run.verdict && status.label !== run.verdict}
+              <span class="badge {getVerdictBadge(run.verdict)}">{run.verdict}</span>
+            {/if}
+            <span style="font-size: 13px; color: #4E3A26; min-width: 56px; text-align: right; font-variant-numeric: tabular-nums;">{run.tokens_total ? formatTokens(run.tokens_total) : '—'}</span>
+            <span style="font-size: 12px; color: #6B5743; min-width: 60px; text-align: right;">{timeAgo(run.started_at)}</span>
+          </div>
         </button>
       {/each}
       {#if recentRuns.length === 0}
