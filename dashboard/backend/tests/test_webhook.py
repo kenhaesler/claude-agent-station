@@ -658,6 +658,93 @@ def test_normalize_event_name():
     assert _normalize_event_name("unknown_event") == "unknown_event"
 
 
+# ---------------------------------------------------------------------------
+# SSE broadcast: vision-bootstrap fields propagated to event bus
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+@patch("app.services.run_lifecycle.parse_employee_report", return_value=None)
+async def test_run_event_publishes_vision_bootstrap_fields_to_sse(
+    mock_report, project_client: AsyncClient
+):
+    """Webhook 'finished' for vision-bootstrap should propagate vision_bootstrap_count,
+    vision_bootstrap_proposals, and skip_reason to the SSE event bus payload."""
+    published: list[dict] = []
+
+    async def capture_publish(payload: dict) -> None:
+        published.append(payload)
+
+    with patch("app.routers.webhook.event_bus_publish", side_effect=capture_publish):
+        resp = await project_client.post("/api/webhook/run-event", json={
+            "run_id": "run-vb-sse-001",
+            "event": "run_complete",
+            "project": "owner/test-repo",
+            "mode": "vision-bootstrap",
+            "status": "success",
+            "vision_bootstrap_count": 3,
+            "vision_bootstrap_proposals": [
+                {"title": "Add logging", "body": "We need logs."},
+                {"title": "Add tests", "body": "Coverage gap."},
+                {"title": "Add docs", "body": "Docs are missing."},
+            ],
+            "skip_reason": None,
+        })
+    assert resp.status_code == 200
+
+    # At least one published event should carry the vision-bootstrap fields
+    assert len(published) >= 1, "event_bus_publish was never called"
+    data_blocks = [p.get("data", {}) for p in published]
+    matching = [
+        d for d in data_blocks
+        if d.get("vision_bootstrap_count") is not None
+        or d.get("vision_bootstrap_proposals") is not None
+    ]
+    assert matching, (
+        "None of the published SSE events carried vision_bootstrap_count or "
+        "vision_bootstrap_proposals. "
+        f"Published data blocks: {data_blocks}"
+    )
+    sse_data = matching[0]
+    assert sse_data["vision_bootstrap_count"] == 3
+    assert isinstance(sse_data["vision_bootstrap_proposals"], list)
+    assert len(sse_data["vision_bootstrap_proposals"]) == 3
+    assert sse_data["vision_bootstrap_proposals"][0]["title"] == "Add logging"
+
+
+@pytest.mark.asyncio
+@patch("app.services.run_lifecycle.parse_employee_report", return_value=None)
+async def test_run_event_publishes_skip_reason_to_sse(
+    mock_report, project_client: AsyncClient
+):
+    """Webhook 'finished' for vision-bootstrap with skip_reason should propagate
+    the skip_reason field in the SSE payload."""
+    published: list[dict] = []
+
+    async def capture_publish(payload: dict) -> None:
+        published.append(payload)
+
+    with patch("app.routers.webhook.event_bus_publish", side_effect=capture_publish):
+        resp = await project_client.post("/api/webhook/run-event", json={
+            "run_id": "run-vb-sse-002",
+            "event": "run_complete",
+            "project": "owner/test-repo",
+            "mode": "vision-bootstrap",
+            "status": "success",
+            "vision_bootstrap_count": 0,
+            "vision_bootstrap_proposals": [],
+            "skip_reason": "no_vision_document",
+        })
+    assert resp.status_code == 200
+
+    data_blocks = [p.get("data", {}) for p in published]
+    matching = [d for d in data_blocks if d.get("skip_reason") is not None]
+    assert matching, (
+        "No published SSE event carried skip_reason. "
+        f"Published data blocks: {data_blocks}"
+    )
+    assert matching[0]["skip_reason"] == "no_vision_document"
+
+
 def test_build_notification_message():
     """Test the _build_notification_message function."""
     from app.services.run_lifecycle import build_notification_message as _build_notification_message

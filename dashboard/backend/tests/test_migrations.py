@@ -230,3 +230,50 @@ async def test_dag_json_read_write_after_migration(tmp_path):
         assert row[0] == '{"nodes": []}'
 
     await test_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_vision_bootstrap_columns_present(tmp_path):
+    """The four vision-bootstrap columns must exist after migration."""
+    db_path = tmp_path / "vision_bootstrap_test.db"
+
+    # Create minimal runs and projects tables without the vision-bootstrap columns.
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("""
+        CREATE TABLE runs (
+            id INTEGER PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            project_id INTEGER,
+            status TEXT,
+            verdict TEXT,
+            started_at DATETIME
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE projects (
+            id INTEGER PRIMARY KEY,
+            repo TEXT NOT NULL,
+            name TEXT
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    test_engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", echo=False)
+
+    async with test_engine.begin() as aconn:
+        await _migrate_add_columns(aconn)
+
+    await test_engine.dispose()
+
+    conn = sqlite3.connect(str(db_path))
+    runs_cols = {row[1] for row in conn.execute("PRAGMA table_info(runs)").fetchall()}
+    projects_cols = {row[1] for row in conn.execute("PRAGMA table_info(projects)").fetchall()}
+    conn.close()
+
+    assert "skip_reason" in runs_cols
+    assert "vision_bootstrap_count" in runs_cols
+    assert "vision_bootstrap_proposals" in runs_cols
+    assert "last_vision_analyzed_sha" in projects_cols

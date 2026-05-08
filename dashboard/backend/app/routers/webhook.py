@@ -170,6 +170,9 @@ async def receive_run_event(
             "turns": event.turns,
             "narration": event.narration,
             "narration_kind": event.narration_kind,
+            "vision_bootstrap_count": event.vision_bootstrap_count,
+            "vision_bootstrap_proposals": event.vision_bootstrap_proposals,
+            "skip_reason": event.skip_reason,
         },
     })
 

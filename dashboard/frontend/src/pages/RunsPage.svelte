@@ -1,7 +1,7 @@
 <script lang="ts">
   import { listRuns } from '../lib/api';
   import { navigate } from '../lib/router.svelte';
-  import { formatTokens, formatDuration, timeAgo } from '../lib/format';
+  import { formatTokens, formatDuration, timeAgo, formatRunMode, formatSkipReason } from '../lib/format';
   import type { Run } from '../lib/types';
   import SkeletonLoader from '../components/data-display/SkeletonLoader.svelte';
   import EmptyState from '../components/data-display/EmptyState.svelte';
@@ -46,10 +46,6 @@
     return verdict ? map[verdict] ?? '' : '';
   }
 
-  function getModeBadge(mode: string | null): string {
-    return mode ? `badge-${mode}` : '';
-  }
-
   function getStatusDot(run: Run): string {
     // Any active sub-state of a live run should render green, not offline.
     if (
@@ -65,6 +61,7 @@
   }
 
   function getRowTint(run: Run): string {
+    if (run.mode === 'vision-bootstrap') return 'background: rgba(176,96,48,0.04); border-left: 2px solid var(--color-violet);';
     if (run.verdict === 'APPROVE' || run.verdict === 'PR') return 'background: rgba(46,125,50,0.03);';
     if (run.verdict === 'REJECT') return 'background: rgba(208,96,80,0.03);';
     if (run.status === 'started') return 'background: rgba(46,125,50,0.02);';
@@ -139,9 +136,11 @@
           {/each}
         {:else}
           {#each runs as run, i (run.id)}
+            {@const m = formatRunMode(run.mode)}
+            {@const skipHint = formatSkipReason(run.skip_reason)}
             <tr
               class="hover:bg-surface-1/50 cursor-pointer transition-colors animate-slide-up stagger-{Math.min(i + 1, 6)}"
-              style="{getRowTint(run)} border-bottom: 1px solid rgba(240,220,200,0.10);"
+              style="{getRowTint(run)} border-bottom: {skipHint ? 'none' : '1px solid rgba(240,220,200,0.10)'};"
               onclick={() => navigate(`/runs/${run.run_id}`)}
               role="button"
               tabindex="0"
@@ -153,7 +152,9 @@
                 {#if run.issue_number}<span class="text-xs text-primary">#{run.issue_number}</span>
                 {:else}<span class="text-xs text-ghost">-</span>{/if}
               </td>
-              <td class="p-3">{#if run.mode}<span class="badge {getModeBadge(run.mode)}">{run.mode}</span>{:else}<span class="text-xs text-ghost">-</span>{/if}</td>
+              <td class="p-3">
+                <span class="badge badge-{run.mode ?? 'default'}">{m.icon} {m.label}</span>
+              </td>
               <td class="p-3"><span class="text-xs font-mono text-tertiary">{run.model?.split('-').pop() ?? '-'}</span></td>
               <td class="p-3"><AutonomyBadge level={run.autonomy_level} size="xs" /></td>
               <td class="p-3">
@@ -165,6 +166,21 @@
               <td class="p-3 text-right"><span class="font-mono text-xs text-secondary">{run.duration_ms ? formatDuration(run.duration_ms) : '-'}</span></td>
               <td class="p-3 text-right"><span class="font-mono text-xs text-tertiary">{timeAgo(run.started_at)}</span></td>
             </tr>
+            {#if skipHint}
+              <tr
+                style="{getRowTint(run)} border-bottom: 1px solid rgba(240,220,200,0.10);"
+                onclick={() => navigate(`/runs/${run.run_id}`)}
+                role="button"
+                tabindex="-1"
+                onkeydown={(e) => e.key === 'Enter' && navigate(`/runs/${run.run_id}`)}
+                class="cursor-pointer"
+              >
+                <td></td>
+                <td colspan="9" class="pb-2 pt-0 px-3">
+                  <span class="text-xs font-mono" style="color: var(--color-violet);">{skipHint}</span>
+                </td>
+              </tr>
+            {/if}
           {/each}
         {/if}
         {#if !loading && runs.length === 0}

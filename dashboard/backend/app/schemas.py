@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import Any
 
@@ -87,6 +88,18 @@ class RunOut(BaseModel):
     # ADR-0001
     autonomy_level: str | None = None
     max_budget_usd: float | None = None
+    # Vision-bootstrap fields — spec 2026-05-08-vision-issue-bootstrap-design.md
+    vision_bootstrap_count: int | None = None
+    vision_bootstrap_proposals: list[dict] | None = None
+    skip_reason: str | None = None
+
+    @field_validator("vision_bootstrap_proposals", mode="before")
+    @classmethod
+    def _deserialize_proposals(cls, v: object) -> object:
+        """Accept raw JSON string from the DB column or a parsed list."""
+        if isinstance(v, str):
+            return json.loads(v)
+        return v
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -328,6 +341,10 @@ class WebhookRunEvent(BaseModel):
     # has to guess what's happening.
     narration: str | None = None
     narration_kind: str | None = None  # "directive" | "step" | "system"
+    # Vision-bootstrap fields — spec 2026-05-08-vision-issue-bootstrap-design.md
+    vision_bootstrap_count: int | None = None
+    vision_bootstrap_proposals: list[dict] | None = None
+    skip_reason: str | None = None
 
 
 # --- Coordinator ---
@@ -704,9 +721,8 @@ class PermissionRequestOut(BaseModel):
     def _parse_json_input(cls, v: Any) -> Any:
         """tool_input is stored as a JSON string; unwrap for the API."""
         if isinstance(v, str):
-            import json as _json
             try:
-                return _json.loads(v)
+                return json.loads(v)
             except Exception:
                 return {"raw": v}
         return v or {}
@@ -811,6 +827,7 @@ class VisionCommitOut(BaseModel):
     """Response for POST /api/projects/{id}/vision."""
     sha: str
     html_url: str
+    analyst_dispatched: bool = False  # True when the SHA-gated dispatch fired (or 409'd)
 
 
 class VisionStaleSha(BaseModel):
@@ -837,3 +854,9 @@ class VisionChatTurnIn(BaseModel):
     """Body for POST /api/projects/{id}/vision/chat (turn)."""
     session_id: str | None = None  # None on first turn
     message: str
+
+
+class VisionProposalsRead(BaseModel):
+    """Response for GET /api/projects/{id}/vision/proposals."""
+    open: int
+    accepted_recent: int

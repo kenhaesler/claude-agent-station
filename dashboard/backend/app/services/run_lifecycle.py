@@ -182,6 +182,17 @@ async def handle_finished(
     run.duration_ms = event.duration_ms
     run.finished_at = datetime.now(timezone.utc)
     run.model = event.model or run.model
+    if event.mode:
+        run.mode = event.mode
+
+    # Vision-bootstrap: only set when the event carries them so we don't
+    # overwrite a regular run's NULLs with NULL-from-event.
+    if event.vision_bootstrap_count is not None:
+        run.vision_bootstrap_count = event.vision_bootstrap_count
+    if event.vision_bootstrap_proposals is not None:
+        run.vision_bootstrap_proposals = json.dumps(event.vision_bootstrap_proposals)
+    if event.skip_reason is not None:
+        run.skip_reason = event.skip_reason
 
     if not run.employee_report and event.project:
         repo_short = _safe_repo_short(event.project)

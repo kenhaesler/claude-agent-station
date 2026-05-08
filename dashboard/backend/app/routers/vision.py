@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import subprocess
+import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
@@ -13,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db
 from app.models import Project, VisionChatSession
-from app.schemas import VisionRead, VisionCommitIn, VisionCommitOut, VisionStaleSha, VisionChatTurnIn, VisionChatSessionOut
+from app.schemas import VisionRead, VisionCommitIn, VisionCommitOut, VisionStaleSha, VisionChatTurnIn, VisionChatSessionOut, VisionProposalsRead
 from app.services import github_contents
 from app.services.vision_render import render_vision_doc
 from app.services import vision_chat as vc_service
@@ -112,13 +115,33 @@ async def commit_vision(
     project.vision_cached_body = fresh.body
     project.vision_cached_at = now
 
+    # Trigger B (spec 2026-05-08-vision-issue-bootstrap-design.md):
+    # fire the analyst when the vision SHA actually changed. We set
+    # last_vision_analyzed_sha at *dispatch* time (not on completion) so a
+    # failed analyst doesn't loop on identical re-commits.
+    dispatched: bool = False
+    if fresh.sha != project.last_vision_analyzed_sha:
+        try:
+            result = await service_control.start_vision_analyst(project_id)
+            if not result.get("success") and result.get("status_code") != 409:
+                logger.warning(
+                    "vision commit B-trigger dispatch failed: %s",
+                    result.get("error") or result.get("stderr"),
+                )
+            else:
+                # 200 or 409 — both mean "an analyst run will happen"
+                project.last_vision_analyzed_sha = fresh.sha
+                dispatched = True
+        except Exception as exc:
+            logger.warning("vision commit B-trigger dispatch exception: %s", exc)
+
     # Mark any active chat session as approved with the assembled doc
     active = await vc_service.get_active_session(db, project_id)
     if active:
         await vc_service.mark_approved(db, active.id, assembled=body.vision_doc.model_dump())
 
     await db.commit()
-    return VisionCommitOut(sha=new_sha, html_url=fresh.html_url)
+    return VisionCommitOut(sha=new_sha, html_url=fresh.html_url, analyst_dispatched=dispatched)
 
 
 # ---------------------------------------------------------------------------
@@ -172,9 +195,8 @@ async def chat_turn(
         system_prompt = _load_prompt("vision_create.md")
 
     # Pick the model — read the station config JSON directly
-    import asyncio as _asyncio
     from app.services.config_sync import _read_config_json
-    config = await _asyncio.to_thread(_read_config_json)
+    config = await asyncio.to_thread(_read_config_json)
     model = (config.get("models") or {}).get("planner") or "claude-sonnet-4-6"
 
     async def event_stream():
@@ -253,3 +275,64 @@ async def find_gaps(project_id: int, db: AsyncSession = Depends(get_db)):
             detail=result.get("error") or result.get("stderr") or "failed to start vision-analyst",
         )
     return {"status": "triggered", **{k: v for k, v in result.items() if k not in {"success", "status_code"}}}
+
+
+# ---------------------------------------------------------------------------
+# Vision proposals: open + recently-accepted vision-suggested issues
+# ---------------------------------------------------------------------------
+
+# Module-level cache: {project_id: (timestamp, payload)}.
+# 60-second TTL is enough to absorb dashboard re-renders without
+# overwhelming the rate-limited gh CLI.
+_PROPOSALS_CACHE: dict[int, tuple[float, dict]] = {}
+_PROPOSALS_TTL_S = 60
+
+
+def _count_issues(repo: str, *, state: str, label: str, days_back: int | None = None) -> int:
+    """Run `gh issue list` and count results. Returns 0 on any failure."""
+    cmd = [
+        "gh", "issue", "list",
+        "--repo", repo,
+        "--state", state,
+        "--label", label,
+        "--limit", "100",
+        "--json", "number",
+    ]
+    if days_back is not None:
+        # Use gh's --search; resolve the date in Python to avoid shell expansion
+        # surprises.
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days_back)).strftime("%Y-%m-%d")
+        cmd += ["--search", f"closed:>={cutoff}"]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        if result.returncode != 0:
+            return 0
+        return len(json.loads(result.stdout or "[]"))
+    except Exception:
+        return 0
+
+
+@router.get("/{project_id}/vision/proposals", response_model=VisionProposalsRead)
+async def vision_proposals(project_id: int, db: AsyncSession = Depends(get_db)):
+    """Return open + recently-accepted proposal counts for the Vision tab."""
+    project = await db.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="project not found")
+
+    cached = _PROPOSALS_CACHE.get(project_id)
+    if cached and (time.time() - cached[0]) < _PROPOSALS_TTL_S:
+        return VisionProposalsRead(**cached[1])
+
+    open_count = await asyncio.to_thread(
+        _count_issues, project.repo, state="open", label="vision-suggested"
+    )
+    # Accepted = closed within last 7 days that previously had vision-suggested.
+    # The label may have been removed when the issue was accepted, so this is
+    # an approximation — close enough for an info strip.
+    accepted = await asyncio.to_thread(
+        _count_issues, project.repo, state="closed", label="vision-suggested", days_back=7,
+    )
+
+    payload = {"open": open_count, "accepted_recent": accepted}
+    _PROPOSALS_CACHE[project_id] = (time.time(), payload)
+    return VisionProposalsRead(**payload)

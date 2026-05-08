@@ -11,6 +11,7 @@ import { getActiveEmployees, getLatestRun, listPlans, listRuns, getStoredApiKey 
 import type { ActiveEmployee, Run } from './types';
 import { AgentEventStream } from './event-stream';
 import { handleStreamEvent as permissionTrayHandleEvent } from './permission-tray.svelte';
+import { addToast } from './toast.svelte';
 
 // --- Agent Identity ---
 
@@ -350,6 +351,16 @@ function connectSSE() {
   sse.connect();
 }
 
+function visionBootstrapCompletionToast(data: any): void {
+  const n = (data.vision_bootstrap_count ?? data.data?.vision_bootstrap_count) ?? 0;
+  addToast(
+    'success',
+    n === 0
+      ? 'Vision analyzed — no gaps found.'
+      : `${n} issue${n === 1 ? '' : 's'} created from vision.`,
+  );
+}
+
 function handleSSEEvent(data: any) {
   const eventType = data.event ?? data.type;
   const agentColor = getRoleColors().manager;
@@ -453,6 +464,23 @@ function handleSSEEvent(data: any) {
         content: `Verdict: ${data.verdict ?? data.action ?? 'UNKNOWN'}`,
       });
       break;
+    case 'finished': {
+      // The vision_analyst worker emits event="finished" when the vision-bootstrap
+      // run completes. Only act on this for vision-bootstrap mode — all other
+      // terminal events use run_complete / orchestrator_complete below.
+      const vbRunMode = data.mode ?? data.data?.mode;
+      if (vbRunMode !== 'vision-bootstrap') break;
+      agentPresence.phase = 'idle';
+      addConversationEntry({
+        agentName: 'Manager',
+        agentColor,
+        type: 'phase',
+        content: 'Run completed',
+      });
+      visionBootstrapCompletionToast(data);
+      refreshActiveRuns();
+      break;
+    }
     case 'run_complete':
     case 'orchestrator_complete':
     case 'orchestrator_error': {
@@ -472,6 +500,14 @@ function handleSSEEvent(data: any) {
           : (eventType === 'orchestrator_error' ? 'Run failed' : 'Run completed'),
         isError: interrupted || eventType === 'orchestrator_error',
       });
+      // Vision-bootstrap completion toast
+      const runMode = data.mode ?? data.data?.mode;
+      const runStatus = data.status ?? data.data?.status;
+      if (runMode === 'vision-bootstrap' && !interrupted &&
+          (runStatus === 'success' || runStatus === 'completed') &&
+          eventType !== 'orchestrator_error') {
+        visionBootstrapCompletionToast(data);
+      }
       refreshActiveRuns();
       break;
     }

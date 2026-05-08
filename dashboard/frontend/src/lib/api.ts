@@ -13,7 +13,7 @@ import type {
   AnalyticsResponse, DiffResult, PlanUsage,
   PromptInfo, StationConfig, TokenUsage,
   AgentEvent, Notification,
-  VisionRead, VisionDoc, VisionCommitOut, VisionChatSession,
+  VisionRead, VisionDoc, VisionCommitOut, VisionChatSession, VisionProposals,
 } from './types';
 
 import { toastError } from './toast.svelte';
@@ -548,3 +548,6 @@ export const visionChatTurnUrl = (projectId: number) =>
 
 export const findVisionGaps = (projectId: number) =>
   request<{ status: string; pid?: number; log?: string }>(`/api/projects/${projectId}/vision/find-gaps`, { method: 'POST' });
+
+export const getVisionProposals = (projectId: number): Promise<VisionProposals> =>
+  request<VisionProposals>(`/api/projects/${projectId}/vision/proposals`);

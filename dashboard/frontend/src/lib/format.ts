@@ -80,3 +80,39 @@ export function formatCost(usd: number | null): string {
   if (usd < 0.01) return `$${usd.toFixed(4)}`;
   return `$${usd.toFixed(2)}`;
 }
+
+export interface RunModeDescriptor {
+  label: string;
+  icon: string;
+  accent: 'default' | 'violet';
+}
+
+/** Map a Run.mode value to its UI descriptor. */
+export function formatRunMode(mode: string | null | undefined): RunModeDescriptor {
+  switch (mode) {
+    case 'vision-bootstrap':
+      return { label: 'Vision bootstrap', icon: '✨', accent: 'violet' };
+    case 'agent-teams':
+      return { label: 'Agent Teams', icon: '◆', accent: 'default' };
+    default:
+      return { label: 'Run', icon: '◆', accent: 'default' };
+  }
+}
+
+/** Human-readable hint for a Run.skip_reason value. Returns the raw value
+ *  if no canned text matches. */
+export function formatSkipReason(reason: string | null | undefined): string {
+  if (!reason) return '';
+  switch (reason) {
+    case 'no-eligible-issues-no-vision':
+      return 'No vision yet — define one in the Vision tab.';
+    case 'no-eligible-issues-bootstrap-dispatched':
+      return 'Vision analyst dispatched.';
+    case 'no-eligible-issues-bootstrap-already-running':
+      return 'Vision analyst is already running.';
+    case 'no-eligible-issues-proposals-pending':
+      return 'Vision-suggested issues await your acceptance.';
+    default:
+      return reason;
+  }
+}

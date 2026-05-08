@@ -33,6 +33,7 @@ class Project(Base):
     vision_cached_sha = Column(Text, nullable=True, default=None)
     vision_cached_body = Column(Text, nullable=True, default=None)
     vision_cached_at = Column(DateTime, nullable=True, default=None)
+    last_vision_analyzed_sha = Column(Text, nullable=True, default=None)
     created_at = Column(DateTime, default=_utcnow)
     updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
 
@@ -75,6 +76,10 @@ class Run(Base):
     # ADR-0001: autonomy snapshot at trigger time; per-run budget override
     autonomy_level = Column(Text, nullable=True, default="assisted")
     max_budget_usd = Column(Float, nullable=True, default=None)
+    # Vision-bootstrap (spec 2026-05-08-vision-issue-bootstrap-design.md)
+    skip_reason = Column(Text, nullable=True)
+    vision_bootstrap_count = Column(Integer, nullable=True)
+    vision_bootstrap_proposals = Column(Text, nullable=True)  # JSON list
 
 
 class ConfigEntry(Base):
