@@ -1,7 +1,7 @@
 import json
 import pytest
 from unittest.mock import patch, MagicMock
-from agent.vision_analyst import propose_gaps, format_proposal_body
+from agent.vision_analyst import propose_gaps, format_proposal_body, _ensure_workspace
 
 
 VISION = {"problem": "P", "users": "U", "end_state": "E", "non_goals": "N",
@@ -49,7 +49,7 @@ async def test_run_for_project_posts_started_and_finished_webhooks(monkeypatch, 
         return R()
 
     monkeypatch.setattr(va.httpx, "post", fake_post, raising=False)
-    monkeypatch.setattr(va, "_ensure_workspace", lambda w, r: True)
+    monkeypatch.setattr(va, "_ensure_workspace", lambda w, r, b="main": True)
     monkeypatch.setattr(va, "load_vision", lambda w: {
         "problem": "p", "users": "u", "end_state": "e",
         "non_goals": "n", "principles": "pr", "horizons": "h",
@@ -84,6 +84,105 @@ async def test_run_for_project_posts_started_and_finished_webhooks(monkeypatch, 
     assert finished["status"] == "success"
     assert finished["vision_bootstrap_count"] == 1
     assert finished["vision_bootstrap_proposals"][0]["number"] == 101
+
+
+def _ok(stdout: str = "") -> object:
+    return type("R", (), {"returncode": 0, "stdout": stdout, "stderr": ""})()
+
+
+def _fail(stderr: str = "boom", code: int = 1) -> object:
+    return type("R", (), {"returncode": code, "stdout": "", "stderr": stderr})()
+
+
+def test_ensure_workspace_refreshes_existing_clone_with_branch(monkeypatch, tmp_path):
+    """When .git already exists, _ensure_workspace must run
+    `git fetch --depth 1 origin <branch>` followed by
+    `git reset --hard origin/<branch>` against the right branch."""
+    workspace = tmp_path / "repo"
+    workspace.mkdir()
+    (workspace / ".git").mkdir()  # simulate existing clone
+
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, *a, **kw):
+        calls.append(list(cmd))
+        return _ok()
+
+    monkeypatch.setattr("agent.vision_analyst.subprocess.run", fake_run)
+
+    ok = _ensure_workspace(str(workspace), "owner/repo", "develop")
+    assert ok is True
+
+    # Two calls: fetch then reset --hard. No clone (git dir already present).
+    assert len(calls) == 2
+    fetch_cmd = calls[0]
+    reset_cmd = calls[1]
+    assert fetch_cmd == [
+        "git", "-C", str(workspace), "fetch", "--depth", "1",
+        "origin", "develop",
+    ]
+    assert reset_cmd == [
+        "git", "-C", str(workspace), "reset", "--hard", "origin/develop",
+    ]
+
+
+def test_ensure_workspace_defaults_to_main(monkeypatch, tmp_path):
+    """Branch default is 'main' when not supplied."""
+    workspace = tmp_path / "repo"
+    workspace.mkdir()
+    (workspace / ".git").mkdir()
+
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, *a, **kw):
+        calls.append(list(cmd))
+        return _ok()
+
+    monkeypatch.setattr("agent.vision_analyst.subprocess.run", fake_run)
+    ok = _ensure_workspace(str(workspace), "owner/repo")
+    assert ok is True
+    assert calls[0][-1] == "main"
+    assert calls[1][-1] == "origin/main"
+
+
+def test_ensure_workspace_returns_true_when_fetch_fails(monkeypatch, tmp_path, caplog):
+    """If `git fetch` fails the function still returns True so the caller
+    can fall through to load_vision; the failure is logged."""
+    workspace = tmp_path / "repo"
+    workspace.mkdir()
+    (workspace / ".git").mkdir()
+
+    def fake_run(cmd, *a, **kw):
+        # Fail the first (fetch) call.
+        return _fail("network down")
+
+    monkeypatch.setattr("agent.vision_analyst.subprocess.run", fake_run)
+    with caplog.at_level("WARNING"):
+        ok = _ensure_workspace(str(workspace), "owner/repo", "main")
+    assert ok is True
+    assert any("git fetch" in rec.message and "failed" in rec.message
+               for rec in caplog.records)
+
+
+def test_ensure_workspace_clones_when_missing_then_refreshes(monkeypatch, tmp_path):
+    """When .git is absent, clone first, then run fetch + reset."""
+    workspace = tmp_path / "repo"
+    # workspace dir does NOT exist yet — clone path
+
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, *a, **kw):
+        calls.append(list(cmd))
+        return _ok()
+
+    monkeypatch.setattr("agent.vision_analyst.subprocess.run", fake_run)
+    ok = _ensure_workspace(str(workspace), "owner/repo", "main")
+    assert ok is True
+    # clone, fetch, reset
+    assert len(calls) == 3
+    assert calls[0][:3] == ["gh", "repo", "clone"]
+    assert calls[1][:5] == ["git", "-C", str(workspace), "fetch", "--depth"]
+    assert calls[2][:5] == ["git", "-C", str(workspace), "reset", "--hard"]
 
 
 def test_create_proposed_issues_pairs_failures_correctly(monkeypatch):
