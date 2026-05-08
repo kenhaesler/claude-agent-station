@@ -105,7 +105,7 @@ CI runs a drift check that re-compiles and fails if `requirements-lock.txt` is o
 
 ## Origin
 
-Extracted from [claude-user-memory](https://github.com/VAMFI/claude-user-memory) autonomous mode. See `ARCHITECTURE.md` for full system design.
+Extracted from [claude-user-memory](https://github.com/VAMFI/claude-user-memory) autonomous mode. See `docs/architecture.md` for full system design.
 
 ## License
 

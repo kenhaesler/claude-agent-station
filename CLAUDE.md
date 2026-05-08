@@ -12,7 +12,7 @@ Self-hosted autonomous Claude Code agent with web dashboard. Uses **Agent Teams 
 - **Deployment**: systemd (Rocky Linux 9 / RHEL-based)
 
 ## Architecture
-See `ARCHITECTURE.md` for full system design.
+See `docs/architecture.md` for full system design.
 
 **Agent Teams flow**: run-manager.sh → station_orchestrator.py → Claude Agent SDK → Lead spawns teammates → each teammate works one issue → Lead reviews → Manager reviews all work → verdicts (APPROVE/PR/REJECT)
 
