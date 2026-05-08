@@ -14,7 +14,12 @@ import logging
 import os
 import subprocess
 import sys
+import uuid
 from typing import Any
+
+import httpx
+
+from agent.vision import load_vision
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -25,6 +30,33 @@ DISCLAIMER = (
     "Review and accept by removing the `vision-suggested` label, "
     "or close to reject.*\n\n---\n\n"
 )
+
+
+def _webhook_url() -> str | None:
+    return os.environ.get("STATION_WEBHOOK_URL") or None
+
+
+def _webhook_secret() -> str | None:
+    return os.environ.get("STATION_WEBHOOK_SECRET") or None
+
+
+def _post_webhook(payload: dict) -> None:
+    """Best-effort POST to STATION_WEBHOOK_URL. Failures are logged, not raised."""
+    url = _webhook_url()
+    if not url:
+        logger.info("vision_analyst: STATION_WEBHOOK_URL unset, skipping webhook")
+        return
+    headers = {}
+    secret = _webhook_secret()
+    if secret:
+        headers["X-Webhook-Token"] = secret
+    try:
+        resp = httpx.post(url, json=payload, headers=headers, timeout=5.0)
+        if resp.status_code >= 400:
+            logger.warning("vision_analyst webhook %s -> %s: %s",
+                           payload.get("event"), resp.status_code, resp.text[:200])
+    except httpx.HTTPError as exc:
+        logger.warning("vision_analyst webhook POST failed: %s", exc)
 
 
 def _gather_repo_state(workspace: str, repo: str) -> dict:
@@ -236,34 +268,72 @@ def _ensure_workspace(workspace: str, repo: str) -> bool:
 
 
 async def run_for_project(project_id: int) -> dict:
-    """Entry point: load project from DB, run analyst, return summary."""
+    """Entry point: load project from DB, run analyst, return summary.
+
+    Self-registers as a `vision-bootstrap` Run via webhooks so the dashboard
+    sees the activity in Mission Control + Runs list.
+    """
     from app.database import async_session, init_db
     from app.models import Project
-    from agent.vision import load_vision
 
     await init_db()
     async with async_session() as db:
         project = await db.get(Project, project_id)
         if not project:
             return {"ok": False, "error": "project not found"}
+        repo = project.repo
 
     workspaces_dir = os.environ.get("STATION_WORKSPACES", "/var/lib/claude-agent-station/workspaces")
-    name = project.repo.split("/")[-1]
+    name = repo.split("/")[-1]
     workspace = os.path.join(workspaces_dir, name)
 
-    if not _ensure_workspace(workspace, project.repo):
-        return {"ok": False, "error": f"could not clone {project.repo}"}
+    run_id = f"run-vb-{uuid.uuid4().hex[:12]}"
+    _post_webhook({
+        "event": "started",
+        "run_id": run_id,
+        "project": repo,
+        "mode": "vision-bootstrap",
+    })
+
+    def _finish(status: str, **extra) -> None:
+        _post_webhook({
+            "event": "finished",
+            "run_id": run_id,
+            "project": repo,
+            "mode": "vision-bootstrap",
+            "status": status,
+            **extra,
+        })
+
+    if not _ensure_workspace(workspace, repo):
+        _finish("error")
+        return {"ok": False, "error": f"could not clone {repo}"}
 
     vision = load_vision(workspace)
     if vision is None:
+        _finish("error")
         return {"ok": False, "error": "no vision file at docs/vision.md"}
 
     model = os.environ.get("STATION_VISION_ANALYST_MODEL", "claude-sonnet-4-6")
-    proposals = propose_gaps(workspace, vision, project.repo, model)
+    proposals = propose_gaps(workspace, vision, repo, model)
     if not proposals:
+        _finish("success", vision_bootstrap_count=0, vision_bootstrap_proposals=[])
         return {"ok": True, "proposals": [], "created": []}
 
-    created = create_proposed_issues(project.repo, proposals)
+    created = create_proposed_issues(repo, proposals)
+    proposal_records = [
+        {
+            "number": num,
+            "title": p.get("title", ""),
+            "url": f"https://github.com/{repo}/issues/{num}",
+        }
+        for num, p in zip(created, proposals)
+    ]
+    _finish(
+        "success",
+        vision_bootstrap_count=len(created),
+        vision_bootstrap_proposals=proposal_records,
+    )
     return {"ok": True, "proposals": proposals, "created": created}
 
 

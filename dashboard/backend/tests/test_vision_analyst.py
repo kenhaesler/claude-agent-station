@@ -33,3 +33,54 @@ def test_format_proposal_body_includes_disclaimer():
     assert "Proposed by Claude Station" in body
     assert "vision-suggested" in body
     assert "The feature explanation." in body
+
+
+async def test_run_for_project_posts_started_and_finished_webhooks(monkeypatch, tmp_path):
+    """run_for_project must POST started + finished events with mode=vision-bootstrap."""
+    from agent import vision_analyst as va
+
+    posted = []
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        posted.append({"url": url, "json": json})
+        class R:
+            status_code = 200
+            def raise_for_status(self): pass
+        return R()
+
+    monkeypatch.setattr(va.httpx, "post", fake_post, raising=False)
+    monkeypatch.setattr(va, "_ensure_workspace", lambda w, r: True)
+    monkeypatch.setattr(va, "load_vision", lambda w: {
+        "problem": "p", "users": "u", "end_state": "e",
+        "non_goals": "n", "principles": "pr", "horizons": "h",
+        "anti_patterns": "a",
+    })
+    monkeypatch.setattr(va, "propose_gaps", lambda w, v, r, m: [
+        {"title": "T1", "body": "B1", "priority": "low"},
+    ])
+    monkeypatch.setattr(va, "create_proposed_issues", lambda r, p: [101])
+    monkeypatch.setenv("STATION_WEBHOOK_URL", "http://test/api/webhook/run-event")
+    monkeypatch.setenv("STATION_WORKSPACES", str(tmp_path))
+
+    # Project with id=1
+    from app.database import async_session, init_db
+    from app.models import Project
+    await init_db()
+    async with async_session() as db:
+        db.add(Project(id=1, repo="x/y", branch="main"))
+        await db.commit()
+
+    result = await va.run_for_project(1)
+    assert result["ok"] is True
+
+    assert len(posted) == 2
+    started = posted[0]["json"]
+    finished = posted[1]["json"]
+    assert started["event"] == "started"
+    assert started["mode"] == "vision-bootstrap"
+    assert started["run_id"].startswith("run-vb-")
+    assert finished["event"] == "finished"
+    assert finished["mode"] == "vision-bootstrap"
+    assert finished["status"] == "success"
+    assert finished["vision_bootstrap_count"] == 1
+    assert finished["vision_bootstrap_proposals"][0]["number"] == 101
