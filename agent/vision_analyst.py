@@ -254,25 +254,75 @@ def create_proposed_issues(repo: str, proposals: list[dict]) -> list[tuple[int, 
     return created
 
 
+def _fetch_gh_token() -> str | None:
+    """Fetch a fresh GitHub auth secret from the dashboard's token endpoint.
+
+    Mirrors what ``run-manager.sh:ensure_gh_token`` does for the orchestrator
+    path: GET ``${STATION_DASHBOARD_BASE_URL}/api/github/app/token`` with the
+    ``X-Launcher-Token`` header. Returns ``None`` when the dashboard is
+    unreachable or no GitHub auth is configured — caller falls back to
+    whatever was previously baked into the workspace remote URL.
+
+    Returning ``None`` means the workspace's existing remote URL is the only
+    credential available; that's expected on first install (before the App is
+    set up) but will fail any subsequent ``git fetch`` once the embedded
+    installation token expires (~1 hour).
+    """
+    base = os.environ.get("STATION_DASHBOARD_BASE_URL", "http://localhost:8420").rstrip("/")
+    launcher = os.environ.get("STATION_LAUNCHER_TOKEN", "").strip()
+    headers = {"X-Launcher-Token": launcher} if launcher else {}
+    url = f"{base}/api/github/app/token"
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            resp = client.get(url, headers=headers)
+        if 200 <= resp.status_code < 300:
+            try:
+                body = resp.json()
+            except ValueError:
+                logger.warning("github auth endpoint returned non-JSON response")
+                return None
+            tok = body.get("token") if isinstance(body, dict) else None
+            if tok:
+                return str(tok)
+            logger.warning("github auth endpoint returned no credential")
+            return None
+        logger.warning(
+            "github auth endpoint returned HTTP %d", resp.status_code,
+        )
+    except httpx.RequestError as exc:
+        logger.warning("github auth endpoint unreachable: %s", type(exc).__name__)
+    return None
+
+
 def _ensure_workspace(workspace: str, repo: str, branch: str = "main") -> bool:
     """Clone the repo into workspace if not already present, then refresh
     the checkout to the tip of ``branch``.
 
+    Authentication: an installation token is fetched fresh on each call from
+    the dashboard's ``/api/github/app/token`` endpoint and used both as
+    ``GH_TOKEN`` (for ``gh repo clone``) and via remote-URL rotation (for
+    ``git fetch``/``reset``). Without this, the workspace's embedded
+    ``x-access-token:ghs_...@github.com`` URL becomes stale within an hour
+    and every refresh after the first run fails 401.
+
     The refresh is best-effort: if ``git fetch`` or ``git reset --hard`` fails
     we still return ``True`` so the caller can attempt to read whatever is on
     disk. ``load_vision`` will surface a clear error if the file is missing.
-
-    Logs each git step so operators can ``grep`` worker output for stale-
-    workspace symptoms without inspecting the volume.
     """
     parent = os.path.dirname(workspace)
     name = os.path.basename(workspace)
+    gh_token = _fetch_gh_token()
+    subprocess_env: dict[str, str] | None = None
+    if gh_token:
+        subprocess_env = {**os.environ, "GH_TOKEN": gh_token}
+
     if not os.path.isdir(os.path.join(workspace, ".git")):
         os.makedirs(parent, exist_ok=True)
         try:
             clone = subprocess.run(
                 ["gh", "repo", "clone", repo, name],
                 cwd=parent, capture_output=True, text=True, timeout=120,
+                env=subprocess_env,
             )
         except subprocess.TimeoutExpired:
             logger.warning("gh repo clone %s timed out", repo)
@@ -283,6 +333,25 @@ def _ensure_workspace(workspace: str, repo: str, branch: str = "main") -> bool:
                 repo, clone.stderr.strip(),
             )
             return False
+
+    # Rotate the remote URL with the fresh token so subsequent ``git`` ops
+    # authenticate. Without this, a clone made hours ago retains an expired
+    # ``ghs_...`` token in its origin URL.
+    if gh_token:
+        new_url = f"https://x-access-token:{gh_token}@github.com/{repo}.git"
+        try:
+            rotate = subprocess.run(
+                ["git", "-C", workspace, "remote", "set-url", "origin", new_url],
+                capture_output=True, text=True, timeout=10,
+            )
+        except subprocess.TimeoutExpired:
+            logger.warning("git remote set-url in %s timed out", workspace)
+            rotate = None
+        if rotate is not None and rotate.returncode != 0:
+            logger.warning(
+                "git remote set-url in %s failed: %s",
+                workspace, rotate.stderr.strip(),
+            )
 
     # Refresh the existing checkout to the tip of the configured branch.
     try:
