@@ -1,0 +1,403 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Station / Fleet — Pro</title>
+<link rel="stylesheet" href="pro.css" />
+<style>
+.page-head {
+  display: grid; grid-template-columns: auto 1fr;
+  align-items: center; gap: 18px;
+  padding: 10px 16px; border-bottom: 1px solid var(--rule);
+  flex-shrink: 0;
+}
+.page-head h1 {
+  margin: 0; font-family: var(--sans);
+  font-size: 14px; font-weight: 700;
+  letter-spacing: 0.18em; text-transform: uppercase;
+  color: var(--ink);
+}
+.page-head h1 .br { color: var(--ash); margin: 0 6px; }
+.page-head h1 .team { color: var(--graphite); }
+.page-head .meta {
+  font-family: var(--mono); font-size: 11px;
+  color: var(--graphite); display: flex; gap: 12px; flex-wrap: wrap; justify-content: flex-end;
+}
+.page-head .meta b { color: var(--ink); font-weight: 500; }
+
+.fleet { display: grid; grid-template-columns: 1fr 320px; flex: 1; min-height: 0; }
+.fleet-main { border-right: 1px solid var(--rule); padding: 22px; }
+
+.map { display: grid; grid-template-rows: auto 36px auto; gap: 0; }
+.cell {
+  background: var(--paper-2);
+  border: 1px solid var(--rule);
+  font-family: var(--mono);
+  display: grid;
+}
+.cell.lead { padding: 14px 18px 16px; }
+.cell .head {
+  display: flex; align-items: center; justify-content: space-between; gap: 14px;
+  font-family: var(--sans); font-size: 10px; font-weight: 700;
+  letter-spacing: 0.18em; text-transform: uppercase; color: var(--ash);
+  border-bottom: 1px solid var(--rule); padding-bottom: 8px; margin-bottom: 12px;
+}
+.cell .head .role { color: var(--ink); }
+.cell .head .role .br { color: var(--ash); margin: 0 4px; }
+.cell .head-right { display: flex; align-items: center; gap: 10px; }
+.cell .head-meta { font-family: var(--mono); font-size: 10px; letter-spacing: 0; text-transform: none; color: var(--graphite); }
+
+.cell.run   { border-left: 3px solid var(--go); }
+.cell.idle  { border-left: 3px solid var(--ash); opacity: 0.74; }
+.cell.stop  { border-left: 3px solid var(--caution); }
+.cell.abort { border-left: 3px solid var(--abort); }
+
+.cell .lead-body {
+  display: grid; grid-template-columns: 1fr auto;
+  gap: 22px; align-items: center;
+}
+.cell .lead-summary { font-family: var(--sans); font-size: 14px; color: var(--ink); line-height: 1.4; }
+.cell .lead-summary .sub {
+  font-family: var(--mono); color: var(--graphite); font-size: 11px; margin-top: 4px;
+}
+
+.stats { display: grid; gap: 1px; background: var(--rule); padding: 1px; border: 1px solid var(--rule); }
+.stats.s5 { grid-template-columns: repeat(5, minmax(64px, 1fr)); }
+.stats.s6 { grid-template-columns: repeat(3, 1fr); grid-auto-rows: minmax(36px, auto); }
+.stat {
+  background: var(--paper-2);
+  padding: 4px 8px;
+  display: grid; align-content: center;
+}
+.stat .k {
+  font-family: var(--sans); font-size: 8px; font-weight: 700;
+  letter-spacing: 0.2em; text-transform: uppercase;
+  color: var(--ash); line-height: 1;
+}
+.stat .v {
+  font-family: var(--mono); font-weight: 600; font-size: 16px; color: var(--ink); line-height: 1;
+  font-variant-numeric: tabular-nums; margin-top: 2px;
+}
+.stat .v.go { color: var(--go); }
+.stat .v.nu { color: var(--ash); }
+
+.connectors { position: relative; height: 36px; }
+.connectors svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.connectors path {
+  fill: none; stroke: var(--rule-2); stroke-width: 1;
+  transition: stroke 200ms ease, stroke-width 200ms ease;
+}
+.connectors path.pulse {
+  stroke: var(--data); stroke-width: 2;
+}
+
+.team-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.cell.mate { padding: 12px 14px; min-height: 240px; display: flex; flex-direction: column; gap: 10px; }
+.cell.mate .task {
+  font-family: var(--sans); font-size: 12px; color: var(--ink); line-height: 1.35;
+}
+.cell.mate .task .nul { color: var(--ash); font-style: italic; }
+.cell.mate .latest {
+  margin-top: auto; font-family: var(--mono); font-size: 11px; color: var(--graphite);
+  border-top: 1px dashed var(--rule); padding-top: 8px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.cell.mate .latest .arrow { color: var(--data); margin-right: 4px; }
+.cell.mate .latest b { color: var(--ink); font-weight: 500; }
+
+.side { display: flex; flex-direction: column; min-height: 0; }
+.side .body { overflow-y: auto; flex: 1; min-height: 0; }
+.msg {
+  display: grid; grid-template-columns: auto 1fr auto;
+  gap: 8px; align-items: baseline;
+  padding: 8px 14px; border-bottom: 1px solid var(--rule);
+  font-family: var(--mono); font-size: 11px;
+}
+.msg .arr {
+  font-family: var(--sans); font-size: 10px; font-weight: 700;
+  letter-spacing: 0.16em; text-transform: uppercase;
+  color: var(--data); white-space: nowrap;
+}
+.msg .arr.up   { color: var(--go); }
+.msg .arr.peer { color: var(--caution); }
+.msg .body { color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.msg .body em { font-style: normal; color: var(--data); margin-right: 4px; }
+.msg .t { color: var(--ash); font-size: 10px; }
+
+@media (max-width: 1180px) {
+  .fleet { grid-template-columns: 1fr; }
+  .fleet-main { border-right: none; }
+  .team-row { grid-template-columns: 1fr; }
+}
+@media (max-width: 760px) { .stats.s5 { grid-template-columns: repeat(2, 1fr); } }
+</style>
+</head>
+<body>
+
+<header class="strip">
+  <div class="wordmark">
+    <span class="name">Station</span>
+    <span class="tag">OPERATOR · v1</span>
+  </div>
+  <nav class="strip-nav">
+    <a href="dispatch-board.html">Dispatch</a>
+    <a href="mission.html">Mission</a>
+    <a href="#" class="active">Fleet</a>
+    <a href="run-detail.html">Run</a>
+    <a href="#">Queue</a>
+    <a href="#">Settings</a>
+  </nav>
+  <div class="strip-status">
+    <span><span class="dot go live"></span><span class="pill">WORKING · 1</span></span>
+    <span>647 TOK</span>
+    <span>SSE&nbsp;<b style="color:var(--go)">●</b></span>
+    <button class="btn-theme" id="theme-toggle" aria-label="Toggle theme">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" id="theme-sun" style="display:none">
+        <circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="4.2" y1="4.2" x2="6.3" y2="6.3"/><line x1="17.7" y1="17.7" x2="19.8" y2="19.8"/><line x1="2" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="22" y2="12"/><line x1="4.2" y1="19.8" x2="6.3" y2="17.7"/><line x1="17.7" y1="6.3" x2="19.8" y2="4.2"/>
+      </svg>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" id="theme-moon">
+        <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>
+      </svg>
+    </button>
+    <button class="btn-stop">Stop <kbd>⌘.</kbd></button>
+  </div>
+</header>
+
+<div class="ticker">
+  <span class="ticker-tag">// Live</span>
+  <div class="ticker-track" id="ticker-track"></div>
+</div>
+
+<div class="page-head">
+  <h1>Fleet <span class="br">·</span> <span class="team">Team Sprightly-Na…</span></h1>
+  <div class="meta">
+    <span>Run <b>run-…220534Z</b></span>
+    <span>·</span><span>Mode <b>FULL</b></span>
+    <span>·</span><span>Aut <b>ASSISTED</b></span>
+    <span>·</span><span>Elapsed <b>30M</b></span>
+    <span>·</span><span>Project <b>laboef1900/next-itsm</b></span>
+  </div>
+</div>
+
+<section class="fleet">
+  <div class="fleet-main">
+    <div class="map">
+      <!-- LEAD -->
+      <div class="cell lead run">
+        <div class="head">
+          <span class="role">Lead <span class="br">·</span> Commander</span>
+          <div class="head-right">
+            <span class="aut assist">ASSIST</span>
+            <span class="head-meta">claude-sonnet-4-6</span>
+            <span class="status run"><span class="run-tick"></span><span class="lab">Run</span></span>
+          </div>
+        </div>
+        <div class="lead-body">
+          <div class="lead-summary">
+            Coordinating 3 specialists across team <b>sprightly-na…</b>
+            <div class="sub">last action: <em style="color:var(--data); font-style:normal">Plan</em> dispatched backend + frontend + qa specialists · 30m elapsed</div>
+          </div>
+          <div class="stats s5">
+            <div class="stat"><span class="k">Tok</span><span class="v go">647</span></div>
+            <div class="stat"><span class="k">Turns</span><span class="v">0</span></div>
+            <div class="stat"><span class="k">Tasks</span><span class="v">3<span style="color:var(--ash); font-size: 0.7em">/3</span></span></div>
+            <div class="stat"><span class="k">Plans</span><span class="v nu">—</span></div>
+            <div class="stat"><span class="k">Budget</span><span class="v nu">—</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- CONNECTORS -->
+      <div class="connectors" aria-hidden="true">
+        <svg viewBox="0 0 1000 36" preserveAspectRatio="none">
+          <path d="M 500 0 L 500 14" />
+          <path d="M 167 14 L 833 14" />
+          <path id="conn-backend"  d="M 167 14 L 167 36" />
+          <path id="conn-frontend" d="M 500 14 L 500 36" />
+          <path id="conn-qa"       d="M 833 14 L 833 36" />
+        </svg>
+      </div>
+
+      <!-- TEAMMATES -->
+      <div class="team-row">
+        <div class="cell mate run" data-role="backend">
+          <div class="head">
+            <span class="role">Backend <span class="br">·</span> Specialist</span>
+            <div class="head-right">
+              <span class="aut assist">ASSIST</span>
+              <span class="status run"><span class="run-tick"></span><span class="lab">Run</span></span>
+            </div>
+          </div>
+          <div class="task">Backend specialist on team <b>sprightly-na…</b> — <span class="nul">scope: untitled / no issue</span></div>
+          <div class="stats s6">
+            <div class="stat"><span class="k">Tok</span><span class="v">—</span></div>
+            <div class="stat"><span class="k">Turn</span><span class="v">0</span></div>
+            <div class="stat"><span class="k">Files</span><span class="v">0</span></div>
+            <div class="stat"><span class="k">Time</span><span class="v">23m</span></div>
+            <div class="stat"><span class="k">Aut</span><span class="v" style="font-size:11px">ASSIST</span></div>
+            <div class="stat"><span class="k">Modl</span><span class="v" style="font-size:11px">OPUS-4-7</span></div>
+          </div>
+          <div class="latest"><span class="arrow">→</span><b>lead</b> · approved plan: 4 steps · 2 files</div>
+        </div>
+
+        <div class="cell mate run" data-role="frontend">
+          <div class="head">
+            <span class="role">Frontend <span class="br">·</span> Specialist</span>
+            <div class="head-right">
+              <span class="aut assist">ASSIST</span>
+              <span class="status run"><span class="run-tick"></span><span class="lab">Run</span></span>
+            </div>
+          </div>
+          <div class="task">Frontend specialist on team <b>sprightly-na…</b> — <span class="nul">scope: untitled / no issue</span></div>
+          <div class="stats s6">
+            <div class="stat"><span class="k">Tok</span><span class="v">—</span></div>
+            <div class="stat"><span class="k">Turn</span><span class="v">0</span></div>
+            <div class="stat"><span class="k">Files</span><span class="v">0</span></div>
+            <div class="stat"><span class="k">Time</span><span class="v">23m</span></div>
+            <div class="stat"><span class="k">Aut</span><span class="v" style="font-size:11px">ASSIST</span></div>
+            <div class="stat"><span class="k">Modl</span><span class="v" style="font-size:11px">OPUS-4-7</span></div>
+          </div>
+          <div class="latest"><span class="arrow">→</span><b>lead</b> · scope confirmed: AgentTeamsCanvas only</div>
+        </div>
+
+        <div class="cell mate run" data-role="qa">
+          <div class="head">
+            <span class="role">QA <span class="br">·</span> Specialist</span>
+            <div class="head-right">
+              <span class="aut assist">ASSIST</span>
+              <span class="status run"><span class="run-tick"></span><span class="lab">Run</span></span>
+            </div>
+          </div>
+          <div class="task">QA specialist on team <b>sprightly-na…</b> — <span class="nul">scope: untitled / no issue</span></div>
+          <div class="stats s6">
+            <div class="stat"><span class="k">Tok</span><span class="v">—</span></div>
+            <div class="stat"><span class="k">Turn</span><span class="v">0</span></div>
+            <div class="stat"><span class="k">Files</span><span class="v">0</span></div>
+            <div class="stat"><span class="k">Time</span><span class="v">23m</span></div>
+            <div class="stat"><span class="k">Aut</span><span class="v" style="font-size:11px">ASSIST</span></div>
+            <div class="stat"><span class="k">Modl</span><span class="v" style="font-size:11px">OPUS-4-7</span></div>
+          </div>
+          <div class="latest"><span class="arrow">→</span><b>lead</b> · stand by — preparing test plan</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <aside class="side">
+    <div class="section-head">
+      <span>Messages</span>
+      <span class="right" id="msg-count">0 / 0</span>
+    </div>
+    <div class="body" id="msg-feed"></div>
+  </aside>
+</section>
+
+<footer class="tele">
+  <span class="now"><span class="run-tick"></span><span id="clock">00:00:00</span></span>
+  <span><b>run-…220534Z</b></span>
+  <span class="ev" id="event">lead · <em>Plan</em> dispatching backend + frontend + qa specialists on team <b>sprightly-na</b></span>
+  <span id="tok">+0.6k</span>
+</footer>
+
+<div class="legend">
+  <span><kbd>j/k</kbd>cell</span>
+  <span><kbd>t</kbd>theme</span>
+  <span><kbd>⌘.</kbd>stop</span>
+</div>
+
+<script src="pro.js"></script>
+<script>
+renderTicker(document.getElementById('ticker-track'));
+setupClock(document.getElementById('clock'));
+
+const MESSAGES = [
+  { from:"lead",     to:"backend",  dir:"down", verb:"Plan",   body:"approved plan: 4 steps · 2 files", t:"22:08" },
+  { from:"backend",  to:"lead",     dir:"up",   verb:"Read",   body:"app/services/coordinator_service.py", t:"22:09" },
+  { from:"lead",     to:"frontend", dir:"down", verb:"Scope",  body:"AgentTeamsCanvas only — collapse completed cards", t:"22:10" },
+  { from:"frontend", to:"lead",     dir:"up",   verb:"Ack",    body:"reading existing layout — 3 components", t:"22:11" },
+  { from:"lead",     to:"qa",       dir:"down", verb:"Hold",   body:"stand by for handoff once backend lands", t:"22:13" },
+  { from:"qa",       to:"lead",     dir:"up",   verb:"Ack",    body:"preparing test plan — coordinator + ws", t:"22:14" },
+  { from:"backend",  to:"frontend", dir:"peer", verb:"Note",   body:"shared type lives in app/schemas.py:112", t:"22:18" },
+  { from:"frontend", to:"backend",  dir:"peer", verb:"Ack",    body:"thx — will mirror naming", t:"22:19" },
+  { from:"backend",  to:"lead",     dir:"up",   verb:"Plan",   body:"3 steps: extend ActiveEmployeeOut · add field · test", t:"22:24" },
+  { from:"lead",     to:"backend",  dir:"down", verb:"Approve",body:"go ahead — keep migration in same PR", t:"22:25" },
+  { from:"backend",  to:"lead",     dir:"up",   verb:"Bash",   body:"pytest -k coordinator → 8 passed", t:"22:31" },
+];
+const feed = document.getElementById('msg-feed');
+const msgCount = document.getElementById('msg-count');
+function arrowFor(m) {
+  if (m.dir === "down") return { txt: "lead → " + m.to, cls: "" };
+  if (m.dir === "up")   return { txt: m.from + " → lead", cls: "up" };
+  return                 { txt: m.from + " ⇄ " + m.to, cls: "peer" };
+}
+function addMessage(m, animate=true) {
+  const a = arrowFor(m);
+  const row = document.createElement('div');
+  row.className = "msg";
+  row.innerHTML = `
+    <span class="arr ${a.cls}">${a.txt}</span>
+    <span class="body"><em>${m.verb}</em>${m.body}</span>
+    <span class="t">${m.t}</span>
+  `;
+  if (animate) {
+    const body = row.querySelector('.body');
+    const original = body.textContent;
+    body.innerHTML = '';
+    body.appendChild(flap(original, 0, 14));
+  }
+  feed.prepend(row);
+  return row;
+}
+MESSAGES.slice().reverse().forEach(m => addMessage(m, false));
+msgCount.textContent = MESSAGES.length + ' / ' + MESSAGES.length;
+
+const newEvents = [
+  { from:"backend",  to:"lead",     dir:"up",   verb:"Edit",  body:"app/routers/runs.py — extend ActiveEmployeeOut" },
+  { from:"lead",     to:"frontend", dir:"down", verb:"Q",     body:"any blocker on the collapse-cards UX?" },
+  { from:"frontend", to:"lead",     dir:"up",   verb:"Reply", body:"none — drafted Svelte component, 18 lines" },
+  { from:"qa",       to:"backend",  dir:"peer", verb:"Note",  body:"will need a fixture for the new shape" },
+  { from:"lead",     to:"qa",       dir:"down", verb:"OK",    body:"add it to tests/fixtures/coordinator.py" },
+];
+let evIx = 0;
+function pulseConnector(role) {
+  const path = document.getElementById("conn-" + role);
+  if (!path) return;
+  path.classList.add('pulse');
+  setTimeout(() => path.classList.remove('pulse'), 600);
+}
+const evCell = document.getElementById('event');
+const tokCell = document.getElementById('tok');
+setInterval(() => {
+  const m = newEvents[evIx % newEvents.length]; evIx++;
+  m.t = nowStr();
+  addMessage(m, true);
+  while (feed.childElementCount > 30) feed.lastChild.remove();
+  msgCount.textContent = feed.childElementCount + ' / ' + (MESSAGES.length + evIx);
+  if (m.dir === "down") pulseConnector(m.to);
+  else if (m.dir === "up") pulseConnector(m.from);
+  else { pulseConnector(m.from); setTimeout(() => pulseConnector(m.to), 250); }
+  evCell.innerHTML = "";
+  evCell.appendChild(flap(`${m.from} · ${m.verb} ${m.body}`, 0));
+  tokCell.textContent = "+" + (Math.floor(Math.random()*9)+1) + "." + (Math.floor(Math.random()*9)) + "k";
+}, 4200);
+
+const cells = ['backend', 'frontend', 'qa'];
+let cellIx = -1;
+function selectCell(role) {
+  document.querySelectorAll('.cell.mate').forEach(el => el.style.outline = '');
+  const el = document.querySelector(`.cell.mate[data-role="${role}"]`);
+  if (!el) return;
+  el.style.outline = '2px solid var(--data)';
+  el.scrollIntoView({block: 'nearest'});
+  pulseConnector(role);
+}
+document.addEventListener('keydown', (e) => {
+  if (e.target.tagName === 'INPUT') return;
+  if (e.key === 'j') { cellIx = Math.min(cellIx+1, cells.length-1); selectCell(cells[cellIx]); }
+  if (e.key === 'k') { cellIx = Math.max(cellIx-1, 0);              selectCell(cells[cellIx]); }
+});
+</script>
+
+</body>
+</html>

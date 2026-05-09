@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Station / Projects — Pro</title>
+<link rel="stylesheet" href="pro.css" />
+<style>
+.page-head {
+  display: grid; grid-template-columns: auto 1fr auto;
+  align-items: center; gap: 18px;
+  padding: 10px 16px; border-bottom: 1px solid var(--rule);
+  flex-shrink: 0;
+}
+.page-head h1 {
+  margin: 0; font-family: var(--sans);
+  font-size: 14px; font-weight: 700;
+  letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink);
+}
+.page-head .meta { font-family: var(--mono); font-size: 11px; color: var(--graphite); }
+.opbtn {
+  font-family: var(--sans); font-weight: 700; font-size: 10px;
+  letter-spacing: 0.14em; text-transform: uppercase;
+  background: transparent; color: var(--ink);
+  border: 1px solid var(--rule-2);
+  padding: 5px 11px; cursor: pointer; height: 26px;
+}
+.opbtn:hover { background: var(--paper-2); }
+.opbtn.primary { background: var(--ink); color: var(--paper); }
+
+.list {
+  flex: 1; overflow-y: auto; padding: 16px; display: grid;
+  grid-template-columns: 1fr; gap: 12px;
+}
+.proj {
+  background: var(--paper-2);
+  border: 1px solid var(--rule);
+  display: grid;
+  grid-template-columns: 36px 1fr auto;
+  gap: 16px; align-items: center;
+  padding: 14px 18px;
+  cursor: pointer;
+  text-decoration: none;
+  color: var(--ink);
+}
+.proj:hover { background: var(--paper-3); border-color: var(--rule-2); }
+.proj.enabled { border-left: 3px solid var(--go); }
+.proj.disabled { border-left: 3px solid var(--ash); opacity: 0.74; }
+
+.proj .icon {
+  width: 36px; height: 36px;
+  background: var(--paper); border: 1px solid var(--rule);
+  display: grid; place-items: center;
+  font-family: var(--mono); font-size: 14px; color: var(--graphite);
+}
+.proj .body .repo {
+  font-family: var(--mono); font-size: 14px; color: var(--ink);
+  display: flex; align-items: center; gap: 10px;
+}
+.proj .body .repo b { font-weight: 600; }
+.proj .body .repo .branch {
+  font-family: var(--mono); font-size: 11px; color: var(--graphite);
+  border: 1px solid var(--rule); padding: 1px 6px;
+}
+.proj .body .row {
+  margin-top: 6px;
+  display: flex; gap: 14px; flex-wrap: wrap;
+  font-family: var(--mono); font-size: 11px; color: var(--graphite);
+}
+.proj .body .row b { color: var(--ink); font-weight: 500; }
+.proj .body .row .pri.high { color: var(--abort); }
+.proj .body .row .pri.med  { color: var(--caution); }
+
+.proj .stats {
+  display: grid;
+  grid-template-columns: repeat(4, auto);
+  gap: 0;
+}
+.proj .stat {
+  padding: 0 18px;
+  border-right: 1px solid var(--rule);
+  display: flex; flex-direction: column; align-items: flex-end; gap: 2px;
+  min-width: 88px;
+}
+.proj .stat:last-child { border-right: none; padding-right: 0; }
+.proj .stat .k { font-family: var(--sans); font-size: 9px; font-weight: 700; letter-spacing: 0.18em; text-transform: uppercase; color: var(--graphite); }
+.proj .stat .v { font-family: var(--mono); font-size: 16px; font-weight: 600; color: var(--ink); line-height: 1; font-variant-numeric: tabular-nums; }
+.proj .stat .v.go      { color: var(--go); }
+.proj .stat .v.caution { color: var(--caution); }
+.proj .stat .v.abort   { color: var(--abort); }
+.proj .stat .v.nu      { color: var(--ash); }
+.proj .stat .sub { font-family: var(--mono); font-size: 9px; color: var(--ash); }
+
+.empty-list {
+  font-family: var(--mono); font-size: 13px; color: var(--ash);
+  text-align: center; padding: 60px 14px; border: 1px dashed var(--rule);
+  margin: 16px;
+}
+</style>
+</head>
+<body>
+
+<header class="strip">
+  <div class="wordmark">
+    <span class="name">Station</span>
+    <span class="tag">OPERATOR · v1</span>
+  </div>
+  <nav class="strip-nav">
+    <a href="dispatch-board.html">Dispatch</a>
+    <a href="mission.html">Mission</a>
+    <a href="fleet.html">Fleet</a>
+    <a href="run-detail.html">Run</a>
+    <a href="queue.html">Queue</a>
+    <a href="#" class="active">Projects</a>
+    <a href="settings.html">Settings</a>
+  </nav>
+  <div class="strip-status">
+    <span><span class="dot go live"></span><span class="pill">WORKING · 1</span></span>
+    <span>647 TOK</span>
+    <span>SSE&nbsp;<b style="color:var(--go)">●</b></span>
+    <button class="btn-theme" id="theme-toggle" aria-label="Toggle theme">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" id="theme-sun" style="display:none">
+        <circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="4.2" y1="4.2" x2="6.3" y2="6.3"/><line x1="17.7" y1="17.7" x2="19.8" y2="19.8"/><line x1="2" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="22" y2="12"/><line x1="4.2" y1="19.8" x2="6.3" y2="17.7"/><line x1="17.7" y1="6.3" x2="19.8" y2="4.2"/>
+      </svg>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" id="theme-moon">
+        <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>
+      </svg>
+    </button>
+    <button class="btn-stop">Stop <kbd>⌘.</kbd></button>
+  </div>
+</header>
+
+<div class="ticker">
+  <span class="ticker-tag">// Live</span>
+  <div class="ticker-track" id="ticker-track"></div>
+</div>
+
+<div class="page-head">
+  <h1>Projects</h1>
+  <div class="meta">1 project · 1 enabled · 23 runs / 7d</div>
+  <div>
+    <button class="opbtn primary">+ Add Project</button>
+  </div>
+</div>
+
+<div class="list">
+  <a class="proj enabled" href="project-detail.html">
+    <div class="icon">▣</div>
+    <div class="body">
+      <div class="repo">
+        <b>laboef1900/next-itsm</b>
+        <span class="branch">main</span>
+        <span class="mode plan">PLAN</span>
+        <span class="aut auto">AUTO</span>
+      </div>
+      <div class="row">
+        <span>Priority <b class="pri high">HIGH</b></span>
+        <span>·</span>
+        <span>Enabled <b style="color: var(--go)">YES</b></span>
+        <span>·</span>
+        <span>Security review <b>OFF</b></span>
+        <span>·</span>
+        <span>Budget <b style="color: var(--ash)">—</b></span>
+        <span>·</span>
+        <span>Created <b>2026-05-07</b></span>
+      </div>
+    </div>
+    <div class="stats">
+      <div class="stat">
+        <span class="k">Runs · 7d</span>
+        <span class="v">23</span>
+        <span class="sub">15 today</span>
+      </div>
+      <div class="stat">
+        <span class="k">Active</span>
+        <span class="v go">1</span>
+        <span class="sub">3 teammates</span>
+      </div>
+      <div class="stat">
+        <span class="k">Verdicts</span>
+        <span class="v nu">—</span>
+        <span class="sub">0 OK / 0 PR</span>
+      </div>
+      <div class="stat">
+        <span class="k">Last</span>
+        <span class="v" style="font-size: 12px; font-weight: 500">30m ago</span>
+        <span class="sub">running</span>
+      </div>
+    </div>
+  </a>
+</div>
+
+<footer class="tele">
+  <span class="now"><span class="run-tick"></span><span id="clock">00:00:00</span></span>
+  <span>1 project · 1 enabled · 1 active</span>
+  <span class="ev" id="event">backend · <em>Edit</em> app/routers/runs.py — extend ActiveEmployeeOut</span>
+  <span id="tok">+0.6k</span>
+</footer>
+
+<div class="legend">
+  <span><kbd>n</kbd>new</span>
+  <span><kbd>↵</kbd>open</span>
+  <span><kbd>t</kbd>theme</span>
+  <span><kbd>⌘.</kbd>stop</span>
+</div>
+
+<script src="pro.js"></script>
+<script>
+renderTicker(document.getElementById('ticker-track'));
+setupClock(document.getElementById('clock'));
+const STREAM = [
+  ["backend",  "Edit", "app/routers/runs.py — extend ActiveEmployeeOut"],
+  ["lead",     "Plan", "monitoring 3 specialists — no blockers"],
+  ["frontend", "Read", "pages/AgentTeamsCanvas.svelte"],
+  ["qa",       "Bash", "pytest -k coordinator"],
+];
+let evIx = 0;
+const evCell = document.getElementById('event');
+const tokCell = document.getElementById('tok');
+setInterval(() => {
+  const e = STREAM[evIx % STREAM.length]; evIx++;
+  evCell.innerHTML = "";
+  evCell.appendChild(flap(`${e[0]} · ${e[1]} ${e[2]}`, 0));
+  tokCell.textContent = "+" + (Math.floor(Math.random()*9)+1) + "." + (Math.floor(Math.random()*9)) + "k";
+}, 4200);
+</script>
+
+</body>
+</html>

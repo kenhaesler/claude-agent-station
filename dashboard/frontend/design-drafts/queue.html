@@ -1,0 +1,437 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Station / Queue — Pro</title>
+<link rel="stylesheet" href="pro.css" />
+<style>
+.page-head {
+  display: grid; grid-template-columns: auto 1fr auto;
+  align-items: center; gap: 18px;
+  padding: 10px 16px; border-bottom: 1px solid var(--rule);
+  flex-shrink: 0;
+}
+.page-head h1 {
+  margin: 0; font-family: var(--sans);
+  font-size: 14px; font-weight: 700;
+  letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink);
+}
+.page-head .meta { font-family: var(--mono); font-size: 11px; color: var(--graphite); display: flex; gap: 12px; }
+.page-head .meta b { color: var(--ink); font-weight: 500; }
+.page-head .actions { display: flex; gap: 8px; }
+.opbtn {
+  font-family: var(--sans); font-weight: 700; font-size: 10px;
+  letter-spacing: 0.14em; text-transform: uppercase;
+  background: transparent; color: var(--ink);
+  border: 1px solid var(--rule-2);
+  padding: 5px 11px; cursor: pointer; height: 26px;
+}
+.opbtn:hover { background: var(--paper-2); }
+.opbtn.primary { background: var(--ink); color: var(--paper); }
+
+/* Backpressure / stats bar */
+.qbar {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  border-bottom: 1px solid var(--rule);
+}
+.qcell {
+  padding: 10px 14px; border-right: 1px solid var(--rule);
+  display: flex; flex-direction: column; gap: 2px;
+}
+.qcell:last-child { border-right: none; }
+.qcell .k { font-family: var(--sans); font-size: 9px; font-weight: 700; letter-spacing: 0.18em; text-transform: uppercase; color: var(--graphite); }
+.qcell .v { font-family: var(--mono); font-size: 18px; font-weight: 600; color: var(--ink); line-height: 1; font-variant-numeric: tabular-nums; }
+.qcell .v.go      { color: var(--go); }
+.qcell .v.caution { color: var(--caution); }
+.qcell .v.abort   { color: var(--abort); }
+.qcell .v.nu      { color: var(--ash); }
+.qcell .sub { font-family: var(--mono); font-size: 9px; color: var(--ash); }
+
+/* Kanban */
+.kanban {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 0;
+  flex: 1; min-height: 0;
+}
+.kcol {
+  display: flex; flex-direction: column; min-height: 0;
+  border-right: 1px solid var(--rule);
+}
+.kcol:last-child { border-right: none; }
+.kcol-head {
+  height: 32px;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 14px;
+  background: var(--paper-2);
+  border-bottom: 1px solid var(--rule);
+  font-family: var(--sans); font-size: 10px; font-weight: 700;
+  letter-spacing: 0.2em; text-transform: uppercase; color: var(--ash);
+}
+.kcol-head .name {
+  display: inline-flex; align-items: center; gap: 6px;
+  color: var(--ink);
+}
+.kcol-head .name::before {
+  content: ""; display: inline-block; width: 4px; height: 14px;
+  background: var(--rule-2);
+}
+.kcol-head.waiting .name::before { background: var(--graphite); }
+.kcol-head.active  .name::before { background: var(--go); }
+.kcol-head.review  .name::before { background: var(--caution); }
+.kcol-head.done    .name::before { background: var(--graphite); }
+.kcol-head.problem .name::before { background: var(--abort); }
+.kcol-head .count  { font-family: var(--mono); color: var(--graphite); font-size: 11px; letter-spacing: 0; }
+
+.kbody {
+  flex: 1; overflow-y: auto;
+  padding: 10px; display: flex; flex-direction: column; gap: 8px;
+}
+.kbody.empty {
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--mono); font-size: 11px; color: var(--ash);
+  font-style: italic;
+}
+
+/* Issue card */
+.icard {
+  background: var(--paper-2);
+  border: 1px solid var(--rule);
+  padding: 10px 12px;
+  display: grid; gap: 6px;
+  cursor: pointer;
+  font-family: var(--mono); font-size: 11px;
+}
+.icard:hover { border-color: var(--rule-2); background: var(--paper-3); }
+.icard.live  { border-left: 3px solid var(--go); }
+.icard.done  { border-left: 3px solid var(--graphite); opacity: 0.85; }
+.icard.fail  { border-left: 3px solid var(--abort); }
+.icard .num {
+  font-family: var(--mono); font-size: 11px;
+  color: var(--data); font-weight: 600;
+}
+.icard .title {
+  font-family: var(--sans); font-size: 13px; line-height: 1.35;
+  color: var(--ink);
+}
+.icard .title.nul { color: var(--ash); font-style: italic; }
+.icard .meta {
+  display: flex; gap: 8px; flex-wrap: wrap;
+  color: var(--graphite); font-size: 10px;
+}
+.icard .meta .repo { color: var(--graphite); }
+.icard .meta b { color: var(--ink); font-weight: 500; }
+.icard .pri.high { color: var(--abort); }
+.icard .pri.med  { color: var(--caution); }
+.icard .pri.low  { color: var(--graphite); }
+
+/* Slide panel */
+.panel {
+  position: fixed; top: 0; right: 0; bottom: 0;
+  width: 420px; max-width: 95vw;
+  background: var(--paper); border-left: 1px solid var(--rule-2);
+  z-index: 50; transform: translateX(100%);
+  transition: transform 240ms cubic-bezier(.16,1,.3,1);
+  display: flex; flex-direction: column;
+  box-shadow: -8px 0 24px rgba(0,0,0,0.08);
+}
+.panel.open { transform: translateX(0); }
+.panel-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px; border-bottom: 1px solid var(--rule);
+}
+.panel-head h2 { margin: 0; font-family: var(--sans); font-size: 12px; font-weight: 700; letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink); }
+.panel-head button {
+  background: transparent; border: none; cursor: pointer;
+  font-family: var(--mono); font-size: 14px; color: var(--graphite);
+  padding: 4px 8px;
+}
+.panel-head button:hover { color: var(--ink); }
+.panel-body { flex: 1; overflow-y: auto; padding: 16px; }
+.panel-body .key-row {
+  display: grid; grid-template-columns: 100px 1fr; gap: 10px;
+  padding: 6px 0; border-bottom: 1px dashed var(--rule);
+  font-family: var(--mono); font-size: 12px;
+}
+.panel-body .key-row:last-child { border-bottom: none; }
+.panel-body .key-row label { color: var(--ash); font-family: var(--sans); font-size: 9px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; align-self: center; }
+.panel-body .key-row val { color: var(--ink); }
+.panel-body .key-row val a { color: var(--data); text-decoration: none; }
+.panel-body .key-row val a:hover { text-decoration: underline; }
+
+.panel-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.32);
+  z-index: 49; opacity: 0; pointer-events: none;
+  transition: opacity 240ms ease;
+}
+.panel-overlay.open { opacity: 1; pointer-events: auto; }
+
+@media (max-width: 1180px) {
+  .kanban { grid-template-columns: repeat(2, 1fr); overflow-y: auto; }
+  .kcol { border-bottom: 1px solid var(--rule); }
+  .qbar { grid-template-columns: repeat(4, 1fr); }
+}
+</style>
+</head>
+<body>
+
+<header class="strip">
+  <div class="wordmark">
+    <span class="name">Station</span>
+    <span class="tag">OPERATOR · v1</span>
+  </div>
+  <nav class="strip-nav">
+    <a href="dispatch-board.html">Dispatch</a>
+    <a href="mission.html">Mission</a>
+    <a href="fleet.html">Fleet</a>
+    <a href="run-detail.html">Run</a>
+    <a href="#" class="active">Queue</a>
+    <a href="projects.html">Projects</a>
+    <a href="settings.html">Settings</a>
+  </nav>
+  <div class="strip-status">
+    <span><span class="dot go live"></span><span class="pill">WORKING · 1</span></span>
+    <span>647 TOK</span>
+    <span>SSE&nbsp;<b style="color:var(--go)">●</b></span>
+    <button class="btn-theme" id="theme-toggle" aria-label="Toggle theme">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" id="theme-sun" style="display:none">
+        <circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="4.2" y1="4.2" x2="6.3" y2="6.3"/><line x1="17.7" y1="17.7" x2="19.8" y2="19.8"/><line x1="2" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="22" y2="12"/><line x1="4.2" y1="19.8" x2="6.3" y2="17.7"/><line x1="17.7" y1="6.3" x2="19.8" y2="4.2"/>
+      </svg>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" id="theme-moon">
+        <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>
+      </svg>
+    </button>
+    <button class="btn-stop">Stop <kbd>⌘.</kbd></button>
+  </div>
+</header>
+
+<div class="ticker">
+  <span class="ticker-tag">// Live</span>
+  <div class="ticker-track" id="ticker-track"></div>
+</div>
+
+<div class="page-head">
+  <h1>Queue</h1>
+  <div class="meta">
+    <span>laboef1900/next-itsm · 1 project</span>
+    <span>·</span>
+    <span>Backpressure <b style="color:var(--go)">GREEN</b></span>
+    <span>·</span>
+    <span>Auto-trigger <b>—</b></span>
+  </div>
+  <div class="actions">
+    <button class="opbtn">Refresh</button>
+    <button class="opbtn primary">+ Enqueue</button>
+  </div>
+</div>
+
+<div class="qbar">
+  <div class="qcell"><span class="k">Total</span><span class="v">3</span><span class="sub">all states</span></div>
+  <div class="qcell"><span class="k">Waiting</span><span class="v nu">0</span><span class="sub">pending · assigned</span></div>
+  <div class="qcell"><span class="k">Active</span><span class="v go">1</span><span class="sub">claimed · planning · in_progress</span></div>
+  <div class="qcell"><span class="k">Review</span><span class="v nu">0</span><span class="sub">review · verifying</span></div>
+  <div class="qcell"><span class="k">Done</span><span class="v">2</span><span class="sub">approved · completed</span></div>
+  <div class="qcell"><span class="k">Problem</span><span class="v nu">0</span><span class="sub">rejected · escalated · failed</span></div>
+  <div class="qcell"><span class="k">Avg time</span><span class="v nu">—</span><span class="sub">no completed yet</span></div>
+</div>
+
+<section class="kanban">
+  <div class="kcol">
+    <div class="kcol-head waiting">
+      <span class="name">Waiting</span>
+      <span class="count">0</span>
+    </div>
+    <div class="kbody empty">No issues queued.</div>
+  </div>
+
+  <div class="kcol">
+    <div class="kcol-head active">
+      <span class="name">Active</span>
+      <span class="count">1</span>
+    </div>
+    <div class="kbody" id="col-active"></div>
+  </div>
+
+  <div class="kcol">
+    <div class="kcol-head review">
+      <span class="name">Review</span>
+      <span class="count">0</span>
+    </div>
+    <div class="kbody empty">Nothing to review.</div>
+  </div>
+
+  <div class="kcol">
+    <div class="kcol-head done">
+      <span class="name">Done</span>
+      <span class="count">2</span>
+    </div>
+    <div class="kbody" id="col-done"></div>
+  </div>
+
+  <div class="kcol">
+    <div class="kcol-head problem">
+      <span class="name">Problem</span>
+      <span class="count">0</span>
+    </div>
+    <div class="kbody empty">No failures or escalations.</div>
+  </div>
+</section>
+
+<footer class="tele">
+  <span class="now"><span class="run-tick"></span><span id="clock">00:00:00</span></span>
+  <span>queue · 3 items · 1 active</span>
+  <span class="ev" id="event">backend · <em>Bash</em> pytest -k coordinator → 8 passed</span>
+  <span id="tok">+0.6k</span>
+</footer>
+
+<div class="legend">
+  <span><kbd>j/k</kbd>card</span>
+  <span><kbd>↵</kbd>open</span>
+  <span><kbd>t</kbd>theme</span>
+  <span><kbd>⌘.</kbd>stop</span>
+</div>
+
+<!-- Slide panel -->
+<div class="panel-overlay" id="panel-overlay"></div>
+<aside class="panel" id="panel">
+  <div class="panel-head">
+    <h2 id="panel-title">Queue Item</h2>
+    <button id="panel-close" aria-label="Close">✕</button>
+  </div>
+  <div class="panel-body" id="panel-body"></div>
+</aside>
+
+<script src="pro.js"></script>
+<script>
+renderTicker(document.getElementById('ticker-track'));
+setupClock(document.getElementById('clock'));
+
+/* Real queue data: 1 claimed (active), 2 completed (done) */
+const ITEMS = [
+  { id: 3, project_repo:"laboef1900/next-itsm", issue_number: 13, issue_title: null, state:"claimed",   priority: 0, run_id:"run-20260509T220534Z", retry_count: 0, max_retries: 1, mode:"full",      confidence: null, created_at:"2026-05-09T21:53:52", live: true },
+  { id: 2, project_repo:"laboef1900/next-itsm", issue_number: 14, issue_title: null, state:"completed", priority: 0, run_id:"run-20260509T183351Z", retry_count: 0, max_retries: 1, mode:"plan_only", confidence: null, created_at:"2026-05-09T12:14:46" },
+  { id: 1, project_repo:"laboef1900/next-itsm", issue_number: 13, issue_title: null, state:"completed", priority: 0, run_id:"run-20260509T183351Z", retry_count: 0, max_retries: 1, mode:"plan_only", confidence: null, created_at:"2026-05-09T11:42:18" },
+];
+
+function priorityLabel(p) {
+  if (p >= 8) return { txt: 'P0', cls: 'high' };
+  if (p >= 4) return { txt: 'P1', cls: 'med'  };
+  if (p > 0)  return { txt: 'P2', cls: 'low'  };
+  return        { txt: 'P3', cls: 'low'  };
+}
+function ageOf(iso) {
+  const ms = Date.now() - new Date(iso).getTime();
+  const m = Math.floor(ms / 60000);
+  if (m < 60)   return m + 'm';
+  if (m < 1440) return Math.floor(m/60) + 'h';
+  return Math.floor(m/1440) + 'd';
+}
+
+function cardEl(it, baseDelay) {
+  const card = document.createElement('div');
+  card.className = 'icard';
+  if (it.live) card.classList.add('live');
+  else if (it.state === 'completed' || it.state === 'approved') card.classList.add('done');
+  else if (['rejected','failed','escalated'].includes(it.state)) card.classList.add('fail');
+  card.dataset.id = it.id;
+  const pri = priorityLabel(it.priority);
+  const titleClass = it.issue_title ? '' : 'nul';
+  const titleText  = it.issue_title || 'untitled · no issue title';
+  card.innerHTML = `
+    <div class="num"></div>
+    <div class="title ${titleClass}"></div>
+    <div class="meta">
+      <span class="repo"></span>
+      <span>·</span>
+      <span class="state"></span>
+      <span>·</span>
+      <span class="pri ${pri.cls}"></span>
+      <span>·</span>
+      <span class="age"></span>
+    </div>
+  `;
+  card.querySelector('.num'  ).appendChild(flap(`#${it.issue_number}`,                     baseDelay));
+  card.querySelector('.title').appendChild(flap(titleText,                                 baseDelay + 30));
+  card.querySelector('.repo' ).appendChild(flap(it.project_repo.split('/').pop(),          baseDelay + 80));
+  card.querySelector('.state').appendChild(flap(it.state.toUpperCase(),                    baseDelay + 110));
+  card.querySelector('.pri'  ).appendChild(flap(pri.txt,                                   baseDelay + 130));
+  card.querySelector('.age'  ).appendChild(flap(ageOf(it.created_at),                      baseDelay + 150));
+  card.addEventListener('click', () => openPanel(it));
+  return card;
+}
+
+const colActive = document.getElementById('col-active');
+const colDone   = document.getElementById('col-done');
+ITEMS.forEach((it, i) => {
+  const target = (it.state === 'claimed' || it.state === 'planning' || it.state === 'in_progress') ? colActive
+               : (it.state === 'completed' || it.state === 'approved')                              ? colDone
+               : null;
+  if (target) target.appendChild(cardEl(it, i * 80));
+});
+
+/* Slide panel */
+const panel = document.getElementById('panel');
+const overlay = document.getElementById('panel-overlay');
+const panelTitle = document.getElementById('panel-title');
+const panelBody  = document.getElementById('panel-body');
+function openPanel(it) {
+  panelTitle.textContent = `Issue #${it.issue_number} · ${it.state.toUpperCase()}`;
+  panelBody.innerHTML = `
+    <div class="key-row"><label>Issue</label><val>#${it.issue_number}<span style="color:var(--ash); font-style:italic; margin-left:8px">${it.issue_title || 'no title'}</span></val></div>
+    <div class="key-row"><label>Project</label><val>${it.project_repo}</val></div>
+    <div class="key-row"><label>State</label><val style="text-transform: capitalize">${it.state}</val></div>
+    <div class="key-row"><label>Priority</label><val class="mono">${it.priority}</val></div>
+    <div class="key-row"><label>Mode</label><val>${it.mode}</val></div>
+    <div class="key-row"><label>Retries</label><val class="mono">${it.retry_count} / ${it.max_retries}</val></div>
+    <div class="key-row"><label>Run</label><val><a href="run-detail.html">${it.run_id}</a></val></div>
+    <div class="key-row"><label>Confidence</label><val style="color: var(--ash)">${it.confidence == null ? '—' : (it.confidence * 100).toFixed(0) + '%'}</val></div>
+    <div class="key-row"><label>Created</label><val>${it.created_at.replace('T', ' · ')}</val></div>
+    <div class="key-row"><label>Queue ID</label><val class="mono" style="color: var(--graphite)">${it.id}</val></div>
+  `;
+  panel.classList.add('open');
+  overlay.classList.add('open');
+}
+function closePanel() {
+  panel.classList.remove('open');
+  overlay.classList.remove('open');
+}
+document.getElementById('panel-close').addEventListener('click', closePanel);
+overlay.addEventListener('click', closePanel);
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closePanel();
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+  if (e.key === 'j' || e.key === 'k') {
+    const cards = [...document.querySelectorAll('.icard')];
+    if (!cards.length) return;
+    let cur = document.querySelector('.icard.selected');
+    let idx = cur ? cards.indexOf(cur) : -1;
+    idx = e.key === 'j' ? Math.min(idx+1, cards.length-1) : Math.max(idx-1, 0);
+    cards.forEach(c => c.classList.remove('selected'));
+    cards[idx]?.classList.add('selected');
+    cards[idx]?.scrollIntoView({block: 'nearest'});
+  }
+  if (e.key === 'Enter') document.querySelector('.icard.selected')?.click();
+});
+
+/* Teleprinter */
+const STREAM = [
+  ["backend",  "Bash",   "pytest -k coordinator → 8 passed"],
+  ["lead",     "Plan",   "monitoring 3 specialists — no blockers"],
+  ["frontend", "Edit",   "components/agent-teams/TeammateGrid.svelte:24"],
+  ["qa",       "Read",   "tests/fixtures/coordinator.py"],
+];
+let evIx = 0;
+const evCell = document.getElementById('event');
+const tokCell = document.getElementById('tok');
+setInterval(() => {
+  const e = STREAM[evIx % STREAM.length]; evIx++;
+  evCell.innerHTML = "";
+  evCell.appendChild(flap(`${e[0]} · ${e[1]} ${e[2]}`, 0));
+  tokCell.textContent = "+" + (Math.floor(Math.random()*9)+1) + "." + (Math.floor(Math.random()*9)) + "k";
+}, 4200);
+</script>
+
+</body>
+</html>
