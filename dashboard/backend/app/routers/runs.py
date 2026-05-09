@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -597,3 +599,186 @@ async def message_run(
     run has already ended — previously messages were silently orphaned."""
     await _require_live_run(db, run_id)
     return await _queue_control(db, run_id, "message", {"text": payload.text})
+
+
+# ── Plan-review gate operator override (issue #266 follow-up) ─────────────
+
+
+_PLAN_REVIEW_AWAITING_STATES = ("awaiting_plan_review",)
+
+
+def _verdicts_path_for_run(run_id: str) -> Path:
+    """Return the manager-verdicts JSON path for a given ``run_id``.
+
+    The shell driver writes ``{LOG_DIR}/{run_id}-verdicts.json``
+    (run-manager.sh:1718). The same volume is mounted into the dashboard
+    container in compose mode, so we can read it directly.
+    """
+    log_dir = Path(os.environ.get("STATION_LOG_DIR", "/var/log/claude-agent"))
+    return log_dir / f"{run_id}-verdicts.json"
+
+
+def _build_followup_queue_item(
+    *,
+    project_repo: str,
+    issue_number: int | None,
+    plan_path: str | None,
+    parent_run_id: str,
+    employee_index: int | None = None,
+    operator_approved: bool = False,
+) -> dict:
+    """Build a QueueItem dict for a follow-up ``full`` run after a
+    plan_only run was approved.
+
+    Mirrors the shape ``agent.plan_review_gate.build_followup_queue_item``
+    produces, but doesn't import from agent/ — the plan-review gate
+    runs in the agent container; this runs in the dashboard backend
+    after operator action.
+    """
+    return {
+        "project_repo": project_repo,
+        "issue_number": issue_number,
+        "mode": "full",
+        "state": "pending",
+        "context": json.dumps({
+            "approved_plan_path": plan_path,
+            "from_plan_only_run": True,
+            "parent_run_id": parent_run_id,
+            "parent_employee_index": employee_index,
+            "approved_by_operator": operator_approved,
+        }),
+    }
+
+
+async def _require_plan_review_run(db: AsyncSession, run_id: str) -> Run:
+    """Resolve a plan_only run that's currently waiting on the gate.
+
+    Returns 404 when missing, 409 when the run isn't in the right
+    mode/state for an operator override.
+    """
+    result = await db.execute(select(Run).where(Run.run_id == run_id))
+    run = result.scalar_one_or_none()
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"run {run_id} not found")
+    if (run.mode or "").lower() != "plan_only":
+        raise HTTPException(
+            status_code=409,
+            detail=f"run {run_id} is mode={run.mode!r}, expected 'plan_only'",
+        )
+    if run.status not in _PLAN_REVIEW_AWAITING_STATES:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"run {run_id} is status={run.status!r}; operator override is only "
+                f"available while a plan_only run is awaiting_plan_review"
+            ),
+        )
+    return run
+
+
+@router.post("/{run_id}/plan/approve")
+async def operator_approve_plan(
+    run_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Operator override: approve the plan(s) from a plan_only run and
+    enqueue follow-up ``full`` run(s) to implement them.
+
+    Reads the manager-verdicts JSON to recover the per-employee
+    issue/plan mapping. For each entry the operator override treats
+    EVERY verdict as approved (regardless of what the manager said) —
+    the operator's word overrides the manager's. When the verdicts file
+    is missing or empty, the run is still marked ``plan_approved`` but
+    no follow-up runs are enqueued — the operator has signalled "stop
+    waiting" without binding the orchestrator to specific issues.
+
+    This is the override flow. The auto-approve path (manager's
+    ``APPROVE_PLAN`` verdict) lives in :mod:`agent.plan_review_gate`
+    and runs from inside the agent container after manager review.
+    """
+    run = await _require_plan_review_run(db, run_id)
+    project = await db.get(Project, run.project_id) if run.project_id else None
+    project_repo = project.repo if project else None
+
+    enqueued: list[dict] = []
+    verdicts_file = _verdicts_path_for_run(run_id)
+    if project_repo and verdicts_file.is_file():
+        try:
+            data = json.loads(verdicts_file.read_text())
+            entries = data.get("plan_verdicts") or []
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                payload = _build_followup_queue_item(
+                    project_repo=project_repo,
+                    issue_number=entry.get("issue_number"),
+                    plan_path=entry.get("plan_path"),
+                    parent_run_id=run_id,
+                    employee_index=entry.get("employee_index"),
+                    operator_approved=True,
+                )
+                qi = QueueItem(
+                    project_repo=payload["project_repo"],
+                    issue_number=payload["issue_number"],
+                    mode=payload["mode"],
+                    state=payload["state"],
+                    context=payload["context"],
+                )
+                db.add(qi)
+                await db.flush()
+                enqueued.append({
+                    "id": qi.id,
+                    "issue_number": qi.issue_number,
+                })
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning(
+                "Operator approve %s: could not parse verdicts file %s: %s",
+                run_id, verdicts_file, exc,
+            )
+
+    run.status = "plan_approved"
+    if not run.finished_at:
+        run.finished_at = datetime.now(timezone.utc)
+    await db.commit()
+
+    await publish({
+        "type": "run_status",
+        "run_id": run_id,
+        "status": "plan_approved",
+        "operator_approved": True,
+    })
+
+    return {
+        "run_id": run_id,
+        "status": "plan_approved",
+        "enqueued": enqueued,
+        "verdicts_file_found": verdicts_file.is_file(),
+    }
+
+
+@router.post("/{run_id}/plan/reject")
+async def operator_reject_plan(
+    run_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Operator override: reject the plan(s) from a plan_only run.
+
+    Marks the run ``plan_rejected`` and emits a status webhook so the
+    UI banner updates. No follow-up runs are enqueued — operator owns
+    the next step (e.g. close the issue, edit the issue body, retrigger
+    in a different mode).
+    """
+    run = await _require_plan_review_run(db, run_id)
+    run.status = "plan_rejected"
+    if not run.finished_at:
+        run.finished_at = datetime.now(timezone.utc)
+    await db.commit()
+
+    await publish({
+        "type": "run_status",
+        "run_id": run_id,
+        "status": "plan_rejected",
+        "operator_rejected": True,
+    })
+
+    return {"run_id": run_id, "status": "plan_rejected"}

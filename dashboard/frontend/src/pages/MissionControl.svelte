@@ -1,6 +1,6 @@
 <script lang="ts">
   import { agentPresence } from '../lib/agent-presence.svelte';
-  import { messageRun, triggerRun } from '../lib/api';
+  import { messageRun, triggerRun, operatorApproveRunPlan, operatorRejectRunPlan } from '../lib/api';
   import { addToast } from '../lib/toast.svelte';
   import { formatTokens, timeAgo } from '../lib/format';
   import AgentActivityFeed from '../components/agents/AgentActivityFeed.svelte';
@@ -33,6 +33,43 @@
       ? (currentRun.status as string)
       : null
   );
+
+  // Plan-review gate operator override (issue #266 follow-up).
+  // ``planActionInFlight`` doubles as a busy flag and a label hint for
+  // the button rendering 'Approving…' / 'Rejecting…'.
+  let planActionInFlight = $state<'approve' | 'reject' | null>(null);
+
+  async function approveCurrentRunPlan() {
+    if (!currentRunId || planActionInFlight) return;
+    planActionInFlight = 'approve';
+    try {
+      const result = await operatorApproveRunPlan(currentRunId);
+      const n = result.enqueued.length;
+      addToast(
+        'success',
+        n > 0
+          ? `Plan approved — ${n} follow-up run${n === 1 ? '' : 's'} enqueued`
+          : 'Plan approved (no follow-up enqueued — verdicts file missing)',
+      );
+    } catch {
+      // requestWithToast already surfaced the error toast.
+    } finally {
+      planActionInFlight = null;
+    }
+  }
+
+  async function rejectCurrentRunPlan() {
+    if (!currentRunId || planActionInFlight) return;
+    planActionInFlight = 'reject';
+    try {
+      await operatorRejectRunPlan(currentRunId);
+      addToast('success', 'Plan rejected');
+    } catch {
+      // toast already shown
+    } finally {
+      planActionInFlight = null;
+    }
+  }
 
   // Operator message input — goes straight to the agent's next turn.
   let messageText = $state('');
@@ -152,21 +189,45 @@
   <!-- Plan-review gate banner (issue #266) -->
   {#if planReviewStatus}
     <div
-      class="px-4 py-2 text-xs border-b border-border"
+      class="px-4 py-2 text-xs border-b border-border flex items-center gap-3 flex-wrap"
       class:bg-amber-500={planReviewStatus === 'awaiting_plan_review' || planReviewStatus === 'plan_reviewing'}
       class:bg-green-600={planReviewStatus === 'plan_approved'}
       class:bg-red-600={planReviewStatus === 'plan_rejected'}
       class:text-white={true}
       data-testid="plan-review-banner"
     >
+      <span class="flex-1 min-w-0">
+        {#if planReviewStatus === 'awaiting_plan_review'}
+          <strong>Plan awaiting review.</strong> The teammate wrote an implementation plan; approve to enqueue a follow-up <code class="font-mono">full</code> run, or reject to stop here.
+        {:else if planReviewStatus === 'plan_reviewing'}
+          <strong>Manager reviewing plan…</strong>
+        {:else if planReviewStatus === 'plan_approved'}
+          <strong>Plan approved.</strong> A follow-up full run has been enqueued.
+        {:else if planReviewStatus === 'plan_rejected'}
+          <strong>Plan rejected.</strong> No follow-up run will be queued.
+        {/if}
+      </span>
       {#if planReviewStatus === 'awaiting_plan_review'}
-        <strong>Plan awaiting review.</strong> The teammate has written an implementation plan; the manager will approve, request revisions, or reject it before any code is written.
-      {:else if planReviewStatus === 'plan_reviewing'}
-        <strong>Manager reviewing plan…</strong>
-      {:else if planReviewStatus === 'plan_approved'}
-        <strong>Plan approved.</strong> A follow-up full run has been enqueued to implement the approved plan.
-      {:else if planReviewStatus === 'plan_rejected'}
-        <strong>Plan rejected.</strong> No follow-up run will be queued. See the manager verdict for reasoning.
+        <span class="flex gap-2">
+          <button
+            type="button"
+            onclick={approveCurrentRunPlan}
+            disabled={planActionInFlight}
+            class="px-2 py-0.5 rounded bg-white/20 hover:bg-white/30 text-white text-xs font-semibold disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            data-testid="plan-review-approve-btn"
+          >
+            {planActionInFlight === 'approve' ? 'Approving…' : 'Approve'}
+          </button>
+          <button
+            type="button"
+            onclick={rejectCurrentRunPlan}
+            disabled={planActionInFlight}
+            class="px-2 py-0.5 rounded bg-white/20 hover:bg-white/30 text-white text-xs font-semibold disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            data-testid="plan-review-reject-btn"
+          >
+            {planActionInFlight === 'reject' ? 'Rejecting…' : 'Reject'}
+          </button>
+        </span>
       {/if}
     </div>
   {/if}
