@@ -186,8 +186,26 @@ def format_proposal_body(body: str) -> str:
     return DISCLAIMER + body.strip() + "\n"
 
 
+class VisionAnalystError(RuntimeError):
+    """Raised when the analyst could not produce proposals due to a runtime
+    failure (model unreachable, response not JSON, etc).
+
+    Distinct from the model legitimately returning an empty list, which the
+    caller represents as ``[]``. Without this distinction
+    :func:`run_for_project` would report ``status=success`` with zero
+    proposals on every transient failure, hiding the failure from
+    operators.
+    """
+
+
 def propose_gaps(workspace: str, vision: dict, repo: str, model: str) -> list[dict]:
-    """Return a list of proposal dicts, capped at MAX_PROPOSALS. Empty on failure."""
+    """Return a list of proposal dicts, capped at MAX_PROPOSALS.
+
+    Returns ``[]`` when the model legitimately produced no proposals.
+    Raises :class:`VisionAnalystError` when the model call failed or its
+    output could not be parsed — caller should treat that as a run failure
+    rather than "no gaps".
+    """
     state = _gather_repo_state(workspace, repo)
 
     open_titles = [f"#{i['number']}: {i['title']}" for i in state["open_issues"]][:50]
@@ -209,19 +227,23 @@ def propose_gaps(workspace: str, vision: dict, repo: str, model: str) -> list[di
         raw = _call_model(prompt, model)
     except Exception as e:
         logger.error("vision_analyst model call failed: %s", e)
-        return []
+        raise VisionAnalystError(f"model call failed: {e}") from e
 
     raw = raw.strip()
     if raw.startswith("```"):
         raw = raw.split("\n", 1)[1] if "\n" in raw else raw
         raw = raw.rstrip("` \n")
+    if not raw:
+        raise VisionAnalystError("model returned empty response")
     try:
         proposals = json.loads(raw)
     except json.JSONDecodeError as e:
         logger.error("vision_analyst response not JSON: %s", e)
-        return []
+        raise VisionAnalystError(f"response not JSON: {e}") from e
     if not isinstance(proposals, list):
-        return []
+        raise VisionAnalystError(
+            f"model returned non-list JSON: {type(proposals).__name__}"
+        )
     return proposals[:MAX_PROPOSALS]
 
 
@@ -439,7 +461,11 @@ async def run_for_project(project_id: int) -> dict:
         return {"ok": False, "error": "no vision file at docs/vision.md"}
 
     model = os.environ.get("STATION_VISION_ANALYST_MODEL", "claude-sonnet-4-6")
-    proposals = propose_gaps(workspace, vision, repo, model)
+    try:
+        proposals = propose_gaps(workspace, vision, repo, model)
+    except VisionAnalystError as exc:
+        _finish("error", error=str(exc))
+        return {"ok": False, "error": str(exc)}
     if not proposals:
         _finish("success", vision_bootstrap_count=0, vision_bootstrap_proposals=[])
         return {"ok": True, "proposals": [], "created": []}

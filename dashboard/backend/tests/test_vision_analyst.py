@@ -1,7 +1,12 @@
 import json
 import pytest
 from unittest.mock import patch, MagicMock
-from agent.vision_analyst import propose_gaps, format_proposal_body, _ensure_workspace
+from agent.vision_analyst import (
+    propose_gaps,
+    format_proposal_body,
+    _ensure_workspace,
+    VisionAnalystError,
+)
 
 
 VISION = {"problem": "P", "users": "U", "end_state": "E", "non_goals": "N",
@@ -26,6 +31,40 @@ def test_propose_gaps_caps_at_5():
         with patch("agent.vision_analyst._call_model", return_value=huge):
             proposals = propose_gaps(workspace="/x", vision=VISION, repo="o/r", model="m")
     assert len(proposals) <= 5
+
+
+def test_propose_gaps_raises_when_model_call_fails():
+    """A failed CLI invocation must raise VisionAnalystError so the caller
+    can report a run failure rather than silently degrading to 'no gaps'."""
+    with patch("agent.vision_analyst._gather_repo_state", return_value={"tree": [], "readme": "", "commits": [], "open_issues": [], "closed_issues": []}):
+        with patch("agent.vision_analyst._call_model", side_effect=RuntimeError("boom")):
+            with pytest.raises(VisionAnalystError, match="model call failed"):
+                propose_gaps(workspace="/x", vision=VISION, repo="o/r", model="m")
+
+
+def test_propose_gaps_raises_on_empty_response():
+    """An empty stdout from the CLI is a runtime failure — not 'no gaps'."""
+    with patch("agent.vision_analyst._gather_repo_state", return_value={"tree": [], "readme": "", "commits": [], "open_issues": [], "closed_issues": []}):
+        with patch("agent.vision_analyst._call_model", return_value=""):
+            with pytest.raises(VisionAnalystError, match="empty response"):
+                propose_gaps(workspace="/x", vision=VISION, repo="o/r", model="m")
+
+
+def test_propose_gaps_raises_on_non_json_response():
+    """Garbage output from the CLI must surface as an error, not [] proposals."""
+    with patch("agent.vision_analyst._gather_repo_state", return_value={"tree": [], "readme": "", "commits": [], "open_issues": [], "closed_issues": []}):
+        with patch("agent.vision_analyst._call_model", return_value="not json at all"):
+            with pytest.raises(VisionAnalystError, match="not JSON"):
+                propose_gaps(workspace="/x", vision=VISION, repo="o/r", model="m")
+
+
+def test_propose_gaps_returns_empty_list_when_model_says_no_gaps():
+    """A legitimate empty list from the model is NOT an error — caller
+    should report success-with-zero-proposals."""
+    with patch("agent.vision_analyst._gather_repo_state", return_value={"tree": [], "readme": "", "commits": [], "open_issues": [], "closed_issues": []}):
+        with patch("agent.vision_analyst._call_model", return_value="[]"):
+            proposals = propose_gaps(workspace="/x", vision=VISION, repo="o/r", model="m")
+    assert proposals == []
 
 
 def test_format_proposal_body_includes_disclaimer():
