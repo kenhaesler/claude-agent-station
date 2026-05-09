@@ -67,6 +67,42 @@ def test_propose_gaps_returns_empty_list_when_model_says_no_gaps():
     assert proposals == []
 
 
+def test_propose_gaps_tolerates_leading_prose():
+    """Claude sometimes prefixes the JSON with explanatory prose despite
+    the prompt's 'Output ONLY a JSON array' instruction. The parser must
+    locate the first '[' and extract the array."""
+    fake = (
+        "Here are 1 proposal:\n\n"
+        + json.dumps([{"title": "Add CI smoke", "body": "x", "labels": [], "priority": "low"}])
+    )
+    with patch("agent.vision_analyst._gather_repo_state", return_value={"tree": [], "readme": "", "commits": [], "open_issues": [], "closed_issues": []}):
+        with patch("agent.vision_analyst._call_model", return_value=fake):
+            proposals = propose_gaps(workspace="/x", vision=VISION, repo="o/r", model="m")
+    assert len(proposals) == 1
+    assert proposals[0]["title"] == "Add CI smoke"
+
+
+def test_propose_gaps_tolerates_trailing_prose():
+    """Trailing prose after a valid JSON array — raw_decode reads the
+    array and ignores everything after the closing bracket."""
+    fake = (
+        json.dumps([{"title": "T", "body": "B", "labels": [], "priority": "low"}])
+        + "\n\nNote: I prioritized the user-impacting items first."
+    )
+    with patch("agent.vision_analyst._gather_repo_state", return_value={"tree": [], "readme": "", "commits": [], "open_issues": [], "closed_issues": []}):
+        with patch("agent.vision_analyst._call_model", return_value=fake):
+            proposals = propose_gaps(workspace="/x", vision=VISION, repo="o/r", model="m")
+    assert len(proposals) == 1
+
+
+def test_propose_gaps_raises_when_no_array_present():
+    """Pure prose with no JSON array at all must surface as an error."""
+    with patch("agent.vision_analyst._gather_repo_state", return_value={"tree": [], "readme": "", "commits": [], "open_issues": [], "closed_issues": []}):
+        with patch("agent.vision_analyst._call_model", return_value="Sorry, I cannot help with this request."):
+            with pytest.raises(VisionAnalystError, match="not JSON"):
+                propose_gaps(workspace="/x", vision=VISION, repo="o/r", model="m")
+
+
 def test_format_proposal_body_includes_disclaimer():
     body = format_proposal_body("The feature explanation.")
     assert "Proposed by Claude Station" in body
