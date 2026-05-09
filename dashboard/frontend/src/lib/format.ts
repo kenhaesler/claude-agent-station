@@ -2,10 +2,29 @@
 // Formatting Utilities
 // ============================================
 
+/**
+ * Parse a backend timestamp into a Date in UTC.
+ *
+ * The backend stores naive ISO strings (e.g. ``2026-05-09T08:35:48.315``)
+ * because SQLAlchemy's default ``DateTime`` column is timezone-naive and
+ * the code uses ``datetime.utcnow()``. Per ECMAScript, ISO date-time
+ * strings without a timezone marker are parsed as **local time** —
+ * which means a UTC value gets shifted by the operator's offset,
+ * making "2 minutes ago" render as "2 hours ago" in CEST.
+ *
+ * This helper appends ``Z`` when no timezone marker is present so the
+ * Date constructor reads the string as UTC. Strings already carrying a
+ * marker (``...Z`` or ``...+HH:MM``) pass through unchanged.
+ */
+function parseServerDate(dateStr: string): Date {
+  const hasTz = dateStr.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(dateStr);
+  return new Date(hasTz ? dateStr : dateStr + 'Z');
+}
+
 /** Relative time string from a date string or null */
 export function timeAgo(dateStr: string | null): string {
   if (!dateStr) return 'never';
-  const date = new Date(dateStr);
+  const date = parseServerDate(dateStr);
   const now = Date.now();
   const diff = now - date.getTime();
 
@@ -71,7 +90,7 @@ export function formatPercent(n: number | null): string {
 /** Format a date string to locale string */
 export function formatDate(dateStr: string | null): string {
   if (!dateStr) return '-';
-  return new Date(dateStr).toLocaleString();
+  return parseServerDate(dateStr).toLocaleString();
 }
 
 /** @deprecated Use formatTokens instead. Kept for historical data display. */
