@@ -283,7 +283,27 @@
             </div>
           {/if}
 
-          {#if ctx?.queue_item}
+          {#if ctx?.queue_items && ctx.queue_items.length > 0}
+            <div class="card p-5 space-y-2">
+              <h3 class="text-xs font-mono uppercase tracking-widest text-tertiary">
+                Queue Items ({ctx.queue_items.length})
+              </h3>
+              <div class="space-y-2">
+                {#each ctx.queue_items as qi}
+                  <div class="text-xs space-y-1 text-secondary font-mono border-t border-border first:border-t-0 pt-2 first:pt-0">
+                    <div class="flex items-center gap-2">
+                      <span>#{qi.issue_number ?? '–'}</span>
+                      <span class="badge badge-{qi.state}">{qi.state}</span>
+                      <span class="text-tertiary">{qi.mode ?? '–'}</span>
+                    </div>
+                    {#if qi.issue_title}
+                      <div class="text-secondary">{qi.issue_title}</div>
+                    {/if}
+                  </div>
+                {/each}
+              </div>
+            </div>
+          {:else if ctx?.queue_item}
             <div class="card p-5 space-y-2">
               <h3 class="text-xs font-mono uppercase tracking-widest text-tertiary">Queue Item</h3>
               <div class="text-xs space-y-1 text-secondary font-mono">

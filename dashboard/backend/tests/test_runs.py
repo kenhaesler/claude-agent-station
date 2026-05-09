@@ -283,3 +283,43 @@ async def test_get_run_full_context_not_found(client):
     """GET /api/runs/{run_id}/full returns 404 for unknown run."""
     resp = await client.get("/api/runs/nonexistent-run/full")
     assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_get_run_full_context_multiple_queue_items(client):
+    """Issue #290 wired the orchestrator to drain multiple QueueItems
+    per run. The endpoint must return them as a list — previously it
+    used ``scalar_one_or_none()`` which 500'd with MultipleResultsFound
+    for any drained run, breaking the run-detail UI completely.
+    """
+    from datetime import datetime, timezone
+
+    from app.database import async_session
+    from app.models import QueueItem, Run
+
+    async with async_session() as s:
+        s.add(Run(
+            run_id="run-multi-q-001",
+            status="running",
+            started_at=datetime.now(timezone.utc),
+        ))
+        s.add_all([
+            QueueItem(project_repo="x/y", issue_number=42, mode="full",
+                      state="claimed", run_id="run-multi-q-001"),
+            QueueItem(project_repo="x/y", issue_number=43, mode="full",
+                      state="claimed", run_id="run-multi-q-001"),
+            QueueItem(project_repo="x/y", issue_number=44, mode="full",
+                      state="claimed", run_id="run-multi-q-001"),
+        ])
+        await s.commit()
+
+    resp = await client.get("/api/runs/run-multi-q-001/full")
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert "queue_items" in data
+    assert len(data["queue_items"]) == 3
+    issue_numbers = sorted(qi["issue_number"] for qi in data["queue_items"])
+    assert issue_numbers == [42, 43, 44]
+    # Backwards-compat: ``queue_item`` is the first item (by id), not None
+    assert data["queue_item"] is not None
+    assert data["queue_item"]["issue_number"] == 42

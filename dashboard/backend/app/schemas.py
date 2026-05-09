@@ -551,7 +551,12 @@ class RunFullContext(BaseModel):
     run: RunOut
     coordinator_tasks: list[CoordinatorTaskOut] = []
     coordinator_messages: list[CoordinatorMessageOut] = []
+    # ``queue_item`` is the first matching row for backwards-compat with
+    # callers that expected exactly-one. ``queue_items`` is the full
+    # list — required since #290 wired the orchestrator to drain
+    # multiple QueueItems per run from the plan-review gate.
     queue_item: QueueItemOut | None = None
+    queue_items: list[QueueItemOut] = []
     plan: PlanOut | None = None
     project_repo: str | None = None
     intelligence_decisions: list[AgentEventOut] = []

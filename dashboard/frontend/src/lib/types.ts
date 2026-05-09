@@ -121,7 +121,11 @@ export interface RunFullContext {
   run: Run;
   coordinator_tasks: CoordinatorTask[];
   coordinator_messages: CoordinatorMessage[];
+  /** First matching queue item (kept for backwards compat). */
   queue_item: QueueItem | null;
+  /** Full list — required since #290 wired the orchestrator to drain
+   *  multiple QueueItems per run from the plan-review gate. */
+  queue_items?: QueueItem[];
   plan: Plan | null;
   project_repo: string | null;
   intelligence_decisions: AgentEvent[];
