@@ -3,7 +3,7 @@
   import { navigate } from '../lib/router.svelte';
   import { toastSuccess, toastError } from '../lib/toast.svelte';
   import { formatCompact, formatDuration } from '../lib/chart-utils';
-  import type { Project, Run } from '../lib/types';
+  import type { Project, Run, AutonomyLevel } from '../lib/types';
   import Toggle from '../components/forms/Toggle.svelte';
   import VisionTab from '../components/vision/VisionTab.svelte';
 
@@ -75,34 +75,76 @@
     </div>
 
     {#if activeTab === 'overview'}
-      <!-- Config -->
+      <!-- Work scope — what the agent is asked to do -->
+      <div class="glass rounded-lg p-4 space-y-3">
+        <div>
+          <h2 class="text-xs font-semibold text-secondary uppercase tracking-wider">Work scope</h2>
+          <p class="mt-1 text-[11px] leading-snug text-tertiary">
+            What the agent is asked to do on this project. Shapes the prompt teammates receive and the criteria the manager applies.
+          </p>
+        </div>
+        <div>
+          <label class="text-xs text-tertiary mb-1 block">Mode</label>
+          <select
+            value={project.mode}
+            onchange={(e) => { project!.mode = (e.target as HTMLSelectElement).value as any; save('mode', project!.mode); }}
+            class="w-full px-3 py-2 rounded-lg bg-void text-primary text-sm border border-border focus:border-border-focus outline-none"
+          >
+            <option value="full">Full — plan and implement</option>
+            <option value="analyze">Analyze — read-only investigation</option>
+            <option value="plan">Plan — plan-quality output, source untouched</option>
+            <option value="plan_only">Plan Only — write plan, stop, wait for approval</option>
+          </select>
+          <p class="mt-1 text-[11px] leading-snug text-tertiary">
+            {#if project.mode === 'full'}
+              Teammates write code, run tests, and push a feature branch for the manager to review.
+            {:else if project.mode === 'analyze'}
+              Teammates inspect code and write findings to a report file. No source changes, no branches, no commits.
+            {:else if project.mode === 'plan'}
+              Teammates produce inline-rich plans; the manager rejects any source modification.
+            {:else if project.mode === 'plan_only'}
+              Teammates write a plan and stop. The manager approves, requests revisions, or rejects before any code is written. An approved plan_only run schedules a follow-up <em>full</em> run that implements it.
+            {/if}
+          </p>
+        </div>
+      </div>
+
+      <!-- Execution policy — how freely the agent can act -->
+      <div class="glass rounded-lg p-4 space-y-3">
+        <div>
+          <h2 class="text-xs font-semibold text-secondary uppercase tracking-wider">Execution policy</h2>
+          <p class="mt-1 text-[11px] leading-snug text-tertiary">
+            How freely the agent can act on the work scope above. Independent of mode — applies to every tool call regardless of whether the run is implementing, planning, or analyzing.
+          </p>
+        </div>
+        <div>
+          <label class="text-xs text-tertiary mb-1 block">Autonomy level</label>
+          <select
+            value={project.autonomy_level ?? 'assisted'}
+            onchange={(e) => { project!.autonomy_level = (e.target as HTMLSelectElement).value as AutonomyLevel; save('autonomy_level', project!.autonomy_level); }}
+            class="w-full px-3 py-2 rounded-lg bg-void text-primary text-sm border border-border focus:border-border-focus outline-none"
+          >
+            <option value="manual">Manual — operator approves every edit and risky command</option>
+            <option value="assisted">Assisted — edits auto-allowed, destructive commands ask</option>
+            <option value="auto">Auto — only the always-deny list blocks the agent</option>
+          </select>
+          <p class="mt-1 text-[11px] leading-snug text-tertiary">
+            {#if project.autonomy_level === 'manual'}
+              Every <code>Edit</code> / <code>Write</code> and every destructive bash (<code>rm -rf</code>, force push, etc.) defers to the operator via the permission tray. Use for new or sensitive repos.
+            {:else if project.autonomy_level === 'auto'}
+              Mirrors Claude Code Auto Mode. Edits and most bash run without prompting; only the hard-coded always-deny list (push to <code>main</code>, fork bombs, <code>sudo</code>, etc.) is blocked.
+            {:else}
+              Edits auto-allowed; destructive bash patterns still defer to the operator. The default for established repos.
+            {/if}
+            Every decision is recorded to the autonomy audit, regardless of level.
+          </p>
+        </div>
+      </div>
+
+      <!-- Project basics -->
       <div class="glass rounded-lg p-4 space-y-4">
-        <h2 class="text-xs font-semibold text-secondary uppercase tracking-wider">Configuration</h2>
+        <h2 class="text-xs font-semibold text-secondary uppercase tracking-wider">Project basics</h2>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div>
-            <label class="text-xs text-tertiary mb-1 block">Mode</label>
-            <select
-              value={project.mode}
-              onchange={(e) => { project!.mode = (e.target as HTMLSelectElement).value as any; save('mode', project!.mode); }}
-              class="w-full px-3 py-2 rounded-lg bg-void text-primary text-sm border border-border focus:border-border-focus outline-none"
-            >
-              <option value="full">Full</option>
-              <option value="analyze">Analyze</option>
-              <option value="plan">Plan</option>
-              <option value="plan_only">Plan Only</option>
-            </select>
-            <p class="mt-1 text-[11px] leading-snug text-tertiary">
-              {#if project.mode === 'full'}
-                Plan and implement: teammates write code, run tests, and push a feature branch for the manager to review.
-              {:else if project.mode === 'analyze'}
-                Read-only investigation: teammates inspect code and write findings to a report file. No source changes, no branches, no commits.
-              {:else if project.mode === 'plan'}
-                Plan-quality output, source untouched: teammates produce inline-rich plans; the manager rejects any source modification.
-              {:else if project.mode === 'plan_only'}
-                Pre-implementation gate: teammates write a plan and stop. The manager approves, requests revisions, or rejects before any code is written.
-              {/if}
-            </p>
-          </div>
           <div>
             <label class="text-xs text-tertiary mb-1 block">Priority</label>
             <select
