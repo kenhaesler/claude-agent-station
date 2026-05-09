@@ -34,8 +34,14 @@
   let allEmpty = $derived(columns.every(c => c.items.length === 0));
 
   async function loadData() {
+    // ``limit=100`` matches the backend cap on /api/queue (Pydantic
+    // ``Query(le=100)``). Asking for more makes the request 422 and
+    // — because Promise.allSettled swallows the rejection — the board
+    // silently shows "Queue is empty" even when there are pending
+    // items, while the KPI card (which uses getQueueStats) shows the
+    // real count. If we ever need >100, raise the backend cap first.
     const [qRes, sRes, bRes] = await Promise.allSettled([
-      listQueue({ limit: 200 }),
+      listQueue({ limit: 100 }),
       getQueueStats(),
       getBackpressure(),
     ]);
