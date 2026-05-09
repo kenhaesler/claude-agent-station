@@ -284,9 +284,62 @@ def _parse_proposal_list(raw: str) -> list:
     return value
 
 
+# Label names + colors the analyst needs on every target repo. The colors
+# are hex without the leading ``#`` per gh's ``label create --color`` API.
+# We create-or-skip these once at the start of each run; ``gh`` exits
+# non-zero when a label already exists which we treat as success.
+_REQUIRED_LABELS: tuple[tuple[str, str, str], ...] = (
+    ("vision-suggested", "0E8A16", "Issue proposed by Claude Station from the project vision"),
+    ("low",       "C2E0C6", "Priority: low"),
+    ("medium",    "FBCA04", "Priority: medium"),
+    ("high",      "D93F0B", "Priority: high"),
+    ("critical",  "B60205", "Priority: critical"),
+)
+
+
+def _ensure_labels(repo: str) -> None:
+    """Best-effort: create the labels the analyst attaches before any
+    ``gh issue create``.
+
+    Without this, the very first vision-bootstrap run on a fresh repo
+    fails every issue create with ``could not add label: 'vision-suggested'
+    not found`` and produces zero issues. Subsequent runs would work
+    only if an operator manually created the labels — undiscoverable.
+
+    All errors (already-exists, network blip, missing scope) are logged
+    at info/warning level and ignored.
+    """
+    for name, color, description in _REQUIRED_LABELS:
+        try:
+            result = subprocess.run(
+                ["gh", "label", "create", name,
+                 "--repo", repo,
+                 "--color", color,
+                 "--description", description],
+                capture_output=True, text=True, timeout=15,
+            )
+            if result.returncode == 0:
+                logger.info("Created label %s on %s", name, repo)
+            else:
+                # gh label create exits 1 when the label already exists.
+                # That's the common case — silence it unless something
+                # else is wrong.
+                stderr = result.stderr.strip()
+                if "already exists" in stderr:
+                    logger.debug("Label %s already exists on %s", name, repo)
+                else:
+                    logger.warning(
+                        "Could not create label %s on %s: %s",
+                        name, repo, stderr,
+                    )
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            logger.warning("gh label create %s on %s failed: %s", name, repo, exc)
+
+
 def create_proposed_issues(repo: str, proposals: list[dict]) -> list[tuple[int, dict]]:
     """Create issues via `gh`. Returns list of (issue_number, proposal) tuples
     for the proposals that actually succeeded."""
+    _ensure_labels(repo)
     created: list[tuple[int, dict]] = []
     for p in proposals:
         labels = ["vision-suggested"]
