@@ -45,6 +45,65 @@ def _run_helper(snippet: str, *, env_overrides: dict[str, str] | None = None) ->
     return result.returncode, result.stdout.strip(), result.stderr.strip()
 
 
+def _resolve_run_mode(workspace: str, project_index: int, *, config_mode: str) -> str:
+    """Source run-manager.sh and call resolve_run_mode against a fake config.
+
+    We synthesize a one-project manager-config.json with the requested static
+    mode so the helper's fallback path has something to read.
+    """
+    cfg_dir = Path(workspace).parent
+    cfg = cfg_dir / "manager-config.json"
+    cfg.write_text(
+        f'{{"projects":[{{"repo":"x/y","mode":"{config_mode}"}}]}}'
+    )
+    cmd = (
+        f"export STATION_CONFIG='{cfg}'; "
+        f"source '{RUN_MANAGER}' 2>/dev/null || true; "
+        f"resolve_run_mode '{workspace}' {project_index}"
+    )
+    out = subprocess.run(
+        ["bash", "-c", cmd], capture_output=True, text=True, timeout=10,
+    )
+    return out.stdout.strip()
+
+
+def test_resolve_run_mode_uses_marker_when_present(tmp_path):
+    """Regression for run-20260509T183351Z: an approved-plan follow-up run
+    drained queue items with mode=full, but the project's static config
+    still said plan_only. Without the per-run marker, the manager review
+    was built against PLAN_REVIEW criteria and auto-rejected every
+    implementing teammate as "MODE MISMATCH"."""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / ".claude-run-mode").write_text("full")
+    assert _resolve_run_mode(str(ws), 0, config_mode="plan_only") == "full"
+
+
+def test_resolve_run_mode_falls_back_to_config_when_marker_absent(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    assert _resolve_run_mode(str(ws), 0, config_mode="plan_only") == "plan_only"
+
+
+def test_resolve_run_mode_rejects_garbage_marker_and_falls_back(tmp_path):
+    """A marker that doesn't name one of the four valid modes must be
+    treated as absent, not propagated. Otherwise a corrupt write could
+    silently change review behavior."""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / ".claude-run-mode").write_text("rm -rf /\nplan_only")
+    assert _resolve_run_mode(str(ws), 0, config_mode="analyze") == "analyze"
+
+
+def test_resolve_run_mode_strips_trailing_whitespace(tmp_path):
+    """The orchestrator writes the mode without a trailing newline, but a
+    human or future code path might add one. Be tolerant."""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / ".claude-run-mode").write_text("full\n")
+    assert _resolve_run_mode(str(ws), 0, config_mode="plan_only") == "full"
+
+
 def test_rate_limit_allows_first_call(tmp_path):
     """With no lockfile, auto_draft_rate_limit_allowed returns 0 (allow)."""
     rc, _, _ = _run_helper(
