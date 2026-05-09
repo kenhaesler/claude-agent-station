@@ -53,11 +53,6 @@
     }
   }
 
-  function rerunAnalyst() {
-    fetch(`/api/projects/${project.id}/vision/find-gaps`, { method: 'POST' })
-      .then(r => { if (!r.ok) console.warn('vision-analyst rerun failed', r.status); });
-  }
-
   const githubBaseUrl = $derived(
     `https://github.com/${project.repo}/blob/${project.branch || 'main'}/docs/vision.md`,
   );
@@ -79,7 +74,15 @@
     {/if}
   </span>
   <span class="flex-1"></span>
-  <button type="button" class="btn btn-ghost btn-sm text-xs" onclick={rerunAnalyst}>Re-run analyst</button>
+  <button
+    type="button"
+    class="btn btn-ghost btn-sm text-xs"
+    onclick={findGaps}
+    disabled={findingGaps}
+    data-testid="vision-rerun-analyst-btn"
+  >
+    {findingGaps ? 'Starting…' : 'Re-run analyst'}
+  </button>
   <a class="btn btn-ghost btn-sm text-xs"
      href={githubProposalsUrl}
      target="_blank" rel="noopener">View on GitHub →</a>

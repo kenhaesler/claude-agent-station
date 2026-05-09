@@ -123,6 +123,25 @@ describe('timeAgo', () => {
     const future = new Date(now.getTime() + 60_000).toISOString();
     expect(timeAgo(future)).toBe('just now');
   });
+
+  it('treats naive ISO strings (no Z, no offset) as UTC', () => {
+    // Backend stores datetime.utcnow() which serializes without a timezone
+    // marker. Without explicit UTC handling, JS parses "2026-05-08T11:59:30"
+    // as local time, so an operator in CEST sees the run as 2 hours older
+    // than it actually is. Issue debug: original report was "runs 2h back".
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-05-08T12:00:00Z'));
+    // 30 seconds ago in UTC, no timezone marker.
+    expect(timeAgo('2026-05-08T11:59:30')).toBe('30s ago');
+    expect(timeAgo('2026-05-08T11:59:30.000')).toBe('30s ago');
+  });
+
+  it('respects explicit timezone markers when present', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-05-08T12:00:00Z'));
+    expect(timeAgo('2026-05-08T11:59:30Z')).toBe('30s ago');
+    expect(timeAgo('2026-05-08T13:59:30+02:00')).toBe('30s ago');
+  });
 });
 
 import { formatRunMode, formatSkipReason } from './format';
