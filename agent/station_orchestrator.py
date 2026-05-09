@@ -70,34 +70,15 @@ class _StreamState:
     BATCH_INTERVAL: float = 15.0  # seconds between progress webhooks
 
 
-async def _user_prompt_stream(text: str, done_event: asyncio.Event | None = None):
+async def _user_prompt_stream(text: str):
     """Wrap a string prompt as the AsyncIterable form the SDK requires when
     ``can_use_tool`` or ``hooks`` are supplied.
 
-    Yields one user message then **awaits ``done_event``** before returning.
-    Without that wait, the AsyncIterable would close as soon as the first
-    yield is consumed; the SDK transport then closes its stdin to the
-    bundled Claude CLI subprocess; subsequent tool calls trigger
-    PreToolUse / PostToolUse hooks which open a control_request back to
-    the Python side via the now-closed stdio stream. Result::
-
-        Error in hook callback hook_0: ... error: Stream closed
-            at sendRequest (.../cli.js:7552:133)
-
-    Symptom in production (run-20260509T142511Z): the lead spawned 3
-    teammates correctly, but every teammate tool call hit the closed
-    stream during PreToolUse — the audit hook couldn't write its row,
-    the CLI surfaced the failure, and teammates ended up not producing
-    any code or commits over a 13-minute run.
-
-    The fix is to keep the prompt stream alive for the full SDK
-    iteration. Caller passes an ``asyncio.Event`` and ``set()``s it in
-    a ``finally`` block once the ``async for message in query(...)``
-    loop has fully drained.
-
-    ``done_event=None`` keeps the original "yield-and-exit" behaviour
-    for a few legacy callers that don't use hooks; do NOT rely on
-    that path for any new code.
+    Yields one user message then ends. The SDK is designed for this shape
+    and handles stdin lifetime itself via ``_first_result_event`` and the
+    ``CLAUDE_CODE_STREAM_CLOSE_TIMEOUT`` env var (in ms; 60s default).
+    Long Agent Teams sessions need that timeout bumped; see
+    :mod:`agent.launcher` where it's set on the orchestrator subprocess.
     """
     yield {
         "type": "user",
@@ -105,8 +86,6 @@ async def _user_prompt_stream(text: str, done_event: asyncio.Event | None = None
         "message": {"role": "user", "content": text},
         "parent_tool_use_id": None,
     }
-    if done_event is not None:
-        await done_event.wait()
 
 
 SKIP_LABELS = frozenset({
@@ -1720,55 +1699,35 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
                         options.resume = session_id
                         options.continue_conversation = True
 
-                    # ``prompt_done`` keeps the SDK's input stream alive
-                    # for the full duration of the ``async for`` below.
-                    # See ``_user_prompt_stream`` for the rationale —
-                    # without this gate, every PreToolUse / PostToolUse
-                    # hook callback hits ``Error: Stream closed`` because
-                    # the SDK transport closes stdin as soon as the
-                    # AsyncIterable is exhausted, and hooks need
-                    # bidirectional control_request comms after that.
-                    prompt_done = asyncio.Event()
-                    try:
-                        async for message in query(
-                            prompt=_user_prompt_stream(prompt, prompt_done),
-                            options=options,
-                        ):
-                            # Capture session_id for resume
-                            sid = getattr(message, "session_id", None)
-                            if sid:
-                                session_id = sid
+                    async for message in query(prompt=_user_prompt_stream(prompt), options=options):
+                        # Capture session_id for resume
+                        sid = getattr(message, "session_id", None)
+                        if sid:
+                            session_id = sid
 
-                            # Only send orchestrator_start webhook on the very first init
-                            if isinstance(message, SystemMessage) and getattr(message, "subtype", "") == "init":
-                                if not first_init_sent:
-                                    post_webhook(config, "orchestrator_start", {
-                                        "run_id": f"run-{run_id}",
-                                        "mode": project_mode,
-                                    })
-                                    first_init_sent = True
+                        # Only send orchestrator_start webhook on the very first init
+                        if isinstance(message, SystemMessage) and getattr(message, "subtype", "") == "init":
+                            if not first_init_sent:
+                                post_webhook(config, "orchestrator_start", {
+                                    "run_id": f"run-{run_id}",
+                                    "mode": project_mode,
+                                })
+                                first_init_sent = True
 
-                            handle_stream_event(message, config, run_id, log_file=log_file, state=stream_state)
+                        handle_stream_event(message, config, run_id, log_file=log_file, state=stream_state)
 
-                            # The background control poll task is already running;
-                            # we only need to check the stop flag here to break
-                            # out of the stream loop as soon as it latches.
-                            if control_flags["stop"]:
-                                logger.info("Stop requested; breaking SDK stream")
-                                break
+                        # The background control poll task is already running;
+                        # we only need to check the stop flag here to break
+                        # out of the stream loop as soon as it latches.
+                        if control_flags["stop"]:
+                            logger.info("Stop requested; breaking SDK stream")
+                            break
 
-                            # Check result for completion
-                            if isinstance(message, ResultMessage):
-                                result_text = getattr(message, "result", "")
-                                if _is_work_complete(result_text):
-                                    work_complete = True
-                    finally:
-                        # Release the prompt-stream gate so its generator
-                        # can return cleanly. This is a no-op for the
-                        # SDK-side stream (already drained by ``async for``
-                        # exiting), but it lets ``_user_prompt_stream``'s
-                        # background task finish so we don't leak it.
-                        prompt_done.set()
+                        # Check result for completion
+                        if isinstance(message, ResultMessage):
+                            result_text = getattr(message, "result", "")
+                            if _is_work_complete(result_text):
+                                work_complete = True
 
                     if control_flags["stop"]:
                         raise OrchestratorStopRequested()

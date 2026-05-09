@@ -1557,54 +1557,46 @@ def test_build_team_prompt_omits_approved_plans_section_when_none():
     assert "Approved plans from a prior plan_only run" not in prompt
 
 
-# --- Prompt stream stays open for hooks (Stream-closed regression) ---------
+# --- Prompt stream + stream-close timeout (Stream-closed regression) -------
 
 
 @pytest.mark.asyncio
-async def test_user_prompt_stream_yields_then_blocks_on_done_event():
-    """Without ``done_event``, _user_prompt_stream yields once and exits —
-    the SDK transport closes its stdin to the bundled CLI subprocess as
-    soon as the AsyncIterable is drained. Subsequent PreToolUse /
-    PostToolUse hook callbacks then hit ``Error: Stream closed`` because
-    the CLI's ``sendRequest`` for control_request finds inputClosed=True.
-
-    The ``done_event`` form keeps the generator alive until the caller
-    explicitly signals completion, mirroring the SDK's expectation that
-    the input stream stays open for the duration of the conversation.
+async def test_user_prompt_stream_yields_one_message_and_exits():
+    """``_user_prompt_stream`` yields exactly one user message, then
+    StopAsyncIteration. The SDK is responsible for keeping stdin open
+    long enough for hooks via its ``CLAUDE_CODE_STREAM_CLOSE_TIMEOUT``
+    env var (set on the orchestrator subprocess by ``agent.launcher``).
     """
-    import asyncio
-    from agent import station_orchestrator as so
-
-    done = asyncio.Event()
-    gen = so._user_prompt_stream("hello world", done)
-    first = await gen.__anext__()
-    assert first["type"] == "user"
-    assert first["message"]["content"] == "hello world"
-
-    # Without done.set(), the generator must NOT advance — the next
-    # ``__anext__()`` should block indefinitely. We give it a short
-    # window and assert that no second value materialises.
-    second_task = asyncio.create_task(gen.__anext__())
-    try:
-        await asyncio.wait_for(asyncio.shield(second_task), timeout=0.2)
-        pytest.fail("generator returned a second value — done_event gate not honoured")
-    except asyncio.TimeoutError:
-        pass  # expected — gate is doing its job
-
-    # Releasing the gate must let the generator complete (StopAsyncIteration).
-    done.set()
-    with pytest.raises(StopAsyncIteration):
-        await asyncio.wait_for(second_task, timeout=1.0)
-
-
-@pytest.mark.asyncio
-async def test_user_prompt_stream_legacy_no_event_still_works():
-    """Legacy callers (without hooks/can_use_tool) can pass no event;
-    the generator yields once and exits. Don't break that path."""
     from agent import station_orchestrator as so
 
     items = []
-    async for msg in so._user_prompt_stream("legacy"):
+    async for msg in so._user_prompt_stream("hello world"):
         items.append(msg)
     assert len(items) == 1
-    assert items[0]["message"]["content"] == "legacy"
+    assert items[0]["type"] == "user"
+    assert items[0]["message"]["content"] == "hello world"
+
+
+def test_launcher_sets_stream_close_timeout_in_run_env():
+    """Regression guard: the launcher must inject
+    ``CLAUDE_CODE_STREAM_CLOSE_TIMEOUT`` into the orchestrator
+    subprocess env so post-first-result hook callbacks don't hit
+    ``Error: Stream closed``. Source-level assertion — we don't boot
+    the launcher in tests.
+
+    Background: the SDK closes stdin ~60s after the first ResultMessage
+    by default (CLAUDE_CODE_STREAM_CLOSE_TIMEOUT=60000ms). After stdin
+    closes, every PreToolUse / PostToolUse hook callback raises
+    ``Error: Stream closed`` because the CLI's sendRequest finds
+    inputClosed=True. Long Agent Teams runs hit this within minutes —
+    the run keeps producing tool calls but every audit hook silently
+    fails. Bumping the timeout via env var is the supported escape.
+    """
+    import inspect
+    from agent import launcher
+
+    src = inspect.getsource(launcher)
+    assert 'CLAUDE_CODE_STREAM_CLOSE_TIMEOUT' in src, (
+        "agent.launcher.trigger() must set CLAUDE_CODE_STREAM_CLOSE_TIMEOUT "
+        "in the run-manager subprocess env"
+    )
