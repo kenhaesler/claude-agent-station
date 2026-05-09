@@ -2585,7 +2585,14 @@ for item in data.get('items', []):
     local agent_dir
     agent_dir="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-    PYTHONPATH="$agent_dir/.." python3 -m agent.station_orchestrator \
+    # PYTHONPATH must include both the agent root (so ``import agent``
+    # resolves) AND the dashboard backend (so the orchestrator's queue
+    # consumer can ``from app.database import async_session`` —
+    # introduced in #290 to drain pending QueueItems from approved
+    # plan_only runs). Dropping the latter silently disables the queue
+    # drain with a ModuleNotFoundError after ``Processing project:``,
+    # leaving operators with a "trigger has no effect" symptom.
+    PYTHONPATH="$agent_dir/..:$agent_dir/../dashboard/backend" python3 -m agent.station_orchestrator \
         --config "$CONFIG_FILE" \
         --run-id "$RUN_ID" \
         --workspaces-dir "$WORKSPACES_DIR"
