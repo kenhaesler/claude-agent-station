@@ -216,11 +216,19 @@ async def get_run_full_context(run_id: str, db: AsyncSession = Depends(get_db)):
     )
     messages = msgs_result.scalars().all()
 
-    # 4. Fetch related queue item (by run_id)
+    # 4. Fetch related queue items (by run_id). Issue #290 wired the
+    # orchestrator to drain multiple QueueItems per run when a plan_only
+    # run was approved, so ``scalar_one_or_none()`` here would 500 with
+    # ``MultipleResultsFound`` for any post-#290 run that drained more
+    # than one item. ``queue_item`` is kept as the first row for old
+    # consumers; ``queue_items`` exposes the full list.
     queue_result = await db.execute(
-        select(QueueItem).where(QueueItem.run_id == run_id)
+        select(QueueItem)
+        .where(QueueItem.run_id == run_id)
+        .order_by(QueueItem.id.asc())
     )
-    queue_item = queue_result.scalar_one_or_none()
+    queue_items = list(queue_result.scalars().all())
+    queue_item = queue_items[0] if queue_items else None
 
     # 5. Fetch related plan (by implementation_run_id or run_id)
     plan_result = await db.execute(
@@ -281,6 +289,7 @@ async def get_run_full_context(run_id: str, db: AsyncSession = Depends(get_db)):
         coordinator_tasks=[CoordinatorTaskOut.model_validate(t) for t in tasks],
         coordinator_messages=[CoordinatorMessageOut.model_validate(m) for m in messages],
         queue_item=QueueItemOut.model_validate(queue_item) if queue_item else None,
+        queue_items=[QueueItemOut.model_validate(q) for q in queue_items],
         plan=PlanOut.model_validate(plan) if plan else None,
         project_repo=project_repo,
         intelligence_decisions=[AgentEventOut.model_validate(e) for e in intel_events],
