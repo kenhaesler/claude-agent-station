@@ -116,25 +116,63 @@ async def get_agent_status() -> dict:
 
     In compose mode the agent has no timer (the launcher is always up), so
     ``timer_active`` is always False.
+
+    ``service_active`` is True when **any** child process the agent
+    container is responsible for is in flight — currently either
+    ``run-manager.sh`` (full orchestrator runs) or ``vision_analyst``
+    (Hook 3 vision-bootstrap). Without the second source, the stale-run
+    reaper saw ``service_active=False`` while a vision-analyst was
+    running, marked the in-flight Run row ``interrupted``, then the
+    analyst's terminal webhook flipped it back to ``completed`` minutes
+    later — producing the confusing ``interrupted → completed`` flicker
+    operators noticed.
     """
     if _mode() == "compose":
-        result = await _launcher_call("GET", "/status")
-        running = bool(result.get("running"))
+        run_status = await _launcher_call("GET", "/status")
+        analyst_status = await _launcher_call("GET", "/vision-analyst/status")
+        run_running = bool(run_status.get("running"))
+        analyst_running = bool(analyst_status.get("running"))
+        # ``pid`` semantically reports a single in-flight process; prefer
+        # the orchestrator's pid when both are running because the
+        # orchestrator is the more visible workload.
+        pid = run_status.get("pid") or analyst_status.get("pid")
+        # Surface the first non-success error so the dashboard can
+        # surface auth/network problems regardless of which endpoint
+        # failed.
+        error = None
+        if not run_status.get("success"):
+            error = run_status.get("error")
+        elif not analyst_status.get("success"):
+            error = analyst_status.get("error")
         return {
-            "service_active": running,
+            "service_active": run_running or analyst_running,
             "timer_active": False,
             "timer_next": None,
             "service_stdout": "",
             "timer_stdout": "",
-            "pid": result.get("pid"),
-            "error": None if result.get("success") else result.get("error"),
+            "pid": pid,
+            "error": error,
+            # Per-source breakdown — useful for the dashboard's UI when
+            # we want to differentiate "an orchestrator run is going" vs
+            # "a vision-bootstrap is going". Reaper only checks the
+            # combined ``service_active``.
+            "run_active": run_running,
+            "vision_analyst_active": analyst_running,
         }
     # systemd mode — normalise to the compose shape so callers don't have to
     # branch on deploy mode. The systemd path doesn't have a single pid (the
     # service can have a tree of children), and there's no async error to
-    # surface, so both default to None.
+    # surface, so both default to None. ``run_active`` mirrors
+    # ``service_active`` because systemd doesn't expose vision-analyst as
+    # a distinct unit; ``vision_analyst_active`` defaults False.
     result = await systemd_get_status()
-    return {**result, "pid": None, "error": None}
+    return {
+        **result,
+        "pid": None,
+        "error": None,
+        "run_active": bool(result.get("service_active")),
+        "vision_analyst_active": False,
+    }
 
 
 async def run_action(action: str, unit: str | None = None) -> dict:
