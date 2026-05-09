@@ -376,6 +376,27 @@ export const rejectPlan = (id: number) =>
 export const implementPlan = (id: number) =>
   requestWithToast<Plan>(`/api/plans/${id}/implement`, { method: 'POST' });
 
+// --- Plan-review gate operator override (issue #266 follow-up) ---
+
+export interface PlanReviewApproveResult {
+  run_id: string;
+  status: 'plan_approved';
+  enqueued: { id: number; issue_number: number | null }[];
+  verdicts_file_found: boolean;
+}
+
+export const operatorApproveRunPlan = (runId: string) =>
+  requestWithToast<PlanReviewApproveResult>(
+    `/api/runs/${encodeURIComponent(runId)}/plan/approve`,
+    { method: 'POST' },
+  );
+
+export const operatorRejectRunPlan = (runId: string) =>
+  requestWithToast<{ run_id: string; status: 'plan_rejected' }>(
+    `/api/runs/${encodeURIComponent(runId)}/plan/reject`,
+    { method: 'POST' },
+  );
+
 // --- Logs ---
 
 export const searchLogs = (q: string, runId?: string, limit?: number) =>

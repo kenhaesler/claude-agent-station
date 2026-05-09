@@ -1,6 +1,6 @@
 <script lang="ts">
   import { agentPresence } from '../lib/agent-presence.svelte';
-  import { getCoordinatorTasks, getCoordinatorMessages, triggerRun, getActiveEmployees } from '../lib/api';
+  import { getCoordinatorTasks, getCoordinatorMessages, triggerRun, getActiveEmployees, operatorApproveRunPlan, operatorRejectRunPlan } from '../lib/api';
   import { addToast } from '../lib/toast.svelte';
   import { formatTokens, formatDuration, timeAgo } from '../lib/format';
   import type { CoordinatorTask, CoordinatorMessage, ActiveEmployee } from '../lib/types';
@@ -30,6 +30,41 @@
       ? (activeRun.status as string)
       : null
   );
+
+  // Plan-review gate operator override (issue #266 follow-up).
+  let planActionInFlight = $state<'approve' | 'reject' | null>(null);
+
+  async function approveCanvasRunPlan() {
+    if (!latestRunId || planActionInFlight) return;
+    planActionInFlight = 'approve';
+    try {
+      const result = await operatorApproveRunPlan(latestRunId);
+      const n = result.enqueued.length;
+      addToast(
+        'success',
+        n > 0
+          ? `Plan approved — ${n} follow-up run${n === 1 ? '' : 's'} enqueued`
+          : 'Plan approved (no follow-up enqueued — verdicts file missing)',
+      );
+    } catch {
+      // requestWithToast already surfaced the error toast.
+    } finally {
+      planActionInFlight = null;
+    }
+  }
+
+  async function rejectCanvasRunPlan() {
+    if (!latestRunId || planActionInFlight) return;
+    planActionInFlight = 'reject';
+    try {
+      await operatorRejectRunPlan(latestRunId);
+      addToast('success', 'Plan rejected');
+    } catch {
+      // toast already shown
+    } finally {
+      planActionInFlight = null;
+    }
+  }
 
   // Fetch coordinator data
   $effect(() => {
@@ -173,17 +208,41 @@
 {:else}
   {#if planReviewStatus}
     <div
-      style="position: fixed; top: 54px; left: 0; right: 0; padding: 8px 16px; font-size: 12px; z-index: 2; color: white; background: {planReviewStatus === 'plan_approved' ? '#16a34a' : planReviewStatus === 'plan_rejected' ? '#dc2626' : '#d97706'};"
+      style="position: fixed; top: 54px; left: 0; right: 0; padding: 8px 16px; font-size: 12px; z-index: 2; color: white; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; background: {planReviewStatus === 'plan_approved' ? '#16a34a' : planReviewStatus === 'plan_rejected' ? '#dc2626' : '#d97706'};"
       data-testid="plan-review-banner"
     >
+      <span style="flex: 1; min-width: 0;">
+        {#if planReviewStatus === 'awaiting_plan_review'}
+          <strong>Plan awaiting review.</strong> The teammate wrote a plan; approve to enqueue a follow-up <code style="font-family: monospace;">full</code> run, or reject to stop here.
+        {:else if planReviewStatus === 'plan_reviewing'}
+          <strong>Manager reviewing plan…</strong>
+        {:else if planReviewStatus === 'plan_approved'}
+          <strong>Plan approved.</strong> A follow-up full run has been enqueued.
+        {:else if planReviewStatus === 'plan_rejected'}
+          <strong>Plan rejected.</strong> No follow-up run will be queued.
+        {/if}
+      </span>
       {#if planReviewStatus === 'awaiting_plan_review'}
-        <strong>Plan awaiting review.</strong> The teammate has written a plan; the manager will approve, request revisions, or reject it before any code is written.
-      {:else if planReviewStatus === 'plan_reviewing'}
-        <strong>Manager reviewing plan…</strong>
-      {:else if planReviewStatus === 'plan_approved'}
-        <strong>Plan approved.</strong> A follow-up full run has been enqueued.
-      {:else if planReviewStatus === 'plan_rejected'}
-        <strong>Plan rejected.</strong> No follow-up run will be queued.
+        <span style="display: flex; gap: 8px;">
+          <button
+            type="button"
+            onclick={approveCanvasRunPlan}
+            disabled={planActionInFlight !== null}
+            style="padding: 2px 8px; border-radius: 4px; background: rgba(255,255,255,0.2); color: white; font-size: 11px; font-weight: 600; border: none; cursor: pointer; opacity: {planActionInFlight ? 0.5 : 1};"
+            data-testid="plan-review-approve-btn"
+          >
+            {planActionInFlight === 'approve' ? 'Approving…' : 'Approve'}
+          </button>
+          <button
+            type="button"
+            onclick={rejectCanvasRunPlan}
+            disabled={planActionInFlight !== null}
+            style="padding: 2px 8px; border-radius: 4px; background: rgba(255,255,255,0.2); color: white; font-size: 11px; font-weight: 600; border: none; cursor: pointer; opacity: {planActionInFlight ? 0.5 : 1};"
+            data-testid="plan-review-reject-btn"
+          >
+            {planActionInFlight === 'reject' ? 'Rejecting…' : 'Reject'}
+          </button>
+        </span>
       {/if}
     </div>
   {/if}
