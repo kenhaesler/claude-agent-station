@@ -70,6 +70,21 @@ async def test_wired_policy_allows_read_at_all_levels(tmp_path):
         assert isinstance(decision, PermissionResultAllow)
 
 
+def test_orchestrator_writes_run_mode_marker():
+    """Regression for run-20260509T183351Z: run-manager.sh's review-package
+    builder needs the *effective* run mode (e.g. ``full`` when implementing
+    from approved plans), not the project's static config mode (e.g.
+    ``plan_only``). Pin the marker write in the orchestrator source so it
+    can't be silently dropped — the bash side reads it via resolve_run_mode."""
+    source = inspect.getsource(station_orchestrator)
+    assert ".claude-run-mode" in source, (
+        "orchestrator must write a per-run mode marker to the workspace"
+    )
+    # Marker must be written from the project iteration so it picks up the
+    # post-queue-drain mode, not the pre-drain config mode.
+    assert "f.write(project_mode)" in source
+
+
 def test_orchestrator_options_block_contains_can_use_tool():
     """The source must wire can_use_tool=make_audited_policy(...) into
     ClaudeAgentOptions — otherwise the policy + audit never run.

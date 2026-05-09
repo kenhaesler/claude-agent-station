@@ -658,6 +658,39 @@ get_project_field() {
     json_get "$CONFIG_FILE" "projects.$index.$field"
 }
 
+# Resolve the *effective* mode for a project's run.
+#
+# The project's static config mode (manager-config.json:projects[i].mode) is
+# only authoritative when the orchestrator hasn't drained queue items that
+# override it. An approved-plan follow-up run drains queue items with
+# mode=full, but the project's configured mode may still be plan_only.
+# Without resolving this, the manager review is built against PLAN_REVIEW
+# criteria and auto-rejects every implementing teammate as "MODE MISMATCH"
+# (run-20260509T183351Z incident).
+#
+# The orchestrator drops a workspace-local marker file (.claude-run-mode)
+# with the run's effective mode. Prefer it; fall back to the static config.
+# Garbage in the marker silently falls back too.
+#
+# Args: $1 = workspace path, $2 = project index in CONFIG_FILE.
+resolve_run_mode() {
+    local workspace="$1" index="$2"
+    local mode=""
+    local marker="$workspace/.claude-run-mode"
+    if [ -f "$marker" ]; then
+        mode=$(head -c 32 "$marker" 2>/dev/null | tr -d '[:space:]')
+        case "$mode" in
+            full|analyze|plan|plan_only) ;;
+            *) mode="" ;;
+        esac
+    fi
+    if [ -z "$mode" ]; then
+        mode=$(get_project_field "$index" "mode" 2>/dev/null || echo "full")
+    fi
+    [ -z "$mode" ] && mode="full"
+    printf '%s' "$mode"
+}
+
 # Extract repo name from "owner/repo" -> "repo"
 repo_name() {
     echo "$1" | cut -d'/' -f2
@@ -1510,14 +1543,14 @@ collect_employee_reports() {
         echo "## Project: $repo" >> "$review_package"
         echo "" >> "$review_package"
 
-        # Detect project mode from config and emit the matching MODE header.
+        # Detect the run's effective mode and emit the matching MODE header.
         # The manager prompt (agent/prompts/manager.md:23-33) keys its
         # review-criteria branching off these exact headers — keep them in
-        # lockstep with that contract. Issue #266: cover all four modes,
-        # not just analyze.
+        # lockstep with that contract. Issue #266: cover all four modes.
+        # See resolve_run_mode for why this prefers a per-run marker over
+        # the static project config.
         local project_mode
-        project_mode=$(get_project_field "$i" "mode" 2>/dev/null || echo "full")
-        [ -z "$project_mode" ] && project_mode="full"
+        project_mode=$(resolve_run_mode "$workspace" "$i")
         if [ "$project_mode" = "analyze" ]; then
             echo "MODE: ANALYZE" >> "$review_package"
             echo "" >> "$review_package"

@@ -1508,6 +1508,23 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
             len(issues), repo, [f"#{i['number']}" for i in issues],
         )
 
+        # Persist the run's effective mode so run-manager.sh's review-package
+        # builder uses it instead of the static project config. Without this
+        # marker, an approved-plan follow-up run (drained queue items with
+        # mode=full) gets reviewed under the project's configured mode
+        # (often plan_only) and the manager auto-rejects every teammate as
+        # "MODE MISMATCH — you wrote code in plan mode". Run-manager reads
+        # this file in collect_employee_reports and falls back to the static
+        # config only if the marker is absent or unreadable.
+        try:
+            with open(os.path.join(workspace, ".claude-run-mode"), "w") as f:
+                f.write(project_mode)
+        except OSError as exc:
+            logger.warning(
+                "could not write .claude-run-mode marker for %s: %s",
+                repo, exc,
+            )
+
         # Determine base branch for worktrees
         integration = config.get("integration", {})
         base_branch = integration.get("dev_branch", "autonomous/dev")
