@@ -5,6 +5,7 @@
       "args": ["-y", "@playwright/mcp@latest"]
     },
     "ref": {
+      "type": "http",
       "url": "https://api.ref.tools/mcp"
     }
   }
