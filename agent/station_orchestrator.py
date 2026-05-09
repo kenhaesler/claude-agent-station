@@ -1428,10 +1428,12 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
                         },
                         mcp_servers={
                             "playwright": {
+                                "type": "stdio",
                                 "command": "npx",
                                 "args": ["-y", "@playwright/mcp@latest"],
                             },
                             "ref": {
+                                "type": "http",
                                 "url": "https://api.ref.tools/mcp",
                             },
                         },
