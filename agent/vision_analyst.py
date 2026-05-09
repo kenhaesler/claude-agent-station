@@ -236,15 +236,52 @@ def propose_gaps(workspace: str, vision: dict, repo: str, model: str) -> list[di
     if not raw:
         raise VisionAnalystError("model returned empty response")
     try:
-        proposals = json.loads(raw)
+        proposals = _parse_proposal_list(raw)
     except json.JSONDecodeError as e:
-        logger.error("vision_analyst response not JSON: %s", e)
+        # Log a truncated preview so operators can see what the model
+        # actually produced without dumping kilobytes of prose into the log.
+        logger.error(
+            "vision_analyst response not JSON: %s | preview=%r",
+            e, raw[:300],
+        )
         raise VisionAnalystError(f"response not JSON: {e}") from e
     if not isinstance(proposals, list):
         raise VisionAnalystError(
             f"model returned non-list JSON: {type(proposals).__name__}"
         )
     return proposals[:MAX_PROPOSALS]
+
+
+def _parse_proposal_list(raw: str) -> list:
+    """Parse a JSON array out of the model's output.
+
+    Handles the common ways Claude's free-form output deviates from a
+    strict JSON document:
+
+    - Strict ``[...]`` payload — happy path.
+    - Trailing prose after the array (``[...]\\n\\nNote: ...``) — the
+      :func:`json.JSONDecoder.raw_decode` API returns the array and we
+      ignore the trailing characters.
+    - Leading prose before the array (``Here are the proposals:\\n[...]``)
+      — locate the first ``[`` and start parsing there.
+
+    Raises :class:`json.JSONDecodeError` when neither shape produces a
+    valid array — caller wraps it in :class:`VisionAnalystError` and
+    surfaces an operator-visible run failure.
+    """
+    decoder = json.JSONDecoder()
+    # Try raw_decode at offset 0 first — handles strict + trailing-prose.
+    try:
+        value, _ = decoder.raw_decode(raw)
+        return value
+    except json.JSONDecodeError:
+        pass
+    # Fall back to leading-prose: skip to the first ``[`` and retry.
+    bracket = raw.find("[")
+    if bracket == -1:
+        raise json.JSONDecodeError("no '[' found in response", raw, 0)
+    value, _ = decoder.raw_decode(raw[bracket:])
+    return value
 
 
 def create_proposed_issues(repo: str, proposals: list[dict]) -> list[tuple[int, dict]]:
