@@ -41,6 +41,15 @@ services:
       # longer ship a published default because it leaked into prod-shaped
       # stacks where it was never overridden.
       STATION_LAUNCHER_TOKEN: "${STATION_LAUNCHER_TOKEN:?STATION_LAUNCHER_TOKEN must be set (generate with: openssl rand -hex 32)}"
+      # Optional auth — when set in .env, all /api/* (except /api/health and
+      # /api/webhook/*) require a Bearer token, and /api/webhook/* requires
+      # X-Webhook-Token. Empty string keeps the dashboard in backward-
+      # compatible open mode. Both secrets must be propagated to the agent
+      # service below so the plan-review gate's queue/webhook POSTs include
+      # the right headers when auth is enabled.
+      STATION_API_KEY: "${STATION_API_KEY:-}"
+      STATION_WEBHOOK_SECRET: "${STATION_WEBHOOK_SECRET:-}"
+      STATION_GITHUB_WEBHOOK_SECRET: "${STATION_GITHUB_WEBHOOK_SECRET:-}"
       STATION_SERVICE_USER: root
       # GitHub App credentials persist in the named volume so they survive
       # container rebuilds. The credentials file holds the App's RSA private
@@ -95,6 +104,14 @@ services:
       # Shared secret authenticating dashboard → launcher calls. Both ends
       # read the same value from the environment / .env at the repo root.
       STATION_LAUNCHER_TOKEN: "${STATION_LAUNCHER_TOKEN:?STATION_LAUNCHER_TOKEN must be set (generate with: openssl rand -hex 32)}"
+      # Optional auth — must match the dashboard's values. The plan-review
+      # gate (``agent/plan_review_gate.py``) reads these to add a
+      # ``Authorization: Bearer`` header on /api/queue and an
+      # ``X-Webhook-Token`` header on /api/webhook/run-event. Empty strings
+      # work as long as the dashboard is also in open mode; mismatch means
+      # the gate's POSTs get 401'd silently.
+      STATION_API_KEY: "${STATION_API_KEY:-}"
+      STATION_WEBHOOK_SECRET: "${STATION_WEBHOOK_SECRET:-}"
       # Where the agent fetches a fresh GitHub App installation token before
       # spawning run-manager.sh. The token gets exported as GH_TOKEN so `gh`
       # CLI calls authenticate as the App installation. Different host than
