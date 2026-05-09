@@ -95,6 +95,80 @@ def test_propose_gaps_tolerates_trailing_prose():
     assert len(proposals) == 1
 
 
+def test_ensure_labels_invokes_gh_for_each_required_label():
+    """_ensure_labels must call ``gh label create`` for the full required
+    set (vision-suggested + 4 priority labels). Without this, the very
+    first analyst run on a fresh repo fails every issue create."""
+    from agent import vision_analyst as va
+
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, *_a, **_kw):
+        calls.append(list(cmd))
+        return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    with patch("agent.vision_analyst.subprocess.run", side_effect=fake_run):
+        va._ensure_labels("owner/repo")
+
+    # 5 labels expected: vision-suggested + low/medium/high/critical
+    assert len(calls) == 5
+    label_names = [cmd[3] for cmd in calls]  # ["gh", "label", "create", <name>, ...]
+    assert label_names == ["vision-suggested", "low", "medium", "high", "critical"]
+    for cmd in calls:
+        assert "--repo" in cmd
+        assert cmd[cmd.index("--repo") + 1] == "owner/repo"
+        assert "--color" in cmd
+
+
+def test_ensure_labels_swallows_already_exists():
+    """gh exits 1 when a label already exists — _ensure_labels must
+    treat that as success and not log warnings."""
+    from agent import vision_analyst as va
+
+    def fake_run(_cmd, *_a, **_kw):
+        return type("R", (), {
+            "returncode": 1, "stdout": "",
+            "stderr": "label 'vision-suggested' already exists in 'owner/repo'",
+        })()
+
+    with patch("agent.vision_analyst.subprocess.run", side_effect=fake_run):
+        # Must NOT raise — already-exists is the common case.
+        va._ensure_labels("owner/repo")
+
+
+def test_create_proposed_issues_calls_ensure_labels_first():
+    """create_proposed_issues must call _ensure_labels before attempting
+    issue creation, so a fresh repo gets its labels seeded.
+    """
+    from agent import vision_analyst as va
+
+    call_log: list[str] = []
+
+    def fake_run(cmd, *_a, **_kw):
+        if cmd[1] == "label":
+            call_log.append(f"label:{cmd[3]}")
+        elif cmd[1] == "issue":
+            call_log.append("issue:create")
+        return type("R", (), {
+            "returncode": 0,
+            "stdout": "https://github.com/owner/repo/issues/42",
+            "stderr": "",
+        })()
+
+    with patch("agent.vision_analyst.subprocess.run", side_effect=fake_run):
+        va.create_proposed_issues(
+            "owner/repo",
+            [{"title": "T", "body": "B", "labels": [], "priority": "low"}],
+        )
+
+    # All 5 label-creates must precede the first issue:create.
+    label_calls = [c for c in call_log if c.startswith("label:")]
+    issue_calls = [c for c in call_log if c.startswith("issue:")]
+    assert len(label_calls) == 5
+    assert len(issue_calls) == 1
+    assert call_log.index("issue:create") > call_log.index("label:critical")
+
+
 def test_propose_gaps_raises_when_no_array_present():
     """Pure prose with no JSON array at all must surface as an error."""
     with patch("agent.vision_analyst._gather_repo_state", return_value={"tree": [], "readme": "", "commits": [], "open_issues": [], "closed_issues": []}):
@@ -426,15 +500,19 @@ def test_create_proposed_issues_pairs_failures_correctly(monkeypatch):
         {"title": "Proposal C (will succeed)", "body": "z", "priority": "low"},
     ]
 
-    call_count = [0]
+    issue_call_count = [0]
 
     def fake_run(cmd, *a, **kw):
-        call_count[0] += 1
-        # First call (Proposal A) fails
-        if call_count[0] == 1:
+        # Skip label-create calls — _ensure_labels runs them upfront and
+        # they're not what this test exercises. Treat them as success.
+        if len(cmd) > 1 and cmd[1] == "label":
+            return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+        issue_call_count[0] += 1
+        # First *issue create* (Proposal A) fails
+        if issue_call_count[0] == 1:
             return type("R", (), {"returncode": 1, "stdout": "", "stderr": "gh boom"})()
         # Subsequent calls succeed; URL ends with the issue number
-        n = 100 + call_count[0]
+        n = 100 + issue_call_count[0]
         return type("R", (), {
             "returncode": 0,
             "stdout": f"https://github.com/x/y/issues/{n}\n",
