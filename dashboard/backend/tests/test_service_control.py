@@ -167,9 +167,33 @@ async def test_status_compose_translates_launcher_status(monkeypatch):
     from app.services import service_control
     with respx.mock() as mock:
         mock.get("http://agent:8421/status").respond(200, json={"running": True, "pid": 99, "exit_code": None})
+        mock.get("http://agent:8421/vision-analyst/status").respond(200, json={"running": False, "pid": None, "exit_code": None})
         result = await service_control.get_agent_status()
     assert result["service_active"] is True
     assert result["pid"] == 99
+    assert result["run_active"] is True
+    assert result["vision_analyst_active"] is False
+
+
+@pytest.mark.asyncio
+async def test_status_compose_active_when_only_vision_analyst_running(monkeypatch):
+    """Issue: vision-analyst runs are spawned as a sibling process and were
+    invisible to /status. The reaper saw service_active=False during a
+    vision-bootstrap and prematurely marked the run row 'interrupted'.
+    Now /vision-analyst/status is OR'd into service_active.
+    """
+    monkeypatch.setenv("STATION_DEPLOY_MODE", "compose")
+    monkeypatch.setenv("STATION_AGENT_LAUNCHER_URL", "http://agent:8421")
+    monkeypatch.delenv("STATION_LAUNCHER_TOKEN", raising=False)
+    from app.services import service_control
+    with respx.mock() as mock:
+        mock.get("http://agent:8421/status").respond(200, json={"running": False, "pid": None, "exit_code": None})
+        mock.get("http://agent:8421/vision-analyst/status").respond(200, json={"running": True, "pid": 42, "exit_code": None})
+        result = await service_control.get_agent_status()
+    assert result["service_active"] is True
+    assert result["pid"] == 42  # falls back to analyst's pid when no run-manager
+    assert result["run_active"] is False
+    assert result["vision_analyst_active"] is True
 
 
 @pytest.mark.asyncio
@@ -181,6 +205,7 @@ async def test_status_compose_when_unreachable_returns_inactive(monkeypatch):
     from app.services import service_control
     with respx.mock() as mock:
         mock.get("http://agent:8421/status").mock(side_effect=httpx.ConnectError("refused"))
+        mock.get("http://agent:8421/vision-analyst/status").mock(side_effect=httpx.ConnectError("refused"))
         result = await service_control.get_agent_status()
     assert result["service_active"] is False
     assert result.get("error")
@@ -188,11 +213,12 @@ async def test_status_compose_when_unreachable_returns_inactive(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_status_returns_same_keys_in_both_modes(monkeypatch):
-    """Drop-in substitution: callers should be able to read any of the 7
+    """Drop-in substitution: callers should be able to read any of the
     keys without branching on deploy mode."""
     expected_keys = {
         "service_active", "timer_active", "timer_next",
         "service_stdout", "timer_stdout", "pid", "error",
+        "run_active", "vision_analyst_active",
     }
 
     # Systemd mode
@@ -217,6 +243,7 @@ async def test_status_returns_same_keys_in_both_modes(monkeypatch):
     monkeypatch.delenv("STATION_LAUNCHER_TOKEN", raising=False)
     with respx.mock() as mock:
         mock.get("http://agent:8421/status").respond(200, json={"running": True, "pid": 1, "exit_code": None})
+        mock.get("http://agent:8421/vision-analyst/status").respond(200, json={"running": False, "pid": None, "exit_code": None})
         compose_result = await service_control.get_agent_status()
     assert set(compose_result.keys()) == expected_keys
 
@@ -243,6 +270,7 @@ async def test_run_action_status_compose_unreachable_surfaces_as_failure(monkeyp
 
     with respx.mock() as mock:
         mock.get("http://agent:8421/status").mock(side_effect=httpx.ConnectError("refused"))
+        mock.get("http://agent:8421/vision-analyst/status").mock(side_effect=httpx.ConnectError("refused"))
         result = await service_control.run_action("status", "claude-agent.service")
 
     assert result["success"] is False
@@ -261,6 +289,7 @@ async def test_run_action_status_compose_reachable_inactive_is_success(monkeypat
 
     with respx.mock() as mock:
         mock.get("http://agent:8421/status").respond(200, json={"running": False, "pid": None, "exit_code": None})
+        mock.get("http://agent:8421/vision-analyst/status").respond(200, json={"running": False, "pid": None, "exit_code": None})
         result = await service_control.run_action("status", "claude-agent.service")
 
     assert result["success"] is True       # call succeeded
