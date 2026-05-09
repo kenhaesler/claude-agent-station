@@ -171,6 +171,70 @@
 
     <!-- ===== TAB CONTENT ===== -->
     {#if activeTab === 'overview'}
+      {#if run.mode === 'vision-bootstrap'}
+        <!-- Vision-bootstrap runs don't produce employee_report / verdict;
+             they propose new issues directly on GitHub. Render a dedicated
+             summary card so operators see what the run actually did
+             instead of "Employee did not produce a report". -->
+        <div class="card p-5 space-y-3 mb-6" data-testid="vision-bootstrap-summary">
+          <div class="flex items-center justify-between">
+            <h3 class="text-xs font-mono uppercase tracking-widest text-tertiary">Vision bootstrap</h3>
+            <span class="text-[10px] font-mono text-tertiary">
+              {#if run.status === 'completed'}
+                {run.vision_bootstrap_count ?? 0} issue{(run.vision_bootstrap_count ?? 0) === 1 ? '' : 's'} proposed
+              {:else if run.status === 'failed' || run.status === 'error'}
+                Failed
+              {:else}
+                {run.status}
+              {/if}
+            </span>
+          </div>
+
+          {#if run.status === 'failed' || run.status === 'error'}
+            <p class="text-sm text-secondary">
+              The vision analyst could not complete this run. Check the logs tab for the underlying error.
+            </p>
+          {:else if (run.vision_bootstrap_count ?? 0) === 0 && run.status === 'completed'}
+            <p class="text-sm text-secondary">
+              The analyst found no gaps to propose. The current repo state already covers the vision's near-term horizons.
+            </p>
+          {:else if run.vision_bootstrap_proposals && run.vision_bootstrap_proposals.length > 0}
+            <p class="text-sm text-secondary leading-snug">
+              These issues carry the <code class="font-mono text-xs">vision-suggested</code> label and are skipped by the orchestrator until you accept one — remove the label to allow autonomous implementation, or close to reject.
+            </p>
+            <ul class="space-y-2">
+              {#each run.vision_bootstrap_proposals as p}
+                <li class="flex items-start gap-2 text-sm">
+                  <span class="font-mono text-tertiary text-xs pt-0.5">#{p.number}</span>
+                  <a
+                    href={p.url}
+                    target="_blank"
+                    rel="noopener"
+                    class="text-primary hover:underline flex-1"
+                  >
+                    {p.title}
+                  </a>
+                  <a
+                    href={p.url}
+                    target="_blank"
+                    rel="noopener"
+                    class="text-tertiary hover:text-primary text-xs pt-0.5"
+                    aria-label="Open on GitHub"
+                  >
+                    ↗
+                  </a>
+                </li>
+              {/each}
+            </ul>
+          {:else if run.status === 'started' || run.status === 'running'}
+            <p class="text-sm text-tertiary">
+              Analyst is running — proposed issues will appear here once the run finishes.
+            </p>
+          {/if}
+        </div>
+      {/if}
+
+      {#if run.mode !== 'vision-bootstrap'}
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <!-- Employee Report -->
         <div class="card p-5 space-y-3">
@@ -260,6 +324,7 @@
           {/if}
         </div>
       </div>
+      {/if}
 
     {:else if activeTab === 'dag' && ctx?.coordinator_tasks}
       <div class="card p-5">
