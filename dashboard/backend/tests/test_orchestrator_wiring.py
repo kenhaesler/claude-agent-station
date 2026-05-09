@@ -1555,3 +1555,56 @@ def test_build_team_prompt_omits_approved_plans_section_when_none():
         project_mode="full",
     )
     assert "Approved plans from a prior plan_only run" not in prompt
+
+
+# --- Prompt stream stays open for hooks (Stream-closed regression) ---------
+
+
+@pytest.mark.asyncio
+async def test_user_prompt_stream_yields_then_blocks_on_done_event():
+    """Without ``done_event``, _user_prompt_stream yields once and exits —
+    the SDK transport closes its stdin to the bundled CLI subprocess as
+    soon as the AsyncIterable is drained. Subsequent PreToolUse /
+    PostToolUse hook callbacks then hit ``Error: Stream closed`` because
+    the CLI's ``sendRequest`` for control_request finds inputClosed=True.
+
+    The ``done_event`` form keeps the generator alive until the caller
+    explicitly signals completion, mirroring the SDK's expectation that
+    the input stream stays open for the duration of the conversation.
+    """
+    import asyncio
+    from agent import station_orchestrator as so
+
+    done = asyncio.Event()
+    gen = so._user_prompt_stream("hello world", done)
+    first = await gen.__anext__()
+    assert first["type"] == "user"
+    assert first["message"]["content"] == "hello world"
+
+    # Without done.set(), the generator must NOT advance — the next
+    # ``__anext__()`` should block indefinitely. We give it a short
+    # window and assert that no second value materialises.
+    second_task = asyncio.create_task(gen.__anext__())
+    try:
+        await asyncio.wait_for(asyncio.shield(second_task), timeout=0.2)
+        pytest.fail("generator returned a second value — done_event gate not honoured")
+    except asyncio.TimeoutError:
+        pass  # expected — gate is doing its job
+
+    # Releasing the gate must let the generator complete (StopAsyncIteration).
+    done.set()
+    with pytest.raises(StopAsyncIteration):
+        await asyncio.wait_for(second_task, timeout=1.0)
+
+
+@pytest.mark.asyncio
+async def test_user_prompt_stream_legacy_no_event_still_works():
+    """Legacy callers (without hooks/can_use_tool) can pass no event;
+    the generator yields once and exits. Don't break that path."""
+    from agent import station_orchestrator as so
+
+    items = []
+    async for msg in so._user_prompt_stream("legacy"):
+        items.append(msg)
+    assert len(items) == 1
+    assert items[0]["message"]["content"] == "legacy"
