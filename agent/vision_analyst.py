@@ -341,12 +341,27 @@ def create_proposed_issues(repo: str, proposals: list[dict]) -> list[tuple[int, 
     for the proposals that actually succeeded."""
     _ensure_labels(repo)
     created: list[tuple[int, dict]] = []
+    # Only attach labels we actually create on the repo. The model's
+    # ``labels`` field often contains free-form suggestions like
+    # ``feature``, ``backend``, ``priority:high`` that don't exist on
+    # the target repo — ``gh issue create --label`` fails the whole
+    # call when ANY label is missing, so a single unknown label kills
+    # the issue. Drop unknowns rather than try to create them: the
+    # operator owns the project's label taxonomy, and silently adding
+    # whatever the model dreamed up would pollute it.
+    known = {name for name, _color, _desc in _REQUIRED_LABELS}
     for p in proposals:
         labels = ["vision-suggested"]
         priority = (p.get("priority") or "low").lower()
         if priority in ("low", "medium", "high", "critical"):
             labels.append(priority)
-        labels.extend([l for l in (p.get("labels") or []) if l != "vision-suggested"])
+        # Keep only labels that we explicitly seeded on the repo. The
+        # model's ``labels`` field is useful as soft hints (carried
+        # through in the proposal body if needed) but shouldn't gate
+        # issue creation.
+        for extra in (p.get("labels") or []):
+            if extra in known and extra not in labels:
+                labels.append(extra)
 
         body = format_proposal_body(p.get("body") or "")
         cmd = ["gh", "issue", "create", "--repo", repo,

@@ -136,6 +136,41 @@ def test_ensure_labels_swallows_already_exists():
         va._ensure_labels("owner/repo")
 
 
+def test_create_proposed_issues_drops_unknown_labels():
+    """Model's free-form labels (e.g. ``feature``, ``backend``) must NOT
+    be passed to ``gh issue create`` — gh fails the entire call when ANY
+    label is missing on the repo. Only seeded labels survive."""
+    from agent import vision_analyst as va
+
+    captured_labels: list[str] = []
+
+    def fake_run(cmd, *_a, **_kw):
+        if cmd[1] == "issue":
+            i = cmd.index("--label")
+            captured_labels.append(cmd[i + 1])
+        return type("R", (), {
+            "returncode": 0,
+            "stdout": "https://github.com/owner/repo/issues/1",
+            "stderr": "",
+        })()
+
+    with patch("agent.vision_analyst.subprocess.run", side_effect=fake_run):
+        va.create_proposed_issues(
+            "owner/repo",
+            [{"title": "T", "body": "B",
+              "labels": ["feature", "backend", "priority:high"],
+              "priority": "high"}],
+        )
+
+    assert len(captured_labels) == 1
+    label_set = set(captured_labels[0].split(","))
+    # Only the seeded labels survive.
+    assert label_set == {"vision-suggested", "high"}
+    # The model's free-form labels are dropped.
+    assert "feature" not in label_set
+    assert "backend" not in label_set
+
+
 def test_create_proposed_issues_calls_ensure_labels_first():
     """create_proposed_issues must call _ensure_labels before attempting
     issue creation, so a fresh repo gets its labels seeded.
