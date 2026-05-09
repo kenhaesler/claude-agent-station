@@ -520,6 +520,15 @@ async def test_orchestrate_skips_disabled_projects_in_mixed_config(monkeypatch, 
         so, "fetch_eligible_issues",
         lambda repo, _limit, _ws: fetched.append(repo) or [],
     )
+
+    # Stub the queue-drain helper added in #289 follow-up so this test
+    # doesn't depend on a DB schema being present. The drain returning
+    # ``[]`` matches the "no pre-approved work" branch and lets the
+    # original fetch_eligible_issues flow run.
+    async def _empty_claim(_repo, _run_id, **_kw):
+        return []
+    monkeypatch.setattr(so, "claim_pending_queue_items", _empty_claim)
+
     # Stub the empty-backlog branch so we don't dispatch vision work
     # during the test.
     monkeypatch.setattr(
@@ -1335,3 +1344,214 @@ def test_frontend_dropdown_values_match_backend_modes():
     assert "Pre-implementation gate" in pd_text  # plan_only
     assert "Plan-quality output" in pd_text  # plan
     assert "Plan and implement" in pd_text  # full
+
+
+# --- Issue #266 follow-up: orchestrator drains pending queue items ---------
+
+
+@pytest.mark.asyncio
+async def test_claim_pending_queue_items_returns_empty_when_none(monkeypatch):
+    """No pending items for the project → empty list. Guards against the
+    helper accidentally claiming items belonging to other projects."""
+    from app.database import Base, async_session, engine
+    from app.models import Project, QueueItem, StationControl
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    try:
+        async with async_session() as s:
+            s.add(StationControl(id=1, global_pause=False))
+            s.add(Project(repo="x/y", priority="medium", branch="main"))
+            await s.commit()
+        # An item for a DIFFERENT repo — must NOT be returned.
+        async with async_session() as s:
+            s.add(QueueItem(project_repo="other/repo", issue_number=99,
+                            mode="full", state="pending"))
+            await s.commit()
+
+        items = await station_orchestrator.claim_pending_queue_items(
+            "x/y", "test-run-1",
+        )
+        assert items == []
+    finally:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all)
+
+
+@pytest.mark.asyncio
+async def test_claim_pending_queue_items_marks_claimed_and_fetches_issue(
+    monkeypatch,
+):
+    """Happy path: pending items are transitioned to ``claimed``, run_id
+    is bound, the issue dict shape matches what fetch_eligible_issues
+    returns, and approved_plan_path comes through from the context JSON.
+    """
+    from app.database import Base, async_session, engine
+    from app.models import Project, QueueItem, StationControl
+    from sqlalchemy import select
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    try:
+        async with async_session() as s:
+            s.add(StationControl(id=1, global_pause=False))
+            s.add(Project(repo="x/y", priority="medium", branch="main"))
+            ctx = '{"approved_plan_path": "/ws/.claude-employee-plan-0.json", "from_plan_only_run": true}'
+            s.add(QueueItem(project_repo="x/y", issue_number=42,
+                            mode="full", state="pending", context=ctx))
+            await s.commit()
+
+        # Stub gh issue view → return a realistic issue payload.
+        def fake_run(cmd, *a, **kw):
+            assert cmd[:3] == ["gh", "issue", "view"]
+            payload = '{"number":42,"title":"T","body":"B","labels":[{"name":"bug"}]}'
+            return type("R", (), {"returncode": 0, "stdout": payload, "stderr": ""})()
+        monkeypatch.setattr("agent.station_orchestrator.subprocess.run", fake_run)
+
+        items = await station_orchestrator.claim_pending_queue_items(
+            "x/y", "test-run-2",
+        )
+        assert len(items) == 1
+        c = items[0]
+        assert c.queue_mode == "full"
+        assert c.approved_plan_path == "/ws/.claude-employee-plan-0.json"
+        assert c.issue["number"] == 42
+        assert c.issue["title"] == "T"
+        assert c.issue["body"] == "B"
+        assert c.issue["labels"] == [{"name": "bug"}]
+
+        async with async_session() as s:
+            qi = (await s.execute(
+                select(QueueItem).where(QueueItem.id == c.queue_item_id)
+            )).scalar_one()
+            assert qi.state == "claimed"
+            assert qi.run_id == "run-test-run-2"
+            assert qi.assigned_at is not None
+    finally:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all)
+
+
+@pytest.mark.asyncio
+async def test_claim_pending_queue_items_marks_failed_on_gh_error(monkeypatch):
+    """When ``gh issue view`` errors (closed issue, network fail, etc.),
+    the queue item is moved to ``failed`` with the error captured —
+    don't return a half-baked dict the orchestrator will choke on."""
+    from app.database import Base, async_session, engine
+    from app.models import Project, QueueItem, StationControl
+    from sqlalchemy import select
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    try:
+        async with async_session() as s:
+            s.add(StationControl(id=1, global_pause=False))
+            s.add(Project(repo="x/y", priority="medium", branch="main"))
+            s.add(QueueItem(project_repo="x/y", issue_number=999,
+                            mode="full", state="pending"))
+            await s.commit()
+
+        def fake_run(*_a, **_kw):
+            return type("R", (), {
+                "returncode": 1, "stdout": "",
+                "stderr": "GraphQL: Could not resolve to an Issue with the number of 999",
+            })()
+        monkeypatch.setattr("agent.station_orchestrator.subprocess.run", fake_run)
+
+        items = await station_orchestrator.claim_pending_queue_items(
+            "x/y", "test-run-3",
+        )
+        assert items == []  # nothing returned for the orchestrator to work on
+
+        async with async_session() as s:
+            qi = (await s.execute(select(QueueItem))).scalar_one()
+            assert qi.state == "failed"
+            assert "Could not resolve" in (qi.error_message or "")
+    finally:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all)
+
+
+@pytest.mark.asyncio
+async def test_finalise_claimed_queue_items_marks_completed():
+    """Finalisation flips claimed items to the requested terminal
+    state. Different runs should never see them as pending again."""
+    from app.database import Base, async_session, engine
+    from app.models import QueueItem, StationControl
+    from sqlalchemy import select
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    try:
+        async with async_session() as s:
+            s.add(StationControl(id=1, global_pause=False))
+            s.add(QueueItem(project_repo="x/y", issue_number=1,
+                            mode="full", state="claimed"))
+            s.add(QueueItem(project_repo="x/y", issue_number=2,
+                            mode="full", state="claimed"))
+            await s.commit()
+            row1 = (await s.execute(
+                select(QueueItem).where(QueueItem.issue_number == 1)
+            )).scalar_one()
+            row2 = (await s.execute(
+                select(QueueItem).where(QueueItem.issue_number == 2)
+            )).scalar_one()
+
+        claimed = [
+            station_orchestrator._ClaimedQueueItem(
+                queue_item_id=row1.id, queue_mode="full",
+                approved_plan_path=None, issue={"number": 1},
+            ),
+            station_orchestrator._ClaimedQueueItem(
+                queue_item_id=row2.id, queue_mode="full",
+                approved_plan_path=None, issue={"number": 2},
+            ),
+        ]
+        await station_orchestrator.finalise_claimed_queue_items(
+            claimed, outcome="completed",
+        )
+
+        async with async_session() as s:
+            states = sorted(
+                (await s.execute(select(QueueItem.state))).scalars().all()
+            )
+            assert states == ["completed", "completed"]
+    finally:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all)
+
+
+def test_build_team_prompt_surfaces_approved_plans_section():
+    """When approved_plan_paths is provided, the spawn prompt must
+    contain an APPROVED_PLAN section the lead can route teammates to."""
+    prompt = station_orchestrator.build_team_prompt(
+        repo="x/y",
+        issues=[{"number": 13, "title": "T", "body": "B", "labels": []}],
+        config={},
+        run_id="run-x",
+        workspace="/ws",
+        worktree_paths={"backend": "/ws-b"},
+        project_mode="full",
+        approved_plan_paths=[
+            "/ws/.claude-employee-plan-0.json",
+            "/ws/.claude-employee-plan-1.json",
+        ],
+    )
+    assert "Approved plans from a prior plan_only run" in prompt
+    assert "/ws/.claude-employee-plan-0.json" in prompt
+    assert "/ws/.claude-employee-plan-1.json" in prompt
+
+
+def test_build_team_prompt_omits_approved_plans_section_when_none():
+    """No approved_plan_paths → no section. Otherwise the lead would
+    talk about plans that don't exist."""
+    prompt = station_orchestrator.build_team_prompt(
+        repo="x/y",
+        issues=[{"number": 13, "title": "T", "body": "B", "labels": []}],
+        config={},
+        run_id="run-x",
+        workspace="/ws",
+        worktree_paths={"backend": "/ws-b"},
+        project_mode="full",
+    )
+    assert "Approved plans from a prior plan_only run" not in prompt

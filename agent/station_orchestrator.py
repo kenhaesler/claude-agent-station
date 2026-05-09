@@ -41,6 +41,8 @@ from claude_agent_sdk.types import (
     ToolUseBlock,
 )
 
+from sqlalchemy import select
+
 from agent.audit_hook import (
     make_audited_policy,
     make_post_tool_hook,
@@ -186,6 +188,160 @@ def load_agent_definition(path: Path) -> tuple[str, AgentDefinition]:
         tools=tools,
         model=model,
     )
+
+
+# ── Queue Draining (issue #266 follow-up) ──────────────────────
+#
+# When the plan-review gate (or the operator override) approves a
+# ``plan_only`` run, it enqueues a follow-up ``full`` ``QueueItem`` per
+# approved plan. Without a consumer, those items sit forever. The
+# orchestrator now drains them at the start of each per-project loop,
+# bypassing the GitHub-issue-driven flow when there's pre-approved work
+# pending.
+
+
+@dataclass
+class _ClaimedQueueItem:
+    """A pending queue item we've claimed for this run.
+
+    Bundles the DB row id with the issue dict (in the shape
+    :func:`fetch_eligible_issues` returns) so the rest of the loop can
+    treat it identically. Carries the per-item ``mode`` and any
+    ``approved_plan_path`` from the gate's context for the spawn-prompt
+    builder to surface.
+    """
+    queue_item_id: int
+    queue_mode: str
+    approved_plan_path: str | None
+    issue: dict
+
+
+async def claim_pending_queue_items(
+    project_repo: str,
+    full_run_id: str,
+    *,
+    max_items: int = 10,
+) -> list[_ClaimedQueueItem]:
+    """Atomically claim pending queue items for the project.
+
+    Each pending ``QueueItem`` is transitioned to ``state='claimed'``
+    with ``run_id`` bound to the current orchestrator run, then we
+    ``gh issue view`` to fetch title/body/labels matching what
+    :func:`fetch_eligible_issues` returns. Items whose underlying GitHub
+    issue can't be read (closed, deleted, network blip) are released
+    back to ``state='failed'`` with the error captured.
+
+    Bypasses :data:`SKIP_LABELS` — items in the queue are operator- or
+    manager-approved already, so re-filtering by label here would
+    silently drop work the operator told us to do (vision-suggested
+    issues being the obvious case after an APPROVE_PLAN).
+    """
+    from app.database import async_session
+    from app.models import QueueItem
+
+    claimed: list[_ClaimedQueueItem] = []
+    async with async_session() as db:
+        result = await db.execute(
+            select(QueueItem)
+            .where(
+                QueueItem.project_repo == project_repo,
+                QueueItem.state == "pending",
+            )
+            .order_by(QueueItem.id.asc())
+            .limit(max_items)
+        )
+        items = list(result.scalars().all())
+        if not items:
+            return []
+
+        for item in items:
+            issue_data: dict | None = None
+            error: str | None = None
+            try:
+                proc = subprocess.run(
+                    ["gh", "issue", "view", str(item.issue_number),
+                     "--repo", project_repo,
+                     "--json", "number,title,body,labels"],
+                    capture_output=True, text=True, timeout=15,
+                )
+                if proc.returncode == 0:
+                    issue_data = json.loads(proc.stdout)
+                else:
+                    error = proc.stderr.strip() or f"gh exit {proc.returncode}"
+            except (subprocess.TimeoutExpired, OSError, json.JSONDecodeError) as exc:
+                error = str(exc)
+
+            if issue_data is None:
+                logger.warning(
+                    "Could not fetch queued issue #%s for %s: %s",
+                    item.issue_number, project_repo, error,
+                )
+                item.state = "failed"
+                item.error_message = error or "issue lookup failed"
+                continue
+
+            ctx: dict = {}
+            if item.context:
+                try:
+                    ctx = json.loads(item.context)
+                    if not isinstance(ctx, dict):
+                        ctx = {}
+                except json.JSONDecodeError:
+                    ctx = {}
+
+            item.state = "claimed"
+            item.run_id = f"run-{full_run_id}"
+            item.assigned_at = datetime.now(timezone.utc)
+
+            issue_dict = {
+                "number": issue_data.get("number"),
+                "title": issue_data.get("title", ""),
+                "body": issue_data.get("body", ""),
+                "labels": [
+                    {"name": (l.get("name") if isinstance(l, dict) else str(l))}
+                    for l in (issue_data.get("labels") or [])
+                ],
+            }
+            claimed.append(_ClaimedQueueItem(
+                queue_item_id=item.id,
+                queue_mode=(item.mode or "full"),
+                approved_plan_path=ctx.get("approved_plan_path"),
+                issue=issue_dict,
+            ))
+
+        await db.commit()
+
+    return claimed
+
+
+async def finalise_claimed_queue_items(
+    items: list[_ClaimedQueueItem],
+    *,
+    outcome: str,
+) -> None:
+    """Mark previously-claimed items completed or failed at run end.
+
+    ``outcome`` is the QueueItem state to land on:
+    ``"completed"`` on a clean SDK run (regardless of per-issue verdict —
+    that's tracked on the Run row), or ``"failed"`` when the run as a
+    whole errored before producing useful work.
+
+    Best-effort: lookup-failures are logged so a subsequent run can
+    retry rather than wedge.
+    """
+    if not items:
+        return
+    from app.database import async_session
+    from app.models import QueueItem
+
+    async with async_session() as db:
+        for c in items:
+            row = await db.get(QueueItem, c.queue_item_id)
+            if row is None:
+                logger.warning("Queue item %s vanished during run", c.queue_item_id)
+                continue
+            row.state = outcome
+        await db.commit()
 
 
 # ── Issue Fetching ─────────────────────────────────────────────
@@ -491,8 +647,17 @@ def build_team_prompt(
     worktree_paths: dict[str, str] | None = None,
     vision: dict | None = None,
     project_mode: str = "full",
+    approved_plan_paths: list[str] | None = None,
 ) -> str:
-    """Build the lead agent prompt that creates and manages the team."""
+    """Build the lead agent prompt that creates and manages the team.
+
+    ``approved_plan_paths`` are the absolute paths to plan files an
+    earlier ``plan_only`` run produced and that the manager / operator
+    has since approved. The prompt instructs each teammate to read its
+    matching plan file (named ``.claude-employee-plan-{index}.json``)
+    as ``APPROVED_PLAN`` guidance before writing code, so the
+    follow-up ``full`` run honours the work already done.
+    """
     issue_entries = []
     for issue in issues:
         labels_str = ", ".join(l.get("name", "") for l in issue.get("labels", []))
@@ -545,6 +710,29 @@ def build_team_prompt(
             "/ REJECT_PLAN. Include the PLAN_ONLY_MODE block below verbatim in every "
             "teammate spawn prompt.\n"
         )
+
+    approved_plan_section = ""
+    if approved_plan_paths:
+        plan_lines = "\n".join(f"  - `{p}`" for p in approved_plan_paths)
+        approved_plan_section = f"""
+## Approved plans from a prior plan_only run
+
+The team is implementing work that was previously planned in a
+``plan_only`` run and approved (either by the manager's auto-verdict
+or via operator override on the dashboard). Each teammate **must**
+read its matching plan file from the list below before writing code,
+treat it as the agreed approach, and only deviate when an explicit
+issue requirement contradicts it (in which case raise it on the team
+chat first).
+
+The plan files (one per pre-existing employee index):
+{plan_lines}
+
+When you decompose tasks, route each issue to the teammate that wrote
+its plan when possible — they have the most context. If you re-route,
+the new teammate should still read the corresponding plan file as
+guidance.
+"""
 
     vision_section = ""
     if vision is not None:
@@ -681,6 +869,7 @@ and your teammates lose their work. You must keep making tool calls to stay aliv
 - Workspace: {workspace}
 - Base branch: `{base_branch}` (teammates must branch FROM this)
 - GH_TOKEN is available for GitHub CLI operations
+{approved_plan_section}
 {vision_section}
 {mode_block}"""
 
@@ -1250,8 +1439,42 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
             repo, autonomy_level.value, max_budget_usd,
         )
 
-        # Fetch and filter issues
-        issues = fetch_eligible_issues(repo, max_per_project, workspace)
+        # Issue #266 follow-up: drain the queue first. Pre-approved
+        # follow-up runs (manager APPROVE_PLAN auto-gate, or operator
+        # override via /api/runs/.../plan/approve) land in QueueItems
+        # with state='pending' and their own ``mode`` (typically
+        # ``full``). Without this consumer they sat forever and the
+        # follow-up implementation never happened.
+        claimed_items = await claim_pending_queue_items(repo, run_id)
+        approved_plan_paths: list[str] = []
+        if claimed_items:
+            issues = [c.issue for c in claimed_items]
+            queued_modes = {c.queue_mode for c in claimed_items}
+            if len(queued_modes) == 1:
+                project_mode = _normalize_project_mode(next(iter(queued_modes)))
+                logger.info(
+                    "Draining %d queue items for %s; using queued mode %s",
+                    len(claimed_items), repo, project_mode,
+                )
+            else:
+                logger.warning(
+                    "Mixed queue-item modes for %s: %s; falling back to "
+                    "project mode %s for the batch",
+                    repo, queued_modes, project_mode,
+                )
+            approved_plan_paths = [
+                c.approved_plan_path for c in claimed_items if c.approved_plan_path
+            ]
+            if approved_plan_paths:
+                logger.info(
+                    "Approved plan files in this batch: %s",
+                    approved_plan_paths,
+                )
+        else:
+            # Fall back to GitHub-issue-driven flow (the original
+            # behaviour for projects with no queued work).
+            issues = fetch_eligible_issues(repo, max_per_project, workspace)
+
         if not issues:
             handle_empty_backlog(
                 config=config,
@@ -1414,6 +1637,7 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
                         prompt = build_team_prompt(
                             repo, issues, config, run_id, workspace, worktree_paths,
                             vision=vision, project_mode=project_mode,
+                            approved_plan_paths=approved_plan_paths,
                         )
 
                     # Build options — use resume for follow-up iterations.
@@ -1560,6 +1784,21 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
                         logger.info("Cleaned up worktree for %s: %s", role, wt_path)
                     else:
                         logger.warning("Failed to clean up worktree %s: %s", wt_path, result.stderr.strip())
+
+            # Finalise any queue items we claimed for this project so the
+            # next orchestrator pass doesn't see them as still-pending.
+            # ``completed`` regardless of per-issue verdict — the run's
+            # success/failure is tracked on the Run row; the queue item's
+            # job is just to mark "this work was attempted".
+            if claimed_items:
+                outcome = "completed" if exit_code == 0 else "failed"
+                try:
+                    await finalise_claimed_queue_items(claimed_items, outcome=outcome)
+                except Exception as exc:  # pragma: no cover — defensive
+                    logger.warning(
+                        "Failed to finalise queue items for %s: %s",
+                        repo, exc,
+                    )
 
     return exit_code
 
