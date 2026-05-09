@@ -17,6 +17,7 @@
   // Overlays
   import Toast from './components/overlays/Toast.svelte';
   import ShortcutsOverlay from './components/overlays/ShortcutsOverlay.svelte';
+  import AuthPrompt from './components/overlays/AuthPrompt.svelte';
   import PermissionTray from './components/layout/PermissionTray.svelte';
 
   // Pages
@@ -137,5 +138,6 @@
 
   <Toast />
   <ShortcutsOverlay show={showShortcuts} onClose={() => (showShortcuts = false)} />
+  <AuthPrompt />
   <PermissionTray />
 </div>
