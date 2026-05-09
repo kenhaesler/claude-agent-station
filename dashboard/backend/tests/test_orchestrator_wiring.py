@@ -1557,6 +1557,54 @@ def test_build_team_prompt_omits_approved_plans_section_when_none():
     assert "Approved plans from a prior plan_only run" not in prompt
 
 
+def test_build_team_prompt_approved_plans_swaps_workflow_to_implementation_only():
+    """Regression: run-20260509T183351Z burned ~43 min spawning
+    "Wait for plan submissions" teammates because the workflow still said
+    "Require plan approval before any teammate starts implementation".
+    With approved_plan_paths, the lead must see an implementation-only
+    workflow that explicitly tells it not to wait for plan approval."""
+    prompt = station_orchestrator.build_team_prompt(
+        repo="x/y",
+        issues=[{"number": 13, "title": "T", "body": "B", "labels": []}],
+        config={},
+        run_id="run-x",
+        workspace="/ws",
+        worktree_paths={"backend": "/ws-b"},
+        project_mode="full",
+        approved_plan_paths=["/ws/.claude-employee-plan-0.json"],
+    )
+    assert "IMPLEMENTATION — plans pre-approved" in prompt
+    assert "Skip plan approval" in prompt
+    assert "Require plan approval" not in prompt
+    # Approved-plan section must precede the workflow so the lead reads
+    # it first (it's now part of the same instruction surface, not a
+    # footer the lead may skim past).
+    assert prompt.index("Approved plans from a prior plan_only run") < prompt.index(
+        "Your Workflow"
+    )
+
+
+def test_build_team_prompt_bans_spawn_as_sleep_proxy():
+    """Regression for the same run: the lead used Task spawn as a sleep
+    primitive ("Wait 3 min then check progress" teammates). Active
+    Monitoring must explicitly forbid that pattern in both branches."""
+    base_kwargs = dict(
+        repo="x/y",
+        issues=[{"number": 13, "title": "T", "body": "B", "labels": []}],
+        config={},
+        run_id="run-x",
+        workspace="/ws",
+        worktree_paths={"backend": "/ws-b"},
+        project_mode="full",
+    )
+    for paths in (None, ["/ws/.claude-employee-plan-0.json"]):
+        prompt = station_orchestrator.build_team_prompt(
+            **base_kwargs, approved_plan_paths=paths
+        )
+        assert "Do **NOT** spawn a teammate just to wait" in prompt
+        assert "sleep proxies" in prompt
+
+
 # --- Prompt stream + stream-close timeout (Stream-closed regression) -------
 
 
