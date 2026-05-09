@@ -720,23 +720,56 @@ def build_team_prompt(
     if approved_plan_paths:
         plan_lines = "\n".join(f"  - `{p}`" for p in approved_plan_paths)
         approved_plan_section = f"""
-## Approved plans from a prior plan_only run
+## Approved plans from a prior plan_only run (READ FIRST)
 
-The team is implementing work that was previously planned in a
-``plan_only`` run and approved (either by the manager's auto-verdict
-or via operator override on the dashboard). Each teammate **must**
-read its matching plan file from the list below before writing code,
-treat it as the agreed approach, and only deviate when an explicit
-issue requirement contradicts it (in which case raise it on the team
-chat first).
+The {len(approved_plan_paths)} plan files listed below were produced by an
+earlier ``plan_only`` run and have **already** been approved (manager
+auto-verdict or operator override on the dashboard). Plan approval is
+DONE — this run is implementation only. Do **not** wait for plan
+submissions, do not gate teammates on a plan-review signal, do not
+poll for "plan approval requests". The plans exist on disk:
 
-The plan files (one per pre-existing employee index):
 {plan_lines}
 
-When you decompose tasks, route each issue to the teammate that wrote
-its plan when possible — they have the most context. If you re-route,
-the new teammate should still read the corresponding plan file as
-guidance.
+Each teammate must read its matching plan file (`.claude-employee-plan-<index>.json`)
+as `APPROVED_PLAN` guidance before writing code, treat it as the agreed
+approach, and only deviate when an explicit issue requirement contradicts
+it (raise on the team chat first). When you decompose tasks, route each
+issue to the teammate that wrote its plan when possible — they have the
+most context.
+"""
+
+    repo_short = repo.split("/")[-1]
+    run_id_short = run_id[:8]
+    if approved_plan_paths:
+        workflow_section = f"""## Your Workflow (IMPLEMENTATION — plans pre-approved)
+
+1. **Create a team** called "{repo_short}-{run_id_short}".
+2. **Read every approved plan file** listed above so you know what each teammate signed up to build.
+3. **Spawn exactly 3 specialized teammates** (backend, frontend, qa) using the
+   `issue-worker` agent type. Tell each teammate which plan file to load as
+   `APPROVED_PLAN` guidance and which worktree to `cd` into. Spawn each role
+   ONCE — do not respawn extra teammates whose only purpose is to wait or poll.
+4. **Skip plan approval** — teammates implement straight from their approved
+   plan; do not block on a "plan submitted" or "plan approved" signal.
+5. **Actively monitor** teammates until each has written
+   `.claude-employee-report-<index>.json` or 20 minutes elapse (see monitoring rules below).
+6. After teammates finish, **synthesize a final JSON summary**.
+"""
+    else:
+        workflow_section = f"""## Your Workflow
+
+1. **Create a team** called "{repo_short}-{run_id_short}"
+2. **Analyze all issues** and decompose them into granular tasks (research, implement, test, review)
+3. **Create tasks** on the shared task list with dependencies and specialization tags
+4. **Spawn 3 specialized teammates** using the `issue-worker` agent type:
+   - **Backend specialist** — Python/FastAPI, database, API changes
+   - **Frontend specialist** — Svelte/TypeScript, UI components, CSS
+   - **QA specialist** — writes tests, validates implementations, runs linters
+5. **Require plan approval** before any teammate starts implementation
+6. Review plans — reject if they conflict with another teammate's work
+7. **Actively monitor** teammates until ALL tasks are completed (see monitoring rules)
+8. After all work is done, **synthesize a final JSON summary**
 """
 
     vision_section = ""
@@ -779,19 +812,8 @@ plan does not violate the non-goals or anti-patterns below. If it does:
 
     return f"""You are the lead of an agent team implementing GitHub issues for **{repo}**.
 {mode_instruction}
-## Your Workflow
-
-1. **Create a team** called "{repo.split('/')[-1]}-{run_id[:8]}"
-2. **Analyze all issues** and decompose them into granular tasks (research, implement, test, review)
-3. **Create tasks** on the shared task list with dependencies and specialization tags
-4. **Spawn 3 specialized teammates** using the `issue-worker` agent type:
-   - **Backend specialist** — Python/FastAPI, database, API changes
-   - **Frontend specialist** — Svelte/TypeScript, UI components, CSS
-   - **QA specialist** — writes tests, validates implementations, runs linters
-5. **Require plan approval** before any teammate starts implementation
-6. Review plans — reject if they conflict with another teammate's work
-7. **Actively monitor** teammates until ALL tasks are completed (see monitoring rules)
-8. After all work is done, **synthesize a final JSON summary**
+{approved_plan_section}
+{workflow_section}
 
 ## Narration (MANDATORY — ends operator silence)
 
@@ -844,7 +866,10 @@ After spawning teammates, you MUST actively monitor their progress using tool ca
 **NEVER end your turn while any teammate is still working.**
 
 Follow this monitoring loop:
-1. After spawning all teammates, run: `sleep 60` (Bash tool)
+1. After spawning all teammates, run **`sleep 60`** via the **Bash tool**.
+   Do **NOT** spawn a teammate just to wait — the Task tool is for real
+   implementation work, never for sleep proxies. Spawning a teammate with a
+   description like "Wait 3 minutes then check progress" is a bug; use Bash sleep instead.
 2. Check for completed reports: `find {workspace} -name ".claude-employee-report*.json" -type f 2>/dev/null`
 3. For each report found, read it and record the status
 4. If any teammate has not yet reported, **go back to step 1**
@@ -853,7 +878,8 @@ Follow this monitoring loop:
    - 20 minutes have elapsed since spawning (timeout for remaining)
 
 **Why this matters**: If you say "I'm waiting" and end your turn, the session terminates
-and your teammates lose their work. You must keep making tool calls to stay alive.
+and your teammates lose their work. You must keep making tool calls to stay alive —
+but those tool calls should be Bash sleeps and report-file polls, not new Task spawns.
 
 ## Rules
 
@@ -874,7 +900,6 @@ and your teammates lose their work. You must keep making tool calls to stay aliv
 - Workspace: {workspace}
 - Base branch: `{base_branch}` (teammates must branch FROM this)
 - GH_TOKEN is available for GitHub CLI operations
-{approved_plan_section}
 {vision_section}
 {mode_block}"""
 
