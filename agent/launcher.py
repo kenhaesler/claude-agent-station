@@ -181,6 +181,20 @@ def trigger(x_launcher_token: str | None = Header(default=None)) -> dict:
     if gh_token:
         env["GH_TOKEN"] = gh_token
 
+    # Bump the SDK's stream-close timeout from the 60s default. After the
+    # bundled CLI emits its first ResultMessage the SDK begins a countdown
+    # before closing stdin; once stdin closes, every PreToolUse /
+    # PostToolUse hook callback the CLI tries to make to the Python side
+    # raises ``Error: Stream closed`` (cli.js:7552 sendRequest).
+    # Production hit this ~1-2 minutes into a long Agent Teams session
+    # — teammates' tool calls were still happening but their hooks
+    # silently failed, so audit_log rows stopped being written and
+    # teammates produced no commits. 30 minutes is generous enough for
+    # multi-issue Agent Teams runs without leaving stdin open
+    # indefinitely. Operators can override via the env if they need
+    # longer.
+    env.setdefault("CLAUDE_CODE_STREAM_CLOSE_TIMEOUT", "1800000")
+
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     log_path = LOG_DIR / "launcher.out"
     log_fh = log_path.open("ab")
