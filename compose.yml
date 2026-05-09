@@ -118,6 +118,13 @@ services:
       # the dashboard side because the agent reaches the dashboard via the
       # compose service name.
       STATION_DASHBOARD_BASE_URL: http://dashboard:8420
+      # Claude Code CLI refuses ``--dangerously-skip-permissions`` under
+      # root unless ``IS_SANDBOX=1`` is set. The agent container runs as
+      # root and uses that flag for non-interactive ``claude --print``
+      # calls in vision_analyst and run-manager.sh. Setting this here
+      # documents the choice and unblocks those calls; tighten by running
+      # the container as a non-root user instead, when feasible.
+      IS_SANDBOX: "1"
     volumes:
       - station-data:/var/lib/claude-agent-station
       - station-logs:/var/log/claude-agent

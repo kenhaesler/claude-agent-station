@@ -12,8 +12,10 @@ default) — see :mod:`app.services.service_control` for the dispatch.
 
 from __future__ import annotations
 
+import glob
 import logging
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -63,6 +65,43 @@ def _fetch_gh_token() -> str | None:
 # without --workers; do not change that without reworking state to be shared.
 app = FastAPI(title="claude-agent-station launcher")
 _current: subprocess.Popen | None = None
+
+
+def _ensure_claude_config() -> None:
+    """Restore ``/root/.claude.json`` from a backup if missing.
+
+    The Claude Code CLI writes ``~/.claude.json`` itself on first run, but
+    when the host's ``~/.claude`` is bind-mounted into the container it can
+    arrive without that file (it lives outside the mounted directory on
+    the host). The CLI then refuses to start, printing a backup-restore
+    hint to stderr. The vision-analyst path was silently swallowing this
+    because the orchestrator was already root-blocked too (see
+    ``IS_SANDBOX`` in compose.yml).
+
+    We pick the newest ``backups/.claude.json.backup.*`` and copy it into
+    place. Idempotent: skipped when the file already exists.
+    """
+    target = Path("/root/.claude.json")
+    if target.exists():
+        return
+    backups = sorted(glob.glob("/root/.claude/backups/.claude.json.backup.*"))
+    if not backups:
+        logger.warning(
+            "launcher: /root/.claude.json missing and no backup found under "
+            "/root/.claude/backups — Claude CLI calls will fail. Mount the host's "
+            "Claude config or run ``claude`` once interactively to generate one.",
+        )
+        return
+    src = backups[-1]
+    try:
+        shutil.copy2(src, target)
+        os.chmod(target, 0o600)
+        logger.info("launcher: restored /root/.claude.json from %s", src)
+    except OSError as exc:
+        logger.warning("launcher: failed to restore /root/.claude.json: %s", exc)
+
+
+_ensure_claude_config()
 
 if not LAUNCHER_TOKEN:
     logger.warning(
