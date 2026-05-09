@@ -14,6 +14,10 @@ dashboard/frontend/dist/
 dashboard/frontend/screenshots/
 dashboard/frontend/test-results/
 test-results/
+.playwright-mcp/
+
+# Claude Code local project state
+.claude/
 
 # SQLite
 *.db

@@ -82,7 +82,15 @@ sudo systemctl restart claude-agent.timer
 
 ## Autonomy levels
 
-Agent behavior is gated by a per-project autonomy-level setting. See [`adr/0001-autonomy-levels.md`](adr/0001-autonomy-levels.md) for the model and the level definitions. The default for new projects is `assisted`.
+Per-project setting that gates **how freely** the agent can act on its work. Independent of the [project mode](#project-mode) — applies to every tool call regardless of whether the run is implementing, planning, or analyzing. See [`adr/0001-autonomy-levels.md`](adr/0001-autonomy-levels.md) for the policy engine; this section just summarises what each level does.
+
+| Level | Edits (`Edit` / `Write`) | Destructive bash (`rm -rf`, force push, …) | Always-deny list (push to `main`, fork bombs, `sudo`, …) |
+|---|---|---|---|
+| `manual` | defer to operator | defer to operator | block |
+| `assisted` *(default)* | allow | defer to operator | block |
+| `auto` | allow | allow | block |
+
+Every decision — allow, defer, or block — is recorded to `agent_events` with `event_type='auto_mode_decision'` and surfaced on the Autonomy Audit page. The always-deny list is hard-coded in `agent/auto_mode.py` and cannot be overridden, even at `auto`.
 
 ## API key and webhook secret
 
@@ -97,6 +105,17 @@ Exempt from `STATION_API_KEY` auth (verified in `dashboard/backend/app/main.py`)
 ## Project config
 
 Each managed repository is one row in the `projects` table. The dashboard's Projects page is the easiest way to edit; the underlying schema (used by `POST /api/projects`) is:
+
+### Two orthogonal axes
+
+Projects carry two independent settings that are sometimes confused. They control different concerns and any combination is legal:
+
+| Axis | Values | What it controls | UI section |
+|------|--------|------------------|------------|
+| `mode` | `full`, `analyze`, `plan`, `plan_only` | **What** the agent is asked to do — implement, investigate, plan, or plan-then-pause. Shapes the teammate spawn prompt and the manager review criteria. | "Work scope" |
+| `autonomy_level` | `manual`, `assisted`, `auto` | **How freely** it can act — whether `Edit`/`Write` and destructive bash defer to the operator or run unattended. Applies to every tool call regardless of mode. | "Execution policy" |
+
+Examples: `analyze + auto` runs read-only investigation without any approval prompts; `full + manual` lets the agent implement but every file write needs operator confirmation; `plan_only + assisted` (the typical onboarding default) writes a plan that the manager and operator review before any code is written.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
