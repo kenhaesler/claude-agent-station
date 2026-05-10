@@ -357,6 +357,11 @@ class WebhookRunEvent(BaseModel):
     # Vision misalignment fields
     violated_section: str | None = None
     quote: str | None = None
+    # Hook-callback failure surface — count of pre/post hook callback failures
+    # observed during one project's session (see agent/audit_hook.py). Posted
+    # by the orchestrator when nonzero so operators can spot SDK stream-close
+    # incidents from Mission Control instead of grepping launcher.out.
+    count: int | None = None
     plan_excerpt: str | None = None
     # Narration ("The Bridge" Phase 1): one-sentence present-tense intent
     # statements the agent emits before tool calls so the operator never
