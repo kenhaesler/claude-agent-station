@@ -1,17 +1,37 @@
 <script lang="ts">
-  import { listProjects, createProject, deleteProject, updateProject, listGitHubRepos, listGitHubBranches } from '../lib/api';
+  import {
+    listProjects,
+    listRuns,
+    createProject,
+    updateProject,
+    listGitHubRepos,
+    listGitHubBranches,
+  } from '../lib/api';
   import { navigate } from '../lib/router.svelte';
   import { toastSuccess, toastError } from '../lib/toast.svelte';
-  import type { Project, AgentMode, AutonomyLevel } from '../lib/types';
+  import type { Project, Run, AgentMode, AutonomyLevel } from '../lib/types';
   import type { GitHubRepo, GitHubBranch } from '../lib/api';
   import Modal from '../components/overlays/Modal.svelte';
-  import EmptyState from '../components/data-display/EmptyState.svelte';
-  import SkeletonLoader from '../components/data-display/SkeletonLoader.svelte';
-  import AutonomyBadge from '../components/badges/AutonomyBadge.svelte';
   import VisionChat from '../components/vision/VisionChat.svelte';
 
+  // ── Project list state ────────────────────────────────
   let projects = $state<Project[]>([]);
   let loading = $state(true);
+
+  // Per-project stats keyed by project id. Populated lazily from
+  // listRuns(); stays empty if we can't fetch (so the row falls back
+  // to em-dashes rather than crashing).
+  type ProjectStats = {
+    runs7d: number;
+    runsToday: number;
+    active: number;
+    approved: number;
+    pr: number;
+    last: Run | null;
+  };
+  let stats = $state<Record<number, ProjectStats>>({});
+
+  // ── Wizard state ─────────────────────────────────────
   let showCreateModal = $state(false);
   let wizardStep = $state<1 | 2>(1);
   let savedProjectId = $state<number | null>(null);
@@ -20,23 +40,13 @@
   let newMode = $state<AgentMode>('full');
   let newPriority = $state('medium');
 
-  // Repos pulled from GitHub via the configured auth (App or PAT). The
-  // dropdown shows these; users can also pick "Custom…" to type a repo
-  // name by hand (e.g. for a repo the App isn't installed on yet).
   let repos = $state<GitHubRepo[]>([]);
   let reposLoading = $state(false);
   let useCustomRepo = $state(false);
 
-  // Branches for the currently-selected repo. Fetched lazily when newRepo
-  // changes. Empty list = no GitHub auth, manual-repo mode, or fetch
-  // failed → UI degrades to a free-text branch input.
   let branches = $state<GitHubBranch[]>([]);
   let branchesLoading = $state(false);
 
-  // When the user picks a repo from the dropdown, fetch its branches and
-  // pre-select the default. In manual-repo mode we leave the branch field
-  // alone — there's no way to know the default without an extra round-trip
-  // and users typing a custom repo usually know which branch they want.
   $effect(() => {
     if (!showCreateModal || useCustomRepo || !newRepo) {
       branches = [];
@@ -63,19 +73,59 @@
   $effect(() => { loadProjects(); });
 
   async function loadProjects() {
-    try { projects = await listProjects(); } catch { /* silent */ }
+    try {
+      projects = await listProjects();
+      // Fire stats fetches in parallel; ignore individual failures so
+      // one slow/erroring project doesn't blank the whole list.
+      await Promise.all(projects.map(p => loadStats(p.id)));
+    } catch { /* silent */ }
     loading = false;
+  }
+
+  async function loadStats(projectId: number) {
+    try {
+      // Pull last 50 runs; enough for 7d telemetry on a healthy repo.
+      const res = await listRuns({ project_id: projectId, limit: 50 });
+      const now = Date.now();
+      const sevenDays = 7 * 24 * 60 * 60 * 1000;
+      const oneDay = 24 * 60 * 60 * 1000;
+
+      let runs7d = 0;
+      let runsToday = 0;
+      let active = 0;
+      let approved = 0;
+      let pr = 0;
+      let last: Run | null = null;
+
+      for (const r of res.runs) {
+        const ts = r.started_at ? Date.parse(r.started_at) : NaN;
+        if (!Number.isNaN(ts)) {
+          if (now - ts < sevenDays) runs7d += 1;
+          if (now - ts < oneDay) runsToday += 1;
+        }
+        const status = (r.status ?? '').toLowerCase();
+        if (status === 'running' || status === 'started' || status === 'plan_reviewing' || status === 'reviewing') {
+          active += 1;
+        }
+        if (r.verdict === 'APPROVE') approved += 1;
+        if (r.verdict === 'PR') pr += 1;
+        if (!last || (r.started_at && (!last.started_at || r.started_at > last.started_at))) {
+          last = r;
+        }
+      }
+
+      stats[projectId] = { runs7d, runsToday, active, approved, pr, last };
+    } catch {
+      // leave row without stats; the UI shows em-dashes.
+    }
   }
 
   async function loadRepos() {
     reposLoading = true;
     try {
       const res = await listGitHubRepos();
-      // Filter out repos already added as projects so the dropdown only
-      // shows things the user can actually create.
       const existing = new Set(projects.map(p => p.repo));
       repos = res.repos.filter(r => !existing.has(r.full_name));
-      // If GitHub returned nothing, fall straight to custom-input mode.
       useCustomRepo = repos.length === 0;
     } catch {
       repos = [];
@@ -120,117 +170,142 @@
     } catch (e: any) { toastError(e.message); }
   }
 
-  async function toggleEnabled(p: Project) {
-    try {
-      await updateProject(p.id, { enabled: !p.enabled });
-      p.enabled = !p.enabled;
-    } catch (e: any) { toastError(e.message); }
-  }
+  // ── Derived totals for the page-head meta line ─────────
+  let totalProjects = $derived(projects.length);
+  let enabledCount = $derived(projects.filter(p => p.enabled).length);
+  let totalRuns7d = $derived(
+    Object.values(stats).reduce((sum, s) => sum + s.runs7d, 0),
+  );
 
-  async function setAutonomy(p: Project, next: AutonomyLevel) {
-    if (p.autonomy_level === next) return;
-    const prev = p.autonomy_level;
-    p.autonomy_level = next;   // optimistic
-    try {
-      await updateProject(p.id, { autonomy_level: next });
-      toastSuccess(`Autonomy: ${prev} \u2192 ${next}`);
-    } catch (e: any) {
-      p.autonomy_level = prev; // rollback
-      toastError(e.message ?? 'Failed to update autonomy');
-    }
+  // ── Helpers ────────────────────────────────────────────
+  function modeClass(m: AgentMode): string {
+    if (m === 'plan' || m === 'plan_only') return 'mode plan';
+    if (m === 'analyze') return 'mode vision';
+    return 'mode full';
   }
-
-  function getStatusBorder(p: Project): string {
-    if (!p.enabled) return 'border-l-2 border-l-ghost';
-    return 'border-l-2 border-l-emerald';
+  function autClass(a: AutonomyLevel | null | undefined): string {
+    if (a === 'auto') return 'aut auto';
+    if (a === 'assisted') return 'aut assist';
+    return 'aut manual';
   }
-
-  function getPriorityBadge(priority: string): string {
-    if (priority === 'high') return 'badge-pending';
-    if (priority === 'low') return '';
+  function autLabel(a: AutonomyLevel | null | undefined): string {
+    return (a ?? 'manual').toUpperCase();
+  }
+  function priClass(p: string): string {
+    if (p === 'high' || p === 'critical') return 'pri high';
+    if (p === 'medium') return 'pri med';
     return '';
+  }
+  function fmtRel(iso: string | null | undefined): string {
+    if (!iso) return '—';
+    const t = Date.parse(iso);
+    if (Number.isNaN(t)) return '—';
+    const diff = Date.now() - t;
+    if (diff < 60_000) return 'just now';
+    if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
+    if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
+    return `${Math.floor(diff / 86_400_000)}d ago`;
+  }
+  function fmtDate(iso: string | null | undefined): string {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return '—';
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
   }
 </script>
 
-<div class="space-y-4 animate-fade-in projects-pro">
-  <div class="pp-page-head">
-    <h1 class="pp-title">Projects</h1>
-    <span class="pp-meta">{projects.length} project{projects.length === 1 ? '' : 's'}</span>
-    <button onclick={openCreateModal} class="pp-add-btn">
-      + Add Project
-    </button>
+<div data-testid="projects-page" class="projects-pro animate-fade-in">
+
+  <div class="page-head">
+    <h1>Projects</h1>
+    <div class="meta">
+      {totalProjects} project{totalProjects === 1 ? '' : 's'}
+      · {enabledCount} enabled
+      · {totalRuns7d} runs / 7d
+    </div>
+    <div>
+      <button class="opbtn primary" onclick={openCreateModal}>+ Add Project</button>
+    </div>
   </div>
 
   {#if loading}
-    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-      {#each Array(3) as _}
-        <div class="card p-4"><SkeletonLoader lines={3} /></div>
-      {/each}
-    </div>
+    <div class="empty-list">Loading projects…</div>
   {:else if projects.length === 0}
-    <div class="card">
-      <EmptyState
-        title="No projects yet"
-        description="Add a GitHub repository to get started"
-        icon="▤"
-      />
+    <div class="empty-list">
+      No projects yet. Add a GitHub repository to get started.
     </div>
   {:else}
-    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+    <div class="list">
       {#each projects as project (project.id)}
-        <div
-          class="card p-4 {getStatusBorder(project)} hover:border-border-hover transition-all duration-200 cursor-pointer"
-          style="{!project.enabled ? 'opacity: 0.6;' : ''}"
-          onclick={() => navigate(`/projects/${project.id}`)}
-          role="button"
-          tabindex="0"
-          onkeydown={(e) => e.key === 'Enter' && navigate(`/projects/${project.id}`)}
+        {@const s = stats[project.id]}
+        <a
+          class="proj {project.enabled ? 'enabled' : 'disabled'}"
+          href={`/projects/${project.id}`}
+          onclick={(e) => {
+            e.preventDefault();
+            navigate(`/projects/${project.id}`);
+          }}
         >
-          <div class="flex items-center justify-between mb-2">
-            <span class="text-sm font-medium text-primary truncate flex-1 mr-2">
-              {project.repo}
-            </span>
-            <button
-              onclick={(e) => { e.stopPropagation(); toggleEnabled(project); }}
-              class="w-8 h-4 rounded-full transition-colors shrink-0 cursor-pointer {project.enabled ? 'bg-emerald' : 'bg-surface-2'}"
-              title={project.enabled ? 'Enabled — click to disable' : 'Disabled — click to enable'}
-            >
-              <span class="block w-3 h-3 rounded-full bg-white transition-transform {project.enabled ? 'translate-x-4' : 'translate-x-0.5'}"></span>
-            </button>
-          </div>
-          <div class="flex items-center gap-2 flex-wrap">
-            <span class="badge badge-{project.mode}">{project.mode}</span>
-            <span class="text-[10px] font-mono text-tertiary">Priority: {project.priority}</span>
-            <span class="text-[10px] font-mono text-tertiary">Branch: {project.branch}</span>
-          </div>
-
-          <!-- Autonomy selector (ADR-0001) -->
-          <!-- svelte-ignore a11y_click_events_have_key_events -->
-          <!-- svelte-ignore a11y_no_static_element_interactions -->
-          <div
-            class="mt-3 flex items-center gap-2"
-            onclick={(e) => e.stopPropagation()}
-          >
-            <span class="text-[10px] font-mono uppercase tracking-widest text-tertiary">Autonomy</span>
-            <AutonomyBadge level={project.autonomy_level} size="xs" />
-            <select
-              class="input text-xs py-1 px-2 ml-auto"
-              style="width: auto; min-width: 90px;"
-              value={project.autonomy_level ?? 'assisted'}
-              onchange={(e) => setAutonomy(project, (e.currentTarget as HTMLSelectElement).value as AutonomyLevel)}
-            >
-              <option value="manual">manual</option>
-              <option value="assisted">assisted</option>
-              <option value="auto">auto</option>
-            </select>
-          </div>
-
-          {#if !project.enabled}
-            <div class="mt-2">
-              <span class="badge badge-failed">Disabled</span>
+          <div class="icon">▣</div>
+          <div class="body">
+            <div class="repo">
+              <b>{project.repo}</b>
+              <span class="branch">{project.branch}</span>
+              <span class={modeClass(project.mode)}>{project.mode.toUpperCase()}</span>
+              <span class={autClass(project.autonomy_level)}>{autLabel(project.autonomy_level)}</span>
             </div>
-          {/if}
-        </div>
+            <div class="row">
+              <span>Priority <b class={priClass(project.priority)}>{project.priority.toUpperCase()}</b></span>
+              <span>·</span>
+              <span>Enabled <b style:color={project.enabled ? 'var(--go)' : 'var(--ash)'}>
+                {project.enabled ? 'YES' : 'NO'}
+              </b></span>
+              <span>·</span>
+              <span>Security review <b>{project.security_review_enabled ? 'ON' : 'OFF'}</b></span>
+              <span>·</span>
+              <span>Budget <b style:color={project.max_budget_usd == null ? 'var(--ash)' : 'var(--ink)'}>
+                {project.max_budget_usd == null ? '—' : `$${project.max_budget_usd}`}
+              </b></span>
+              <span>·</span>
+              <span>Created <b>{fmtDate(project.created_at)}</b></span>
+            </div>
+          </div>
+          <div class="stats">
+            <div class="stat">
+              <span class="k">Runs · 7d</span>
+              <span class="v">{s ? s.runs7d : '—'}</span>
+              <span class="sub">{s ? `${s.runsToday} today` : ''}</span>
+            </div>
+            <div class="stat">
+              <span class="k">Active</span>
+              <span class={'v ' + (s && s.active > 0 ? 'go' : 'nu')}>
+                {s ? (s.active > 0 ? s.active : '—') : '—'}
+              </span>
+              <span class="sub">{s && s.active > 0 ? 'live' : 'idle'}</span>
+            </div>
+            <div class="stat">
+              <span class="k">Verdicts</span>
+              <span class={'v ' + (s && (s.approved + s.pr) > 0 ? '' : 'nu')}>
+                {s ? (s.approved + s.pr > 0 ? s.approved + s.pr : '—') : '—'}
+              </span>
+              <span class="sub">{s ? `${s.approved} OK / ${s.pr} PR` : '0 OK / 0 PR'}</span>
+            </div>
+            <div class="stat">
+              <span class="k">Last</span>
+              <span class="v" style="font-size: 12px; font-weight: 500">
+                {s && s.last ? fmtRel(s.last.started_at) : '—'}
+              </span>
+              <span class="sub">
+                {#if s && s.last}
+                  {(s.last.status ?? '').toString()}
+                {/if}
+              </span>
+            </div>
+          </div>
+        </a>
       {/each}
     </div>
   {/if}
@@ -340,47 +415,186 @@
 
 
 <style>
-  /* Pro restyle for the page chrome */
-  .projects-pro :global(.pp-page-head) {
-    display: flex; align-items: center; gap: 14px;
-    padding: 6px 0 10px;
-    border-bottom: 1px solid var(--rule);
+  /* Edge-to-edge container — flush against the strip/ticker. */
+  .projects-pro {
+    display: flex;
+    flex-direction: column;
+    min-height: calc(100vh - 40px);
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--pro-sans);
+    background-image: radial-gradient(circle at 1px 1px, var(--dot) 1px, transparent 0);
+    background-size: 24px 24px;
   }
-  .projects-pro :global(.pp-title) {
+
+  /* Page head ----------------------------------------------- */
+  .projects-pro :global(.page-head) {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: center;
+    gap: 18px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--rule);
+    background: var(--paper);
+    flex-shrink: 0;
+  }
+  .projects-pro :global(.page-head h1) {
     margin: 0;
     font-family: var(--pro-sans);
     font-size: 14px; font-weight: 700;
     letter-spacing: 0.18em; text-transform: uppercase;
     color: var(--ink);
   }
-  .projects-pro :global(.pp-meta) {
+  .projects-pro :global(.page-head .meta) {
     font-family: var(--pro-mono);
-    font-size: 11px; color: var(--graphite);
+    font-size: 11px;
+    color: var(--graphite);
   }
-  .projects-pro :global(.pp-add-btn) {
-    margin-left: auto;
+  .projects-pro :global(.opbtn) {
     font-family: var(--pro-sans);
     font-weight: 700; font-size: 10px;
-    letter-spacing: 0.16em; text-transform: uppercase;
-    background: var(--ink); color: var(--paper);
-    border: 1px solid var(--ink);
+    letter-spacing: 0.14em; text-transform: uppercase;
+    background: transparent; color: var(--ink);
+    border: 1px solid var(--rule-2);
     padding: 5px 11px; cursor: pointer; height: 26px;
+    border-radius: 0;
   }
-  .projects-pro :global(.pp-add-btn:hover) { filter: brightness(1.1); }
+  .projects-pro :global(.opbtn:hover) { background: var(--paper-2); }
+  .projects-pro :global(.opbtn.primary) {
+    background: var(--ink);
+    color: var(--paper);
+    border-color: var(--ink);
+  }
+  .projects-pro :global(.opbtn.primary:hover) { filter: brightness(1.1); background: var(--ink); }
 
-  /* Flatten card glassmorphism on project tiles */
-  .projects-pro :global(.card) {
-    background: var(--paper-2) !important;
-    border: 1px solid var(--rule) !important;
-    border-radius: 0 !important;
-    backdrop-filter: none !important;
-    -webkit-backdrop-filter: none !important;
-    box-shadow: none !important;
-    transition: border-color 200ms ease, transform 0ms !important;
+  /* List ---------------------------------------------------- */
+  .projects-pro :global(.list) {
+    flex: 1;
+    padding: 16px;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 12px;
   }
-  .projects-pro :global(.card:hover) {
-    border-color: var(--rule-2) !important;
-    transform: none !important;
-    box-shadow: none !important;
+  .projects-pro :global(.proj) {
+    background: var(--paper-2);
+    border: 1px solid var(--rule);
+    display: grid;
+    grid-template-columns: 36px 1fr auto;
+    gap: 16px;
+    align-items: center;
+    padding: 14px 18px;
+    cursor: pointer;
+    text-decoration: none;
+    color: var(--ink);
+    transition: background-color 120ms ease, border-color 120ms ease;
+  }
+  .projects-pro :global(.proj:hover) {
+    background: var(--paper-3);
+    border-color: var(--rule-2);
+  }
+  .projects-pro :global(.proj.enabled) { border-left: 3px solid var(--go); }
+  .projects-pro :global(.proj.disabled) {
+    border-left: 3px solid var(--ash);
+    opacity: 0.74;
+  }
+
+  .projects-pro :global(.proj .icon) {
+    width: 36px; height: 36px;
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    display: grid; place-items: center;
+    font-family: var(--pro-mono); font-size: 14px;
+    color: var(--graphite);
+  }
+
+  .projects-pro :global(.proj .body .repo) {
+    font-family: var(--pro-mono); font-size: 14px; color: var(--ink);
+    display: flex; align-items: center; gap: 10px;
+    flex-wrap: wrap;
+  }
+  .projects-pro :global(.proj .body .repo b) { font-weight: 600; }
+  .projects-pro :global(.proj .body .repo .branch) {
+    font-family: var(--pro-mono);
+    font-size: 11px;
+    color: var(--graphite);
+    border: 1px solid var(--rule);
+    padding: 1px 6px;
+  }
+  .projects-pro :global(.proj .body .row) {
+    margin-top: 6px;
+    display: flex; gap: 14px; flex-wrap: wrap;
+    font-family: var(--pro-mono); font-size: 11px;
+    color: var(--graphite);
+  }
+  .projects-pro :global(.proj .body .row b) { color: var(--ink); font-weight: 500; }
+  .projects-pro :global(.proj .body .row .pri.high) { color: var(--abort); }
+  .projects-pro :global(.proj .body .row .pri.med) { color: var(--caution); }
+
+  .projects-pro :global(.proj .stats) {
+    display: grid;
+    grid-template-columns: repeat(4, auto);
+    gap: 0;
+  }
+  .projects-pro :global(.proj .stat) {
+    padding: 0 18px;
+    border-right: 1px solid var(--rule);
+    display: flex; flex-direction: column; align-items: flex-end; gap: 2px;
+    min-width: 88px;
+  }
+  .projects-pro :global(.proj .stat:last-child) {
+    border-right: none;
+    padding-right: 0;
+  }
+  .projects-pro :global(.proj .stat .k) {
+    font-family: var(--pro-sans);
+    font-size: 9px; font-weight: 700;
+    letter-spacing: 0.18em; text-transform: uppercase;
+    color: var(--graphite);
+  }
+  .projects-pro :global(.proj .stat .v) {
+    font-family: var(--pro-mono);
+    font-size: 16px; font-weight: 600;
+    color: var(--ink);
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+  }
+  .projects-pro :global(.proj .stat .v.go) { color: var(--go); }
+  .projects-pro :global(.proj .stat .v.caution) { color: var(--caution); }
+  .projects-pro :global(.proj .stat .v.abort) { color: var(--abort); }
+  .projects-pro :global(.proj .stat .v.nu) { color: var(--ash); }
+  .projects-pro :global(.proj .stat .sub) {
+    font-family: var(--pro-mono);
+    font-size: 9px;
+    color: var(--ash);
+  }
+
+  /* Empty / loading ----------------------------------------- */
+  .projects-pro :global(.empty-list) {
+    font-family: var(--pro-mono);
+    font-size: 13px;
+    color: var(--ash);
+    text-align: center;
+    padding: 60px 14px;
+    border: 1px dashed var(--rule);
+    margin: 16px;
+  }
+
+  /* Stack stats below body on narrow viewports -------------- */
+  @media (max-width: 900px) {
+    .projects-pro :global(.proj) {
+      grid-template-columns: 36px 1fr;
+    }
+    .projects-pro :global(.proj .stats) {
+      grid-column: 1 / -1;
+      grid-template-columns: repeat(4, 1fr);
+      border-top: 1px solid var(--rule);
+      padding-top: 10px;
+      margin-top: 4px;
+    }
+    .projects-pro :global(.proj .stat) {
+      min-width: 0;
+      padding: 0 8px;
+      align-items: flex-start;
+    }
   }
 </style>
