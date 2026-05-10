@@ -269,21 +269,33 @@
   );
 
   // ── Loaders ──────────────────────────────────────────
-  async function loadAll() {
-    const [runsR, empR, telR, sysR, evR, projR] = await Promise.allSettled([
-      listRuns({ limit: 50 }),
+  // Fast path: live ticker + working count drivers (cheap, change quickly).
+  async function loadFast() {
+    const [empR, evR] = await Promise.allSettled([
       getActiveEmployees(),
+      getAgentEvents({ limit: 20 }),
+    ]);
+    if (empR.status === 'fulfilled') activeEmployees = empR.value;
+    if (evR.status === 'fulfilled') agentEvents = evR.value;
+  }
+
+  // Slow path: heavier endpoints (telemetry runs ~5 SQL queries; system
+  // status reads /proc and shells out). Refresh less often.
+  async function loadSlow() {
+    const [runsR, telR, sysR, projR] = await Promise.allSettled([
+      listRuns({ limit: 50 }),
       getTelemetrySummary(),
       getSystemStatus(),
-      getAgentEvents({ limit: 20 }),
       listProjects(),
     ]);
     if (runsR.status === 'fulfilled') recentRuns = runsR.value.runs;
-    if (empR.status === 'fulfilled') activeEmployees = empR.value;
     if (telR.status === 'fulfilled') telemetry = telR.value;
     if (sysR.status === 'fulfilled') systemStatus = sysR.value;
-    if (evR.status === 'fulfilled') agentEvents = evR.value;
     if (projR.status === 'fulfilled') projects = projR.value;
+  }
+
+  async function loadAll() {
+    await Promise.all([loadFast(), loadSlow()]);
     loading = false;
   }
 
@@ -299,12 +311,23 @@
 
   $effect(() => {
     loadAll();
-    const t = setInterval(loadAll, 10_000);
+    // Skip polling while the tab is hidden — saves ~0.6 req/s on background tabs.
+    const isHidden = () => typeof document !== 'undefined' && document.visibilityState === 'hidden';
+    const fast = setInterval(() => { if (!isHidden()) loadFast(); }, 10_000);
+    const slow = setInterval(() => { if (!isHidden()) loadSlow(); }, 30_000);
     const c = setInterval(() => {
       const d = new Date();
       clockNow = `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
     }, 1000);
-    return () => { clearInterval(t); clearInterval(c); };
+    // On tab refocus, pull fresh data immediately so users don't see stale-then-update.
+    const onVis = () => { if (!isHidden()) loadAll(); };
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVis);
+    return () => {
+      clearInterval(fast);
+      clearInterval(slow);
+      clearInterval(c);
+      if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVis);
+    };
   });
 
   // Reload coordinator tasks whenever the latest active run changes
