@@ -612,7 +612,7 @@
           {:else}
             {#each coordTasks.slice(0, 8) as task (task.id)}
               <div class="task">
-                <div class="lane">{task.claimed_by ?? task.teammate_agent_id ?? 'unassigned'}</div>
+                <div class="lane">{stripMd(task.claimed_by ?? task.teammate_agent_id ?? 'unassigned')}</div>
                 <div class="t">{stripMd(task.title)}</div>
                 <div class="meta">
                   <span>{(task.status ?? '—').toUpperCase()}</span>
