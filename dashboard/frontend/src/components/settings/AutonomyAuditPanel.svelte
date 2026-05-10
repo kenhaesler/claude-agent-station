@@ -4,11 +4,11 @@
     getAutonomySummary,
     type AutonomyAuditRow,
     type AutonomySummary,
-  } from '../lib/api';
-  import { timeAgo } from '../lib/format';
-  import AutonomyBadge from '../components/badges/AutonomyBadge.svelte';
-  import SkeletonLoader from '../components/data-display/SkeletonLoader.svelte';
-  import EmptyState from '../components/data-display/EmptyState.svelte';
+  } from '../../lib/api';
+  import { timeAgo } from '../../lib/format';
+  import AutonomyBadge from '../badges/AutonomyBadge.svelte';
+  import SkeletonLoader from '../data-display/SkeletonLoader.svelte';
+  import EmptyState from '../data-display/EmptyState.svelte';
 
   let summary = $state<AutonomySummary | null>(null);
   let rows = $state<AutonomyAuditRow[]>([]);
@@ -92,9 +92,9 @@
   }
 </script>
 
-<div class="space-y-4 animate-fade-in" data-testid="autonomy-audit">
+<div class="space-y-4" data-testid="autonomy-audit">
   <div class="flex items-center justify-between">
-    <h1 class="font-heading text-xl">Autonomy Audit</h1>
+    <h2 class="text-base font-semibold text-primary">Autonomy decisions</h2>
     <span class="text-secondary text-sm">Last 30 days · {summary?.total_decisions ?? 0} decisions</span>
   </div>
 

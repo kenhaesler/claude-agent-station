@@ -12,7 +12,6 @@ export type Page =
   | 'queue-detail'
   | 'projects'
   | 'project-detail'
-  | 'autonomy-audit'
   | 'settings';
 
 export interface Route {
@@ -42,13 +41,15 @@ function parsePath(): Route {
   if (raw === 'projects' && parts.length > 1) return { page: 'project-detail', param: parts[1] };
   if (raw === 'settings' && parts.length > 1) return { page: 'settings', param: parts[1] };
 
+  // Transparent redirect for old bookmarks — keep; do not remove in cleanup passes.
+  if (raw === 'autonomy-audit') return { page: 'settings', param: 'audit' };
+
   const routeMap: Record<string, Page> = {
     'mission-control': 'mission-control',
     'agent-teams': 'agent-teams',
     runs: 'runs',
     queue: 'queue',
     projects: 'projects',
-    'autonomy-audit': 'autonomy-audit',
     settings: 'settings',
   };
 
@@ -131,7 +132,6 @@ export function getPageTitle(page: Page): string {
     'queue-detail': 'Queue Item',
     'projects': 'Projects',
     'project-detail': 'Project',
-    'autonomy-audit': 'Autonomy Audit',
     'settings': 'Settings',
   };
   return titles[page] ?? 'Claude Station';

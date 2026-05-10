@@ -8,6 +8,7 @@
   import type { PromptInfo, SystemStatus, AuthStatus } from '../lib/types';
   import { toastSuccess, toastError } from '../lib/toast.svelte';
   import Toggle from '../components/forms/Toggle.svelte';
+  import AutonomyAuditPanel from '../components/settings/AutonomyAuditPanel.svelte';
   import { appearance, setTheme, setAnimationsEnabled } from '../lib/appearance.svelte';
 
   let { tab = null }: { tab?: string | null } = $props();
@@ -229,7 +230,7 @@
 
   <!-- Tabs -->
   <div class="flex gap-1" style="border-bottom: 1px solid var(--color-border);">
-    {#each ['general', 'models', 'services', 'auth', 'prompts', 'appearance'] as t}
+    {#each ['general', 'models', 'services', 'auth', 'prompts', 'audit', 'appearance'] as t}
       <button
         class="px-4 py-2.5 text-xs font-medium capitalize transition-colors cursor-pointer"
         style="{activeTab === t ? 'color: var(--color-primary); border-bottom: 2px solid var(--color-violet);' : 'color: var(--color-tertiary); border-bottom: 2px solid transparent;'}"
@@ -538,6 +539,9 @@
         {/if}
       </div>
     </div>
+
+  {:else if activeTab === 'audit'}
+    <AutonomyAuditPanel />
 
   {:else if activeTab === 'appearance'}
     <div class="card p-5 space-y-5">
