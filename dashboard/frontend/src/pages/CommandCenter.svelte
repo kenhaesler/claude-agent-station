@@ -144,13 +144,6 @@
     return () => clearInterval(interval);
   });
 
-  function getGreeting(): string {
-    const h = new Date().getHours();
-    if (h < 12) return 'Good morning';
-    if (h < 18) return 'Good afternoon';
-    return 'Good evening';
-  }
-
   function getProjectRepo(projectId: number | null | undefined): string | null {
     if (projectId == null) return null;
     const proj = projects.find((p) => p.id === projectId);
@@ -220,7 +213,7 @@
   }
 </script>
 
-<div data-testid="command-center" style="animation: greeting-in 0.8s cubic-bezier(0.16, 1, 0.3, 1) both;">
+<div data-testid="command-center" class="dispatch-pro animate-fade-in">
 
   {#if loading}
     <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 28px;">
@@ -231,16 +224,16 @@
     <div class="card" style="padding: 24px;"><SkeletonLoader lines={8} /></div>
 
   {:else}
-    <!-- Greeting -->
-    <div style="margin-bottom: 24px;">
-      <div style="font-size: 24px; font-weight: 800; color: #3D2A1A; letter-spacing: -0.03em;">{getGreeting()}</div>
-      <div style="font-size: 14px; color: #8C7A66; margin-top: 4px;">
+    <!-- Page header (Pro) -->
+    <div class="dp-page-head">
+      <h1 class="dp-title">Dispatch</h1>
+      <div class="dp-meta">
         {#if stationPhase === 'working'}
-          <span style="color: #2E7D32; font-weight: 600;">{stationSummary}</span>
-          <span> · </span>
-          <button onclick={() => navigate('/mission-control')} style="color: #B06030; font-weight: 600; cursor: pointer; border: none; background: none; font-family: inherit; font-size: inherit; text-decoration: underline; text-underline-offset: 2px;">Mission Control →</button>
+          <span class="dp-status go">{stationSummary}</span>
+          <span class="sep">·</span>
+          <button onclick={() => navigate('/mission-control')} class="dp-mc-btn">Open Mission Control →</button>
         {:else}
-          {stationSummary}
+          <span>{stationSummary}</span>
         {/if}
       </div>
     </div>
@@ -366,7 +359,6 @@
     <div style="background: rgba(255,251,247,0.65); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border: 1px solid rgba(240,220,200,0.6); border-radius: 18px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.04), 0 12px 32px rgba(0,0,0,0.07); animation: card-in 0.6s cubic-bezier(0.16, 1, 0.3, 1) 0.35s both; margin-bottom: 28px;">
       <div style="padding: 16px 24px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(0,0,0,0.04);">
         <span style="font-size: 15px; font-weight: 700; color: #3D2A1A;">Recent Runs</span>
-        <button onclick={() => navigate('/runs')} style="font-size: 14px; color: #7A6652; cursor: pointer; border: none; background: none; font-family: inherit;">View all →</button>
       </div>
       {#each recentRuns.slice(0, 10) as run (run.id)}
         {@const status = getStatusBadge(run)}
@@ -476,3 +468,54 @@
     </div>
   {/if}
 </div>
+
+<style>
+  .dispatch-pro :global(.dp-page-head) {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 14px; padding: 6px 0 12px; margin-bottom: 18px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .dispatch-pro :global(.dp-title) {
+    margin: 0;
+    font-family: var(--pro-sans);
+    font-size: 14px; font-weight: 700;
+    letter-spacing: 0.18em; text-transform: uppercase;
+    color: var(--ink);
+  }
+  .dispatch-pro :global(.dp-meta) {
+    font-family: var(--pro-mono); font-size: 12px;
+    color: var(--graphite);
+    display: flex; gap: 8px; align-items: center;
+  }
+  .dispatch-pro :global(.dp-meta .sep) { color: var(--ash); }
+  .dispatch-pro :global(.dp-status.go) { color: var(--go); font-weight: 500; }
+  .dispatch-pro :global(.dp-mc-btn) {
+    background: transparent; border: none; cursor: pointer;
+    color: var(--data); font-family: inherit; font-size: inherit;
+    padding: 0; text-decoration: underline; text-underline-offset: 2px;
+  }
+  .dispatch-pro :global(.dp-mc-btn:hover) { filter: brightness(0.9); }
+
+  /* Flatten neumorphic surfaces on the page */
+  .dispatch-pro :global(.card) {
+    background: var(--paper-2) !important;
+    border: 1px solid var(--rule) !important;
+    border-radius: 0 !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    box-shadow: none !important;
+    transition: border-color 200ms ease !important;
+    animation: none !important;
+  }
+  .dispatch-pro :global(.card:hover) {
+    border-color: var(--rule-2) !important;
+    transform: none !important;
+    box-shadow: none !important;
+  }
+  /* Kill the breathe animations on KPI cards */
+  .dispatch-pro :global(.card-breathe),
+  .dispatch-pro :global(.card-breathe-amber),
+  .dispatch-pro :global([class*="card-in"]) {
+    animation: none !important;
+  }
+</style>
