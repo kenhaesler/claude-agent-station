@@ -1373,6 +1373,8 @@ def _synthesize_employee_report(
     workspace: str,
     base_branch: str,
     run_id: str,
+    project_mode: str,
+    issue_numbers: list[int],
 ) -> bool:
     """Best-effort fallback when a teammate exits without writing its own
     ``.claude-employee-report.json``.
@@ -1385,7 +1387,7 @@ def _synthesize_employee_report(
     in the worktree branches. To prevent that, this function inspects the
     role's worktree before the orchestrator tears it down and writes a
     minimal report carrying the fields the manager review pipeline needs:
-    branch, base_branch, files changed, commits.
+    branch, base_branch, files changed, commits, mode, issue number(s).
 
     Skipped silently if:
     - The teammate already wrote a report (don't clobber).
@@ -1425,9 +1427,18 @@ def _synthesize_employee_report(
         if not commits and not files:
             return False
 
+        # run-manager.sh reads `issue_number` (singular) for the manager
+        # review package. Use the run's first issue when there's exactly
+        # one; leave null otherwise so the manager doesn't see a misleading
+        # arbitrary pick. The full list lives under `issue_numbers` for
+        # any downstream consumer that needs the multi-issue context.
+        single_issue = issue_numbers[0] if len(issue_numbers) == 1 else None
+
         report = {
             "status": "success",
-            "mode": "full",
+            "mode": project_mode,
+            "issue_number": single_issue,
+            "issue_numbers": issue_numbers,
             "branch": branch,
             "base_branch": base_branch,
             "files_changed": files,
@@ -1921,6 +1932,15 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
             # see _synthesize_employee_report. Without this, run-manager.sh
             # skips manager review when teammates forget to write their own
             # report, even though commits exist on the worktree branches.
+            #
+            # ``issues`` may not be bound if the project loop short-circuited
+            # before issue selection (early exception, empty backlog ``continue``);
+            # default to an empty list so issue_number is left null rather
+            # than crashing the cleanup path.
+            try:
+                _issue_numbers = [int(i["number"]) for i in issues if "number" in i]
+            except NameError:
+                _issue_numbers = []
             for role, wt_path in worktree_paths.items():
                 _synthesize_employee_report(
                     role=role,
@@ -1928,6 +1948,8 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
                     workspace=workspace,
                     base_branch=base_branch,
                     run_id=run_id,
+                    project_mode=project_mode,
+                    issue_numbers=_issue_numbers,
                 )
 
             # Clean up worktrees
