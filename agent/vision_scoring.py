@@ -26,6 +26,12 @@ _PROMPT_TEMPLATE = """You are scoring open issues against a project vision.
 ## End-state
 {end_state}
 
+## Tech Stack
+{tech_stack}
+
+## Runtime Target
+{runtime_target}
+
 ## Non-goals
 {non_goals}
 

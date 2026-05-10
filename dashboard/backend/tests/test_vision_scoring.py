@@ -7,6 +7,10 @@ VISION = {
     "problem": "Self-host a Claude agent.",
     "users": "Solo devs.",
     "end_state": "A daily autonomous agent.",
+    # Issue #335: VISION dicts in tests must include the new fields so the
+    # template's `**vision` spread finds tech_stack and runtime_target.
+    "tech_stack": "Python/FastAPI + Svelte 5.",
+    "runtime_target": "Linux host (systemd).",
     "non_goals": "Multi-tenant.",
     "principles": "Solo simplicity.",
     "horizons": "Near-term: stability.",
