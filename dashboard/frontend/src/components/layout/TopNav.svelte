@@ -42,7 +42,6 @@
   function isActive(page: string): boolean {
     if (page === 'command-center') {
       return route.page === 'command-center'
-        || route.page === 'runs'
         || route.page === 'run-detail';
     }
     if (page === 'queue') return route.page === 'queue' || route.page === 'queue-detail';

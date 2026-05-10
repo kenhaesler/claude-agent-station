@@ -109,7 +109,7 @@
     {sseConnected}
     activeCount={activeEmployees.length}
   >
-    {#if route.page === 'command-center' || route.page === 'runs'}
+    {#if route.page === 'command-center'}
       <CommandCenter {triggering} onTrigger={handleTrigger} />
     {:else if route.page === 'mission-control'}
       <MissionControl />

@@ -6,7 +6,6 @@ export type Page =
   | 'command-center'
   | 'mission-control'
   | 'agent-teams'
-  | 'runs'
   | 'run-detail'
   | 'queue'
   | 'queue-detail'
@@ -44,10 +43,13 @@ function parsePath(): Route {
   // Transparent redirect for old bookmarks — keep; do not remove in cleanup passes.
   if (raw === 'autonomy-audit') return { page: 'settings', param: 'audit' };
 
+  // Bare /runs (no param) → Dispatch (command-center). Vestigial enum dropped;
+  // legacy bookmarks still resolve.
+  if (raw === 'runs') return { page: 'command-center', param: null };
+
   const routeMap: Record<string, Page> = {
     'mission-control': 'mission-control',
     'agent-teams': 'agent-teams',
-    runs: 'runs',
     queue: 'queue',
     projects: 'projects',
     settings: 'settings',
@@ -126,7 +128,6 @@ export function getPageTitle(page: Page): string {
     'command-center': 'Command Center',
     'mission-control': 'Mission Control',
     'agent-teams': 'Agent Teams',
-    'runs': 'Runs',
     'run-detail': 'Run Detail',
     'queue': 'Queue Board',
     'queue-detail': 'Queue Item',
