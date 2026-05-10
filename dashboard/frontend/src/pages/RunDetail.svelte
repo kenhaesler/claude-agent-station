@@ -66,11 +66,6 @@
     return map[type] ?? 'var(--color-tertiary)';
   }
 
-  function getVerdictBadge(verdict: string | null): string {
-    const map: Record<string, string> = { 'APPROVE': 'badge-approve', 'PR': 'badge-pr', 'REJECT': 'badge-reject' };
-    return verdict ? map[verdict] ?? '' : '';
-  }
-
   function parseReport(report: string | null): Record<string, unknown> | null {
     if (!report) return null;
     try { return JSON.parse(report); } catch { return null; }
@@ -88,83 +83,79 @@
     <button onclick={() => navigate('/runs')} class="btn btn-secondary">Back to Runs</button>
   </div>
 {:else if run}
-  <div class="space-y-6 animate-fade-in">
-    <!-- ===== HEADER ===== -->
-    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-      <div>
-        <div class="flex items-center gap-3 mb-2 flex-wrap">
-          <span class="status-dot {run.status === 'started' ? 'running' : run.verdict === 'REJECT' ? 'error' : run.verdict ? 'online' : 'offline'}"></span>
-          <h1 class="font-heading text-xl">{run.run_id?.slice(0, 20)}</h1>
+  <div class="space-y-6 animate-fade-in run-detail-pro">
+    <!-- ===== HEADER (Pro) ===== -->
+    <div class="rd-head">
+      <div class="rd-head-left">
+        <div class="rd-title-row">
+          <span class="rd-status-dot {run.status === 'started' || run.status === 'running' ? 'go' : run.verdict === 'REJECT' ? 'abort' : run.verdict ? 'go' : ''} {run.status === 'started' || run.status === 'running' ? 'live' : ''}"></span>
+          <h1 class="rd-runid">{run.run_id}</h1>
           {#if run.verdict}
-            <span class="badge {getVerdictBadge(run.verdict)}">{run.verdict}</span>
-          {:else if run.status === 'started'}
-            <span class="badge badge-running">LIVE</span>
+            <span class="rd-pill verdict-{run.verdict.toLowerCase()}">{run.verdict}</span>
+          {:else if run.status === 'started' || run.status === 'running'}
+            <span class="rd-pill run">RUN</span>
           {/if}
           <AutonomyBadge level={run.autonomy_level} />
           {#if run.max_budget_usd != null}
-            <span
-              class="text-xs font-mono text-tertiary"
-              title="Per-run budget cap"
-            >&le; ${run.max_budget_usd.toFixed(2)}</span>
+            <span class="rd-meta-chip" title="Per-run budget cap">≤ ${run.max_budget_usd.toFixed(2)}</span>
           {/if}
         </div>
-        <div class="flex items-center gap-4 text-xs text-tertiary font-mono">
+        <div class="rd-meta-row">
           {#if ctx?.project_repo}
-            <span>{ctx.project_repo}</span>
+            <span><b>{ctx.project_repo}</b></span>
           {/if}
           {#if run.issue_number}
+            <span class="sep">·</span>
             <span>#{run.issue_number}</span>
           {/if}
           {#if run.mode}
             {@const m = formatRunMode(run.mode)}
-            <span class="badge badge-{run.mode}">{m.icon} {m.label}</span>
+            <span class="sep">·</span>
+            <span class="rd-pill mode mode-{run.mode}">{m.icon} {m.label}</span>
           {/if}
           {#if run.skip_reason}
-            <div class="text-sm" style="color: var(--color-text-secondary, #6b6b6b); margin-top: 0.25rem;">
-              {formatSkipReason(run.skip_reason)}
-            </div>
+            <span class="sep">·</span>
+            <span class="rd-skip">{formatSkipReason(run.skip_reason)}</span>
           {/if}
           {#if run.model}
+            <span class="sep">·</span>
             <span>{run.model}</span>
           {/if}
         </div>
       </div>
 
-      <!-- Stats chips -->
-      <div class="flex items-center gap-3">
+      <!-- Stat chips (Pro) -->
+      <div class="rd-stats">
         {#if run.tokens_total}
-          <div class="card px-3 py-1.5">
-            <span class="text-[10px] text-tertiary font-mono">TOKENS</span>
-            <span class="block font-mono text-sm text-primary font-medium">{formatTokens(run.tokens_total)}</span>
+          <div class="rd-stat">
+            <span class="k">Tokens</span>
+            <span class="v">{formatTokens(run.tokens_total)}</span>
           </div>
         {/if}
         {#if run.duration_ms}
-          <div class="card px-3 py-1.5">
-            <span class="text-[10px] text-tertiary font-mono">DURATION</span>
-            <span class="block font-mono text-sm text-primary font-medium">{formatDuration(run.duration_ms)}</span>
+          <div class="rd-stat">
+            <span class="k">Duration</span>
+            <span class="v">{formatDuration(run.duration_ms)}</span>
           </div>
         {/if}
         {#if run.turns}
-          <div class="card px-3 py-1.5">
-            <span class="text-[10px] text-tertiary font-mono">TURNS</span>
-            <span class="block font-mono text-sm text-primary font-medium">{run.turns}</span>
+          <div class="rd-stat">
+            <span class="k">Turns</span>
+            <span class="v">{run.turns}</span>
           </div>
         {/if}
       </div>
     </div>
 
-    <!-- ===== TABS ===== -->
-    <div class="flex items-center gap-1 border-b border-border">
+    <!-- ===== TABS (Pro) ===== -->
+    <div class="rd-tabs">
       {#each tabs as tab}
         <button
           onclick={() => activeTab = tab.id as typeof activeTab}
-          class="px-4 py-2.5 text-sm font-medium transition-colors relative
-                 {activeTab === tab.id ? 'text-cyan' : 'text-secondary hover:text-primary'}"
+          class="rd-tab"
+          class:active={activeTab === tab.id}
         >
           {tab.label}
-          {#if activeTab === tab.id}
-            <span class="absolute bottom-0 left-2 right-2 h-0.5 bg-cyan rounded-full"></span>
-          {/if}
         </button>
       {/each}
     </div>
@@ -571,3 +562,130 @@
     {/if}
   </div>
 {/if}
+
+<style>
+  /* Pro restyle for the page header + tabs only.
+     Tab content keeps existing app.css tokens — its `card`, `badge`,
+     `text-primary`, etc. classes still resolve correctly. */
+  .run-detail-pro :global(.rd-head) {
+    display: flex; flex-direction: column;
+    gap: 16px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--rule);
+  }
+  @media (min-width: 640px) {
+    .run-detail-pro :global(.rd-head) {
+      flex-direction: row;
+      align-items: flex-end;
+      justify-content: space-between;
+    }
+  }
+
+  .run-detail-pro :global(.rd-title-row) {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+    margin-bottom: 6px;
+  }
+  .run-detail-pro :global(.rd-runid) {
+    margin: 0;
+    font-family: var(--pro-mono);
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--ink);
+    word-break: break-all;
+  }
+  .run-detail-pro :global(.rd-status-dot) {
+    display: inline-block; width: 8px; height: 8px;
+    background: var(--ash);
+    flex-shrink: 0;
+  }
+  .run-detail-pro :global(.rd-status-dot.go)    { background: var(--go); }
+  .run-detail-pro :global(.rd-status-dot.abort) { background: var(--abort); }
+  .run-detail-pro :global(.rd-status-dot.live)  { animation: rdlive 1.6s steps(2) infinite; }
+  @keyframes rdlive { 50% { opacity: .35; } }
+
+  .run-detail-pro :global(.rd-pill) {
+    font-family: var(--pro-sans);
+    font-weight: 700; font-size: 9px;
+    letter-spacing: 0.14em; text-transform: uppercase;
+    padding: 3px 6px;
+    border: 1px solid currentColor;
+    color: var(--graphite);
+    line-height: 1;
+    display: inline-block;
+    white-space: nowrap;
+  }
+  .run-detail-pro :global(.rd-pill.run)              { color: var(--go); }
+  .run-detail-pro :global(.rd-pill.verdict-approve)  { color: var(--go); }
+  .run-detail-pro :global(.rd-pill.verdict-pr)       { color: var(--caution); }
+  .run-detail-pro :global(.rd-pill.verdict-reject)   { color: var(--abort); }
+  .run-detail-pro :global(.rd-pill.verdict-skip)     { color: var(--graphite); }
+  .run-detail-pro :global(.rd-pill.mode)             { color: var(--ink); border-color: var(--rule-2); }
+  .run-detail-pro :global(.rd-pill.mode-vision-bootstrap) { color: var(--graphite); }
+
+  .run-detail-pro :global(.rd-meta-chip) {
+    font-family: var(--pro-mono);
+    font-size: 11px;
+    color: var(--graphite);
+    border: 1px solid var(--rule);
+    padding: 1px 6px;
+  }
+
+  .run-detail-pro :global(.rd-meta-row) {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+    font-family: var(--pro-mono);
+    font-size: 11px;
+    color: var(--graphite);
+  }
+  .run-detail-pro :global(.rd-meta-row b)   { color: var(--ink); font-weight: 500; }
+  .run-detail-pro :global(.rd-meta-row .sep){ color: var(--ash); }
+  .run-detail-pro :global(.rd-skip) { font-style: italic; color: var(--caution); }
+
+  .run-detail-pro :global(.rd-stats) {
+    display: flex; align-items: center; gap: 0;
+    border: 1px solid var(--rule);
+    background: var(--paper-2);
+  }
+  .run-detail-pro :global(.rd-stat) {
+    padding: 6px 14px;
+    border-right: 1px solid var(--rule);
+    display: flex; flex-direction: column; gap: 2px;
+    min-width: 80px;
+  }
+  .run-detail-pro :global(.rd-stat:last-child) { border-right: none; }
+  .run-detail-pro :global(.rd-stat .k) {
+    font-family: var(--pro-sans);
+    font-size: 9px; font-weight: 700;
+    letter-spacing: 0.18em; text-transform: uppercase;
+    color: var(--graphite);
+  }
+  .run-detail-pro :global(.rd-stat .v) {
+    font-family: var(--pro-mono);
+    font-size: 14px; font-weight: 600;
+    color: var(--ink); line-height: 1;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Tabs */
+  .run-detail-pro :global(.rd-tabs) {
+    display: flex; gap: 0;
+    border-bottom: 1px solid var(--rule);
+  }
+  .run-detail-pro :global(.rd-tab) {
+    font-family: var(--pro-sans);
+    font-size: 11px; font-weight: 700;
+    letter-spacing: 0.16em; text-transform: uppercase;
+    color: var(--graphite);
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    padding: 10px 14px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .run-detail-pro :global(.rd-tab:hover) { color: var(--ink); }
+  .run-detail-pro :global(.rd-tab.active) {
+    color: var(--ink);
+    border-bottom-color: var(--ink);
+  }
+</style>
