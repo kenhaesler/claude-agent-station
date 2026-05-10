@@ -370,8 +370,14 @@ function visionBootstrapFailureToast(data: any): void {
   const runId: string = (
     data.run_id ?? data.data?.run_id ?? ''
   ).toString();
-  const suffix = runId ? ` — see run ${runId}` : '';
-  addToast('error', `Vision analyst failed${suffix}`);
+  // Show last 8 chars of the run id in the body for compactness; the full
+  // id is preserved in the action href so the link routes correctly.
+  const shortLabel = runId ? runId.slice(-8) : '';
+  const suffix = shortLabel ? ` — see run ${shortLabel}` : '';
+  addToast('error', `Vision analyst failed${suffix}`, {
+    duration: 6000,
+    action: runId ? { label: 'View run', href: `/runs/${runId}` } : undefined,
+  });
 }
 
 function handleSSEEvent(data: any) {

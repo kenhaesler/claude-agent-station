@@ -211,15 +211,105 @@ async def test_find_gaps_calls_service_control(project):
     async with async_session() as db:
         proj = await db.get(Project, project.id)
         proj.vision_cached_body = "# Vision — o/r\n\n## Problem\nP\n"
+        proj.vision_cached_sha = "sha-1"
         await db.commit()
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
-        with patch("app.services.service_control.start_vision_analyst",
+        with patch("app.routers.vision._check_gh_auth", return_value=True), \
+             patch("app.services.service_control.start_vision_analyst",
                    new=AsyncMock(return_value={"success": True, "status_code": 200, "pid": 99})):
             r = await c.post(f"/api/projects/{project.id}/vision/find-gaps")
     assert r.status_code == 200
     assert r.json()["status"] == "triggered"
+
+
+@pytest.mark.asyncio
+async def test_find_gaps_409_when_gh_auth_broken(project):
+    """Preflight: invalid gh auth → 409 before dispatch (issue #272)."""
+    async with async_session() as db:
+        proj = await db.get(Project, project.id)
+        proj.vision_cached_body = "# Vision — o/r\n\n## Problem\nP\n"
+        proj.vision_cached_sha = "sha-1"
+        await db.commit()
+
+    dispatch_mock = AsyncMock(return_value={"success": True, "status_code": 200, "pid": 1})
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        with patch("app.routers.vision._check_gh_auth", return_value=False), \
+             patch("app.services.service_control.start_vision_analyst", new=dispatch_mock):
+            r = await c.post(f"/api/projects/{project.id}/vision/find-gaps")
+    assert r.status_code == 409
+    assert "GitHub CLI" in r.json()["detail"]
+    dispatch_mock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_find_gaps_409_when_recent_failure_for_current_sha(project):
+    """Preflight: last vision-bootstrap failed and no successor → 409 (issue #272)."""
+    from app.models import Run as RunModel
+    async with async_session() as db:
+        proj = await db.get(Project, project.id)
+        proj.vision_cached_body = "# Vision — o/r\n\n## Problem\nP\n"
+        proj.vision_cached_sha = "sha-1"
+        # Add a failed vision-bootstrap run as the most recent run
+        db.add(RunModel(
+            run_id="run-vb-failed",
+            project_id=project.id,
+            mode="vision-bootstrap",
+            status="failed",
+            started_at=datetime.now(timezone.utc),
+        ))
+        await db.commit()
+
+    dispatch_mock = AsyncMock(return_value={"success": True, "status_code": 200, "pid": 1})
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        with patch("app.routers.vision._check_gh_auth", return_value=True), \
+             patch("app.services.service_control.start_vision_analyst", new=dispatch_mock):
+            r = await c.post(f"/api/projects/{project.id}/vision/find-gaps")
+    assert r.status_code == 409
+    assert "Last vision analysis" in r.json()["detail"]
+    dispatch_mock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_find_gaps_recovers_when_success_follows_failure(project):
+    """Preflight: a 'completed' run after the failure unblocks dispatch (issue #272)."""
+    from app.models import Run as RunModel
+    now = datetime.now(timezone.utc)
+    async with async_session() as db:
+        proj = await db.get(Project, project.id)
+        proj.vision_cached_body = "# Vision — o/r\n\n## Problem\nP\n"
+        proj.vision_cached_sha = "sha-1"
+        # Older failure, then a more-recent success
+        db.add(RunModel(
+            run_id="run-vb-failed",
+            project_id=project.id,
+            mode="vision-bootstrap",
+            status="failed",
+            started_at=now - timedelta(minutes=10),
+        ))
+        # Note: the helper iterates the most recent 5, ordered by started_at
+        # desc. We simulate "success after failure" by making the success the
+        # latest row — proves the recovery path.
+        db.add(RunModel(
+            run_id="run-vb-success",
+            project_id=project.id,
+            mode="vision-bootstrap",
+            status="completed",
+            started_at=now,
+        ))
+        await db.commit()
+
+    dispatch_mock = AsyncMock(return_value={"success": True, "status_code": 200, "pid": 1})
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        with patch("app.routers.vision._check_gh_auth", return_value=True), \
+             patch("app.services.service_control.start_vision_analyst", new=dispatch_mock):
+            r = await c.post(f"/api/projects/{project.id}/vision/find-gaps")
+    assert r.status_code == 200
+    dispatch_mock.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
