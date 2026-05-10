@@ -66,11 +66,6 @@
     return map[type] ?? 'var(--color-tertiary)';
   }
 
-  function getVerdictBadge(verdict: string | null): string {
-    const map: Record<string, string> = { 'APPROVE': 'badge-approve', 'PR': 'badge-pr', 'REJECT': 'badge-reject' };
-    return verdict ? map[verdict] ?? '' : '';
-  }
-
   function parseReport(report: string | null): Record<string, unknown> | null {
     if (!report) return null;
     try { return JSON.parse(report); } catch { return null; }
@@ -626,7 +621,6 @@
   .run-detail-pro :global(.rd-pill.verdict-reject)   { color: var(--abort); }
   .run-detail-pro :global(.rd-pill.verdict-skip)     { color: var(--graphite); }
   .run-detail-pro :global(.rd-pill.mode)             { color: var(--ink); border-color: var(--rule-2); }
-  .run-detail-pro :global(.rd-pill.mode-plan_only)   { color: var(--data); border-color: color-mix(in oklab, var(--data) 60%, transparent); }
   .run-detail-pro :global(.rd-pill.mode-vision-bootstrap) { color: var(--graphite); }
 
   .run-detail-pro :global(.rd-meta-chip) {

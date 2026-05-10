@@ -25,6 +25,7 @@
   --go:       #00B86B;
   --caution:  #E89A00;
   --abort:    #D33A2C;
+  --critical: #1A1611; /* BLACK backpressure — distinct from RED/abort */
   --data:     #1F4FD9;
 
   --dot:      rgba(26,22,17,0.06);
@@ -54,6 +55,7 @@
   --go:       #2EE085;
   --caution:  #FFB52D;
   --abort:    #FF5448;
+  --critical: #C58CFF; /* BLACK backpressure — distinct from RED/abort (deep purple in dark mode for contrast) */
   --data:     #6B82FF;
 
   --dot:      rgba(239,230,214,0.05);
@@ -130,7 +132,6 @@
 .pro-nav a:hover { color: var(--ink); }
 
 .pro-status { display: flex; align-items: center; gap: 14px; font-family: var(--pro-mono); font-size: 10px; color: var(--graphite); }
-.pro-status .pill { color: var(--ink); font-weight: 500; }
 .pro-status kbd { font-family: var(--pro-mono); font-size: 9px; padding: 1px 4px; border: 1px solid var(--rule-2); color: var(--graphite); margin-left: 4px; }
 
 .pro-dot { display: inline-block; width: 7px; height: 7px; background: var(--ash); margin-right: 5px; transform: translateY(-1px); }

@@ -90,7 +90,7 @@ Per-project setting that gates **how freely** the agent can act on its work. Ind
 | `assisted` *(default)* | allow | defer to operator | block |
 | `auto` | allow | allow | block |
 
-Every decision — allow, defer, or block — is recorded to `agent_events` with `event_type='auto_mode_decision'` and surfaced on the Autonomy Audit page. The always-deny list is hard-coded in `agent/auto_mode.py` and cannot be overridden, even at `auto`.
+Every decision — allow, defer, or block — is recorded to `agent_events` with `event_type='auto_mode_decision'` and surfaced on the Audit tab in Settings (`/settings/audit`). The always-deny list is hard-coded in `agent/auto_mode.py` and cannot be overridden, even at `auto`.
 
 ## API key and webhook secret
 

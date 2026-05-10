@@ -86,7 +86,7 @@
     border-left: 3px solid transparent;
     display: flex; flex-direction: column; gap: 8px;
     font-family: var(--pro-sans);
-    transition: border-color 200ms ease;
+    transition: border-top-color 200ms ease, border-right-color 200ms ease, border-bottom-color 200ms ease;
   }
   .tm-card:hover { border-color: var(--rule-2); }
   .tm-card.active    { border-left-color: var(--go); }
