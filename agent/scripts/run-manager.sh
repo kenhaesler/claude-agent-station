@@ -2294,7 +2294,34 @@ $close_line}" 2>&1) || true
                                     push_merge_ok=true
                                     log_ok "PR merged to $base_branch"
                                 else
-                                    log_error "PR merge failed — left open for manual review: $pr_url"
+                                    log_warn "PR merge failed for $pr_url — attempting at-merge resolution"
+                                    local pr_num_for_resolve
+                                    pr_num_for_resolve=$(echo "$pr_url" | grep -oE '[0-9]+$' || echo "")
+                                    set +e
+                                    rebase_against_base "$workspace" "$branch" "$base_branch" "$project" "$pr_num_for_resolve" "$RUN_ID" "at_merge"
+                                    local resolve_rc=$?
+                                    set -e
+                                    if [ "$resolve_rc" = "0" ]; then
+                                        log_info "Resolution succeeded; retrying merge"
+                                        if gh pr merge "$pr_url" --merge --delete-branch 2>&1 | while IFS= read -r line; do log_info "  $line"; done; then
+                                            push_merge_ok=true
+                                            log_ok "PR merged to $base_branch (after at-merge resolution)"
+                                        else
+                                            log_error "PR merge still failed after resolution — left open: $pr_url"
+                                            local _script_dir
+                                            _script_dir="$(dirname "${BASH_SOURCE[0]}")"
+                                            # shellcheck source=lib/conflict-helpers.sh
+                                            source "$_script_dir/lib/conflict-helpers.sh"
+                                            post_resolution_outcome 1 "$project" "$pr_num_for_resolve" "$branch"
+                                        fi
+                                    else
+                                        log_error "Resolution failed (rc=$resolve_rc) — left open for manual review: $pr_url"
+                                        local _script_dir
+                                        _script_dir="$(dirname "${BASH_SOURCE[0]}")"
+                                        # shellcheck source=lib/conflict-helpers.sh
+                                        source "$_script_dir/lib/conflict-helpers.sh"
+                                        post_resolution_outcome "$resolve_rc" "$project" "$pr_num_for_resolve" "$branch"
+                                    fi
                                 fi
                             else
                                 log_error "PR creation failed for $branch"
