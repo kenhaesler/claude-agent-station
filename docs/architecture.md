@@ -152,16 +152,14 @@ claude-agent-station/
 │   └── frontend/                   # Svelte 5 SPA
 │       ├── src/
 │       │   ├── App.svelte          # Root + hash-based routing
-│       │   ├── pages/              # 10 page components
+│       │   ├── pages/              # 8 page components
 │       │   │   ├── AgentTeamsCanvas.svelte  # Agent Teams live view
-│       │   │   ├── AutonomyAudit.svelte     # Audit log browser
-│       │   │   ├── CommandCenter.svelte     # Overview dashboard
+│       │   │   ├── CommandCenter.svelte     # Dispatch
 │       │   │   ├── MissionControl.svelte    # Mission control panel
 │       │   │   ├── ProjectDetail.svelte     # Single-project view
 │       │   │   ├── ProjectsPage.svelte      # Projects list
 │       │   │   ├── QueueBoard.svelte        # Task queue kanban
 │       │   │   ├── RunDetail.svelte         # Run detail + diffs
-│       │   │   ├── RunsPage.svelte          # Run history
 │       │   │   └── SettingsPage.svelte      # Settings + system
 │       │   ├── components/         # 56 reusable components (grouped by domain)
 │       │   └── lib/                # TypeScript modules

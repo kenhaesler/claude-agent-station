@@ -359,7 +359,6 @@
     <div style="background: rgba(255,251,247,0.65); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border: 1px solid rgba(240,220,200,0.6); border-radius: 18px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.04), 0 12px 32px rgba(0,0,0,0.07); animation: card-in 0.6s cubic-bezier(0.16, 1, 0.3, 1) 0.35s both; margin-bottom: 28px;">
       <div style="padding: 16px 24px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(0,0,0,0.04);">
         <span style="font-size: 15px; font-weight: 700; color: #3D2A1A;">Recent Runs</span>
-        <button onclick={() => navigate('/runs')} style="font-size: 14px; color: #7A6652; cursor: pointer; border: none; background: none; font-family: inherit;">View all →</button>
       </div>
       {#each recentRuns.slice(0, 10) as run (run.id)}
         {@const status = getStatusBadge(run)}
