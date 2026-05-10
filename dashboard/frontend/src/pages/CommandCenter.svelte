@@ -146,7 +146,7 @@
     if (m === 'plan') return { label: 'PLAN', cls: 'plan' };
     if (m === 'analyze') return { label: 'ANLZ', cls: 'plan' };
     if (m === 'vision-bootstrap') return { label: 'VIS', cls: 'vision' };
-    if (m === 'agent_teams') return { label: 'TEAMS', cls: 'full' };
+    if (m === 'agent-teams' || m === 'agent_teams') return { label: 'TEAMS', cls: 'full' };
     if (m === 'employee') return { label: 'EMP', cls: 'full' };
     if (m === 'manager') return { label: 'MGR', cls: 'full' };
     if (m === 'full') return { label: 'FULL', cls: 'full' };

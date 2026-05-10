@@ -50,7 +50,9 @@ function buildChars(
   const skipAnim = !animate || reducedMotion();
   for (let i = 0; i < text.length; i++) {
     const s = document.createElement('span');
-    s.textContent = text[i] === ' ' ? ' ' : text[i];
+    // Non-breaking space — regular spaces collapse to 0 width inside the
+    // inline-flex .flap container.
+    s.textContent = text[i] === ' ' ? ' ' : text[i];
     if (skipAnim) {
       // Disable the CSS @keyframes flap so polling-driven updates don't
       // re-trigger the intro animation across a 50-row board.
