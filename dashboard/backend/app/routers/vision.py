@@ -12,10 +12,11 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
+from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db
-from app.models import Project, VisionChatSession
+from app.models import Project, Run, VisionChatSession
 from app.schemas import VisionRead, VisionCommitIn, VisionCommitOut, VisionStaleSha, VisionChatTurnIn, VisionChatSessionOut, VisionProposalsRead
 from app.services import github_contents
 from app.services.vision_render import render_vision_doc
@@ -259,6 +260,84 @@ async def delete_chat_session(project_id: int, db: AsyncSession = Depends(get_db
     await db.commit()
 
 
+def _check_gh_auth() -> bool:
+    """Return True iff `gh auth status` exits cleanly.
+
+    Best-effort probe: a non-zero exit means the agent's gh token is
+    invalid/expired and a vision-analyst dispatch will spin up only to
+    crash on the first GitHub API call. Cheap to run (a few hundred ms)
+    and infinitely cheaper than a doomed analyst run.
+    """
+    try:
+        result = subprocess.run(
+            ["gh", "auth", "status"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        return result.returncode == 0
+    except Exception:
+        # Treat any subprocess failure (gh not installed, OS error, timeout)
+        # as auth-broken — the agent can't dispatch anyway.
+        return False
+
+
+async def _vision_preflight(
+    db: AsyncSession, project: Project
+) -> tuple[bool, int, str]:
+    """Preflight checks before dispatching a vision_analyst run.
+
+    Returns ``(ok, status_code, detail)``. When ``ok`` is True, the caller
+    may dispatch; when False, raise HTTPException(status_code, detail).
+
+    Two layers (issue #272):
+    1. ``gh`` CLI auth health — short-circuits invalid-token dispatches.
+    2. Last vision-bootstrap run failed for the *current* vision SHA AND
+       no later success exists → block re-runs until the operator either
+       fixes auth or commits a new vision.
+    """
+    # Layer A: gh auth health — run in a thread so we don't block the loop
+    auth_ok = await asyncio.to_thread(_check_gh_auth)
+    if not auth_ok:
+        return (
+            False,
+            409,
+            "GitHub CLI is not authenticated — visit Settings → GitHub to reconnect.",
+        )
+
+    # Layer B: stale-failure guard. Find the most-recent vision-bootstrap
+    # run for this project; if it failed and no later 'completed' run for
+    # the current cached SHA exists, refuse to re-dispatch.
+    q = (
+        select(Run)
+        .where(Run.project_id == project.id, Run.mode == "vision-bootstrap")
+        .order_by(desc(Run.started_at))
+        .limit(5)
+    )
+    result = await db.execute(q)
+    recent: list[Run] = list(result.scalars().all())
+    if recent:
+        latest = recent[0]
+        if latest.status == "failed":
+            # Look for a 'completed' run that started AFTER the latest failure.
+            # A success at-or-after the failure means the project recovered.
+            recovered = any(
+                r.status == "completed"
+                and (r.started_at or datetime.min) >= (latest.started_at or datetime.min)
+                and r.run_id != latest.run_id
+                for r in recent
+            )
+            if not recovered:
+                return (
+                    False,
+                    409,
+                    "Last vision analysis for this commit failed. "
+                    "Resolve the issue (commit a new vision or fix gh auth) "
+                    "before re-running.",
+                )
+    return (True, 200, "")
+
+
 @router.post("/{project_id}/vision/find-gaps")
 async def find_gaps(project_id: int, db: AsyncSession = Depends(get_db)):
     """Dispatch the vision_analyst to find gaps in the project vision."""
@@ -267,6 +346,10 @@ async def find_gaps(project_id: int, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="project not found")
     if not project.vision_cached_body:
         raise HTTPException(status_code=400, detail="project has no vision yet")
+
+    ok, status_code, detail = await _vision_preflight(db, project)
+    if not ok:
+        raise HTTPException(status_code=status_code, detail=detail)
 
     result = await service_control.start_vision_analyst(project_id)
     if not result.get("success"):
