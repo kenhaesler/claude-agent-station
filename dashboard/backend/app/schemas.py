@@ -526,11 +526,24 @@ class TelemetrySystem(BaseModel):
     uptime_secs: float | None = None
 
 
+class TelemetryVerdicts7d(BaseModel):
+    """Verdict counts over the same 7-day window as ``tokens_7d``.
+
+    ``ok`` covers APPROVE verdicts, ``pr`` covers PR verdicts, ``x`` covers
+    REJECT plus any other non-null terminal verdict (so the three buckets
+    exhaust the verdict-bearing run set without dropping rows).
+    """
+    ok: int = 0
+    pr: int = 0
+    x: int = 0
+
+
 class TelemetrySummaryOut(BaseModel):
     active: TelemetryActive
     queue: TelemetryQueue
     tokens_7d: TelemetryTokens7d
     system: TelemetrySystem
+    verdicts_7d: TelemetryVerdicts7d = TelemetryVerdicts7d()
 
 
 # --- Analytics ---

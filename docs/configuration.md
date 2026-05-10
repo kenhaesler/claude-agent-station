@@ -104,7 +104,7 @@ Exempt from `STATION_API_KEY` auth (verified in `dashboard/backend/app/main.py`)
 
 ### Dispatch telemetry
 
-`GET /api/runs/telemetry-summary` (added by the Pro Dispatch redesign) is the single endpoint backing the four telemetry cells on the home page (Active / Queue / Tokens·7D / System). It aggregates running runs + their teammates, queue counts grouped by lifecycle state, a 7-day token total with daily sparkline points, and a coarse system-health label (`NOMINAL`/`DEGR`/`CRIT`) derived from disk and memory pressure. Lives in `dashboard/backend/app/routers/runs.py`; the response shape is `TelemetrySummaryOut` in `app/schemas.py`.
+`GET /api/runs/telemetry-summary` (added by the Pro Dispatch redesign) is the single endpoint backing the four telemetry cells on the home page (Active / Queue / Tokens·7D / System) and the global LiveTicker KPI bar. It aggregates running runs + their teammates, queue counts grouped by lifecycle state, a 7-day token total with daily sparkline points, a 7-day verdict count (APPROVE/PR/REJECT bucketed as `ok`/`pr`/`x`) for the LiveTicker, and a coarse system-health label (`NOMINAL`/`DEGR`/`CRIT`) derived from disk and memory pressure. Lives in `dashboard/backend/app/routers/runs.py`; the response shape is `TelemetrySummaryOut` in `app/schemas.py`.
 
 **Response shape** (see `TelemetrySummaryOut` and the four sub-models in `app/schemas.py` for the authoritative fields and types):
 
@@ -114,6 +114,7 @@ Exempt from `STATION_API_KEY` auth (verified in `dashboard/backend/app/main.py`)
 | `queue` (`TelemetryQueue`) | `total`, `claimed`, `done`, `pending`, `other` | Counts of `QueueItem` rows grouped by lifecycle state. `claimed` aggregates `claimed`/`assigned`/`planning`/`in_progress`; `done` aggregates `completed`/`approved`; `pending` is just `pending`; `other` catches anything else (`failed`/`paused`/`cancelled`/...) so the four cells always sum to `total`. |
 | `tokens_7d` (`TelemetryTokens7d`) | `total`, `runs`, `input`, `output`, `spark[]` | Sum of `Run.tokens_total` / `tokens_input` / `tokens_output` and run count for the past 7 days. `spark` is always a length-7 array of per-day token totals (oldest → today, missing days backfilled to 0) feeding the cell sparkline. |
 | `system` (`TelemetrySystem`) | `status`, `disk_free_gb`, `memory_used_pct`, `uptime_secs` | Coarse health label derived from disk and memory pressure: `NOMINAL` is the default; `DEGR` triggers under 5G free or >70% memory used; `CRIT` triggers under 1G free or >90% memory used. Underlying numbers come from `app.services.systemd.get_system_resources`. |
+| `verdicts_7d` (`TelemetryVerdicts7d`) | `ok`, `pr`, `x` | 7-day verdict counts grouped by `Run.verdict` (case-insensitive): `APPROVE` → `ok`, `PR` → `pr`, anything else non-null (`REJECT` and any future terminal verdict) → `x`. Runs with NULL verdicts (still in flight or never reviewed) are excluded. Feeds the `VERDICTS·7D` cell in the LiveTicker. |
 
 ## Project config
 

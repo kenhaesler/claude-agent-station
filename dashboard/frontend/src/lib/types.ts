@@ -313,6 +313,7 @@ export interface TelemetrySummary {
     memory_used_pct: number | null;
     uptime_secs: number | null;
   };
+  verdicts_7d: { ok: number; pr: number; x: number };
 }
 
 // --- Notifications ---
