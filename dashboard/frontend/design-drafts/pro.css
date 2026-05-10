@@ -1,0 +1,369 @@
+/* ──────────────────────────────────────────────────────────
+   STATION · PRO design system (shared across drafts)
+   Paper + ink + 4 signal colors. No CRT chrome. Three voices:
+   Fraunces (wordmark only), Bricolage Grotesque (UI labels),
+   JetBrains Mono (telemetry, IDs, all numbers).
+   Motion = signal, never ambience.
+   ────────────────────────────────────────────────────────── */
+
+@import url("https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400..700&family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=JetBrains+Mono:wght@400;500;600;700&display=swap");
+
+:root {
+  --paper:    #F2EDE3;
+  --paper-2:  #ECE6DA;
+  --paper-3:  #E5DECF;
+  --ink:      #1A1611;
+  --rule:     rgba(26,22,17,0.13);
+  --rule-2:   rgba(26,22,17,0.22);
+  --graphite: #5C544A;
+  --ash:      #8E867A;
+
+  --go:       #00B86B;
+  --caution:  #E89A00;
+  --abort:    #D33A2C;
+  --data:     #1F4FD9;
+
+  --dot:      rgba(26,22,17,0.06);
+
+  --serif:    "Fraunces", "Times New Roman", serif;
+  --sans:     "Bricolage Grotesque", system-ui, sans-serif;
+  --mono:     "JetBrains Mono", ui-monospace, monospace;
+
+  /* role tints — used by Mission Control activity feed */
+  --role-lead:     #1F4FD9;
+  --role-backend:  #00B86B;
+  --role-frontend: #E89A00;
+  --role-qa:       #6E3A8E;
+  --role-operator: #1A1611;
+}
+
+[data-theme="dark"] {
+  --paper:    #14110D;
+  --paper-2:  #1B1813;
+  --paper-3:  #221E18;
+  --ink:      #EFE6D6;
+  --rule:     rgba(239,230,214,0.10);
+  --rule-2:   rgba(239,230,214,0.22);
+  --graphite: #B5A993;
+  --ash:      #7E7666;
+
+  --go:       #2EE085;
+  --caution:  #FFB52D;
+  --abort:    #FF5448;
+  --data:     #6B82FF;
+
+  --dot:      rgba(239,230,214,0.05);
+
+  --role-lead:     #6B82FF;
+  --role-backend:  #2EE085;
+  --role-frontend: #FFB52D;
+  --role-qa:       #C58CFF;
+  --role-operator: #EFE6D6;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; height: 100%; }
+html { transition: background-color 220ms ease; }
+body {
+  font-family: var(--sans);
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--ink);
+  background: var(--paper);
+  background-image: radial-gradient(circle at 1px 1px, var(--dot) 1px, transparent 0);
+  background-size: 24px 24px;
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+  display: flex; flex-direction: column;
+  transition: background-color 220ms ease, color 220ms ease;
+}
+.tabular { font-variant-numeric: tabular-nums; }
+.mono { font-family: var(--mono); }
+
+/* ── TOP STRIP ─────────────────────────────────────────── */
+.strip {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 18px;
+  padding: 0 16px;
+  height: 40px;
+  border-bottom: 1px solid var(--rule);
+  background: var(--paper);
+  position: sticky; top: 0; z-index: 10;
+  flex-shrink: 0;
+}
+.wordmark { display: flex; align-items: baseline; gap: 8px; }
+.wordmark .name {
+  font-family: var(--serif);
+  font-weight: 600;
+  font-size: 14px;
+  letter-spacing: -0.005em;
+  color: var(--ink);
+}
+.wordmark .tag {
+  font-family: var(--mono);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: var(--ash);
+}
+.strip-nav {
+  display: flex; gap: 2px; justify-self: start;
+  margin-left: 12px;
+}
+.strip-nav a {
+  font-family: var(--sans);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  text-decoration: none;
+  color: var(--graphite);
+  padding: 5px 10px;
+  border: 1px solid transparent;
+}
+.strip-nav a.active {
+  color: var(--ink);
+  border-color: var(--rule-2);
+  background: var(--paper-2);
+}
+.strip-nav a:hover { color: var(--ink); }
+
+.strip-status {
+  display: flex; align-items: center; gap: 14px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--graphite);
+}
+.dot {
+  display: inline-block;
+  width: 7px; height: 7px;
+  background: var(--ash);
+  margin-right: 5px;
+  transform: translateY(-1px);
+}
+.dot.go { background: var(--go); }
+.dot.caution { background: var(--caution); }
+.dot.abort { background: var(--abort); }
+.dot.live { animation: livedot 1.6s steps(2) infinite; }
+@keyframes livedot { 50% { opacity: .35; } }
+.strip-status .pill { color: var(--ink); font-weight: 500; }
+.strip-status kbd {
+  font-family: var(--mono);
+  font-size: 9px;
+  padding: 1px 4px;
+  border: 1px solid var(--rule-2);
+  color: var(--graphite);
+  margin-left: 4px;
+}
+
+.btn-stop, .btn-theme {
+  font-family: var(--sans);
+  font-weight: 700;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  background: var(--ink);
+  color: var(--paper);
+  border: 1px solid var(--ink);
+  padding: 5px 10px;
+  cursor: pointer;
+  height: 26px;
+}
+.btn-stop:hover { background: var(--abort); border-color: var(--abort); color: #fff; }
+.btn-theme {
+  background: transparent;
+  color: var(--ink);
+  width: 26px; height: 26px;
+  padding: 0;
+  display: inline-grid; place-items: center;
+}
+.btn-theme:hover { background: var(--paper-2); }
+.btn-theme svg { width: 12px; height: 12px; }
+
+/* ── TICKER ────────────────────────────────────────────── */
+.ticker {
+  position: relative;
+  height: 22px;
+  overflow: hidden;
+  border-bottom: 1px solid var(--rule);
+  background: var(--paper-2);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--graphite);
+  display: flex; align-items: center;
+  flex-shrink: 0;
+}
+.ticker-tag {
+  position: absolute; left: 0; top: 0; bottom: 0;
+  display: inline-flex; align-items: center;
+  padding: 0 10px;
+  background: var(--ink); color: var(--paper);
+  font-family: var(--sans);
+  font-weight: 700;
+  font-size: 9px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  z-index: 2;
+}
+.ticker-track {
+  display: flex; gap: 0;
+  animation: tick-scroll 60s linear infinite;
+  padding-left: 80px;
+  white-space: nowrap;
+}
+.ticker-track > span {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 0 18px;
+  border-right: 1px solid var(--rule);
+}
+.ticker-track > span b { color: var(--ink); font-weight: 500; }
+.ticker-track > span .go { color: var(--go); }
+.ticker-track > span .am { color: var(--caution); }
+.ticker-track > span .rd { color: var(--abort); }
+@keyframes tick-scroll { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+
+/* ── SECTION HEAD (used by sidebar panels across pages) ── */
+.section-head {
+  height: 30px;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 14px;
+  font-family: var(--sans);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--ash);
+  background: var(--paper-2);
+  border-bottom: 1px solid var(--rule);
+  flex-shrink: 0;
+}
+.section-head .right {
+  color: var(--graphite);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0;
+  text-transform: none;
+  display: flex; gap: 10px; align-items: center;
+}
+.section-head select {
+  font-family: var(--mono);
+  font-size: 11px;
+  background: var(--paper);
+  color: var(--ink);
+  border: 1px solid var(--rule-2);
+  padding: 1px 4px;
+}
+
+/* ── STATUS PILL / MODE / AUT BADGES ───────────────────── */
+.status {
+  font-family: var(--sans);
+  font-weight: 700;
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  padding: 3px 6px;
+  border: 1px solid currentColor;
+  white-space: nowrap;
+  display: inline-block;
+  line-height: 1;
+}
+.status.run    { color: var(--go); }
+.status.planok { color: var(--go); }
+.status.planx  { color: var(--abort); }
+.status.stop   { color: var(--caution); }
+.status.done   { color: var(--graphite); }
+.status.idle   { color: var(--graphite); }
+
+.run-tick {
+  display: inline-block;
+  width: 5px; height: 5px;
+  background: var(--go);
+  margin-right: 5px;
+  vertical-align: 1px;
+  animation: tick 1.2s steps(2) infinite;
+}
+@keyframes tick { 50% { opacity: 0.25; } }
+
+.mode, .aut {
+  font-family: var(--sans);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  padding: 2px 5px;
+  border: 1px solid var(--rule-2);
+  color: var(--graphite);
+  display: inline-block;
+  line-height: 1.3;
+}
+.mode.plan   { color: var(--data); border-color: color-mix(in oklab, var(--data) 60%, transparent); }
+.mode.full   { color: var(--ink); }
+.mode.vision { color: var(--graphite); }
+.aut.assist  { color: var(--caution); border-color: color-mix(in oklab, var(--caution) 60%, transparent); }
+.aut.auto    { color: var(--go); border-color: color-mix(in oklab, var(--go) 60%, transparent); }
+.aut.manual  { color: var(--graphite); }
+
+/* ── FLAP ─────────────────────────────────────────────── */
+.flap { display: inline-flex; flex-wrap: wrap; }
+.flap span {
+  display: inline-block;
+  transform-origin: center top;
+  animation: flap 220ms cubic-bezier(.5,0,.05,1) both;
+}
+@keyframes flap {
+  0%   { transform: rotateX(-92deg); opacity: 0; }
+  60%  { transform: rotateX(8deg);   opacity: 1; }
+  100% { transform: rotateX(0);      opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .flap span { animation: none; }
+  .ticker-track { animation: none; }
+  .run-tick, .dot.live { animation: none; }
+}
+
+/* ── TELEPRINTER FOOTER ───────────────────────────────── */
+.tele {
+  border-top: 1px solid var(--rule);
+  background: var(--paper-2);
+  padding: 6px 16px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--graphite);
+  display: grid;
+  grid-template-columns: auto auto 1fr auto;
+  gap: 12px;
+  align-items: center;
+  height: 28px;
+  flex-shrink: 0;
+}
+.tele .now { color: var(--ink); display: inline-flex; align-items: center; gap: 7px; }
+.tele .ev { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tele .ev b  { color: var(--ink); font-weight: 500; }
+.tele .ev em { font-style: normal; color: var(--data); }
+
+/* ── HOTKEY LEGEND ────────────────────────────────────── */
+.legend {
+  position: fixed; bottom: 38px; right: 14px;
+  font-family: var(--mono); font-size: 9px; color: var(--ash);
+  display: flex; gap: 8px; pointer-events: none; opacity: 0.7;
+  letter-spacing: 0.04em;
+}
+.legend kbd {
+  font-family: var(--mono);
+  font-size: 9px;
+  padding: 1px 4px;
+  border: 1px solid var(--rule-2);
+  color: var(--graphite);
+  background: var(--paper);
+  margin-right: 3px;
+}
+
+/* ── COMMON RESPONSIVE ────────────────────────────────── */
+@media (max-width: 760px) {
+  .strip-nav { display: none; }
+  .ticker-tag { padding: 0 6px; font-size: 8px; }
+  .legend { display: none; }
+}

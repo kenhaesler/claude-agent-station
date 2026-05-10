@@ -1,0 +1,576 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Station / Run · run-…220534Z — Pro</title>
+<link rel="stylesheet" href="pro.css" />
+<style>
+.crumb {
+  display: flex; align-items: center; gap: 12px;
+  padding: 6px 16px; border-bottom: 1px solid var(--rule);
+  background: var(--paper); flex-shrink: 0;
+  font-family: var(--mono); font-size: 11px; color: var(--graphite);
+}
+.crumb a { color: var(--graphite); text-decoration: none; }
+.crumb a:hover { color: var(--ink); }
+.crumb b { color: var(--ink); font-weight: 500; }
+.crumb .sep { color: var(--ash); }
+
+.page-head {
+  display: grid; grid-template-columns: 1fr auto;
+  gap: 18px; align-items: end;
+  padding: 16px 16px 12px; border-bottom: 1px solid var(--rule);
+  flex-shrink: 0;
+}
+.page-head h1 {
+  margin: 0; font-family: var(--mono); font-size: 22px;
+  font-weight: 600; letter-spacing: -0.01em; color: var(--ink);
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+}
+.page-head h1 .badges { display: inline-flex; gap: 6px; }
+.page-head .meta {
+  font-family: var(--mono); font-size: 11px;
+  color: var(--graphite); display: flex; gap: 12px; flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.page-head .meta b { color: var(--ink); font-weight: 500; }
+
+/* Quick stats strip — 8 stats inline */
+.qstats {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  border-bottom: 1px solid var(--rule);
+}
+.qstat {
+  padding: 10px 14px; border-right: 1px solid var(--rule);
+  display: flex; flex-direction: column; gap: 2px;
+}
+.qstat:last-child { border-right: none; }
+.qstat .k {
+  font-family: var(--sans); font-size: 9px; font-weight: 700;
+  letter-spacing: 0.18em; text-transform: uppercase; color: var(--graphite);
+}
+.qstat .v {
+  font-family: var(--mono); font-size: 18px; font-weight: 600;
+  color: var(--ink); line-height: 1; font-variant-numeric: tabular-nums;
+}
+.qstat .v.go { color: var(--go); }
+.qstat .v.caution { color: var(--caution); }
+.qstat .v.abort { color: var(--abort); }
+.qstat .v.nu { color: var(--ash); }
+.qstat .sub { font-family: var(--mono); font-size: 9px; color: var(--ash); }
+
+/* Tabs */
+.tabs {
+  display: flex; gap: 0; align-items: center;
+  border-bottom: 1px solid var(--rule);
+  background: var(--paper); padding: 0 16px;
+  flex-shrink: 0; overflow-x: auto;
+}
+.tab {
+  font-family: var(--sans); font-size: 11px; font-weight: 700;
+  letter-spacing: 0.16em; text-transform: uppercase;
+  color: var(--graphite); background: transparent;
+  border: none; border-bottom: 2px solid transparent;
+  padding: 10px 14px; cursor: pointer; white-space: nowrap;
+}
+.tab.active { color: var(--ink); border-bottom-color: var(--ink); }
+.tab:hover { color: var(--ink); }
+.tab .count {
+  font-family: var(--mono); font-size: 10px; color: var(--ash);
+  margin-left: 4px; font-weight: 500;
+}
+.tab.active .count { color: var(--graphite); }
+.tab.disabled { color: var(--ash); cursor: not-allowed; }
+.tab.disabled:hover { color: var(--ash); }
+
+.tab-body { flex: 1; min-height: 0; overflow-y: auto; }
+.tab-pane { display: none; padding: 16px; }
+.tab-pane.active { display: block; }
+
+/* Overview cards grid */
+.cards {
+  display: grid; grid-template-columns: 2fr 1fr; gap: 16px;
+}
+.card-block {
+  background: var(--paper-2);
+  border: 1px solid var(--rule);
+  padding: 14px 16px;
+}
+.card-block h3 {
+  margin: 0 0 8px; font-family: var(--sans); font-size: 10px;
+  font-weight: 700; letter-spacing: 0.2em; text-transform: uppercase;
+  color: var(--ash);
+  border-bottom: 1px solid var(--rule); padding-bottom: 6px;
+}
+.card-block p { margin: 6px 0; font-family: var(--sans); font-size: 13px; line-height: 1.5; color: var(--ink); }
+.card-block .mono-line { font-family: var(--mono); font-size: 11px; color: var(--graphite); margin: 4px 0; }
+.card-block .key-row { display: grid; grid-template-columns: 90px 1fr; gap: 8px; padding: 3px 0; border-bottom: 1px dashed var(--rule); font-family: var(--mono); font-size: 11px; }
+.card-block .key-row:last-child { border-bottom: none; }
+.card-block .key-row label { color: var(--ash); font-family: var(--sans); font-size: 9px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; align-self: center; }
+.card-block .key-row val { color: var(--ink); }
+
+/* Progress bar */
+.progress {
+  height: 6px; background: var(--paper-3);
+  position: relative; margin: 4px 0;
+}
+.progress > span {
+  position: absolute; left: 0; top: 0; bottom: 0;
+  background: var(--go);
+}
+.progress-meta { font-family: var(--mono); font-size: 10px; color: var(--ash); display: flex; justify-content: space-between; margin-top: 2px; }
+
+/* DAG tab */
+.dag {
+  display: flex; flex-direction: column; gap: 16px;
+}
+.dag-row {
+  display: grid; grid-template-columns: 24px 110px 1fr 80px 70px 70px;
+  gap: 14px; align-items: center;
+  padding: 10px 14px; border: 1px solid var(--rule); background: var(--paper-2);
+  font-family: var(--mono); font-size: 12px;
+}
+.dag-row .ix { color: var(--ash); font-size: 11px; }
+.dag-row .id { color: var(--graphite); }
+.dag-row .title { font-family: var(--sans); font-size: 13px; font-weight: 500; color: var(--ink); }
+.dag-row .num { text-align: right; font-variant-numeric: tabular-nums; }
+.dag-row .nu  { color: var(--ash); }
+.dag-row.run { border-left: 3px solid var(--go); }
+
+/* Conversation tab — same shape as Mission Control feed but lighter */
+.conv-row {
+  display: grid; grid-template-columns: 78px 100px 16px 1fr;
+  gap: 8px; padding: 4px 14px; align-items: baseline;
+  font-family: var(--mono); font-size: 12px;
+}
+.conv-row + .conv-row { border-top: 1px dashed var(--rule); }
+.conv-row .t { color: var(--ash); font-size: 11px; }
+.conv-row .agent { color: var(--ink); font-weight: 500; }
+.conv-row .agent[data-role="lead"]      { color: var(--role-lead); }
+.conv-row .agent[data-role="backend"]   { color: var(--role-backend); }
+.conv-row .agent[data-role="frontend"]  { color: var(--role-frontend); }
+.conv-row .agent[data-role="qa"]        { color: var(--role-qa); }
+.conv-row .agent[data-role="operator"]  { color: var(--role-operator); }
+.conv-row .glyph { color: var(--graphite); }
+.conv-row .body { color: var(--ink); }
+.conv-row .body em { font-style: normal; color: var(--data); margin-right: 5px; }
+
+/* Diff tab */
+.diff-stat {
+  display: flex; gap: 14px; padding: 10px 14px;
+  border: 1px solid var(--rule); background: var(--paper-2);
+  font-family: var(--mono); font-size: 12px; margin-bottom: 12px;
+}
+.diff-stat .add { color: var(--go); }
+.diff-stat .del { color: var(--abort); }
+.diff-file {
+  border: 1px solid var(--rule); background: var(--paper-2);
+  margin-bottom: 8px;
+}
+.diff-file .file-head {
+  font-family: var(--mono); font-size: 12px;
+  padding: 8px 12px; border-bottom: 1px solid var(--rule);
+  display: flex; justify-content: space-between; gap: 14px;
+  background: var(--paper-3);
+}
+.diff-file .file-head .path { color: var(--ink); }
+.diff-file .file-head .meta { color: var(--graphite); }
+.diff-file .file-head .add { color: var(--go); }
+.diff-file .file-head .del { color: var(--abort); }
+.diff-file .hunk { padding: 8px 0; font-family: var(--mono); font-size: 11px; line-height: 1.45; }
+.diff-file .hunk-line { display: grid; grid-template-columns: 36px 36px 16px 1fr; gap: 0; }
+.diff-file .hunk-line .ln { color: var(--ash); padding: 0 8px; text-align: right; user-select: none; }
+.diff-file .hunk-line .sg { padding: 0 4px; text-align: center; user-select: none; }
+.diff-file .hunk-line .src { padding: 0 8px; white-space: pre; color: var(--ink); }
+.diff-file .hunk-line.add { background: color-mix(in oklab, var(--go) 9%, transparent); }
+.diff-file .hunk-line.add .sg { color: var(--go); }
+.diff-file .hunk-line.del { background: color-mix(in oklab, var(--abort) 8%, transparent); }
+.diff-file .hunk-line.del .sg { color: var(--abort); }
+.diff-file .hunk-line.hd  { color: var(--graphite); padding: 0 8px; font-style: italic; grid-column: 1 / -1; }
+
+/* Logs tab — terminal scrollback */
+.logs {
+  font-family: var(--mono); font-size: 11px;
+  background: var(--paper-2); border: 1px solid var(--rule);
+  padding: 12px; line-height: 1.5;
+  white-space: pre-wrap; max-height: 540px; overflow-y: auto;
+}
+
+/* Empty state */
+.empty {
+  font-family: var(--mono); font-size: 12px; color: var(--ash);
+  padding: 32px 14px; text-align: center; border: 1px dashed var(--rule);
+}
+
+@media (max-width: 1180px) {
+  .qstats { grid-template-columns: repeat(4, 1fr); }
+  .cards { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+
+<header class="strip">
+  <div class="wordmark">
+    <span class="name">Station</span>
+    <span class="tag">OPERATOR · v1</span>
+  </div>
+  <nav class="strip-nav">
+    <a href="dispatch-board.html">Dispatch</a>
+    <a href="mission.html">Mission</a>
+    <a href="fleet.html">Fleet</a>
+    <a href="#" class="active">Run</a>
+    <a href="#">Queue</a>
+    <a href="#">Settings</a>
+  </nav>
+  <div class="strip-status">
+    <span><span class="dot go live"></span><span class="pill">WORKING · 1</span></span>
+    <span>647 TOK</span>
+    <span>SSE&nbsp;<b style="color:var(--go)">●</b></span>
+    <button class="btn-theme" id="theme-toggle" aria-label="Toggle theme">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" id="theme-sun" style="display:none">
+        <circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="4.2" y1="4.2" x2="6.3" y2="6.3"/><line x1="17.7" y1="17.7" x2="19.8" y2="19.8"/><line x1="2" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="22" y2="12"/><line x1="4.2" y1="19.8" x2="6.3" y2="17.7"/><line x1="17.7" y1="6.3" x2="19.8" y2="4.2"/>
+      </svg>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" id="theme-moon">
+        <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>
+      </svg>
+    </button>
+    <button class="btn-stop">Stop <kbd>⌘.</kbd></button>
+  </div>
+</header>
+
+<div class="ticker">
+  <span class="ticker-tag">// Live</span>
+  <div class="ticker-track" id="ticker-track"></div>
+</div>
+
+<!-- BREADCRUMB -->
+<div class="crumb">
+  <a href="dispatch-board.html">← Dispatch</a>
+  <span class="sep">/</span>
+  <span>laboef1900/next-itsm</span>
+  <span class="sep">/</span>
+  <b>run-20260509T220534Z</b>
+</div>
+
+<!-- PAGE HEADER -->
+<div class="page-head">
+  <h1>
+    <span>run-20260509T220534Z</span>
+    <span class="badges">
+      <span class="status run"><span class="run-tick"></span><span class="lab">Run</span></span>
+      <span class="mode full">FULL</span>
+      <span class="aut assist">ASSIST</span>
+    </span>
+  </h1>
+  <div class="meta">
+    <span>Project <b>laboef1900/next-itsm</b></span>
+    <span>·</span><span>Issue <b style="color:var(--ash); font-weight:400">— none —</b></span>
+    <span>·</span><span>Branch <b style="color:var(--ash); font-weight:400">— none —</b></span>
+    <span>·</span><span>Started <b>30m ago</b></span>
+  </div>
+</div>
+
+<!-- QUICK STATS -->
+<div class="qstats">
+  <div class="qstat"><span class="k">Tokens</span><span class="v go">647</span><span class="sub">63 in / 584 out</span></div>
+  <div class="qstat"><span class="k">Turns</span><span class="v">0</span><span class="sub">no tool calls yet</span></div>
+  <div class="qstat"><span class="k">Cost</span><span class="v nu">—</span><span class="sub">awaiting first usage</span></div>
+  <div class="qstat"><span class="k">Tasks</span><span class="v">3<span style="font-size:0.55em; color:var(--ash); margin-left:4px">/3</span></span><span class="sub">all running</span></div>
+  <div class="qstat"><span class="k">Files</span><span class="v">0</span><span class="sub">none touched</span></div>
+  <div class="qstat"><span class="k">Phase</span><span class="v" style="font-size:14px">PLAN</span><span class="sub">specialists deployed</span></div>
+  <div class="qstat"><span class="k">Verdict</span><span class="v nu">—</span><span class="sub">in progress</span></div>
+  <div class="qstat"><span class="k">Budget</span><span class="v nu">—</span><span class="sub">no cap set</span></div>
+</div>
+
+<!-- TABS -->
+<div class="tabs">
+  <button class="tab active" data-tab="overview">Overview</button>
+  <button class="tab" data-tab="dag">DAG <span class="count">3</span></button>
+  <button class="tab" data-tab="team">Team <span class="count">4</span></button>
+  <button class="tab" data-tab="conversation">Conversation <span class="count">20</span></button>
+  <button class="tab" data-tab="diff">Diff</button>
+  <button class="tab" data-tab="logs">Logs</button>
+  <button class="tab disabled" title="No autonomy decisions yet">Intelligence <span class="count">0</span></button>
+</div>
+
+<!-- TAB BODY -->
+<div class="tab-body">
+
+  <!-- OVERVIEW -->
+  <section class="tab-pane active" data-pane="overview">
+    <div class="cards">
+      <!-- left: progress + summary -->
+      <div class="card-block">
+        <h3>In Progress · Phase: Plan</h3>
+        <p>Lead is coordinating <b>3 specialists</b> on team <b>sprightly-na…</b>. Plan-only run promoted to full <b>14m ago</b>. No file touches yet — specialists are still reading the codebase.</p>
+        <div class="progress"><span style="width: 28%"></span></div>
+        <div class="progress-meta">
+          <span>plan ✓ &nbsp; dispatch ✓ &nbsp; <b style="color:var(--ink)">implement</b> &nbsp; review &nbsp; verdict</span>
+          <span>est. ~28% complete</span>
+        </div>
+        <h3 style="margin-top: 18px">Recent Activity</h3>
+        <div class="mono-line"><span style="color:var(--ash)">22:09:11</span> &nbsp; <span style="color:var(--role-frontend)">frontend</span> &nbsp; → Edit <code>TeammateGrid.svelte</code></div>
+        <div class="mono-line"><span style="color:var(--ash)">22:09:04</span> &nbsp; <span style="color:var(--role-qa)">qa</span> &nbsp; → Read <code>tests/test_coordinator.py</code></div>
+        <div class="mono-line"><span style="color:var(--ash)">22:08:52</span> &nbsp; <span style="color:var(--role-backend)">backend</span> &nbsp; > merged review — proceeding to write tests</div>
+        <div class="mono-line"><span style="color:var(--ash)">22:08:48</span> &nbsp; <span style="color:var(--role-lead)">lead</span> &nbsp; → Review · approve backend plan</div>
+        <div class="mono-line" style="color:var(--ash); margin-top: 8px">→ <a href="mission.html" style="color: var(--data)">Open Mission Control for live stream</a></div>
+      </div>
+
+      <!-- right: meta -->
+      <div class="card-block">
+        <h3>Run Metadata</h3>
+        <div class="key-row"><label>Run ID</label><val>run-20260509T220534Z</val></div>
+        <div class="key-row"><label>Trace</label><val style="color:var(--graphite)">trace-run-20260509T220534Z</val></div>
+        <div class="key-row"><label>Group</label><val style="color:var(--graphite)">group-20260509T220534Z</val></div>
+        <div class="key-row"><label>Mode</label><val>full</val></div>
+        <div class="key-row"><label>Autonomy</label><val>assisted</val></div>
+        <div class="key-row"><label>Status</label><val style="color:var(--go)">running</val></div>
+        <div class="key-row"><label>Verdict</label><val style="color:var(--ash)">—</val></div>
+        <div class="key-row"><label>Model</label><val style="color:var(--ash)">— (defaults)</val></div>
+        <div class="key-row"><label>Branch</label><val style="color:var(--ash)">—</val></div>
+        <div class="key-row"><label>Issue</label><val style="color:var(--ash)">—</val></div>
+        <div class="key-row"><label>Started</label><val>2026-05-09 22:05:43</val></div>
+        <div class="key-row"><label>Finished</label><val style="color:var(--ash)">in flight</val></div>
+        <div class="key-row"><label>Log</label><val style="color:var(--data); font-size:10px">/var/log/claude-agent/run-20260509T220534Z-orchestrator.stream.jsonl</val></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- DAG -->
+  <section class="tab-pane" data-pane="dag">
+    <div class="dag">
+      <div class="dag-row run">
+        <span class="ix">01</span>
+        <span class="id">…togzoj73h</span>
+        <span class="title">Backend specialist on team <span style="color:var(--graphite)">sprightly-na…</span></span>
+        <span><span class="status run"><span class="run-tick"></span><span class="lab">Run</span></span></span>
+        <span class="num nu">— files</span>
+        <span class="num">23m</span>
+      </div>
+      <div class="dag-row run">
+        <span class="ix">02</span>
+        <span class="id">…ttsj8q2ay</span>
+        <span class="title">Frontend specialist on team <span style="color:var(--graphite)">sprightly-na…</span></span>
+        <span><span class="status run"><span class="run-tick"></span><span class="lab">Run</span></span></span>
+        <span class="num nu">— files</span>
+        <span class="num">23m</span>
+      </div>
+      <div class="dag-row run">
+        <span class="ix">03</span>
+        <span class="id">…tfpbhy14u</span>
+        <span class="title">QA specialist on team <span style="color:var(--graphite)">sprightly-na…</span></span>
+        <span><span class="status run"><span class="run-tick"></span><span class="lab">Run</span></span></span>
+        <span class="num nu">— files</span>
+        <span class="num">23m</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- TEAM -->
+  <section class="tab-pane" data-pane="team">
+    <div class="card-block">
+      <h3>Team Sprightly-Na…</h3>
+      <p>4 agents linked. Lead (sonnet) coordinates 3 role-specialists (opus). All four are running; no blockers; no plan-review gate active.</p>
+      <p style="font-family: var(--mono); font-size: 11px; color: var(--graphite); margin-top: 8px;">→ <a href="fleet.html" style="color: var(--data)">Open Fleet view</a> for the deployment map and live message connectors.</p>
+    </div>
+  </section>
+
+  <!-- CONVERSATION -->
+  <section class="tab-pane" data-pane="conversation">
+    <div id="conv-feed"></div>
+  </section>
+
+  <!-- DIFF -->
+  <section class="tab-pane" data-pane="diff">
+    <div class="diff-stat">
+      <span><b style="color:var(--ink)">3 files</b> changed</span>
+      <span class="add">+47</span>
+      <span class="del">−6</span>
+      <span style="color:var(--ash)">vs <code>main</code></span>
+    </div>
+    <div class="diff-file">
+      <div class="file-head">
+        <span class="path">dashboard/backend/app/routers/runs.py</span>
+        <span class="meta"><span class="add">+22</span> &nbsp; <span class="del">−3</span></span>
+      </div>
+      <div class="hunk">
+        <div class="hunk-line hd">@@ -105,7 +105,15 @@ async def get_active_employees</div>
+        <div class="hunk-line"><span class="ln">105</span><span class="ln">105</span><span class="sg"></span><span class="src">    employees = [</span></div>
+        <div class="hunk-line"><span class="ln">106</span><span class="ln">106</span><span class="sg"></span><span class="src">        ActiveEmployeeOut(</span></div>
+        <div class="hunk-line del"><span class="ln">107</span><span class="ln"></span><span class="sg">−</span><span class="src">            run_id=r.run_id,</span></div>
+        <div class="hunk-line add"><span class="ln"></span><span class="ln">107</span><span class="sg">+</span><span class="src">            run_id=r.run_id,</span></div>
+        <div class="hunk-line add"><span class="ln"></span><span class="ln">108</span><span class="sg">+</span><span class="src">            team_name=r.team_name,</span></div>
+        <div class="hunk-line"><span class="ln">108</span><span class="ln">109</span><span class="sg"></span><span class="src">            project_id=r.project_id,</span></div>
+        <div class="hunk-line"><span class="ln">109</span><span class="ln">110</span><span class="sg"></span><span class="src">            mode=r.mode or "employee",</span></div>
+      </div>
+    </div>
+    <div class="diff-file">
+      <div class="file-head">
+        <span class="path">dashboard/backend/app/schemas.py</span>
+        <span class="meta"><span class="add">+18</span> &nbsp; <span class="del">−2</span></span>
+      </div>
+      <div class="hunk">
+        <div class="hunk-line hd">@@ -110,6 +110,8 @@ class ActiveEmployeeOut(BaseModel):</div>
+        <div class="hunk-line"><span class="ln">110</span><span class="ln">110</span><span class="sg"></span><span class="src">    employee_index: int | None = None</span></div>
+        <div class="hunk-line add"><span class="ln"></span><span class="ln">111</span><span class="sg">+</span><span class="src">    team_name: str | None = None</span></div>
+        <div class="hunk-line add"><span class="ln"></span><span class="ln">112</span><span class="sg">+</span><span class="src">    """Coordinator-assigned team name (e.g. 'sprightly-na'); null for solo runs."""</span></div>
+        <div class="hunk-line"><span class="ln">111</span><span class="ln">113</span><span class="sg"></span><span class="src">    concurrent_group_id: str | None = None</span></div>
+      </div>
+    </div>
+    <div class="diff-file">
+      <div class="file-head">
+        <span class="path">dashboard/backend/tests/test_runs.py</span>
+        <span class="meta"><span class="add">+7</span> &nbsp; <span class="del">−1</span></span>
+      </div>
+      <div class="hunk">
+        <div class="hunk-line hd">@@ -240,5 +240,11 @@ async def test_get_active_employees</div>
+        <div class="hunk-line"><span class="ln">240</span><span class="ln">240</span><span class="sg"></span><span class="src">    assert emp.run_id == "run-1"</span></div>
+        <div class="hunk-line add"><span class="ln"></span><span class="ln">241</span><span class="sg">+</span><span class="src">    assert emp.team_name == "sprightly-na"</span></div>
+        <div class="hunk-line add"><span class="ln"></span><span class="ln">242</span><span class="sg">+</span><span class="src">    assert emp.concurrent_group_id == "group-1"</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- LOGS -->
+  <section class="tab-pane" data-pane="logs">
+    <div class="card-block" style="margin-bottom: 12px">
+      <div style="display:flex; justify-content: space-between; align-items: center; gap: 14px;">
+        <span class="mono-line" style="margin: 0">/var/log/claude-agent/run-20260509T220534Z-orchestrator.stream.jsonl</span>
+        <span style="font-family: var(--mono); font-size: 11px; color: var(--graphite)">14.2 KB &nbsp;·&nbsp; tail -F</span>
+      </div>
+    </div>
+    <pre class="logs">2026-05-09T22:05:43.974Z [orchestrator] start run=run-20260509T220534Z mode=full aut=assisted
+2026-05-09T22:05:44.012Z [orchestrator] project=laboef1900/next-itsm priority=high
+2026-05-09T22:05:44.180Z [lead] team=sprightly-na decomposing eligible issues...
+2026-05-09T22:06:11.882Z [lead] phase=plan
+2026-05-09T22:07:13.911Z [coordinator] task created id=togzoj73h role=backend
+2026-05-09T22:07:14.301Z [lead] thinking: I'll dispatch three specialists by role
+2026-05-09T22:07:15.402Z [lead] tool=Plan create coordinator-tasks for backend, frontend, qa
+2026-05-09T22:07:16.094Z [lead] result: spawned 3 sub-agents OK
+2026-05-09T22:07:39.598Z [coordinator] task created id=ttsj8q2ay role=frontend
+2026-05-09T22:07:39.701Z [backend]  online workspace=/home/claude-agent/workspaces/next-itsm
+2026-05-09T22:07:44.220Z [backend]  tool=Read app/services/coordinator_service.py
+2026-05-09T22:07:48.118Z [backend]  tool=Bash rg --type py 'class ActiveEmployeeOut'
+2026-05-09T22:07:48.331Z [backend]  result: 1 match · app/schemas.py:112
+2026-05-09T22:08:01.478Z [coordinator] task created id=tfpbhy14u role=qa
+2026-05-09T22:08:01.510Z [qa]       online preparing test plan
+2026-05-09T22:08:06.092Z [frontend] tool=Read pages/AgentTeamsCanvas.svelte
+2026-05-09T22:08:09.541Z [frontend] thinking: completed cards stay visible — collapse them into a strip
+2026-05-09T22:08:14.770Z [operator] guidance: scope this to AgentTeamsCanvas only — no router/api changes
+2026-05-09T22:08:16.005Z [frontend] result: ack · scope confirmed
+2026-05-09T22:08:22.111Z [backend]  tool=Edit app/routers/runs.py — extend ActiveEmployeeOut
+2026-05-09T22:08:25.450Z [backend]  tool=Bash pytest dashboard/backend/tests -k coordinator
+2026-05-09T22:08:31.018Z [backend]  result: 8 passed in 5.4s
+2026-05-09T22:08:48.700Z [lead]     tool=Review approve backend plan: 4 steps · 2 files
+2026-05-09T22:08:52.122Z [backend]  text: merged review — proceeding to write tests
+2026-05-09T22:09:04.844Z [qa]       tool=Read tests/test_coordinator.py
+2026-05-09T22:09:11.331Z [frontend] tool=Edit components/agent-teams/TeammateGrid.svelte</pre>
+  </section>
+
+</div>
+
+<footer class="tele">
+  <span class="now"><span class="run-tick"></span><span id="clock">00:00:00</span></span>
+  <span><b>run-…220534Z</b></span>
+  <span class="ev" id="event">lead · <em>Plan</em> dispatching backend + frontend + qa specialists on team <b>sprightly-na</b></span>
+  <span id="tok">+0.6k</span>
+</footer>
+
+<div class="legend">
+  <span><kbd>1..7</kbd>tab</span>
+  <span><kbd>t</kbd>theme</span>
+  <span><kbd>⌘.</kbd>stop</span>
+</div>
+
+<script src="pro.js"></script>
+<script>
+renderTicker(document.getElementById('ticker-track'));
+setupClock(document.getElementById('clock'));
+
+/* ── Tabs ─────────────────────────────────────────── */
+const tabs = document.querySelectorAll('.tab');
+const panes = document.querySelectorAll('.tab-pane');
+function activate(name) {
+  tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+  panes.forEach(p => p.classList.toggle('active', p.dataset.pane === name));
+  if (name === 'conversation' && !window.__convRendered) renderConversation();
+}
+tabs.forEach(t => {
+  if (t.classList.contains('disabled')) return;
+  t.addEventListener('click', () => activate(t.dataset.tab));
+});
+
+/* Hotkey 1..7 to switch tabs */
+const tabOrder = ['overview','dag','team','conversation','diff','logs'];
+document.addEventListener('keydown', (e) => {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+  const n = parseInt(e.key, 10);
+  if (n >= 1 && n <= tabOrder.length) activate(tabOrder[n-1]);
+});
+
+/* ── Conversation tab — render once on first open ─── */
+const GLYPHS = { text:'>', thinking:'*', tool:'→', result:'←', system:'#', guidance:'@', error:'!' };
+const CONV = [
+  ["22:07:13","lead",     "lead",     "system",   "phase",    "Phase: planning"],
+  ["22:07:14","lead",     "lead",     "thinking", null,       "I'll dispatch three specialists by role; team name = sprightly-na"],
+  ["22:07:15","lead",     "lead",     "tool",     "Plan",     "create coordinator-tasks for backend, frontend, qa"],
+  ["22:07:16","lead",     "lead",     "result",   null,       "spawned 3 sub-agents · OK"],
+  ["22:07:39","backend",  "backend",  "system",   null,       "online — workspace=/home/claude-agent/workspaces/next-itsm"],
+  ["22:07:44","backend",  "backend",  "tool",     "Read",     "dashboard/backend/app/services/coordinator_service.py"],
+  ["22:07:48","backend",  "backend",  "tool",     "Bash",     "rg --type py 'class ActiveEmployeeOut'"],
+  ["22:07:48","backend",  "backend",  "result",   null,       "1 match · dashboard/backend/app/schemas.py:112"],
+  ["22:08:01","qa",       "qa",       "system",   null,       "online — preparing test plan"],
+  ["22:08:06","frontend", "frontend", "tool",     "Read",     "dashboard/frontend/src/pages/AgentTeamsCanvas.svelte"],
+  ["22:08:09","frontend", "frontend", "thinking", null,       "completed cards stay visible — collapse them into a strip"],
+  ["22:08:14","operator", "operator", "guidance", null,       "scope this to AgentTeamsCanvas only — no router/api changes"],
+  ["22:08:16","frontend", "frontend", "result",   null,       "ack · scope confirmed"],
+  ["22:08:22","backend",  "backend",  "tool",     "Edit",     "dashboard/backend/app/routers/runs.py — extend ActiveEmployeeOut"],
+  ["22:08:25","backend",  "backend",  "tool",     "Bash",     "pytest dashboard/backend/tests -k coordinator"],
+  ["22:08:31","backend",  "backend",  "result",   null,       "8 passed in 5.4s"],
+  ["22:08:48","lead",     "lead",     "tool",     "Review",   "approve backend plan: 4 steps · 2 files"],
+  ["22:08:52","backend",  "backend",  "text",     null,       "merged review — proceeding to write tests"],
+  ["22:09:04","qa",       "qa",       "tool",     "Read",     "dashboard/backend/tests/test_coordinator.py"],
+  ["22:09:11","frontend", "frontend", "tool",     "Edit",     "dashboard/frontend/src/components/agent-teams/TeammateGrid.svelte"],
+];
+function renderConversation() {
+  const feed = document.getElementById('conv-feed');
+  CONV.forEach(([t, agent, role, type, tool, content]) => {
+    const row = document.createElement('div');
+    row.className = `conv-row`;
+    const glyph = GLYPHS[type] ?? '·';
+    const toolHTML = tool ? `<em>${tool}</em>` : '';
+    row.innerHTML = `
+      <span class="t">${t}</span>
+      <span class="agent" data-role="${role}">${agent}</span>
+      <span class="glyph">${glyph}</span>
+      <span class="body">${toolHTML}${content}</span>
+    `;
+    feed.appendChild(row);
+  });
+  window.__convRendered = true;
+}
+
+/* ── Teleprinter ─────────────────────────────────── */
+const STREAM = [
+  ["lead",     "Plan",   "monitoring 3 specialists — no blockers"],
+  ["backend",  "Edit",   "app/routers/runs.py — add `team_name` field"],
+  ["backend",  "Bash",   "pytest dashboard/backend/tests/test_runs.py"],
+  ["backend",  "Result", "12 passed · 0.9s"],
+  ["frontend", "Edit",   "components/agent-teams/TeammateGrid.svelte:24"],
+];
+let evIx = 0;
+const evCell = document.getElementById('event');
+const tokCell = document.getElementById('tok');
+setInterval(() => {
+  const e = STREAM[evIx % STREAM.length]; evIx++;
+  evCell.innerHTML = "";
+  evCell.appendChild(flap(`${e[0]} · ${e[1]} ${e[2]}`, 0));
+  tokCell.textContent = "+" + (Math.floor(Math.random()*9)+1) + "." + (Math.floor(Math.random()*9)) + "k";
+}, 4200);
+</script>
+
+</body>
+</html>

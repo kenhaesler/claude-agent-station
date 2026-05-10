@@ -1,0 +1,517 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Station / Mission Control — Pro</title>
+<link rel="stylesheet" href="pro.css" />
+<style>
+.page-head {
+  display: grid; grid-template-columns: auto 1fr auto;
+  align-items: center; gap: 18px;
+  padding: 10px 16px; border-bottom: 1px solid var(--rule);
+  flex-shrink: 0;
+}
+.page-head h1 {
+  margin: 0; font-family: var(--sans);
+  font-size: 14px; font-weight: 700;
+  letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink);
+}
+.page-head h1 .br { color: var(--ash); margin: 0 4px; }
+.page-head .meta { font-family: var(--mono); font-size: 11px; color: var(--graphite); display: flex; gap: 12px; flex-wrap: wrap; justify-content: flex-end; }
+.page-head .meta b { color: var(--ink); font-weight: 500; }
+.page-head .runid { font-family: var(--mono); font-size: 11px; color: var(--graphite); }
+.page-head .runid b { color: var(--ink); }
+
+.intervene {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 8px 16px; border-bottom: 1px solid var(--rule);
+  background: var(--paper); flex-shrink: 0;
+}
+.intervene .label {
+  font-family: var(--sans); font-size: 9px; font-weight: 700;
+  letter-spacing: 0.18em; text-transform: uppercase; color: var(--ash); margin-right: 4px;
+}
+.opbtn {
+  font-family: var(--sans); font-weight: 700; font-size: 10px;
+  letter-spacing: 0.14em; text-transform: uppercase;
+  background: transparent; color: var(--ink);
+  border: 1px solid var(--rule-2);
+  padding: 5px 11px; cursor: pointer; height: 28px;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.opbtn:hover { background: var(--paper-2); }
+.opbtn .glyph { font-family: var(--mono); font-size: 12px; line-height: 1; color: var(--graphite); }
+.opbtn.caution { color: var(--caution); border-color: color-mix(in oklab, var(--caution) 50%, transparent); }
+.opbtn.caution:hover { background: color-mix(in oklab, var(--caution) 12%, var(--paper)); }
+.opbtn.caution .glyph { color: var(--caution); }
+.opbtn.abort { color: var(--abort); border-color: color-mix(in oklab, var(--abort) 50%, transparent); }
+.opbtn.abort:hover { background: color-mix(in oklab, var(--abort) 12%, var(--paper)); }
+.opbtn.abort .glyph { color: var(--abort); }
+.opbtn.active { background: color-mix(in oklab, var(--abort) 18%, var(--paper)); }
+.intervene .sep { width: 1px; height: 20px; background: var(--rule); margin: 0 4px; }
+.intervene .pause-note { font-family: var(--mono); font-size: 11px; color: var(--caution); }
+.intervene .pause-note.global { color: var(--abort); }
+
+.banner {
+  padding: 6px 16px; border-bottom: 1px solid var(--rule);
+  font-family: var(--mono); font-size: 12px;
+  display: flex; align-items: center; gap: 12px;
+  background: color-mix(in oklab, var(--caution) 12%, var(--paper));
+  border-left: 3px solid var(--caution);
+  flex-shrink: 0;
+}
+.banner.ok { background: color-mix(in oklab, var(--go) 10%, var(--paper)); border-left-color: var(--go); }
+.banner.no { background: color-mix(in oklab, var(--abort) 10%, var(--paper)); border-left-color: var(--abort); }
+.banner .lev { font-family: var(--sans); font-size: 10px; font-weight: 700; letter-spacing: 0.18em; text-transform: uppercase; color: var(--caution); }
+.banner.ok .lev { color: var(--go); }
+.banner.no .lev { color: var(--abort); }
+.banner .body b { color: var(--ink); font-weight: 500; }
+.banner button {
+  font-family: var(--sans); font-size: 10px; font-weight: 700;
+  letter-spacing: 0.16em; text-transform: uppercase;
+  background: transparent; color: var(--ink);
+  border: 1px solid var(--rule-2);
+  padding: 3px 10px; cursor: pointer; margin-left: auto;
+}
+.banner button + button { margin-left: 6px; }
+.banner button:hover { background: var(--paper-2); }
+.banner button.go { color: var(--go); border-color: color-mix(in oklab, var(--go) 50%, transparent); }
+.banner button.no { color: var(--abort); border-color: color-mix(in oklab, var(--abort) 50%, transparent); }
+
+.main { display: grid; grid-template-columns: 1fr 360px; flex: 1; min-height: 0; }
+.console { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--rule); }
+.aside { display: flex; flex-direction: column; min-height: 0; }
+.aside > section + section { border-top: 1px solid var(--rule); }
+
+.feed { flex: 1; min-height: 0; overflow-y: auto; padding: 8px 0; position: relative; font-family: var(--mono); font-size: 12px; }
+.feed-row {
+  display: grid; grid-template-columns: 78px 100px 16px 1fr;
+  gap: 8px; padding: 1px 14px; align-items: baseline;
+}
+.feed-row:hover { background: var(--paper-2); }
+.feed-row .t { color: var(--ash); font-size: 11px; }
+.feed-row .agent { color: var(--ink); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.feed-row .agent[data-role="lead"]      { color: var(--role-lead); }
+.feed-row .agent[data-role="backend"]   { color: var(--role-backend); }
+.feed-row .agent[data-role="frontend"]  { color: var(--role-frontend); }
+.feed-row .agent[data-role="qa"]        { color: var(--role-qa); }
+.feed-row .agent[data-role="operator"]  { color: var(--role-operator); }
+.feed-row .glyph { color: var(--graphite); font-size: 12px; text-align: center; }
+.feed-row .body  { color: var(--ink); white-space: pre-wrap; word-break: break-word; }
+.feed-row .body em { font-style: normal; color: var(--data); margin-right: 5px; }
+.feed-row.thinking .body { color: var(--graphite); font-style: italic; }
+.feed-row.thinking .glyph { color: var(--caution); }
+.feed-row.tool .glyph     { color: var(--data); }
+.feed-row.result .glyph   { color: var(--go); }
+.feed-row.system  .glyph  { color: var(--ash); }
+.feed-row.system  .body   { color: var(--graphite); }
+.feed-row.guidance        { background: color-mix(in oklab, var(--data) 8%, transparent); }
+.feed-row.guidance .glyph { color: var(--data); }
+.feed-row.guidance .body  { color: var(--ink); }
+.feed-row.error           { background: color-mix(in oklab, var(--abort) 7%, transparent); }
+.feed-row.error .glyph    { color: var(--abort); }
+.feed-row.error .body     { color: var(--abort); }
+.feed .scroll-pin {
+  position: absolute; right: 14px; bottom: 12px;
+  font-family: var(--sans); font-size: 9px; letter-spacing: 0.16em; text-transform: uppercase;
+  color: var(--ink); background: var(--paper-2); border: 1px solid var(--rule-2);
+  padding: 4px 10px; cursor: pointer; display: none;
+}
+.feed .scroll-pin.visible { display: inline-block; }
+
+.tx { padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
+.tx .prompt { font-family: var(--mono); font-size: 11px; color: var(--graphite); display: flex; align-items: baseline; gap: 8px; }
+.tx .prompt .caret { color: var(--ink); font-weight: 700; }
+.tx textarea {
+  font-family: var(--mono); font-size: 12px; line-height: 1.4;
+  background: var(--paper-2); color: var(--ink);
+  border: 1px solid var(--rule-2); padding: 10px 12px;
+  resize: vertical; min-height: 84px; outline: none;
+}
+.tx textarea:focus { border-color: var(--ink); }
+.tx textarea::placeholder { color: var(--ash); font-style: italic; }
+.tx .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.tx .hint { font-family: var(--mono); font-size: 10px; color: var(--ash); }
+.tx .hint b { color: var(--graphite); font-weight: 500; }
+.tx button {
+  font-family: var(--sans); font-weight: 700; font-size: 10px;
+  letter-spacing: 0.16em; text-transform: uppercase;
+  background: var(--data); color: var(--paper); border: 1px solid var(--data);
+  padding: 6px 14px; cursor: pointer; height: 28px;
+}
+.tx button:hover { filter: brightness(1.1); }
+.tx button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.agents { padding: 6px 0 4px; }
+.agents .row {
+  display: grid; grid-template-columns: 14px 1fr auto auto;
+  gap: 10px; align-items: center; padding: 6px 14px;
+  font-family: var(--mono); font-size: 12px;
+}
+.agents .row:hover { background: var(--paper-2); }
+.agents .row .name { color: var(--ink); }
+.agents .row .role { color: var(--ash); font-size: 11px; }
+.agents .row .stat { color: var(--go); font-size: 11px; }
+
+.quick { padding: 8px 14px 12px; display: flex; flex-direction: column; gap: 4px; }
+.quick button {
+  font-family: var(--mono); font-size: 12px;
+  text-align: left; padding: 6px 10px;
+  background: transparent; color: var(--ink);
+  border: 1px solid transparent; cursor: pointer;
+  display: flex; align-items: center; gap: 8px;
+}
+.quick button:hover { background: var(--paper-2); border-color: var(--rule); }
+.quick button .arr { color: var(--ash); font-family: var(--sans); font-size: 10px; letter-spacing: 0.16em; }
+
+@media (max-width: 1180px) {
+  .main { grid-template-columns: 1fr; }
+  .console { border-right: none; }
+  .aside { border-top: 1px solid var(--rule); }
+}
+</style>
+</head>
+<body>
+
+<header class="strip">
+  <div class="wordmark">
+    <span class="name">Station</span>
+    <span class="tag">OPERATOR · v1</span>
+  </div>
+  <nav class="strip-nav">
+    <a href="dispatch-board.html">Dispatch</a>
+    <a href="#" class="active">Mission</a>
+    <a href="fleet.html">Fleet</a>
+    <a href="run-detail.html">Run</a>
+    <a href="#">Queue</a>
+    <a href="#">Settings</a>
+  </nav>
+  <div class="strip-status">
+    <span><span class="dot go live"></span><span class="pill">WORKING · 1</span></span>
+    <span>647 TOK</span>
+    <span>SSE&nbsp;<b style="color:var(--go)">●</b></span>
+    <button class="btn-theme" id="theme-toggle" aria-label="Toggle theme">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" id="theme-sun" style="display:none">
+        <circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="4.2" y1="4.2" x2="6.3" y2="6.3"/><line x1="17.7" y1="17.7" x2="19.8" y2="19.8"/><line x1="2" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="22" y2="12"/><line x1="4.2" y1="19.8" x2="6.3" y2="17.7"/><line x1="17.7" y1="6.3" x2="19.8" y2="4.2"/>
+      </svg>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" id="theme-moon">
+        <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>
+      </svg>
+    </button>
+    <button class="btn-stop">Stop <kbd>⌘.</kbd></button>
+  </div>
+</header>
+
+<div class="ticker">
+  <span class="ticker-tag">// Live</span>
+  <div class="ticker-track" id="ticker-track"></div>
+</div>
+
+<div class="page-head">
+  <h1>Mission Control <span class="br">·</span> OP-7</h1>
+  <div class="runid">Run <b>run-…220534Z</b> <span class="br" style="color:var(--ash); margin: 0 6px">·</span> phase <b>plan</b></div>
+  <div class="meta">
+    <span>Tokens <b>647</b></span>
+    <span>·</span><span>Turns <b>0</b></span>
+    <span>·</span><span>Started <b>30m ago</b></span>
+    <span>·</span><span>Aut <b>ASSISTED</b></span>
+  </div>
+</div>
+
+<div class="intervene">
+  <span class="label">Intervene</span>
+  <button class="opbtn caution" id="btn-pause-run"><span class="glyph">⏸</span> Pause Run</button>
+  <button class="opbtn abort" id="btn-stop-run"><span class="glyph">⏹</span> Stop Run</button>
+  <span class="sep"></span>
+  <button class="opbtn abort" id="btn-pause-all"><span class="glyph">⚠</span> Pause All</button>
+  <span class="pause-note" id="pause-note" style="display:none">Run paused — next tool call will wait for approval.</span>
+</div>
+
+<div class="banner" id="banner" style="display:none">
+  <span class="lev">Plan Awaiting Review</span>
+  <span class="body">Teammate wrote an implementation plan. <b>Approve</b> to enqueue a follow-up <code>full</code> run, or <b>reject</b> to stop here.</span>
+  <button class="go" id="banner-approve">Approve</button>
+  <button class="no" id="banner-reject">Reject</button>
+</div>
+
+<div class="main">
+  <section class="console">
+    <div class="section-head">
+      <span>Agent Activity · Live</span>
+      <span class="right">
+        <span id="feed-count">0</span>
+        <select id="feed-filter">
+          <option value="">all</option>
+          <option value="tool">tools</option>
+          <option value="thinking">thinking</option>
+          <option value="text">text</option>
+          <option value="result">results</option>
+          <option value="system">system</option>
+          <option value="error">errors</option>
+        </select>
+      </span>
+    </div>
+    <div class="feed" id="feed">
+      <button class="scroll-pin" id="scroll-pin">↓ jump to live</button>
+    </div>
+  </section>
+
+  <aside class="aside">
+    <section>
+      <div class="section-head">
+        <span>TX · Send to Agent</span>
+        <span class="right" id="tx-status">SSE open · ~1s delivery</span>
+      </div>
+      <div class="tx">
+        <div class="prompt"><span class="caret">&gt;</span><span>operator@station ~ </span></div>
+        <textarea id="tx-input" rows="4" placeholder="Type a message — agent picks it up within ~1s. Ctrl/⌘+Enter to send."></textarea>
+        <div class="row">
+          <span class="hint"><b>⌘+Enter</b> send · <b>Esc</b> clear · <b>↑</b> last</span>
+          <button id="tx-send" disabled>Send</button>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <span>Agents</span>
+        <span class="right">4 linked</span>
+      </div>
+      <div class="agents">
+        <div class="row" data-role="lead">
+          <span class="dot" style="background: var(--role-lead)"></span>
+          <span class="name">lead <span class="role">· spright</span></span>
+          <span class="stat">running</span>
+          <span class="role" style="color: var(--ash)">sonnet-4-6</span>
+        </div>
+        <div class="row" data-role="backend">
+          <span class="dot" style="background: var(--role-backend)"></span>
+          <span class="name">backend <span class="role">· spright</span></span>
+          <span class="stat">running</span>
+          <span class="role" style="color: var(--ash)">opus-4-7</span>
+        </div>
+        <div class="row" data-role="frontend">
+          <span class="dot" style="background: var(--role-frontend)"></span>
+          <span class="name">frontend <span class="role">· spright</span></span>
+          <span class="stat">running</span>
+          <span class="role" style="color: var(--ash)">opus-4-7</span>
+        </div>
+        <div class="row" data-role="qa">
+          <span class="dot" style="background: var(--role-qa)"></span>
+          <span class="name">qa <span class="role">· spright</span></span>
+          <span class="stat">running</span>
+          <span class="role" style="color: var(--ash)">opus-4-7</span>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <span>Quick Ops</span>
+        <span class="right">⌘+1..5</span>
+      </div>
+      <div class="quick">
+        <button data-q="approve-plan"><span class="arr">▸</span>Approve current plan</button>
+        <button data-q="halt-soft"><span class="arr">▸</span>Halt after current tool call</button>
+        <button data-q="ask-status"><span class="arr">▸</span>Ask for status report</button>
+        <button data-q="raise-budget"><span class="arr">▸</span>Raise budget · +$2.00</button>
+        <button data-q="forbid-network"><span class="arr">▸</span>Forbid network calls this turn</button>
+      </div>
+    </section>
+  </aside>
+</div>
+
+<footer class="tele">
+  <span class="now"><span class="run-tick"></span><span id="clock">00:00:00</span></span>
+  <span><b>run-…220534Z</b></span>
+  <span class="ev" id="event">lead · <em>Plan</em> dispatching backend + frontend + qa specialists on team <b>spright</b></span>
+  <span id="tok">+0.6k</span>
+</footer>
+
+<div class="legend">
+  <span><kbd>p</kbd>pause</span>
+  <span><kbd>s</kbd>stop</span>
+  <span><kbd>t</kbd>theme</span>
+  <span><kbd>⌘.</kbd>kill</span>
+  <span><kbd>⌘↵</kbd>send</span>
+</div>
+
+<script src="pro.js"></script>
+<script>
+renderTicker(document.getElementById('ticker-track'));
+setupClock(document.getElementById('clock'));
+
+const GLYPHS = { text:'>', thinking:'*', tool:'→', result:'←', system:'#', guidance:'@', error:'!' };
+const SEED = [
+  ["22:07:13","lead",     "lead",     "system",   "phase",    "Phase: planning"],
+  ["22:07:14","lead",     "lead",     "thinking", null,       "I'll dispatch three specialists by role; team name = spright"],
+  ["22:07:15","lead",     "lead",     "tool",     "Plan",     "create coordinator-tasks for backend, frontend, qa"],
+  ["22:07:16","lead",     "lead",     "result",   null,       "spawned 3 sub-agents · OK"],
+  ["22:07:39","backend",  "backend",  "system",   null,       "online — workspace=/home/claude-agent/workspaces/next-itsm"],
+  ["22:07:44","backend",  "backend",  "tool",     "Read",     "dashboard/backend/app/services/coordinator_service.py"],
+  ["22:07:48","backend",  "backend",  "tool",     "Bash",     "rg --type py 'class ActiveEmployeeOut'"],
+  ["22:07:48","backend",  "backend",  "result",   null,       "1 match · dashboard/backend/app/schemas.py:112"],
+  ["22:08:01","qa",       "qa",       "system",   null,       "online — preparing test plan"],
+  ["22:08:06","frontend", "frontend", "tool",     "Read",     "dashboard/frontend/src/pages/AgentTeamsCanvas.svelte"],
+  ["22:08:09","frontend", "frontend", "thinking", null,       "completed cards stay visible — collapse them into a strip"],
+  ["22:08:14","operator", "operator", "guidance", null,       "scope this to AgentTeamsCanvas only — no router/api changes"],
+  ["22:08:16","frontend", "frontend", "result",   null,       "ack · scope confirmed"],
+  ["22:08:22","backend",  "backend",  "tool",     "Edit",     "dashboard/backend/app/routers/runs.py — extend ActiveEmployeeOut"],
+  ["22:08:25","backend",  "backend",  "tool",     "Bash",     "pytest dashboard/backend/tests -k coordinator"],
+  ["22:08:31","backend",  "backend",  "result",   null,       "8 passed in 5.4s"],
+  ["22:08:48","lead",     "lead",     "tool",     "Review",   "approve backend plan: 4 steps · 2 files"],
+  ["22:08:52","backend",  "backend",  "text",     null,       "merged review — proceeding to write tests"],
+  ["22:09:04","qa",       "qa",       "tool",     "Read",     "dashboard/backend/tests/test_coordinator.py"],
+  ["22:09:11","frontend", "frontend", "tool",     "Edit",     "dashboard/frontend/src/components/agent-teams/TeammateGrid.svelte"],
+];
+const feedEl = document.getElementById('feed');
+const feedCountEl = document.getElementById('feed-count');
+const filterEl = document.getElementById('feed-filter');
+const pinEl = document.getElementById('scroll-pin');
+let autoScroll = true;
+let allEntries = [];
+let filter = "";
+function rowEl(e, animate) {
+  const [t, agent, role, type, tool, content] = e;
+  const row = document.createElement("div");
+  row.className = `feed-row ${type}`;
+  row.dataset.type = type;
+  const glyph = GLYPHS[type] ?? '·';
+  const toolHTML = tool ? `<em>${tool}</em>` : '';
+  row.innerHTML = `
+    <span class="t">${t}</span>
+    <span class="agent" data-role="${role}">${agent}</span>
+    <span class="glyph">${glyph}</span>
+    <span class="body">${toolHTML}<span class="content"></span></span>
+  `;
+  const c = row.querySelector('.content');
+  if (animate) c.appendChild(flap(content, 0, 12));
+  else c.textContent = content;
+  return row;
+}
+function applyFilter() {
+  for (const r of feedEl.querySelectorAll('.feed-row')) {
+    if (!filter) r.style.display = '';
+    else r.style.display = (r.dataset.type === filter) ? '' : 'none';
+  }
+}
+function appendEntry(e, animate=true) {
+  allEntries.push(e);
+  feedEl.appendChild(rowEl(e, animate));
+  feedCountEl.textContent = allEntries.length;
+  applyFilter();
+  if (autoScroll) feedEl.scrollTop = feedEl.scrollHeight;
+}
+SEED.forEach(e => appendEntry(e, false));
+
+filterEl.addEventListener('change', () => { filter = filterEl.value; applyFilter(); });
+feedEl.addEventListener('scroll', () => {
+  const dist = feedEl.scrollHeight - feedEl.scrollTop - feedEl.clientHeight;
+  autoScroll = dist < 40;
+  pinEl.classList.toggle('visible', !autoScroll);
+});
+pinEl.addEventListener('click', () => { autoScroll = true; feedEl.scrollTop = feedEl.scrollHeight; });
+
+const STREAM = [
+  ["lead",     "lead",     "thinking", null,       "monitoring 3 specialists — no blockers"],
+  ["backend",  "backend",  "tool",     "Edit",     "dashboard/backend/app/routers/runs.py — add `team_name`"],
+  ["backend",  "backend",  "tool",     "Bash",     "pytest dashboard/backend/tests/test_runs.py"],
+  ["backend",  "backend",  "result",   null,       "12 passed · 0.9s"],
+  ["frontend", "frontend", "tool",     "Edit",     "dashboard/frontend/src/components/agent-teams/TeammateGrid.svelte:24"],
+  ["qa",       "qa",       "tool",     "Read",     "dashboard/backend/tests/fixtures/coordinator.py"],
+  ["qa",       "qa",       "thinking", null,       "fixture lacks team_name field — will need to extend"],
+  ["lead",     "lead",     "text",     null,       "all three on track · token budget 38% spent"],
+  ["operator", "operator", "guidance", null,       "if backend lands first, hold qa until frontend merges"],
+  ["lead",     "lead",     "result",   null,       "ack · qa held"],
+];
+let streamIx = 0;
+const evCell = document.getElementById('event');
+const tokCell = document.getElementById('tok');
+setInterval(() => {
+  const line = STREAM[streamIx % STREAM.length]; streamIx++;
+  appendEntry([nowStr(), ...line], true);
+  evCell.innerHTML = "";
+  evCell.appendChild(flap(`${line[0]} · ${line[2]}${line[3] ? ' '+line[3] : ''} ${line[4]}`, 0));
+  tokCell.textContent = "+" + (Math.floor(Math.random()*9)+1) + "." + (Math.floor(Math.random()*9)) + "k";
+  while (allEntries.length > 200) {
+    allEntries.shift();
+    feedEl.querySelector('.feed-row')?.remove();
+  }
+}, 3500);
+
+const txInput = document.getElementById('tx-input');
+const txSend = document.getElementById('tx-send');
+let lastSent = '';
+txInput.addEventListener('input', () => { txSend.disabled = !txInput.value.trim(); });
+txInput.addEventListener('keydown', (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); sendOperator(); }
+  if (e.key === 'Escape') { e.preventDefault(); txInput.value = ''; txSend.disabled = true; }
+  if (e.key === 'ArrowUp' && !txInput.value && lastSent) { e.preventDefault(); txInput.value = lastSent; }
+});
+txSend.addEventListener('click', sendOperator);
+function sendOperator() {
+  const text = txInput.value.trim();
+  if (!text) return;
+  lastSent = text;
+  appendEntry([nowStr(), "operator", "operator", "guidance", null, text], true);
+  txInput.value = ''; txSend.disabled = true;
+  document.getElementById('tx-status').textContent = 'sent · queued for next turn';
+  setTimeout(() => document.getElementById('tx-status').textContent = 'SSE open · ~1s delivery', 2400);
+}
+
+document.querySelectorAll('.quick button').forEach(b => {
+  b.addEventListener('click', () => {
+    const map = {
+      'approve-plan':   'approve current plan',
+      'halt-soft':      'halt after current tool call · finish gracefully',
+      'ask-status':     'send status report: tasks, files touched, blockers',
+      'raise-budget':   'raise budget by $2.00',
+      'forbid-network': 'no network calls this turn',
+    };
+    appendEntry([nowStr(), "operator", "operator", "guidance", null, map[b.dataset.q]], true);
+  });
+});
+
+const btnPauseRun = document.getElementById('btn-pause-run');
+const btnStopRun  = document.getElementById('btn-stop-run');
+const btnPauseAll = document.getElementById('btn-pause-all');
+const pauseNote   = document.getElementById('pause-note');
+let runPaused = false, globalPause = false;
+function refreshPauseNote() {
+  pauseNote.style.display = (runPaused || globalPause) ? '' : 'none';
+  pauseNote.classList.toggle('global', globalPause);
+  pauseNote.textContent = globalPause
+    ? 'Global pause active — approve every tool call in the tray.'
+    : 'Run paused — next tool call will wait for approval.';
+}
+btnPauseRun.addEventListener('click', () => {
+  runPaused = !runPaused;
+  btnPauseRun.innerHTML = runPaused ? '<span class="glyph">▶</span> Resume Run' : '<span class="glyph">⏸</span> Pause Run';
+  btnPauseRun.classList.toggle('active', runPaused);
+  refreshPauseNote();
+  appendEntry([nowStr(), "operator", "operator", "system", null, runPaused ? 'pause requested' : 'resume requested'], true);
+});
+btnStopRun.addEventListener('click', () => {
+  if (!confirm('Stop run run-…220534Z? The agent will halt after its next tool call and finish with status=interrupted.')) return;
+  appendEntry([nowStr(), "operator", "operator", "system", null, 'stop requested · finishing with status=interrupted'], true);
+});
+btnPauseAll.addEventListener('click', () => {
+  if (!globalPause && !confirm('Pause ALL runs? Every next tool call on every run will block until you approve it in the permission tray.')) return;
+  globalPause = !globalPause;
+  btnPauseAll.innerHTML = globalPause ? '<span class="glyph">▶</span> Resume All' : '<span class="glyph">⚠</span> Pause All';
+  btnPauseAll.classList.toggle('active', globalPause);
+  refreshPauseNote();
+  appendEntry([nowStr(), "operator", "operator", "system", null, globalPause ? 'GLOBAL PAUSE engaged' : 'global pause cleared'], true);
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+  if (e.key === 'p') btnPauseRun.click();
+  if (e.key === 's') btnStopRun.click();
+  if (e.key === '/' && !e.metaKey && !e.ctrlKey) { e.preventDefault(); txInput.focus(); }
+});
+</script>
+
+</body>
+</html>

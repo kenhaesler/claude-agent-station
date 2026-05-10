@@ -1,0 +1,485 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Station / Settings — Pro</title>
+<link rel="stylesheet" href="pro.css" />
+<style>
+.page-head {
+  display: grid; grid-template-columns: auto 1fr;
+  align-items: center; gap: 18px;
+  padding: 10px 16px; border-bottom: 1px solid var(--rule);
+  flex-shrink: 0;
+}
+.page-head h1 {
+  margin: 0; font-family: var(--sans);
+  font-size: 14px; font-weight: 700;
+  letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink);
+}
+.page-head .meta { font-family: var(--mono); font-size: 11px; color: var(--graphite); }
+.page-head .meta b { color: var(--ink); font-weight: 500; }
+
+/* Two-column layout: side tabs + content */
+.settings {
+  display: grid; grid-template-columns: 200px 1fr;
+  flex: 1; min-height: 0;
+}
+.side-tabs {
+  border-right: 1px solid var(--rule);
+  background: var(--paper-2);
+  padding: 8px 0;
+  display: flex; flex-direction: column;
+  overflow-y: auto;
+}
+.side-tab {
+  font-family: var(--sans); font-size: 11px; font-weight: 700;
+  letter-spacing: 0.16em; text-transform: uppercase;
+  color: var(--graphite);
+  background: transparent; border: none; cursor: pointer;
+  padding: 8px 16px; text-align: left;
+  border-left: 3px solid transparent;
+  display: flex; justify-content: space-between; align-items: center;
+}
+.side-tab:hover { color: var(--ink); background: var(--paper-3); }
+.side-tab.active {
+  color: var(--ink); background: var(--paper);
+  border-left-color: var(--ink);
+}
+.side-tab .meta { font-family: var(--mono); font-size: 10px; color: var(--ash); letter-spacing: 0; text-transform: none; }
+.side-tab.active .meta { color: var(--graphite); }
+
+.content { overflow-y: auto; padding: 16px; }
+.tab-pane { display: none; }
+.tab-pane.active { display: block; }
+
+/* Card blocks */
+.card-block {
+  background: var(--paper-2); border: 1px solid var(--rule);
+  padding: 14px 16px; margin-bottom: 16px;
+}
+.card-block h3 {
+  margin: 0 0 8px; font-family: var(--sans); font-size: 10px;
+  font-weight: 700; letter-spacing: 0.2em; text-transform: uppercase;
+  color: var(--ash); border-bottom: 1px solid var(--rule); padding-bottom: 6px;
+}
+.card-block .key-row { display: grid; grid-template-columns: 180px 1fr; gap: 14px; padding: 6px 0; border-bottom: 1px dashed var(--rule); font-family: var(--mono); font-size: 12px; align-items: center; }
+.card-block .key-row:last-child { border-bottom: none; }
+.card-block .key-row label { color: var(--ash); font-family: var(--sans); font-size: 9px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; }
+.card-block .key-row val { color: var(--ink); }
+.card-block .key-row val .nu { color: var(--ash); }
+.card-block .key-row val .desc { color: var(--graphite); font-size: 11px; margin-top: 2px; display: block; }
+
+.card-block input, .card-block select, .card-block textarea {
+  font-family: var(--mono); font-size: 12px;
+  background: var(--paper); color: var(--ink);
+  border: 1px solid var(--rule-2);
+  padding: 4px 8px; max-width: 320px;
+}
+.card-block input:focus, .card-block select:focus, .card-block textarea:focus { outline: none; border-color: var(--ink); }
+.toggle { display: inline-flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 12px; }
+.toggle input { width: auto; max-width: none; }
+
+.opbtn {
+  font-family: var(--sans); font-weight: 700; font-size: 10px;
+  letter-spacing: 0.14em; text-transform: uppercase;
+  background: transparent; color: var(--ink);
+  border: 1px solid var(--rule-2);
+  padding: 5px 11px; cursor: pointer; height: 26px;
+}
+.opbtn:hover { background: var(--paper-2); }
+.opbtn.primary { background: var(--ink); color: var(--paper); }
+.opbtn.danger { color: var(--abort); border-color: color-mix(in oklab, var(--abort) 50%, transparent); }
+.opbtn.danger:hover { background: color-mix(in oklab, var(--abort) 12%, var(--paper)); }
+
+.status-tag {
+  font-family: var(--sans); font-size: 9px; font-weight: 700;
+  letter-spacing: 0.16em; text-transform: uppercase;
+  padding: 2px 6px; border: 1px solid currentColor;
+}
+.status-tag.go { color: var(--go); }
+.status-tag.warn { color: var(--caution); }
+.status-tag.off { color: var(--ash); }
+
+/* ── Audit tab — donut + table ─────────────────────── */
+.audit-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+.donut-card { display: flex; align-items: center; gap: 16px; }
+.donut-legend { display: flex; flex-direction: column; gap: 6px; font-family: var(--mono); font-size: 12px; }
+.donut-legend .row { display: grid; grid-template-columns: 14px 80px 50px; gap: 6px; align-items: center; }
+.donut-legend .row .swatch { width: 10px; height: 10px; }
+.donut-legend .row .name { color: var(--ink); text-transform: capitalize; }
+.donut-legend .row .pct { color: var(--graphite); text-align: right; }
+
+.audit-filters {
+  display: flex; gap: 8px; flex-wrap: wrap;
+  padding: 10px 14px; border: 1px solid var(--rule); background: var(--paper-2);
+  margin-bottom: 12px;
+  align-items: center;
+  font-family: var(--mono); font-size: 11px; color: var(--graphite);
+}
+.audit-filters label {
+  font-family: var(--sans); font-size: 9px; font-weight: 700;
+  letter-spacing: 0.16em; text-transform: uppercase; color: var(--ash);
+}
+
+.audit-row {
+  display: grid;
+  grid-template-columns: 80px 70px 70px 100px 1fr 60px;
+  gap: 10px; padding: 0 14px; align-items: center;
+  border-bottom: 1px solid var(--rule);
+  height: 32px;
+  font-family: var(--mono); font-size: 11px;
+}
+.audit-row.head {
+  background: var(--paper-2); font-family: var(--sans); font-size: 9px;
+  font-weight: 700; letter-spacing: 0.18em; text-transform: uppercase; color: var(--ash);
+  height: 28px;
+}
+.audit-row .t { color: var(--ash); font-size: 10px; }
+.audit-row .lev {
+  font-family: var(--sans); font-size: 9px; font-weight: 700;
+  letter-spacing: 0.14em; text-transform: uppercase;
+  padding: 2px 5px; border: 1px solid currentColor;
+}
+.audit-row .lev.auto    { color: var(--go); }
+.audit-row .lev.assist  { color: var(--caution); }
+.audit-row .lev.manual  { color: var(--graphite); }
+.audit-row .dec.allow { color: var(--go); }
+.audit-row .dec.deny  { color: var(--abort); }
+.audit-row .tool { color: var(--ink); }
+.audit-row .input { color: var(--graphite); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.audit-row .run a { color: var(--data); text-decoration: none; }
+
+@media (max-width: 1180px) {
+  .settings { grid-template-columns: 1fr; }
+  .side-tabs { display: flex; flex-direction: row; overflow-x: auto; padding: 0; }
+  .side-tab { border-left: none; border-bottom: 2px solid transparent; padding: 10px 14px; }
+  .side-tab.active { border-bottom-color: var(--ink); border-left-color: transparent; }
+  .audit-grid { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+
+<header class="strip">
+  <div class="wordmark">
+    <span class="name">Station</span>
+    <span class="tag">OPERATOR · v1</span>
+  </div>
+  <nav class="strip-nav">
+    <a href="dispatch-board.html">Dispatch</a>
+    <a href="mission.html">Mission</a>
+    <a href="fleet.html">Fleet</a>
+    <a href="run-detail.html">Run</a>
+    <a href="queue.html">Queue</a>
+    <a href="projects.html">Projects</a>
+    <a href="#" class="active">Settings</a>
+  </nav>
+  <div class="strip-status">
+    <span><span class="dot go live"></span><span class="pill">WORKING · 1</span></span>
+    <span>647 TOK</span>
+    <span>SSE&nbsp;<b style="color:var(--go)">●</b></span>
+    <button class="btn-theme" id="theme-toggle" aria-label="Toggle theme">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" id="theme-sun" style="display:none">
+        <circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="4.2" y1="4.2" x2="6.3" y2="6.3"/><line x1="17.7" y1="17.7" x2="19.8" y2="19.8"/><line x1="2" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="22" y2="12"/><line x1="4.2" y1="19.8" x2="6.3" y2="17.7"/><line x1="17.7" y1="6.3" x2="19.8" y2="4.2"/>
+      </svg>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" id="theme-moon">
+        <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>
+      </svg>
+    </button>
+    <button class="btn-stop">Stop <kbd>⌘.</kbd></button>
+  </div>
+</header>
+
+<div class="ticker">
+  <span class="ticker-tag">// Live</span>
+  <div class="ticker-track" id="ticker-track"></div>
+</div>
+
+<div class="page-head">
+  <h1>Settings</h1>
+  <div class="meta">Service <b style="color: var(--go)">ONLINE</b> · uptime <b>3d 09h</b> · SSE <b style="color: var(--go)">open</b> · DB <b>station.db · 2.6 MB</b></div>
+</div>
+
+<section class="settings">
+  <nav class="side-tabs">
+    <button class="side-tab active" data-tab="general">General</button>
+    <button class="side-tab" data-tab="models">Models <span class="meta">5 roles</span></button>
+    <button class="side-tab" data-tab="auth">Auth <span class="meta">Bearer</span></button>
+    <button class="side-tab" data-tab="github">GitHub <span class="meta">PAT</span></button>
+    <button class="side-tab" data-tab="prompts">Prompts <span class="meta">3</span></button>
+    <button class="side-tab" data-tab="audit">Audit <span class="meta">0 / 30d</span></button>
+    <button class="side-tab" data-tab="appearance">Appearance</button>
+  </nav>
+
+  <div class="content">
+
+    <!-- GENERAL -->
+    <section class="tab-pane active" data-pane="general">
+      <div class="card-block">
+        <h3>Service</h3>
+        <div class="key-row">
+          <label>Status</label>
+          <val><span class="status-tag go">● ONLINE</span> &nbsp; <span class="desc" style="display: inline">uptime 3d 09h · pid 12784</span></val>
+        </div>
+        <div class="key-row">
+          <label>Auto-trigger timer</label>
+          <val>
+            <span class="status-tag off">OFF</span>
+            <span class="desc">When on, fires a run on a fixed cadence. Currently disabled — runs are user-triggered or webhook-driven.</span>
+          </val>
+        </div>
+        <div class="key-row">
+          <label>Deploy mode</label><val>compose</val>
+        </div>
+        <div class="key-row">
+          <label>Actions</label>
+          <val style="display: flex; gap: 8px;">
+            <button class="opbtn">Restart</button>
+            <button class="opbtn">View Logs</button>
+            <button class="opbtn danger">Stop Service</button>
+          </val>
+        </div>
+      </div>
+
+      <div class="card-block">
+        <h3>Resources</h3>
+        <div class="key-row"><label>Memory</label><val>9.7 / 13.6 GB · <b style="color: var(--caution)">71%</b></val></div>
+        <div class="key-row"><label>Disk</label><val>4.9 G free of 87 G · <b style="color: var(--caution)">94% used</b></val></div>
+        <div class="key-row"><label>Load avg</label><val>2.83 · 1.04 · 0.57</val></div>
+        <div class="key-row"><label>SSE buffer</label><val>~2.1 KB · 4 listeners</val></div>
+      </div>
+
+      <div class="card-block">
+        <h3>Backpressure</h3>
+        <div class="key-row"><label>Level</label><val><span class="status-tag go">GREEN</span></val></div>
+        <div class="key-row"><label>Concurrent runs cap</label><val><input value="3" /></val></div>
+        <div class="key-row"><label>Pending tray approvals</label><val>0</val></div>
+        <div class="key-row"><label>Global pause</label><val><span class="status-tag off">OFF</span></val></div>
+      </div>
+    </section>
+
+    <!-- MODELS -->
+    <section class="tab-pane" data-pane="models">
+      <div class="card-block">
+        <h3>Role → Model</h3>
+        <div class="key-row">
+          <label>Employee</label>
+          <val><select><option selected>claude-opus-4-7 — most capable</option><option>claude-sonnet-4-6</option><option>claude-haiku-4-5-20251001</option></select> <span class="desc">teammates running implementation work</span></val>
+        </div>
+        <div class="key-row">
+          <label>Manager</label>
+          <val><select><option>claude-opus-4-7</option><option selected>claude-sonnet-4-6 — balanced</option><option>claude-haiku-4-5-20251001</option></select> <span class="desc">verdicts, reviews, plan approvals</span></val>
+        </div>
+        <div class="key-row">
+          <label>Analyst</label>
+          <val><select><option>claude-opus-4-7</option><option selected>claude-sonnet-4-6</option><option>claude-haiku-4-5-20251001</option></select> <span class="desc">issue triage, scope decisions</span></val>
+        </div>
+        <div class="key-row">
+          <label>Planner</label>
+          <val><select><option>claude-opus-4-7</option><option selected>claude-sonnet-4-6</option><option>claude-haiku-4-5-20251001</option></select> <span class="desc">multi-step plan drafts</span></val>
+        </div>
+        <div class="key-row">
+          <label>Router</label>
+          <val><select><option>claude-opus-4-7</option><option>claude-sonnet-4-6</option><option selected>claude-haiku-4-5-20251001 — fast & cheap</option></select> <span class="desc">tool selection, cheap routing decisions</span></val>
+        </div>
+      </div>
+
+      <div class="card-block">
+        <h3>Per-Run Caps</h3>
+        <div class="key-row"><label>Default budget · USD</label><val><input placeholder="—" /> <span class="desc">empty = no cap</span></val></div>
+        <div class="key-row"><label>Max turns</label><val><input value="60" /></val></div>
+        <div class="key-row"><label>Max workspace size</label><val><input value="500" /> MB</val></div>
+      </div>
+    </section>
+
+    <!-- AUTH -->
+    <section class="tab-pane" data-pane="auth">
+      <div class="card-block">
+        <h3>Claude API</h3>
+        <div class="key-row"><label>Auth method</label><val><span class="status-tag go">● OAUTH</span> &nbsp; <span class="desc">refresh token healthy · expires in 6 days</span></val></div>
+        <div class="key-row"><label>Account</label><val>lutz.simon1900@gmail.com</val></div>
+        <div class="key-row"><label>Plan</label><val>Max — 38% of weekly tokens used</val></div>
+        <div class="key-row"><label>Actions</label><val style="display: flex; gap: 8px;"><button class="opbtn">Refresh Token</button><button class="opbtn">Re-authenticate</button><button class="opbtn danger">Disconnect</button></val></div>
+      </div>
+
+      <div class="card-block">
+        <h3>Station API Key</h3>
+        <div class="key-row"><label>Bearer key</label><val><input value="bf244927cf81…" readonly style="color: var(--graphite); background: var(--paper-3)" /> <span class="desc">used by orchestrator and dashboard frontend</span></val></div>
+        <div class="key-row"><label>Actions</label><val style="display: flex; gap: 8px;"><button class="opbtn">Reveal</button><button class="opbtn">Rotate</button></val></div>
+      </div>
+    </section>
+
+    <!-- GITHUB -->
+    <section class="tab-pane" data-pane="github">
+      <div class="card-block">
+        <h3>GitHub Integration</h3>
+        <div class="key-row"><label>Method</label><val><span class="status-tag warn">PAT</span> &nbsp; <span class="desc">app-mode preferred — install GitHub App for finer permissions</span></val></div>
+        <div class="key-row"><label>User</label><val>laboef1900</val></div>
+        <div class="key-row"><label>Scopes</label><val>repo · workflow · read:org</val></div>
+        <div class="key-row"><label>Webhook secret</label><val><span class="nu">— not set —</span></val></div>
+        <div class="key-row"><label>Actions</label><val style="display: flex; gap: 8px;"><button class="opbtn primary">Install GitHub App</button><button class="opbtn">Set PAT</button><button class="opbtn danger">Clear</button></val></div>
+      </div>
+    </section>
+
+    <!-- PROMPTS -->
+    <section class="tab-pane" data-pane="prompts">
+      <div class="card-block">
+        <h3>System Prompts</h3>
+        <div class="key-row">
+          <label>Manager</label>
+          <val><span class="status-tag off">DEFAULT</span> &nbsp; <button class="opbtn" style="margin-left: 8px">Edit</button> <span class="desc">manager review prompt — used to grade verdicts</span></val>
+        </div>
+        <div class="key-row">
+          <label>Lead</label>
+          <val><span class="status-tag off">DEFAULT</span> &nbsp; <button class="opbtn" style="margin-left: 8px">Edit</button> <span class="desc">lead coordinator — dispatches teammates</span></val>
+        </div>
+        <div class="key-row">
+          <label>Issue worker</label>
+          <val><span class="status-tag off">DEFAULT</span> &nbsp; <button class="opbtn" style="margin-left: 8px">Edit</button> <span class="desc">teammate worker — implements one issue</span></val>
+        </div>
+      </div>
+    </section>
+
+    <!-- AUDIT — merged from AutonomyAudit page -->
+    <section class="tab-pane" data-pane="audit">
+      <div class="card-block">
+        <h3>Decisions · Last 30 days</h3>
+        <p style="font-family: var(--mono); font-size: 12px; color: var(--graphite);">
+          <span class="status-tag off">0 DECISIONS</span> &nbsp; No autonomy decisions logged yet — once teammates run autonomously the allow/deny breakdown will populate here.
+        </p>
+        <div class="audit-grid">
+          <!-- Donut block -->
+          <div class="donut-card">
+            <svg width="120" height="120" viewBox="0 0 120 120" aria-hidden="true">
+              <circle cx="60" cy="60" r="48" fill="none" stroke="var(--rule)" stroke-width="14"/>
+              <text x="60" y="65" text-anchor="middle" style="font-family: var(--mono); font-size: 20px; font-weight: 600; fill: var(--ash)">0</text>
+            </svg>
+            <div class="donut-legend">
+              <div class="row"><span class="swatch" style="background: var(--go)"></span><span class="name">auto</span><span class="pct">—</span></div>
+              <div class="row"><span class="swatch" style="background: var(--caution)"></span><span class="name">assisted</span><span class="pct">—</span></div>
+              <div class="row"><span class="swatch" style="background: var(--graphite)"></span><span class="name">manual</span><span class="pct">—</span></div>
+            </div>
+          </div>
+          <!-- Allow / Deny -->
+          <div>
+            <div class="key-row" style="border-bottom: none"><label>Allow</label><val><b style="color: var(--go); font-size: 18px;">—</b></val></div>
+            <div class="key-row" style="border-bottom: none"><label>Deny</label><val><b style="color: var(--abort); font-size: 18px;">—</b></val></div>
+            <div class="key-row" style="border-bottom: none"><label>Allow rate</label><val><span class="nu">—</span></val></div>
+          </div>
+          <!-- Top-touched tools -->
+          <div>
+            <div style="font-family: var(--sans); font-size: 9px; font-weight: 700; letter-spacing: 0.18em; text-transform: uppercase; color: var(--ash); margin-bottom: 6px;">Top tools</div>
+            <div class="empty" style="border: 1px dashed var(--rule); padding: 16px; text-align: center; color: var(--ash); font-family: var(--mono); font-size: 11px;">No tool decisions yet</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card-block">
+        <h3>Decision Log</h3>
+        <div class="audit-filters">
+          <label>Run</label>
+          <input placeholder="run-id…" style="background: var(--paper); width: 160px" />
+          <label>Tool</label>
+          <input placeholder="Bash, Edit…" style="background: var(--paper); width: 120px" />
+          <label>Decision</label>
+          <select style="background: var(--paper)"><option value="">all</option><option>allow</option><option>deny</option></select>
+          <label>Type</label>
+          <select style="background: var(--paper)"><option value="">all</option><option>auto_mode_decision</option><option>auto_mode_referral</option></select>
+          <span style="margin-left: auto">0 of 0</span>
+        </div>
+        <div>
+          <div class="audit-row head">
+            <span>Time</span>
+            <span>Level</span>
+            <span>Decision</span>
+            <span>Tool</span>
+            <span>Input</span>
+            <span>Run</span>
+          </div>
+          <div class="empty" style="border: 1px dashed var(--rule); padding: 28px 14px; text-align: center; color: var(--ash); font-family: var(--mono); font-size: 12px; margin-top: 4px;">
+            No decisions match these filters.
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- APPEARANCE -->
+    <section class="tab-pane" data-pane="appearance">
+      <div class="card-block">
+        <h3>Theme</h3>
+        <div class="key-row">
+          <label>Mode</label>
+          <val>
+            <select id="theme-select">
+              <option value="system">Match system</option>
+              <option value="light">Light</option>
+              <option value="dark">Dark</option>
+            </select>
+            <span class="desc">paper-and-ink in light · charcoal-and-bone in dark</span>
+          </val>
+        </div>
+        <div class="key-row">
+          <label>Animations</label>
+          <val><label class="toggle"><input type="checkbox" checked /> on</label> <span class="desc">honors <code>prefers-reduced-motion</code> regardless</span></val>
+        </div>
+        <div class="key-row">
+          <label>Density</label>
+          <val><select><option>Compact</option><option selected>Pro (default)</option><option>Comfortable</option></select></val>
+        </div>
+      </div>
+    </section>
+
+  </div>
+</section>
+
+<footer class="tele">
+  <span class="now"><span class="run-tick"></span><span id="clock">00:00:00</span></span>
+  <span>service online · uptime 3d 09h</span>
+  <span class="ev" id="event">backend · <em>Edit</em> app/routers/runs.py — extend ActiveEmployeeOut</span>
+  <span id="tok">+0.6k</span>
+</footer>
+
+<div class="legend">
+  <span><kbd>1..7</kbd>tab</span>
+  <span><kbd>t</kbd>theme</span>
+  <span><kbd>⌘.</kbd>stop</span>
+</div>
+
+<script src="pro.js"></script>
+<script>
+renderTicker(document.getElementById('ticker-track'));
+setupClock(document.getElementById('clock'));
+
+const tabs = document.querySelectorAll('.side-tab');
+const panes = document.querySelectorAll('.tab-pane');
+function activate(name) {
+  tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+  panes.forEach(p => p.classList.toggle('active', p.dataset.pane === name));
+}
+tabs.forEach(t => t.addEventListener('click', () => activate(t.dataset.tab)));
+const tabOrder = ['general','models','auth','github','prompts','audit','appearance'];
+document.addEventListener('keydown', (e) => {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+  const n = parseInt(e.key, 10);
+  if (n >= 1 && n <= tabOrder.length) activate(tabOrder[n-1]);
+});
+
+const STREAM = [
+  ["backend",  "Edit", "app/routers/runs.py — extend ActiveEmployeeOut"],
+  ["lead",     "Plan", "monitoring 3 specialists — no blockers"],
+  ["frontend", "Read", "pages/AgentTeamsCanvas.svelte"],
+];
+let evIx = 0;
+const evCell = document.getElementById('event');
+const tokCell = document.getElementById('tok');
+setInterval(() => {
+  const e = STREAM[evIx % STREAM.length]; evIx++;
+  evCell.innerHTML = "";
+  evCell.appendChild(flap(`${e[0]} · ${e[1]} ${e[2]}`, 0));
+  tokCell.textContent = "+" + (Math.floor(Math.random()*9)+1) + "." + (Math.floor(Math.random()*9)) + "k";
+}, 4200);
+</script>
+
+</body>
+</html>

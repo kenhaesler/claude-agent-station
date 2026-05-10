@@ -1,0 +1,509 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Station / Dispatch — Pro</title>
+<link rel="stylesheet" href="pro.css" />
+<style>
+/* ── Filter strip ──────────────────────────────────── */
+.filters {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  height: 34px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--rule);
+  background: var(--paper);
+}
+.views { display: flex; align-items: center; }
+.view {
+  font-family: var(--sans);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--graphite);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 8px 12px;
+  cursor: pointer;
+  height: 34px;
+}
+.view.active { color: var(--ink); border-bottom-color: var(--ink); }
+.view .count { font-family: var(--mono); font-size: 9px; color: var(--ash); margin-left: 4px; font-weight: 500; }
+.view.active .count { color: var(--graphite); }
+.view:hover { color: var(--ink); }
+.filter-right {
+  display: flex; align-items: center; gap: 12px;
+  font-family: var(--mono); font-size: 10px; color: var(--ash);
+}
+.search {
+  font-family: var(--mono);
+  font-size: 11px;
+  background: var(--paper-2);
+  border: 1px solid var(--rule);
+  padding: 3px 8px;
+  color: var(--ink);
+  width: 180px;
+}
+.search::placeholder { color: var(--ash); }
+.search:focus { outline: none; border-color: var(--ink); }
+
+/* ── Alerts ────────────────────────────────────────── */
+.alerts { border-bottom: 1px solid var(--rule); }
+.alert {
+  display: grid;
+  grid-template-columns: 8px auto auto 1fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 6px 16px;
+  border-left: 3px solid var(--abort);
+  background: color-mix(in oklab, var(--abort) 6%, var(--paper));
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink);
+}
+.alert.caution { border-left-color: var(--caution); background: color-mix(in oklab, var(--caution) 6%, var(--paper)); }
+.alert .lev { font-family: var(--sans); font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; font-size: 10px; color: var(--abort); }
+.alert.caution .lev { color: var(--caution); }
+.alert .time { color: var(--ash); font-size: 10px; }
+.alert .body b { font-weight: 500; }
+.alert .ack {
+  font-family: var(--sans); font-size: 9px;
+  letter-spacing: 0.16em; text-transform: uppercase;
+  color: var(--ink); background: transparent;
+  border: 1px solid var(--rule-2); padding: 2px 8px; cursor: pointer;
+}
+.alert .ack:hover { background: var(--paper-2); }
+
+/* ── Telemetry strip ───────────────────────────────── */
+.telemetry {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  border-bottom: 1px solid var(--rule);
+}
+.tcell {
+  padding: 14px 18px;
+  border-right: 1px solid var(--rule);
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-rows: auto auto auto;
+  column-gap: 14px; row-gap: 4px;
+}
+.tcell:last-child { border-right: none; }
+.tcell .label {
+  font-family: var(--sans); font-size: 9px; font-weight: 700;
+  letter-spacing: 0.18em; text-transform: uppercase;
+  color: var(--graphite);
+  grid-column: 1; grid-row: 1;
+}
+.tcell .value {
+  font-family: var(--mono); font-weight: 600; font-size: 26px;
+  letter-spacing: -0.02em; color: var(--ink); line-height: 1;
+  grid-column: 1; grid-row: 2;
+}
+.tcell .value.go      { color: var(--go); }
+.tcell .value.caution { color: var(--caution); }
+.tcell .value.abort   { color: var(--abort); }
+.tcell .value sup {
+  color: var(--ash); font-size: 0.42em; font-weight: 500;
+  margin-left: 2px; vertical-align: 0.85em;
+}
+.tcell .sub {
+  font-family: var(--mono); font-size: 10px; color: var(--ash);
+  grid-column: 1 / -1; grid-row: 3; margin-top: 4px;
+}
+.tcell .spark { grid-column: 2; grid-row: 1 / 3; align-self: center; width: 80px; height: 32px; }
+
+/* ── Board ─────────────────────────────────────────── */
+.board { display: grid; grid-template-columns: 1fr 300px; min-height: 440px; flex: 1; }
+.board-main { border-right: 1px solid var(--rule); }
+.board-head, .board-row {
+  display: grid;
+  grid-template-columns: 20px 110px 44px 52px 1.2fr 78px 50px 62px 62px 52px;
+  align-items: center; gap: 10px; padding: 0 16px;
+  border-bottom: 1px solid var(--rule);
+}
+.board-head {
+  height: 28px; background: var(--paper-2);
+  font-family: var(--sans); font-size: 9px; font-weight: 700;
+  letter-spacing: 0.2em; text-transform: uppercase; color: var(--ash);
+  position: sticky; top: 40px;
+}
+.board-head .num { text-align: right; }
+.board-row {
+  height: 38px;
+  font-family: var(--mono); font-size: 11px; color: var(--ink);
+  cursor: pointer; text-decoration: none;
+}
+.board-row:hover { background: var(--paper-2); }
+.board-row.selected { background: color-mix(in oklab, var(--data) 9%, var(--paper)); }
+.board-row .ix { color: var(--ash); font-size: 10px; }
+.board-row .id { color: var(--graphite); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.board-row .title {
+  font-family: var(--sans); font-size: 12px; font-weight: 500; color: var(--ink);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.board-row .title .repo { color: var(--graphite); margin-right: 8px; }
+.board-row .title .nul  { color: var(--ash); font-style: italic; }
+.board-row .num { text-align: right; font-variant-numeric: tabular-nums; }
+.board-row .nu  { color: var(--ash); }
+
+/* ── Right rail (split: tasking + context) ─────────── */
+.side { display: grid; grid-template-rows: 1fr 1fr; min-height: 100%; }
+.side > section { display: flex; flex-direction: column; min-height: 0; }
+.side > section + section { border-top: 1px solid var(--rule); }
+.side .body { overflow-y: auto; padding: 0; }
+.task {
+  padding: 10px 14px; border-bottom: 1px solid var(--rule);
+  display: grid; gap: 3px;
+}
+.task .lane {
+  font-family: var(--sans); font-size: 8px; font-weight: 700;
+  letter-spacing: 0.2em; text-transform: uppercase; color: var(--data);
+}
+.task .t { font-family: var(--sans); font-size: 12px; color: var(--ink); line-height: 1.3; }
+.task .meta {
+  font-family: var(--mono); font-size: 9px; color: var(--ash); letter-spacing: 0.04em;
+  display: flex; gap: 8px; flex-wrap: wrap;
+}
+.task.empty { color: var(--ash); font-family: var(--mono); font-size: 11px; padding: 12px 14px; }
+
+.ctx { padding: 12px 14px; font-family: var(--mono); font-size: 11px; color: var(--ink); }
+.ctx .row { display: grid; grid-template-columns: 70px 1fr; gap: 8px; padding: 3px 0; border-bottom: 1px dashed var(--rule); }
+.ctx .row:last-child { border-bottom: none; }
+.ctx .row label {
+  color: var(--ash); font-family: var(--sans); font-size: 9px; font-weight: 700;
+  letter-spacing: 0.16em; text-transform: uppercase;
+}
+.ctx .row val { color: var(--ink); }
+.ctx .empty { color: var(--ash); font-style: italic; padding: 12px 0; }
+
+@media (max-width: 1180px) {
+  .board { grid-template-columns: 1fr; }
+  .board-main { border-right: none; }
+  .telemetry { grid-template-columns: repeat(2, 1fr); }
+  .tcell:nth-child(2) { border-right: none; }
+  .board-head, .board-row { grid-template-columns: 20px 44px 52px 1fr 78px 50px 62px 52px; }
+  .board-row .id, .board-head .col-id { display: none; }
+}
+</style>
+</head>
+<body>
+
+<header class="strip">
+  <div class="wordmark">
+    <span class="name">Station</span>
+    <span class="tag">OPERATOR · v1</span>
+  </div>
+  <nav class="strip-nav">
+    <a href="#" class="active">Dispatch</a>
+    <a href="mission.html">Mission</a>
+    <a href="fleet.html">Fleet</a>
+    <a href="run-detail.html">Run</a>
+    <a href="#">Queue</a>
+    <a href="#">Settings</a>
+  </nav>
+  <div class="strip-status">
+    <span><span class="dot go live"></span><span class="pill">WORKING · 1</span></span>
+    <span>647 TOK</span>
+    <span>SSE&nbsp;<b style="color:var(--go)">●</b></span>
+    <button class="btn-theme" id="theme-toggle" aria-label="Toggle theme">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" id="theme-sun" style="display:none">
+        <circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="4.2" y1="4.2" x2="6.3" y2="6.3"/><line x1="17.7" y1="17.7" x2="19.8" y2="19.8"/><line x1="2" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="22" y2="12"/><line x1="4.2" y1="19.8" x2="6.3" y2="17.7"/><line x1="17.7" y1="6.3" x2="19.8" y2="4.2"/>
+      </svg>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" id="theme-moon">
+        <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>
+      </svg>
+    </button>
+    <button class="btn-stop">Stop <kbd>⌘.</kbd></button>
+  </div>
+</header>
+
+<div class="ticker">
+  <span class="ticker-tag">// Live</span>
+  <div class="ticker-track" id="ticker-track"></div>
+</div>
+
+<div class="filters">
+  <div class="views">
+    <button class="view active">All <span class="count">12</span></button>
+    <button class="view">Active <span class="count">1</span></button>
+    <button class="view">24H <span class="count">12</span></button>
+    <button class="view">Plan-Review <span class="count">3</span></button>
+    <button class="view">Interrupted <span class="count">2</span></button>
+    <button class="view">By Mode</button>
+  </div>
+  <div class="filter-right">
+    <span>laboef1900/next-itsm</span>
+    <span>·</span>
+    <input class="search" placeholder="filter…  ·  / focuses" />
+  </div>
+</div>
+
+<div class="alerts">
+  <div class="alert caution">
+    <span class="dot caution"></span>
+    <span class="lev">Caution · Disk</span>
+    <span class="time">22:36</span>
+    <span class="body"><b>4.9 G free of 87 G</b> after worktree purge — back from 1.9 G. Continue monitoring.</span>
+    <button class="ack">Ack</button>
+  </div>
+  <div class="alert caution">
+    <span class="dot caution"></span>
+    <span class="lev">Caution · Memory</span>
+    <span class="time">22:32</span>
+    <span class="body"><b>9.7 / 13.6 G used (71%).</b> Load 2.83 → 1.04 → 0.57. Recent spike, normalizing.</span>
+    <button class="ack">Ack</button>
+  </div>
+</div>
+
+<section class="telemetry">
+  <div class="tcell">
+    <div class="label">Active</div>
+    <div class="value go">1</div>
+    <div class="sub">2 teammates · backend, frontend</div>
+  </div>
+  <div class="tcell">
+    <div class="label">Queue</div>
+    <div class="value">3</div>
+    <div class="sub">1 claimed · 2 done · 0 pending</div>
+  </div>
+  <div class="tcell">
+    <div class="label">Tokens · 7D</div>
+    <div class="value">1.75<sup>K</sup></div>
+    <svg class="spark" viewBox="0 0 80 32" preserveAspectRatio="none" aria-hidden="true">
+      <polyline points="2,30 28,30 54,30 78,4" fill="none" stroke="currentColor" stroke-width="1.4" />
+      <circle cx="78" cy="4" r="2" fill="var(--go)" />
+    </svg>
+    <div class="sub">23 runs · 1.5K out / 225 in · 0% verdicts</div>
+  </div>
+  <div class="tcell">
+    <div class="label">System</div>
+    <div class="value caution">DEGR</div>
+    <div class="sub">disk freed · mem 71% · uptime 3d 09h</div>
+  </div>
+</section>
+
+<section class="board">
+  <div class="board-main">
+    <div class="board-head">
+      <span class="col-ix">#</span>
+      <span class="col-id">Run ID</span>
+      <span>Mode</span>
+      <span>Aut</span>
+      <span>Headline</span>
+      <span>Status</span>
+      <span class="num">Turns</span>
+      <span class="num">Tok</span>
+      <span class="num">Dur</span>
+      <span class="num">Age</span>
+    </div>
+    <div id="rows"></div>
+  </div>
+
+  <aside class="side">
+    <section>
+      <div class="section-head">
+        <span>Coordinator · Live</span>
+        <span class="right">run-…220534Z</span>
+      </div>
+      <div class="body">
+        <div class="task">
+          <div class="lane">Backend · Spright</div>
+          <div class="t">Backend specialist on team spright</div>
+          <div class="meta"><span>RUNNING</span><span>0 TURNS</span><span>0:30</span></div>
+        </div>
+        <div class="task">
+          <div class="lane">Frontend · Spright</div>
+          <div class="t">Frontend specialist on team spright</div>
+          <div class="meta"><span>RUNNING</span><span>0 TURNS</span><span>0:30</span></div>
+        </div>
+        <div class="task empty">No further coordinator tasks.</div>
+      </div>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <span>Context</span>
+        <span class="right" id="ctx-meta">hover a row</span>
+      </div>
+      <div class="body" id="ctx-body">
+        <div class="ctx"><div class="empty">Hover or use j/k to inspect a run.</div></div>
+      </div>
+    </section>
+  </aside>
+</section>
+
+<footer class="tele">
+  <span class="now"><span class="run-tick"></span><span id="clock">00:00:00</span></span>
+  <span><b>run-…220534Z</b></span>
+  <span class="ev" id="event">lead · <em>Plan</em> dispatching backend + frontend specialists on team <b>spright</b></span>
+  <span id="tok">+0.6k</span>
+</footer>
+
+<div class="legend">
+  <span><kbd>/</kbd>filter</span>
+  <span><kbd>j/k</kbd>row</span>
+  <span><kbd>t</kbd>theme</span>
+  <span><kbd>⌘.</kbd>stop</span>
+</div>
+
+<script src="pro.js"></script>
+<script>
+renderTicker(document.getElementById('ticker-track'));
+setupClock(document.getElementById('clock'));
+
+const RUNS = [
+  { run_id:"run-20260509T220534Z", mode:"full",            aut:"assisted", status:"running",        turns: 0,    tokens_total: 647,  duration_ms: null,   age:"30m" },
+  { run_id:"run-20260509T214600Z", mode:"plan_only",       aut:"assisted", status:"plan_approved",  turns: 3,    tokens_total: null, duration_ms: 14911,  age:"50m" },
+  { run_id:"run-20260509T183351Z", mode:"full",            aut:"assisted", status:"plan_rejected",  turns: 3,    tokens_total: null, duration_ms: 21624,  age:"4h"  },
+  { run_id:"run-20260509T145533Z", mode:"full",            aut:"assisted", status:"interrupted",    turns: 1,    tokens_total: null, duration_ms: 5519,   age:"7h"  },
+  { run_id:"run-20260509T142511Z", mode:"full",            aut:"assisted", status:"interrupted",    turns: 31,   tokens_total: 1147, duration_ms: 784380, age:"8h"  },
+  { run_id:"run-20260509T120041Z", mode:"plan_only",       aut:"assisted", status:"plan_approved",  turns: 3,    tokens_total: null, duration_ms: 19352,  age:"10h" },
+  { run_id:"run-20260509T111317Z", mode:"plan_only",       aut:"assisted", status:"completed",      turns: null, tokens_total: null, duration_ms: null,   age:"11h" },
+  { run_id:"run-20260509T100548Z", mode:"plan_only",       aut:"assisted", status:"completed",      turns: null, tokens_total: null, duration_ms: null,   age:"12h" },
+  { run_id:"run-20260509T093644Z", mode:"plan_only",       aut:"assisted", status:"completed",      turns: null, tokens_total: null, duration_ms: null,   age:"13h" },
+  { run_id:"run-vb-5d98bdbf2531",  mode:"vision-bootstrap",aut:"auto",     status:"completed",      turns: null, tokens_total: null, duration_ms: null,   age:"13h" },
+  { run_id:"run-vb-4de1fe693481",  mode:"vision-bootstrap",aut:"auto",     status:"completed",      turns: null, tokens_total: null, duration_ms: null,   age:"14h" },
+  { run_id:"run-vb-a40c1a6c687b",  mode:"vision-bootstrap",aut:"auto",     status:"completed",      turns: null, tokens_total: null, duration_ms: null,   age:"14h" },
+];
+const STATUS_MAP = {
+  running:        { label:"RUN",     cls:"run",    tick:true  },
+  plan_approved:  { label:"PLAN OK", cls:"planok", tick:false },
+  plan_rejected:  { label:"PLAN ✗",  cls:"planx",  tick:false },
+  interrupted:    { label:"STOP",    cls:"stop",   tick:false },
+  completed:      { label:"DONE",    cls:"done",   tick:false },
+  failed:         { label:"FAIL",    cls:"planx",  tick:false },
+};
+const MODE_MAP = {
+  full:             { label:"FULL", cls:"full"   },
+  plan_only:        { label:"PLAN", cls:"plan"   },
+  "vision-bootstrap":{ label:"VIS", cls:"vision" },
+  employee:         { label:"EMP",  cls:"full"   },
+};
+const AUT_MAP = {
+  assisted: { label:"ASSIST", cls:"assist" },
+  auto:     { label:"AUTO",   cls:"auto"   },
+  manual:   { label:"MAN",    cls:"manual" },
+};
+function headlineFor(run) {
+  const repo = "next-itsm";
+  if (run.mode === "vision-bootstrap") return { repo, title:"vision bootstrap", null:false };
+  if (run.mode === "plan_only")        return { repo, title:"plan-only run",    null:true  };
+  return { repo, title:"untitled · no issue", null:true };
+}
+function fmtTok(n)  { return n == null ? "—" : (n < 1000 ? String(n) : (n/1000).toFixed(1)+"K"); }
+function fmtDur(ms, status) {
+  if (ms == null) return status === "running" ? "live" : "—";
+  if (ms < 60000) return (ms/1000).toFixed(1)+"s";
+  const m = Math.floor(ms/60000), s = Math.round((ms%60000)/1000);
+  if (m < 60) return m+"m"+s+"s";
+  return Math.floor(m/60)+"h"+(m%60)+"m";
+}
+function fmtTurns(n) { return n == null ? "—" : String(n); }
+function shortId(id) { return id.replace(/^run-(vb-)?/, "…"); }
+
+const rowSpacingMs = 60;
+const rowsEl = document.getElementById("rows");
+RUNS.forEach((r, i) => {
+  const ix    = String(i+1).padStart(2,"0");
+  const stat  = STATUS_MAP[r.status] ?? { label:r.status.toUpperCase(), cls:"done", tick:false };
+  const mode  = MODE_MAP[r.mode]    ?? { label:r.mode.toUpperCase(),  cls:"full"   };
+  const aut   = AUT_MAP[r.aut]      ?? { label:r.aut.toUpperCase(),   cls:"manual" };
+  const head  = headlineFor(r);
+  const baseDelay = i * rowSpacingMs;
+
+  const row = document.createElement("a");
+  row.className = "board-row";
+  row.href = "run-detail.html";
+  row.dataset.runId = r.run_id;
+  row.innerHTML = `
+    <span class="ix"></span>
+    <span class="id"></span>
+    <span><span class="mode ${mode.cls}"></span></span>
+    <span><span class="aut ${aut.cls}"></span></span>
+    <span class="title"><span class="repo"></span><span class="t ${head.null?'nul':''}"></span></span>
+    <span><span class="status ${stat.cls}">${stat.tick ? '<span class="run-tick"></span>' : ''}<span class="lab"></span></span></span>
+    <span class="num n-turns ${r.turns==null?'nu':''}"></span>
+    <span class="num n-tokens ${r.tokens_total==null?'nu':''}"></span>
+    <span class="num n-dur ${r.duration_ms==null && r.status!=='running'?'nu':''}"></span>
+    <span class="num n-age"></span>
+  `;
+  row.querySelector(".ix"      ).appendChild(flap(ix,                    baseDelay));
+  row.querySelector(".id"      ).appendChild(flap(shortId(r.run_id),     baseDelay + 24));
+  row.querySelector(".mode"    ).appendChild(flap(mode.label,            baseDelay + 48));
+  row.querySelector(".aut"     ).appendChild(flap(aut.label,             baseDelay + 60));
+  row.querySelector(".repo"    ).appendChild(flap(head.repo + "  ·  ",   baseDelay + 80));
+  row.querySelector(".t"       ).appendChild(flap(head.title,            baseDelay + 110));
+  row.querySelector(".lab"     ).appendChild(flap(stat.label,            baseDelay + 160));
+  row.querySelector(".n-turns" ).appendChild(flap(fmtTurns(r.turns),     baseDelay + 200));
+  row.querySelector(".n-tokens").appendChild(flap(fmtTok(r.tokens_total),baseDelay + 230));
+  row.querySelector(".n-dur"   ).appendChild(flap(fmtDur(r.duration_ms, r.status), baseDelay + 260));
+  row.querySelector(".n-age"   ).appendChild(flap(r.age,                 baseDelay + 290));
+
+  const fillCtx = () => {
+    document.querySelectorAll('.board-row.selected').forEach(el => el.classList.remove('selected'));
+    row.classList.add('selected');
+    document.getElementById('ctx-meta').textContent = shortId(r.run_id);
+    const sigVar = stat.cls==='run'||stat.cls==='planok' ? 'go' :
+                   stat.cls==='planx' ? 'abort' :
+                   stat.cls==='stop'  ? 'caution' : 'graphite';
+    document.getElementById('ctx-body').innerHTML = `
+      <div class="ctx">
+        <div class="row"><label>Run ID</label><val>${r.run_id}</val></div>
+        <div class="row"><label>Project</label><val>laboef1900/next-itsm</val></div>
+        <div class="row"><label>Mode</label><val>${r.mode}</val></div>
+        <div class="row"><label>Autonomy</label><val>${r.aut}</val></div>
+        <div class="row"><label>Status</label><val style="color:var(--${sigVar})">${r.status}</val></div>
+        <div class="row"><label>Turns</label><val>${fmtTurns(r.turns)}</val></div>
+        <div class="row"><label>Tokens</label><val>${fmtTok(r.tokens_total)}</val></div>
+        <div class="row"><label>Duration</label><val>${fmtDur(r.duration_ms, r.status)}</val></div>
+        <div class="row"><label>Branch</label><val style="color:var(--ash)">—</val></div>
+        <div class="row"><label>Issue</label><val style="color:var(--ash)">—</val></div>
+        <div class="row"><label>Verdict</label><val style="color:var(--ash)">—</val></div>
+        <div class="row"><label>Cost</label><val style="color:var(--ash)">—</val></div>
+      </div>
+    `;
+  };
+  row.addEventListener('mouseenter', fillCtx);
+  row.addEventListener('focus', fillCtx);
+  rowsEl.appendChild(row);
+});
+
+const EVENTS = [
+  ["lead",       "Plan",   "dispatching backend + frontend specialists on team spright"],
+  ["teammate-1", "Read",   "dashboard/backend/app/services/coordinator_service.py"],
+  ["teammate-2", "Bash",   "rg --type ts AgentTeamsCanvas dashboard/frontend/src"],
+  ["teammate-1", "Edit",   "dashboard/backend/app/routers/runs.py — extend ActiveEmployeeOut"],
+  ["lead",       "Review", "teammate-1 plan: 4 steps · 2 files — APPROVE"],
+  ["teammate-2", "Bash",   "pytest dashboard/backend/tests -k coordinator — 8 passed"],
+];
+let evIx = 0;
+const evCell = document.getElementById("event");
+const tokCell = document.getElementById("tok");
+setInterval(() => {
+  const e = EVENTS[evIx % EVENTS.length]; evIx++;
+  evCell.innerHTML = "";
+  evCell.appendChild(flap(`${e[0]} · ${e[1]} ${e[2]}`, 0));
+  tokCell.textContent = "+" + (Math.floor(Math.random()*9)+1) + "." + (Math.floor(Math.random()*9)) + "k";
+}, 4200);
+
+document.addEventListener('keydown', (e) => {
+  if (e.target.tagName === 'INPUT') return;
+  if (e.key === '/') { e.preventDefault(); document.querySelector('.search')?.focus(); }
+  if (e.key === 'j' || e.key === 'k') {
+    const rows = [...document.querySelectorAll('.board-row')];
+    const cur = document.querySelector('.board-row.selected');
+    let idx = cur ? rows.indexOf(cur) : -1;
+    idx = e.key === 'j' ? Math.min(idx+1, rows.length-1) : Math.max(idx-1, 0);
+    rows[idx]?.dispatchEvent(new MouseEvent('mouseenter'));
+    rows[idx]?.scrollIntoView({block: 'nearest'});
+  }
+});
+</script>
+
+</body>
+</html>
