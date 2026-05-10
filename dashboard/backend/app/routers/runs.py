@@ -41,6 +41,11 @@ from app.schemas import (
     RunOut,
     TeamSummary,
     TeammateStatus,
+    TelemetryActive,
+    TelemetryQueue,
+    TelemetrySummaryOut,
+    TelemetrySystem,
+    TelemetryTokens7d,
 )
 from app.services import service_control
 from app.services.diff_parser import DiffResult, parse_unified_diff
@@ -167,6 +172,149 @@ async def get_active_employees(db: AsyncSession = Depends(get_db)):
 async def get_active_teammates(db: AsyncSession = Depends(get_db)):
     """Alias for active-employees using Agent Teams terminology."""
     return await get_active_employees(db)
+
+
+@router.get("/telemetry-summary", response_model=TelemetrySummaryOut)
+async def get_telemetry_summary(db: AsyncSession = Depends(get_db)):
+    """Aggregate the four telemetry cells on the Dispatch board:
+    Active runs, Queue stats, Tokens (7d) summary + sparkline,
+    and a coarse System health label derived from disk/memory.
+    """
+    from datetime import timedelta
+
+    from app.services.systemd import get_system_resources
+
+    # --- 1. Active runs / teammates / roles ---
+    active_runs_res = await db.execute(
+        select(Run).where(Run.status.in_(["running", "plan_reviewing", "reviewing"]))
+    )
+    active_runs = active_runs_res.scalars().all()
+
+    roles: list[str] = []
+    teammates_count = 0
+    if active_runs:
+        for r in active_runs:
+            members_raw = r.team_members
+            if not members_raw:
+                continue
+            try:
+                members = json.loads(members_raw) if isinstance(members_raw, str) else members_raw
+                if isinstance(members, list):
+                    teammates_count += len(members)
+                    for m in members:
+                        name = (m.get("name") if isinstance(m, dict) else str(m)) or ""
+                        for tag in ("backend", "frontend", "qa", "lead"):
+                            if tag in name.lower() and tag not in roles:
+                                roles.append(tag)
+            except Exception:  # noqa: BLE001 — best-effort introspection
+                continue
+
+        # Fallback: derive from running coordinator tasks if team_members was empty.
+        if teammates_count == 0:
+            ct_res = await db.execute(
+                select(CoordinatorTask).where(
+                    CoordinatorTask.status == "running",
+                    CoordinatorTask.run_id.in_([r.run_id for r in active_runs]),
+                )
+            )
+            tasks = ct_res.scalars().all()
+            teammates_count = len(tasks)
+            for t in tasks:
+                name = (t.claimed_by or t.teammate_agent_id or "") or ""
+                for tag in ("backend", "frontend", "qa", "lead"):
+                    if tag in name.lower() and tag not in roles:
+                        roles.append(tag)
+
+    active = TelemetryActive(
+        count=len(active_runs),
+        teammates=teammates_count,
+        roles=roles,
+    )
+
+    # --- 2. Queue stats ---
+    qstate_res = await db.execute(
+        select(QueueItem.state, func.count(QueueItem.id)).group_by(QueueItem.state)
+    )
+    by_state = {row[0]: row[1] for row in qstate_res.all()}
+    claimed = (
+        by_state.get("claimed", 0)
+        + by_state.get("assigned", 0)
+        + by_state.get("planning", 0)
+        + by_state.get("in_progress", 0)
+    )
+    done = by_state.get("completed", 0) + by_state.get("approved", 0)
+    pending = by_state.get("pending", 0)
+    queue_total = sum(by_state.values())
+
+    queue = TelemetryQueue(total=queue_total, claimed=claimed, done=done, pending=pending)
+
+    # --- 3. Tokens (7d) — sum, run count, in/out, sparkline ---
+    cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+    daily_q = (
+        select(
+            func.date(Run.started_at).label("date"),
+            func.coalesce(func.sum(Run.tokens_total), 0).label("tot"),
+        )
+        .where(Run.started_at >= cutoff)
+        .group_by(func.date(Run.started_at))
+        .order_by(func.date(Run.started_at))
+    )
+    daily_rows = (await db.execute(daily_q)).all()
+    spark = [int(row.tot or 0) for row in daily_rows]
+
+    sum_q = (
+        select(
+            func.coalesce(func.sum(Run.tokens_total), 0),
+            func.coalesce(func.sum(Run.tokens_input), 0),
+            func.coalesce(func.sum(Run.tokens_output), 0),
+            func.count(Run.id),
+        ).where(Run.started_at >= cutoff)
+    )
+    sum_row = (await db.execute(sum_q)).first()
+    tot7, in7, out7, runs7 = (sum_row[0] or 0, sum_row[1] or 0, sum_row[2] or 0, sum_row[3] or 0)
+
+    tokens_7d = TelemetryTokens7d(
+        total=int(tot7),
+        runs=int(runs7),
+        input=int(in7),
+        output=int(out7),
+        spark=spark,
+    )
+
+    # --- 4. System status ---
+    try:
+        resources = await get_system_resources()
+    except Exception:  # noqa: BLE001
+        resources = {}
+
+    disk_free = resources.get("disk_free_gb")
+    mem_used = resources.get("memory_used_mb")
+    mem_total = resources.get("memory_total_mb")
+    uptime = resources.get("uptime_seconds")
+    mem_pct: int | None = None
+    if mem_used is not None and mem_total:
+        mem_pct = int(round(100 * mem_used / mem_total))
+
+    status_label = "NOMINAL"
+    # CRIT thresholds
+    if (disk_free is not None and disk_free < 1) or (mem_pct is not None and mem_pct > 90):
+        status_label = "CRIT"
+    elif (disk_free is not None and disk_free < 5) or (mem_pct is not None and mem_pct > 70):
+        status_label = "DEGR"
+
+    system = TelemetrySystem(
+        status=status_label,
+        disk_free_gb=disk_free,
+        memory_used_pct=mem_pct,
+        uptime_secs=uptime,
+    )
+
+    return TelemetrySummaryOut(
+        active=active,
+        queue=queue,
+        tokens_7d=tokens_7d,
+        system=system,
+    )
 
 
 @router.get("/latest", response_model=Optional[RunOut])

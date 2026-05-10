@@ -323,3 +323,79 @@ async def test_get_run_full_context_multiple_queue_items(client):
     # Backwards-compat: ``queue_item`` is the first item (by id), not None
     assert data["queue_item"] is not None
     assert data["queue_item"]["issue_number"] == 42
+
+
+@pytest.mark.asyncio
+async def test_telemetry_summary_shape_empty(client):
+    """GET /api/runs/telemetry-summary returns the four-cell shape even on
+    a brand-new station with no runs and no queue rows."""
+    resp = await client.get("/api/runs/telemetry-summary")
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+
+    assert set(data.keys()) == {"active", "queue", "tokens_7d", "system"}
+
+    assert data["active"]["count"] == 0
+    assert data["active"]["teammates"] == 0
+    assert data["active"]["roles"] == []
+
+    assert data["queue"]["total"] == 0
+    assert data["queue"]["claimed"] == 0
+    assert data["queue"]["done"] == 0
+    assert data["queue"]["pending"] == 0
+
+    assert data["tokens_7d"]["total"] == 0
+    assert data["tokens_7d"]["runs"] == 0
+    assert isinstance(data["tokens_7d"]["spark"], list)
+
+    # System status is NOMINAL when get_system_resources returns nothing
+    # actionable (e.g. test environment without /proc/meminfo).
+    assert data["system"]["status"] in {"NOMINAL", "DEGR", "CRIT"}
+
+
+@pytest.mark.asyncio
+async def test_telemetry_summary_aggregates_runs_and_queue(client):
+    """Endpoint reflects active runs, queue states, and 7d token totals."""
+    from app.database import async_session
+    from app.models import QueueItem, Run
+
+    async with async_session() as s:
+        s.add(Run(
+            run_id="run-tel-active",
+            status="running",
+            started_at=datetime.now(timezone.utc),
+            tokens_total=500,
+            tokens_input=100,
+            tokens_output=400,
+            team_members='[{"name": "backend-spright"}, {"name": "frontend-spright"}]',
+        ))
+        s.add(Run(
+            run_id="run-tel-old",
+            status="completed",
+            started_at=datetime.now(timezone.utc) - timedelta(days=2),
+            tokens_total=300, tokens_input=50, tokens_output=250,
+        ))
+        s.add_all([
+            QueueItem(project_repo="x/y", issue_number=1, mode="full", state="pending"),
+            QueueItem(project_repo="x/y", issue_number=2, mode="full", state="claimed"),
+            QueueItem(project_repo="x/y", issue_number=3, mode="full", state="completed"),
+        ])
+        await s.commit()
+
+    resp = await client.get("/api/runs/telemetry-summary")
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+
+    assert data["active"]["count"] == 1
+    assert data["active"]["teammates"] == 2
+    assert sorted(data["active"]["roles"]) == ["backend", "frontend"]
+
+    assert data["queue"]["pending"] == 1
+    assert data["queue"]["claimed"] == 1
+    assert data["queue"]["done"] == 1
+    assert data["queue"]["total"] == 3
+
+    assert data["tokens_7d"]["total"] == 800
+    assert data["tokens_7d"]["runs"] == 2
+    assert data["tokens_7d"]["input"] == 150
+    assert data["tokens_7d"]["output"] == 650

@@ -154,7 +154,7 @@ claude-agent-station/
 │       │   ├── App.svelte          # Root + hash-based routing
 │       │   ├── pages/              # 8 page components
 │       │   │   ├── AgentTeamsCanvas.svelte  # Agent Teams live view
-│       │   │   ├── CommandCenter.svelte     # Dispatch
+│       │   │   ├── CommandCenter.svelte     # Dispatch — Pro dense board (strip + ticker + filters + telemetry + run table + right rail)
 │       │   │   ├── MissionControl.svelte    # Mission control panel
 │       │   │   ├── ProjectDetail.svelte     # Single-project view
 │       │   │   ├── ProjectsPage.svelte      # Projects list

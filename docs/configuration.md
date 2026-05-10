@@ -102,6 +102,10 @@ Authentication settings are listed in the env-vars table above. Additional behav
 
 Exempt from `STATION_API_KEY` auth (verified in `dashboard/backend/app/main.py`): the health router, the internal agent webhook router, the WebSocket log-streaming router (`logs.ws_router` at `/api/logs/ws`, which has its own inline WebSocket auth), the GitHub webhook router, and GitHub App lifecycle endpoints.
 
+### Dispatch telemetry
+
+`GET /api/runs/telemetry-summary` (added by the Pro Dispatch redesign) is the single endpoint backing the four telemetry cells on the home page (Active / Queue / Tokens·7D / System). It aggregates running runs + their teammates, queue counts grouped by lifecycle state, a 7-day token total with daily sparkline points, and a coarse system-health label (`NOMINAL`/`DEGR`/`CRIT`) derived from disk and memory pressure. Lives in `dashboard/backend/app/routers/runs.py`; the response shape is `TelemetrySummaryOut` in `app/schemas.py`.
+
 ## Project config
 
 Each managed repository is one row in the `projects` table. The dashboard's Projects page is the easiest way to edit; the underlying schema (used by `POST /api/projects`) is:

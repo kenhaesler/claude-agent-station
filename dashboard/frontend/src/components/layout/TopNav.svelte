@@ -1,7 +1,9 @@
 <script lang="ts">
   import { route, navigate } from '../../lib/router.svelte';
   import { agentPresence } from '../../lib/agent-presence.svelte';
-  import { formatTokens } from '../../lib/format';
+  import { appearance, setTheme } from '../../lib/appearance.svelte';
+  import { pauseAll } from '../../lib/api';
+  import { addToast } from '../../lib/toast.svelte';
 
   let {
     onTrigger,
@@ -22,6 +24,12 @@
     agentPresence.activeRuns[0]?.tokens_total ?? agentPresence.tokensBurned ?? 0
   );
 
+  function fmtTok(n: number): string {
+    if (!n) return '0';
+    if (n < 1000) return String(n);
+    return (n / 1000).toFixed(n < 10000 ? 1 : 0) + 'K';
+  }
+
   const navItems = [
     { label: 'Dispatch', page: 'command-center', path: '/' },
     { label: 'Mission', page: 'mission-control', path: '/mission-control' },
@@ -32,86 +40,113 @@
   ] as const;
 
   function isActive(page: string): boolean {
-    // Dispatch absorbs the old Runs surface — runs and run-detail
-    // both highlight the Dispatch tab.
     if (page === 'command-center') {
-      return route.page === 'command-center' || route.page === 'runs' || route.page === 'run-detail';
+      return route.page === 'command-center'
+        || route.page === 'runs'
+        || route.page === 'run-detail';
     }
     if (page === 'queue') return route.page === 'queue' || route.page === 'queue-detail';
     if (page === 'projects') return route.page === 'projects' || route.page === 'project-detail';
     return route.page === page;
   }
+
+  function toggleTheme() {
+    setTheme(appearance.theme === 'dark' ? 'light' : 'dark');
+  }
+
+  let stopping = $state(false);
+  async function handleStop() {
+    if (stopping) return;
+    if (activeCount === 0) {
+      // Idle — the Stop button doubles as the legacy trigger so the slot
+      // isn't dead between runs.
+      onTrigger?.();
+      return;
+    }
+    stopping = true;
+    try {
+      await pauseAll();
+      addToast('success', 'Global pause engaged — all agents will defer to the permission tray.');
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Pause failed';
+      addToast('error', msg);
+    } finally {
+      stopping = false;
+    }
+  }
 </script>
 
-<nav
-  class="sticky top-0 z-50 flex items-center justify-between"
-  style="padding: 12px 28px; background: rgba(255,245,238,0.65); backdrop-filter: blur(24px) saturate(1.3); -webkit-backdrop-filter: blur(24px) saturate(1.3); border-bottom: 1px solid rgba(255,255,255,0.4); box-shadow: 0 4px 16px rgba(0,0,0,0.03);"
-  aria-label="Main navigation"
->
-  <!-- Left: Logo + Title -->
-  <div class="flex items-center gap-2.5">
-    <div
-      class="flex items-center justify-center"
-      style="width: 30px; height: 30px; border-radius: 9px; background: linear-gradient(135deg, #4A3728, #5C4435); font-weight: 800; font-size: 13px; color: #FFF5EE; box-shadow: 0 2px 8px rgba(74,55,40,0.12); animation: logo-glow 4s ease-in-out infinite;"
-    >C</div>
-    <span style="font-size: 15px; font-weight: 700; color: #3D2A1A;">Claude Station</span>
+<header class="strip" aria-label="Main navigation">
+  <div class="wordmark">
+    <span class="name">Station</span>
+    <span class="tag">OPERATOR · v1</span>
   </div>
 
-  <!-- Center: Nav Pills -->
-  <div
-    class="flex gap-0.5"
-    style="background: rgba(255,255,255,0.60); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.7); border-radius: 14px; padding: 4px;"
-  >
+  <nav class="strip-nav">
     {#each navItems as item}
       <button
+        type="button"
         onclick={() => navigate(item.path)}
-        class="nav-pill"
         class:active={isActive(item.page)}
         aria-current={isActive(item.page) ? 'page' : undefined}
-        style="padding: 8px 20px; border-radius: 10px; font-size: 13px; font-weight: {isActive(item.page) ? '700' : '500'}; color: {isActive(item.page) ? '#4A3728' : '#9E8872'}; background: {isActive(item.page) ? 'white' : 'transparent'}; box-shadow: {isActive(item.page) ? '0 1px 4px rgba(0,0,0,0.06)' : 'none'}; border: none; cursor: pointer; font-family: inherit; transition: all 0.2s ease;"
-      >
-        {item.label}
-      </button>
+      >{item.label}</button>
     {/each}
-  </div>
+  </nav>
 
-  <!-- Right: Status + Trigger -->
-  <div class="flex items-center gap-3.5">
-    <div class="flex items-center gap-2.5" style="font-size: 12px; color: #8C7A66;">
-      <div class="flex items-center gap-1.5">
-        <div
-          style="width: 7px; height: 7px; border-radius: 50%; background: {activeCount > 0 ? '#2E7D32' : '#22C55E'}; position: relative;"
-        >
-          <div style="position: absolute; inset: -3px; border-radius: 50%; background: rgba(34,197,94,0.2); animation: pulse-ring 2.5s ease-out infinite;"></div>
-        </div>
-        <span>{activeCount > 0 ? `Working (${activeCount})` : 'Idle'}</span>
-      </div>
-      {#if liveTokens > 0}
-        <span style="color: #A08E7A;">·</span>
-        <span
-          data-testid="topnav-live-tokens"
-          title="Tokens burned on the live (or last) run"
-          style="font-variant-numeric: tabular-nums; color: #4E3A26; font-weight: 600;"
-        >{formatTokens(liveTokens)} tok</span>
-      {/if}
-      <span style="color: #A08E7A;">·</span>
-      <span style="color: {sseConnected ? '#2E7D32' : '#D06050'}; font-weight: 600;">SSE</span>
-    </div>
+  <div class="strip-status">
+    <span>
+      <span class="dot {activeCount > 0 ? 'go live' : ''}"></span>
+      <span class="pill">{activeCount > 0 ? `WORKING · ${activeCount}` : 'IDLE'}</span>
+    </span>
+
+    <span
+      data-testid="topnav-live-tokens"
+      title="Tokens burned on the live (or last) run"
+      style="font-variant-numeric: tabular-nums;"
+    >{fmtTok(liveTokens)} TOK</span>
+
+    <span>
+      SSE&nbsp;<b style="color: {sseConnected ? 'var(--go)' : 'var(--abort)'};">●</b>
+    </span>
 
     <button
-      onclick={onTrigger}
-      disabled={triggering}
-      class="trigger-btn"
-      style="padding: 10px 22px; border: none; border-radius: 12px; font-size: 14px; font-weight: 700; font-family: inherit; cursor: pointer; background: linear-gradient(135deg, #4A3728 0%, #5C4435 100%); color: #FFF5EE; box-shadow: 0 2px 8px rgba(74,55,40,0.18); transition: transform 0.15s, box-shadow 0.2s; opacity: {triggering ? '0.7' : '1'};"
+      type="button"
+      class="btn-theme"
+      onclick={toggleTheme}
+      aria-label="Toggle theme"
+      title="Toggle theme (t)"
     >
-      {triggering ? '⏳ Triggering...' : '▶ Trigger Run'}
+      {#if appearance.theme === 'dark'}
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="4"/>
+          <line x1="12" y1="2" x2="12" y2="5"/>
+          <line x1="12" y1="19" x2="12" y2="22"/>
+          <line x1="4.2" y1="4.2" x2="6.3" y2="6.3"/>
+          <line x1="17.7" y1="17.7" x2="19.8" y2="19.8"/>
+          <line x1="2" y1="12" x2="5" y2="12"/>
+          <line x1="19" y1="12" x2="22" y2="12"/>
+          <line x1="4.2" y1="19.8" x2="6.3" y2="17.7"/>
+          <line x1="17.7" y1="6.3" x2="19.8" y2="4.2"/>
+        </svg>
+      {:else}
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>
+        </svg>
+      {/if}
+    </button>
+
+    <button
+      type="button"
+      class="btn-stop"
+      onclick={handleStop}
+      disabled={stopping || triggering}
+      title={activeCount > 0 ? 'Engage global pause (Cmd+. or Ctrl+.)' : 'Trigger run'}
+    >
+      {#if activeCount > 0}
+        Stop <kbd>⌘.</kbd>
+      {:else}
+        {triggering ? '…' : 'Run'}
+      {/if}
     </button>
   </div>
-</nav>
-
-<style>
-  .trigger-btn:not(:disabled):hover {
-    transform: scale(1.04);
-    box-shadow: 0 4px 20px rgba(74, 55, 40, 0.25);
-  }
-</style>
+</header>
