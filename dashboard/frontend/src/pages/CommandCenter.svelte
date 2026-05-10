@@ -213,7 +213,7 @@
   }
 </script>
 
-<div data-testid="command-center" class="dispatch-pro">
+<div data-testid="command-center" class="dispatch-pro animate-fade-in">
 
   {#if loading}
     <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 28px;">
