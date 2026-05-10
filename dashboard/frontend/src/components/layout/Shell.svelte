@@ -1,8 +1,10 @@
 <script lang="ts">
   import VaporBackground from '../background/VaporBackground.svelte';
+  import CyberpunkFX from '../background/CyberpunkFX.svelte';
   import TopNav from './TopNav.svelte';
   import LiveTicker from './LiveTicker.svelte';
   import StationStatusFooter from './StationStatusFooter.svelte';
+  import { appearance } from '../../lib/appearance.svelte';
   import type { Snippet } from 'svelte';
 
   let {
@@ -20,7 +22,11 @@
   } = $props();
 </script>
 
-<VaporBackground />
+{#if appearance.theme === 'cyberpunk'}
+  <CyberpunkFX />
+{:else}
+  <VaporBackground />
+{/if}
 
 <TopNav
   {onTrigger}
