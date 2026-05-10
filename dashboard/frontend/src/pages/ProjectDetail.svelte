@@ -365,6 +365,7 @@
                     value={project.priority}
                     onchange={(e) => { project!.priority = (e.currentTarget as HTMLSelectElement).value as Project['priority']; save('priority', project!.priority); }}
                   >
+                    <option value="critical">critical</option>
                     <option value="high">high</option>
                     <option value="medium">medium</option>
                     <option value="low">low</option>
