@@ -68,12 +68,14 @@
     <h1 class="qb-title">Queue</h1>
     <div class="qb-meta">
       {#if stats?.total != null}<span><b>{stats.total}</b> total</span>{/if}
-      {#if backpressure}<span class="sep">·</span><span>Backpressure <b style="color: var(--{backpressure.level === 'GREEN' ? 'go' : backpressure.level === 'YELLOW' ? 'caution' : 'abort'})">{backpressure.level}</b></span>{/if}
+      {#if backpressure}<span class="sep">·</span><span>Backpressure <b style="color: var(--{backpressure.level === 'GREEN' ? 'go' : backpressure.level === 'YELLOW' ? 'caution' : backpressure.level === 'RED' ? 'abort' : 'critical'})">{backpressure.level}</b></span>{/if}
     </div>
   </div>
 
   <!-- Stats bar (legacy component, scoped restyle below) -->
-  <QueueStatsBar {stats} {backpressure} />
+  <div class="qb-stats">
+    <QueueStatsBar {stats} {backpressure} />
+  </div>
 
   <!-- Kanban columns -->
   {#if loading}
@@ -169,8 +171,9 @@
     padding: 10px !important;
   }
 
-  /* Stats bar — restyle to flat paper strip */
-  .queue-board-pro :global(.glass) {
+  /* Stats bar — restyle to flat paper strip.
+     Scoped to .qb-stats so QueueCards (also using .glass) keep their original styling. */
+  .queue-board-pro :global(.qb-stats .glass) {
     background: var(--paper-2) !important;
     border: 1px solid var(--rule) !important;
     border-radius: 0 !important;
