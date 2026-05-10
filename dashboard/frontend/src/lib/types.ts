@@ -272,6 +272,11 @@ export interface CoordinatorTask {
   teammate_agent_id: string | null;
   claimed_by: string | null;
   claimed_at: string | null;
+  /** Per-teammate progress (issue #336). Populated by ``teammate_progress`` /
+   *  ``teammate_completed`` webhooks. Falls back to ``null`` when no progress
+   *  event has landed yet. */
+  tokens_total: number | null;
+  turns: number | null;
   created_at: string;
   started_at: string | null;
   finished_at: string | null;

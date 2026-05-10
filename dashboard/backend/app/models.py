@@ -140,6 +140,10 @@ class CoordinatorTask(Base):
     teammate_agent_id = Column(Text, nullable=True)  # Agent Teams agent ID
     claimed_by = Column(Text, nullable=True)  # Teammate name that claimed the task
     claimed_at = Column(DateTime, nullable=True)
+    # Per-teammate progress (issue #336). Run.tokens_total / Run.turns hold the
+    # lead's aggregate; these are the per-task slice the Fleet page reads.
+    tokens_total = Column(Integer, nullable=True)
+    turns = Column(Integer, nullable=True)
     created_at = Column(DateTime, default=_utcnow)
     started_at = Column(DateTime, nullable=True)
     finished_at = Column(DateTime, nullable=True)

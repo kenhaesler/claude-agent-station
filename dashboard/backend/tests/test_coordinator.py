@@ -297,3 +297,186 @@ async def test_task_depends_on_json(client, sample_data):
     data = resp.json()
     deps = json.loads(data["depends_on"])
     assert deps == ["task-run-20260312T120000Z-0"]
+
+
+# Issue #336: per-teammate progress on the Fleet page
+# ───────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_teammate_progress_writes_per_task_counters(setup_db):
+    """``handle_teammate_progress`` writes tokens/turns to dedicated columns
+    and leaves ``touched_files`` alone (issue #336).
+
+    Earlier code overloaded ``touched_files`` with a {tokens,turns} dict,
+    which the API never read back and which clobbered the file-array
+    contract. Verify the fix in both directions.
+    """
+    from app.schemas import WebhookRunEvent
+    from app.services import coordinator_service
+
+    async with async_session() as session:
+        session.add(CoordinatorTask(
+            id="task-336-progress",
+            run_id="run-336",
+            project_repo="test/repo",
+            title="Build login form",
+            status="running",
+            employee_index=2,
+        ))
+        await session.commit()
+
+    # First progress event lands.
+    async with async_session() as session:
+        await coordinator_service.handle_teammate_progress(
+            session,
+            WebhookRunEvent(
+                event="teammate_progress",
+                run_id="run-336",
+                task_id="task-336-progress",
+                tokens_total=4321,
+                turns=7,
+            ),
+        )
+        await session.commit()
+
+    async with async_session() as session:
+        ct = await session.get(CoordinatorTask, "task-336-progress")
+        assert ct.tokens_total == 4321
+        assert ct.turns == 7
+        # touched_files must NOT be polluted with a tokens/turns dict.
+        assert ct.touched_files is None
+
+    # A second event arrives with a fresher snapshot — counters move forward.
+    async with async_session() as session:
+        await coordinator_service.handle_teammate_progress(
+            session,
+            WebhookRunEvent(
+                event="teammate_progress",
+                run_id="run-336",
+                task_id="task-336-progress",
+                tokens_total=9999,
+                turns=15,
+            ),
+        )
+        await session.commit()
+
+    # A late, stale event must NOT roll counters backwards.
+    async with async_session() as session:
+        await coordinator_service.handle_teammate_progress(
+            session,
+            WebhookRunEvent(
+                event="teammate_progress",
+                run_id="run-336",
+                task_id="task-336-progress",
+                tokens_total=100,
+                turns=1,
+            ),
+        )
+        await session.commit()
+
+    async with async_session() as session:
+        ct = await session.get(CoordinatorTask, "task-336-progress")
+        assert ct.tokens_total == 9999
+        assert ct.turns == 15
+
+
+@pytest.mark.asyncio
+async def test_active_employees_surfaces_per_task_counters(client, setup_db):
+    """``GET /api/runs/active-employees`` returns per-teammate tokens/turns
+    from CoordinatorTask, not the lead's aggregate (issue #336).
+
+    Reproduces the original Fleet bug: with two running teammates and a
+    single parent Run, the endpoint must return distinct per-teammate
+    counters rather than copying ``Run.tokens_total`` onto every row.
+    """
+    async with async_session() as session:
+        session.add(Project(repo="test/repo", priority="medium", mode="full",
+                            enabled=True, branch="main"))
+        await session.flush()
+        session.add(Run(
+            run_id="run-336-fleet",
+            project_id=None,
+            status="running",
+            tokens_total=12345,  # lead's aggregate — must not leak onto teammates
+            turns=99,
+            employee_index=0,
+        ))
+        session.add_all([
+            CoordinatorTask(
+                id="task-336-be",
+                run_id="run-336-fleet",
+                project_repo="test/repo",
+                title="backend work",
+                status="running",
+                employee_index=1,
+                claimed_by="backend-spright",
+                tokens_total=2200,
+                turns=4,
+            ),
+            CoordinatorTask(
+                id="task-336-fe",
+                run_id="run-336-fleet",
+                project_repo="test/repo",
+                title="frontend work",
+                status="running",
+                employee_index=2,
+                claimed_by="frontend-spright",
+                tokens_total=3300,
+                turns=6,
+            ),
+        ])
+        await session.commit()
+
+    resp = await client.get("/api/runs/active-employees")
+    assert resp.status_code == 200
+    rows = resp.json()
+    by_idx = {r["employee_index"]: r for r in rows}
+
+    # Per-teammate rows expose their own counters, not the parent run's.
+    assert by_idx[1]["tokens_total"] == 2200
+    assert by_idx[1]["turns"] == 4
+    assert by_idx[2]["tokens_total"] == 3300
+    assert by_idx[2]["turns"] == 6
+
+
+@pytest.mark.asyncio
+async def test_task_completed_persists_final_counters(setup_db):
+    """When a teammate finishes, ``handle_task_event(task_completed)``
+    writes the final tokens/turns snapshot onto the CoordinatorTask
+    (issue #336)."""
+    from app.schemas import WebhookRunEvent
+    from app.services import coordinator_service
+
+    async with async_session() as session:
+        session.add(CoordinatorTask(
+            id="task-336-done",
+            run_id="run-336",
+            project_repo="test/repo",
+            title="qa pass",
+            status="running",
+            tokens_total=1000,
+            turns=2,
+        ))
+        await session.commit()
+
+    async with async_session() as session:
+        await coordinator_service.handle_task_event(
+            session,
+            WebhookRunEvent(
+                event="teammate_completed",
+                run_id="run-336",
+                task_id="task-336-done",
+                status="success",
+                tokens_total=5500,
+                turns=12,
+            ),
+            "task_completed",
+        )
+        await session.commit()
+
+    async with async_session() as session:
+        ct = await session.get(CoordinatorTask, "task-336-done")
+        assert ct.status == "completed"
+        assert ct.tokens_total == 5500
+        assert ct.turns == 12

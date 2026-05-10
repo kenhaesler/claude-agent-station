@@ -400,6 +400,9 @@ class CoordinatorTaskOut(BaseModel):
     teammate_agent_id: str | None = None
     claimed_by: str | None = None
     claimed_at: datetime | None = None
+    # Per-teammate progress counters (issue #336)
+    tokens_total: int | None = None
+    turns: int | None = None
     created_at: datetime | None = None
     started_at: datetime | None = None
     finished_at: datetime | None = None
