@@ -19,6 +19,15 @@
     (window as unknown as { openHelpDrawer?: (s: string) => void }).openHelpDrawer = openHelpDrawer;
   }
 
+  // Resolve a CSS custom property to its computed color, falling back if
+  // the variable isn't defined. Mermaid's theme engine needs literal
+  // hex/rgb values — it cannot parse `var(--x)`.
+  function resolveColor(varName: string, fallback: string): string {
+    if (typeof window === 'undefined') return fallback;
+    const v = getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
+    return v || fallback;
+  }
+
   onMount(() => {
     let cancelled = false;
 
@@ -31,10 +40,10 @@
           theme: 'base',
           securityLevel: 'loose',
           themeVariables: {
-            primaryColor: 'var(--color-surface-1, #1f2937)',
-            primaryTextColor: 'var(--color-text, #e5e7eb)',
-            primaryBorderColor: 'var(--color-border, #374151)',
-            lineColor: 'var(--color-border, #6b7280)',
+            primaryColor: resolveColor('--color-surface-1', '#1f2937'),
+            primaryTextColor: resolveColor('--color-text', '#e5e7eb'),
+            primaryBorderColor: resolveColor('--color-border', '#374151'),
+            lineColor: resolveColor('--color-border', '#6b7280'),
             fontFamily: 'inherit',
           },
         });
