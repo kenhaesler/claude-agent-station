@@ -12,6 +12,7 @@
   import { formatTokens, timeAgo } from '../lib/format';
   import { flap } from '../lib/design/flap';
   import type { CoordinatorTask, CoordinatorMessage, ActiveEmployee } from '../lib/types';
+  import HelpHint from '../components/help/HelpHint.svelte';
 
   let tasks = $state<CoordinatorTask[]>([]);
   let messages = $state<CoordinatorMessage[]>([]);
@@ -422,7 +423,7 @@
           <!-- LEAD -->
           <div class="cell lead {leadStatusKind}">
             <div class="head">
-              <span class="role"><span class="role-name">Team Lead</span> <span class="br">·</span> <span class="role-tag">Commander</span></span>
+              <span class="role"><span class="role-name">Team Lead</span> <span class="br">·</span> <span class="role-tag">Commander</span> <HelpHint section="roles" label="The three roles" /></span>
               <div class="head-right">
                 <span class="aut assist">ASSIST</span>
                 <span class="head-meta">claude-sonnet-4-6</span>
