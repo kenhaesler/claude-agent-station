@@ -71,3 +71,43 @@ take_flock() {
 release_flock() {
     exec 200>&-
 }
+
+# ensure_conflict_label <repo> <label>
+# Idempotently creates the GitHub label on the repo. Safe to call every run.
+ensure_conflict_label() {
+    local repo="$1" label="$2"
+    gh label create "$label" --repo "$repo" \
+        --color D93F0B \
+        --description "Auto-applied by Claude Agent Station conflict resolver" \
+        2>/dev/null || true
+}
+
+# post_resolution_outcome <exit_code> <repo> <pr_num> <branch>
+# Comment + label on the PR based on the resolver's exit code.
+post_resolution_outcome() {
+    local rc="$1" repo="$2" pr="$3" branch="$4"
+    [ -z "$pr" ] && return 0  # no PR yet (pre-PR rebase) — nothing to comment on
+    case "$rc" in
+        0)
+            gh pr comment "$pr" --repo "$repo" --body "🤖 Conflicts auto-resolved on \`$branch\`. The PR was rebased; any in-flight review comments may now show as outdated." 2>/dev/null || true
+            ;;
+        99)
+            ensure_conflict_label "$repo" "conflict-budget-exhausted"
+            gh pr edit "$pr" --repo "$repo" --add-label "conflict-budget-exhausted" 2>/dev/null || true
+            gh pr comment "$pr" --repo "$repo" --body "🤖 Conflict resolution budget exhausted for \`$branch\` over the rolling 24h window. Resumes automatically tomorrow; remove this label to retry sooner." 2>/dev/null || true
+            ;;
+        10)
+            ensure_conflict_label "$repo" "conflict-tests-failed"
+            gh pr edit "$pr" --repo "$repo" --add-label "conflict-tests-failed" 2>/dev/null || true
+            gh pr comment "$pr" --repo "$repo" --body "🤖 Conflict resolver produced a tree but tests failed after all feedback rounds. The branch state is the resolver's best attempt; review and fix manually." 2>/dev/null || true
+            ;;
+        11)
+            ensure_conflict_label "$repo" "conflict-manager-rejected"
+            gh pr edit "$pr" --repo "$repo" --add-label "conflict-manager-rejected" 2>/dev/null || true
+            gh pr comment "$pr" --repo "$repo" --body "🤖 Conflict resolver produced a tree but the manager review rejected it. Review the resolver's last commit and the manager's reasoning in the audit log." 2>/dev/null || true
+            ;;
+        *)
+            gh pr comment "$pr" --repo "$repo" --body "🤖 Conflict resolution errored (rc=$rc). Branch left as-is for manual intervention." 2>/dev/null || true
+            ;;
+    esac
+}
