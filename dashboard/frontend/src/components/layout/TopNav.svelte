@@ -37,6 +37,7 @@
     { label: 'Queue', page: 'queue', path: '/queue' },
     { label: 'Projects', page: 'projects', path: '/projects' },
     { label: 'Settings', page: 'settings', path: '/settings' },
+    { label: 'Help', page: 'help', path: '/help' },
   ] as const;
 
   function isActive(page: string): boolean {
