@@ -152,10 +152,11 @@
   }
 </script>
 
-<div class="space-y-4 animate-fade-in">
-  <div class="flex items-center justify-between">
-    <h1 class="font-heading text-xl">Projects</h1>
-    <button onclick={openCreateModal} class="btn btn-primary btn-sm">
+<div class="space-y-4 animate-fade-in projects-pro">
+  <div class="pp-page-head">
+    <h1 class="pp-title">Projects</h1>
+    <span class="pp-meta">{projects.length} project{projects.length === 1 ? '' : 's'}</span>
+    <button onclick={openCreateModal} class="pp-add-btn">
       + Add Project
     </button>
   </div>
@@ -336,3 +337,50 @@
     </div>
   {/if}
 </Modal>
+
+
+<style>
+  /* Pro restyle for the page chrome */
+  .projects-pro :global(.pp-page-head) {
+    display: flex; align-items: center; gap: 14px;
+    padding: 6px 0 10px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .projects-pro :global(.pp-title) {
+    margin: 0;
+    font-family: var(--pro-sans);
+    font-size: 14px; font-weight: 700;
+    letter-spacing: 0.18em; text-transform: uppercase;
+    color: var(--ink);
+  }
+  .projects-pro :global(.pp-meta) {
+    font-family: var(--pro-mono);
+    font-size: 11px; color: var(--graphite);
+  }
+  .projects-pro :global(.pp-add-btn) {
+    margin-left: auto;
+    font-family: var(--pro-sans);
+    font-weight: 700; font-size: 10px;
+    letter-spacing: 0.16em; text-transform: uppercase;
+    background: var(--ink); color: var(--paper);
+    border: 1px solid var(--ink);
+    padding: 5px 11px; cursor: pointer; height: 26px;
+  }
+  .projects-pro :global(.pp-add-btn:hover) { filter: brightness(1.1); }
+
+  /* Flatten card glassmorphism on project tiles */
+  .projects-pro :global(.card) {
+    background: var(--paper-2) !important;
+    border: 1px solid var(--rule) !important;
+    border-radius: 0 !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    box-shadow: none !important;
+    transition: border-color 200ms ease, transform 0ms !important;
+  }
+  .projects-pro :global(.card:hover) {
+    border-color: var(--rule-2) !important;
+    transform: none !important;
+    box-shadow: none !important;
+  }
+</style>
