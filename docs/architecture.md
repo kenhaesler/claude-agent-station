@@ -48,6 +48,12 @@ claude-agent-station/
 ├── agent/                          # Autonomous agent core
 │   ├── agents/                     # Agent Teams definitions
 │   │   └── issue-worker.md         # Teammate: implements a single issue
+│   ├── conflict_resolver/        # Layered conflict resolver (LLM + mechanical)
+│   │   ├── __main__.py           # python -m agent.conflict_resolver entrypoint
+│   │   ├── budget.py             # rolling 24h token budget
+│   │   ├── markers.py            # git conflict marker parser
+│   │   ├── prompts.py            # prompt assembly
+│   │   └── sdk_runner.py         # Claude Agent SDK wrapper
 │   ├── prompts/                    # System prompts (markdown)
 │   │   ├── analyst.md              # Analyst role prompt
 │   │   ├── assigner.md             # Assigner role prompt
@@ -67,8 +73,10 @@ claude-agent-station/
 │   │   ├── detect_plan_usage.py    # Claude plan usage detection
 │   │   ├── integration-branch.sh   # Integration branch management
 │   │   ├── lib/                    # Shared shell library
+│   │   │   └── conflict-helpers.sh  # Shared bash helpers
 │   │   ├── promote.sh              # Branch promotion helper
 │   │   ├── refresh-token.py        # OAuth token refresh
+│   │   ├── resolve-conflicts.sh  # Phase orchestrator (mechanical → lockfile → LLM)
 │   │   ├── sprint-cycle.sh         # Sprint cycle automation
 │   │   └── tests/                  # Script unit tests
 │   ├── skills/                     # Reusable agent skills

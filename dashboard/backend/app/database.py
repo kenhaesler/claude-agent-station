@@ -116,6 +116,8 @@ async def _migrate_add_columns(conn) -> None:
         "CREATE INDEX IF NOT EXISTS ix_runs_verdict ON runs(verdict)",
         "CREATE INDEX IF NOT EXISTS ix_runs_started_at ON runs(started_at)",
         "CREATE INDEX IF NOT EXISTS ix_runs_concurrent_group_id ON runs(concurrent_group_id)",
+        "CREATE INDEX IF NOT EXISTS ix_conflict_resolutions_branch_started "
+        "ON conflict_resolutions(branch, started_at)",
     ]
     for sql in index_migrations:
         try:
@@ -133,6 +135,7 @@ async def init_db():
             BrainstormMessage,
             BrainstormSession,
             ConfigEntry,
+            ConflictResolution,
             CoordinatorMessage,
             CoordinatorTask,
             IntegrationFeature,

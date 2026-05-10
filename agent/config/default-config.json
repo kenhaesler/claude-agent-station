@@ -72,5 +72,14 @@
     "max_new_issues_per_role": 3,
     "auto_implement": true,
     "role_turns": 40
+  },
+  "conflict_resolution": {
+    "enabled": true,
+    "rolling_24h_token_budget": 200000,
+    "max_feedback_rounds": 3,
+    "model": "claude-opus-4-7",
+    "max_turns": 30,
+    "lock_ttl_seconds": 1800,
+    "force_push_with_lease": true
   }
 }

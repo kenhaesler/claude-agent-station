@@ -233,3 +233,56 @@ When a project has `docs/vision.md`, two automatic triggers fire the vision anal
 - **Trigger B (vision commit):** committing a new vision via the dashboard fires the analyst when the document SHA changes. Idempotent on identical re-commits via `Project.last_vision_analyzed_sha`.
 
 Both produce `Run.mode = vision-bootstrap` rows that surface in the Runs list and Mission Control. Issues land with the `vision-suggested` label; remove the label to accept (the orchestrator's `SKIP_LABELS` blocks autonomous implementation until then).
+
+## Conflict resolution
+
+When the agent's auto-created PRs hit merge conflicts, a layered resolver
+(mechanical → lockfile → LLM) runs to attempt resolution within a rolling
+24-hour token budget per branch. See spec at
+`docs/superpowers/specs/2026-05-10-conflict-resolution-design.md`.
+
+### Top-level config (`manager-config.json`)
+
+| Key | Default | Notes |
+|---|---|---|
+| `conflict_resolution.enabled` | `true` | master switch |
+| `conflict_resolution.rolling_24h_token_budget` | `200000` | tokens (input + output combined) per head branch over a sliding 24h window |
+| `conflict_resolution.max_feedback_rounds` | `3` | shared counter across test failures and manager REJECTs |
+| `conflict_resolution.model` | `"claude-opus-4-7"` | overridable; SDK fallback chain still applies |
+| `conflict_resolution.max_turns` | `30` | per resolver invocation |
+| `conflict_resolution.lock_ttl_seconds` | `1800` | flock TTL for `/var/lib/claude-agent-station/locks/conflict-<branch>.lock` |
+| `conflict_resolution.force_push_with_lease` | `true` | unconditional v1; reserved for future opt-out |
+
+### Per-project override
+
+To disable LLM resolution for a specific repo (mechanical+lockfile only):
+
+```json
+{
+  "projects": [
+    {
+      "repo": "acme/sensitive",
+      "conflict_resolution": {
+        "rolling_24h_token_budget": 0
+      }
+    }
+  ]
+}
+```
+
+### Per-project test command
+
+To run the project's tests as part of post-resolution validation, set
+`test_command` on the project entry. If absent, the manager review is
+the only validation gate.
+
+```json
+{
+  "projects": [
+    {
+      "repo": "laboef1900/next-itsm",
+      "test_command": "npm test --silent"
+    }
+  ]
+}
+```

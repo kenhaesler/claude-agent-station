@@ -138,6 +138,40 @@ print(", ".join(parts))
 PYEOF
 }
 
+rebase_against_base() {
+    # Calls resolve-conflicts.sh in pre-PR or at-merge mode. Logs the
+    # outcome but never fails the caller — the existing manual-review
+    # path is the safety net.
+    #
+    # Args:
+    #   $1 — workspace path (worktree)
+    #   $2 — head branch name
+    #   $3 — base branch name
+    #   $4 — repo (owner/name)
+    #   $5 — pr_number ("" if pre-PR)
+    #   $6 — run_id ("" if standalone)
+    #   $7 — triggered_by ("pre_pr" or "at_merge"; default "pre_pr")
+    local workspace="$1" branch="$2" base="$3" repo="$4"
+    local pr_num="${5:-}" run_id="${6:-}" triggered_by="${7:-pre_pr}"
+    local script_dir
+    script_dir="$(dirname "${BASH_SOURCE[0]}")"
+    local args=(
+        --workspace "$workspace"
+        --branch "$branch"
+        --base "$base"
+        --repo "$repo"
+        --triggered-by "$triggered_by"
+    )
+    [ -n "$pr_num" ] && args+=(--pr "$pr_num")
+    [ -n "$run_id" ] && args+=(--run-id "$run_id")
+    set +e
+    "$script_dir/resolve-conflicts.sh" "${args[@]}"
+    local rc=$?
+    set -e
+    log_info "rebase_against_base returned $rc for $branch"
+    return "$rc"
+}
+
 ensure_gh_token() {
     # Load GH_TOKEN from dashboard-managed file if not already set.
     # Falls back to existing GH_TOKEN env var for backward compatibility.
@@ -2212,6 +2246,7 @@ Run: $RUN_ID" 2>/dev/null || true
                                 log_info "Auto-draft PR (autonomy=auto, rate limit OK)"
                                 local pr_url close_line
                                 close_line=$(format_close_keywords "$issue_number" "$issue_numbers_json")
+                                rebase_against_base "$workspace" "$branch" "$base_branch" "$project" "" "$RUN_ID" "pre_pr" || true
                                 pr_url=$(gh pr create --repo "$project" --base "$base_branch" --head "$branch" \
                                     --draft \
                                     --title "autonomous (draft): $(git log -1 --format=%s)" \
@@ -2243,6 +2278,7 @@ Rate limit: max 1 auto-draft PR per project per hour. Regenerated at $(date -u +
                             # Create PR and merge via GitHub API (works with protected branches)
                             local pr_url close_line
                             close_line=$(format_close_keywords "$issue_number" "$issue_numbers_json")
+                            rebase_against_base "$workspace" "$branch" "$base_branch" "$project" "" "$RUN_ID" "pre_pr" || true
                             pr_url=$(gh pr create --repo "$project" --base "$base_branch" --head "$branch" \
                                 --title "autonomous: $(git log -1 --format=%s)" \
                                 --body "Approved by autonomous manager.
@@ -2258,7 +2294,30 @@ $close_line}" 2>&1) || true
                                     push_merge_ok=true
                                     log_ok "PR merged to $base_branch"
                                 else
-                                    log_error "PR merge failed — left open for manual review: $pr_url"
+                                    log_warn "PR merge failed for $pr_url — attempting at-merge resolution"
+                                    local pr_num_for_resolve _script_dir
+                                    pr_num_for_resolve=$(echo "$pr_url" | grep -oE '[0-9]+$' || echo "")
+                                    _script_dir="$(dirname "${BASH_SOURCE[0]}")"
+                                    # Source helpers once for both branches below (review finding #9).
+                                    # shellcheck source=lib/conflict-helpers.sh
+                                    source "$_script_dir/lib/conflict-helpers.sh"
+                                    set +e
+                                    rebase_against_base "$workspace" "$branch" "$base_branch" "$project" "$pr_num_for_resolve" "$RUN_ID" "at_merge"
+                                    local resolve_rc=$?
+                                    set -e
+                                    if [ "$resolve_rc" = "0" ]; then
+                                        log_info "Resolution succeeded; retrying merge"
+                                        if gh pr merge "$pr_url" --merge --delete-branch 2>&1 | while IFS= read -r line; do log_info "  $line"; done; then
+                                            push_merge_ok=true
+                                            log_ok "PR merged to $base_branch (after at-merge resolution)"
+                                        else
+                                            log_error "PR merge still failed after resolution — left open: $pr_url"
+                                            post_resolution_outcome 1 "$project" "$pr_num_for_resolve" "$branch"
+                                        fi
+                                    else
+                                        log_error "Resolution failed (rc=$resolve_rc) — left open for manual review: $pr_url"
+                                        post_resolution_outcome "$resolve_rc" "$project" "$pr_num_for_resolve" "$branch"
+                                    fi
                                 fi
                             else
                                 log_error "PR creation failed for $branch"
@@ -2316,6 +2375,7 @@ Autonomous run: $RUN_ID" 2>/dev/null || log_warn "Failed to comment on issue #$i
 
             PR)
                 log_info "PR: Pushing branch and creating PR for human review (base: $base_branch)"
+                rebase_against_base "$workspace" "$branch" "$base_branch" "$project" "" "$RUN_ID" "pre_pr" || true
                 if git push origin "$branch" 2>/dev/null; then
                     log_ok "Pushed $branch"
                     local close_line
