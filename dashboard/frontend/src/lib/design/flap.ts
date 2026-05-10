@@ -15,8 +15,15 @@
  * immediately with no transform animation.
  */
 
-const REDUCED_MOTION = typeof window !== 'undefined'
-  && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+/** Read prefers-reduced-motion at call time so the flap respects OS-level
+ * preference changes within a session. Reading on each `buildChars` call is
+ * cheap (single matchMedia lookup) and avoids the complexity of subscribing
+ * to a `change` event and tearing it down. The previous module-level
+ * constant was captured once at import and never updated. */
+function reducedMotion(): boolean {
+  return typeof window !== 'undefined'
+    && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+}
 
 export interface FlapOptions {
   text: string;
@@ -40,7 +47,7 @@ function buildChars(
 ) {
   host.classList.add('flap');
   host.textContent = '';
-  const skipAnim = !animate || REDUCED_MOTION;
+  const skipAnim = !animate || reducedMotion();
   for (let i = 0; i < text.length; i++) {
     const s = document.createElement('span');
     s.textContent = text[i] === ' ' ? ' ' : text[i];
