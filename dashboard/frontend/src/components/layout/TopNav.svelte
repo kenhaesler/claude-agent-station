@@ -141,6 +141,9 @@
       onclick={handleStop}
       disabled={stopping || triggering}
       title={activeCount > 0 ? 'Engage global pause (Cmd+. or Ctrl+.)' : 'Trigger run'}
+      aria-label={activeCount > 0
+        ? 'Engage global pause — all active runs will defer to the permission tray'
+        : 'Trigger a new run'}
     >
       {#if activeCount > 0}
         Stop <kbd>⌘.</kbd>

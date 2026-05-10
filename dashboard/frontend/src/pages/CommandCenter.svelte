@@ -43,7 +43,29 @@
   let hovered = $state<Run | null>(null);
   let selectedIdx = $state<number>(-1);
   let clockNow = $state<string>('00:00:00');
-  let acked = $state<Set<string>>(new Set());
+  // Persisted acked alerts: localStorage stores a sorted JSON array of
+  // alert ids (Sets don't serialize directly). Keyed by `dispatch-acked-alerts`
+  // so a page refresh doesn't resurrect alerts the operator already cleared.
+  const ACKED_STORAGE_KEY = 'dispatch-acked-alerts';
+  function loadAckedFromStorage(): Set<string> {
+    if (typeof localStorage === 'undefined') return new Set();
+    try {
+      const raw = localStorage.getItem(ACKED_STORAGE_KEY);
+      if (!raw) return new Set();
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return new Set(parsed.map(String));
+    } catch { /* corrupt storage — start fresh */ }
+    return new Set();
+  }
+  let acked = $state<Set<string>>(loadAckedFromStorage());
+  $effect(() => {
+    if (typeof localStorage === 'undefined') return;
+    try {
+      // Sort so the persisted JSON is stable across writes — easier to
+      // diff in DevTools and cheaper for the storage engine.
+      localStorage.setItem(ACKED_STORAGE_KEY, JSON.stringify([...acked].sort()));
+    } catch { /* quota exceeded or storage disabled — silent */ }
+  });
 
   // ── Helpers ────────────────────────────────────────────
   function pad2(n: number) { return String(n).padStart(2, '0'); }
@@ -64,6 +86,7 @@
   }
   function fmtAge(startedAt: string | null): string {
     if (!startedAt) return '—';
+    // SQLite timestamps are written by Python with timezone.utc; we append 'Z' if missing so Date() parses as UTC.
     const hasTz = startedAt.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(startedAt);
     const t = new Date(hasTz ? startedAt : startedAt + 'Z').getTime();
     const diff = Date.now() - t;
@@ -103,7 +126,9 @@
     const s = (r.status ?? '').toLowerCase();
     if (s === 'running' || s === 'started') return { label: 'RUN', cls: 'run', tick: true };
     if (s === 'reviewing') return { label: 'REVIEW', cls: 'run', tick: true };
-    if (s === 'plan_reviewing' || s === 'awaiting_plan_review') return { label: 'PLAN ?', cls: 'planok', tick: false };
+    // 'PLAN-RV' (review) chosen over 'PLAN ?' because at the dense board's
+    // 9px uppercase rendering the '?' visually collapsed to a 'T' (PLANT).
+    if (s === 'plan_reviewing' || s === 'awaiting_plan_review') return { label: 'PLAN-RV', cls: 'planok', tick: false };
     if (s === 'plan_approved' || r.verdict === 'APPROVE' || r.verdict === 'PR') return { label: 'PLAN OK', cls: 'planok', tick: false };
     if (s === 'plan_rejected' || r.verdict === 'REJECT') return { label: 'PLAN ✗', cls: 'planx', tick: false };
     if (s === 'interrupted') return { label: 'STOP', cls: 'stop', tick: false };
@@ -115,9 +140,20 @@
 
   function modeFor(r: Run): { label: string; cls: string } {
     const m = (r.mode ?? '').toLowerCase();
+    // Canonical mode values emitted by the orchestrator (run_lifecycle.py +
+    // station_orchestrator.py + run-manager.sh):
+    //   full, plan_only, plan, analyze, vision-bootstrap, employee, manager,
+    //   agent_teams (Agent Teams flow). Local dev DBs typically only have
+    //   `full`; production widens this. Each gets an explicit short badge
+    //   so we don't fall through to the 4-char truncation that produced
+    //   `AGEN` for `agent_teams` (issue #310).
     if (m === 'plan_only') return { label: 'PLAN', cls: 'plan' };
+    if (m === 'plan') return { label: 'PLAN', cls: 'plan' };
+    if (m === 'analyze') return { label: 'ANLZ', cls: 'plan' };
     if (m === 'vision-bootstrap') return { label: 'VIS', cls: 'vision' };
+    if (m === 'agent_teams') return { label: 'TEAMS', cls: 'full' };
     if (m === 'employee') return { label: 'EMP', cls: 'full' };
+    if (m === 'manager') return { label: 'MGR', cls: 'full' };
     if (m === 'full') return { label: 'FULL', cls: 'full' };
     return { label: (m || '—').toUpperCase().slice(0, 4), cls: 'full' };
   }
@@ -306,12 +342,18 @@
     }
     try {
       coordTasks = await getCoordinatorTasks(runId);
-    } catch { coordTasks = []; }
+    } catch (err) {
+      console.warn('[dispatch] getCoordinatorTasks failed', err);
+      coordTasks = [];
+    }
   }
 
   $effect(() => {
     loadAll();
     // Skip polling while the tab is hidden — saves ~0.6 req/s on background tabs.
+    // TODO(#311): drive run-state and agent-event updates from the existing
+    // /api/events/stream SSE so the polls below only refresh telemetry,
+    // system, and projects. Deferred from PR #309 to keep this change small.
     const isHidden = () => typeof document !== 'undefined' && document.visibilityState === 'hidden';
     const fast = setInterval(() => { if (!isHidden()) loadFast(); }, 10_000);
     const slow = setInterval(() => { if (!isHidden()) loadSlow(); }, 30_000);
@@ -506,7 +548,7 @@
       <div class="label">Queue</div>
       <div class="value">{telemetry?.queue.total ?? 0}</div>
       <div class="sub">
-        {telemetry?.queue.claimed ?? 0} claimed · {telemetry?.queue.done ?? 0} done · {telemetry?.queue.pending ?? 0} pending
+        {telemetry?.queue.claimed ?? 0} claimed · {telemetry?.queue.done ?? 0} done · {telemetry?.queue.pending ?? 0} pending{#if (telemetry?.queue.other ?? 0) > 0} · {telemetry?.queue.other} other{/if}
       </div>
     </div>
 

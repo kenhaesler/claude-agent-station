@@ -504,6 +504,11 @@ class TelemetryQueue(BaseModel):
     claimed: int
     done: int
     pending: int
+    # Catch-all for queue items not bucketed into the three above (e.g.
+    # ``failed``, ``paused``, ``cancelled``). Keeps ``claimed + done +
+    # pending + other == total`` so the UI can reconcile the cells with
+    # the headline count without silently dropping rows.
+    other: int = 0
 
 
 class TelemetryTokens7d(BaseModel):

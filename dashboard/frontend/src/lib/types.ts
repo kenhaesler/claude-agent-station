@@ -305,7 +305,7 @@ export interface AgentEvent {
 // --- Dispatch telemetry ---
 export interface TelemetrySummary {
   active: { count: number; teammates: number; roles: string[] };
-  queue: { total: number; claimed: number; done: number; pending: number };
+  queue: { total: number; claimed: number; done: number; pending: number; other: number };
   tokens_7d: { total: number; runs: number; input: number; output: number; spark: number[] };
   system: {
     status: 'NOMINAL' | 'DEGR' | 'CRIT' | string;
