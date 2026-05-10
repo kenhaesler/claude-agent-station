@@ -18,44 +18,93 @@
   } = $props();
 </script>
 
-<div
-  style="display: flex; align-items: center; gap: 16px; padding: 18px 22px; border-radius: 18px;
-    background: rgba(255,251,247,0.55); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
-    border: 1px solid rgba(240,220,200,0.30);
-    box-shadow: 3px 3px 8px rgba(0,0,0,0.04), -3px -3px 8px rgba(255,255,255,0.40);"
->
-  <!-- Lead Avatar -->
-  <div
-    style="width: 48px; height: 48px; border-radius: 14px; flex-shrink: 0;
-      background: linear-gradient(135deg, #4A3728, #5C4435);
-      display: flex; align-items: center; justify-content: center;
-      font-size: 20px; color: #FFF5EE;
-      box-shadow: 0 0 16px rgba(224,144,96,0.15);
-      animation: lead-breathe 4s ease-in-out infinite;"
-  >&#9670;</div>
+<div class="lead-card">
+  <!-- Lead avatar — square, ink-on-paper, no breathing -->
+  <div class="lead-avatar" aria-hidden="true">◆</div>
 
-  <!-- Info -->
-  <div style="flex: 1;">
-    <div style="font-size: 18px; font-weight: 700; color: #3D2A1A;">Team Lead</div>
-    <div style="font-size: 14px; color: #7A6652; margin-top: 3px;">
+  <div class="lead-info">
+    <div class="lead-title">Team Lead</div>
+    <div class="lead-sub">
       Coordinating {teammateCount} teammate{teammateCount !== 1 ? 's' : ''} · Monitoring task progress
     </div>
     {#if activity}
-      <div style="font-size: 14px; color: #2E7D32; font-weight: 600; margin-top: 3px;">{activity}</div>
+      <div class="lead-activity">{activity}</div>
     {/if}
   </div>
 
-  <!-- Meta -->
-  <div style="display: flex; gap: 16px; font-size: 14px; color: #8C7A66; flex-shrink: 0;">
-    <span>Tasks <span style="font-weight: 700; color: #3D2A1A;">{tasksCompleted}/{tasksTotal}</span></span>
-    <span>Tokens <span style="font-weight: 700; color: #3D2A1A;">{tokens}</span></span>
-    <span style="font-weight: 700; color: #3D2A1A;">{duration}</span>
+  <div class="lead-stats">
+    <div class="stat">
+      <span class="k">Tasks</span>
+      <span class="v">{tasksCompleted}<span class="s">/{tasksTotal}</span></span>
+    </div>
+    <div class="stat">
+      <span class="k">Tokens</span>
+      <span class="v">{tokens}</span>
+    </div>
+    <div class="stat">
+      <span class="k">Elapsed</span>
+      <span class="v">{duration}</span>
+    </div>
   </div>
 </div>
 
 <style>
-  @keyframes lead-breathe {
-    0%, 100% { box-shadow: 0 0 16px rgba(224,144,96,0.15); }
-    50% { box-shadow: 0 0 24px rgba(224,144,96,0.25); }
+  .lead-card {
+    display: flex; align-items: center; gap: 16px;
+    padding: 14px 18px;
+    background: var(--paper-2);
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--ink);
+    font-family: var(--pro-sans);
   }
+  .lead-avatar {
+    width: 40px; height: 40px;
+    flex-shrink: 0;
+    background: var(--ink); color: var(--paper);
+    display: grid; place-items: center;
+    font-size: 18px;
+  }
+  .lead-info { flex: 1; min-width: 0; }
+  .lead-title {
+    font-family: var(--pro-sans);
+    font-size: 11px; font-weight: 700;
+    letter-spacing: 0.18em; text-transform: uppercase;
+    color: var(--ink);
+  }
+  .lead-sub {
+    font-family: var(--pro-mono);
+    font-size: 11px; color: var(--graphite);
+    margin-top: 4px;
+  }
+  .lead-activity {
+    font-family: var(--pro-mono);
+    font-size: 12px; color: var(--go);
+    font-weight: 500;
+    margin-top: 4px;
+  }
+  .lead-stats {
+    display: flex; gap: 0;
+    border: 1px solid var(--rule);
+    flex-shrink: 0;
+  }
+  .stat {
+    padding: 6px 14px;
+    border-right: 1px solid var(--rule);
+    display: flex; flex-direction: column; gap: 2px;
+    min-width: 80px;
+  }
+  .stat:last-child { border-right: none; }
+  .stat .k {
+    font-family: var(--pro-sans);
+    font-size: 9px; font-weight: 700;
+    letter-spacing: 0.18em; text-transform: uppercase;
+    color: var(--graphite);
+  }
+  .stat .v {
+    font-family: var(--pro-mono);
+    font-size: 14px; font-weight: 600;
+    color: var(--ink); line-height: 1;
+    font-variant-numeric: tabular-nums;
+  }
+  .stat .v .s { color: var(--ash); font-size: 0.8em; }
 </style>
