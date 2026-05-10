@@ -606,8 +606,12 @@
   .mc-shell {
     display: flex;
     flex-direction: column;
-    height: 100%;
-    min-height: 0;
+    /* Match AgentTeamsCanvas: pin to viewport so .main can flex-grow into the
+       remaining space below the page-head + intervene + (optional) banner.
+       Without this, height:100% never resolves (App's wrapper isn't a flex
+       container) and the .main grid collapses to its content height,
+       leaving a tall blank gap above the global footer. */
+    min-height: calc(100vh - 40px);
     background: var(--paper);
     color: var(--ink);
     font-family: var(--pro-sans);
