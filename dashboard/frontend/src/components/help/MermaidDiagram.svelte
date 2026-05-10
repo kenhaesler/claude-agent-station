@@ -1,10 +1,10 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
   import { openHelpDrawer } from '../../lib/help-drawer.svelte';
+  import { appearance } from '../../lib/appearance.svelte';
 
   let { source }: { source: string } = $props();
 
-  let host: HTMLDivElement;
+  let host = $state<HTMLDivElement | null>(null);
   let error = $state<string | null>(null);
 
   // Mermaid `click <node> call openHelpDrawer("section")` directives need a
@@ -28,22 +28,35 @@
     return v || fallback;
   }
 
-  onMount(() => {
-    let cancelled = false;
+  // Re-render whenever the theme changes. Mermaid bakes themeVariables into
+  // the SVG at render time, so a `var(--x)` reference can't carry the
+  // toggle through; we resolve and re-render instead. The reactive read
+  // of `appearance.theme` is what wires this `$effect` to the rune.
+  $effect(() => {
+    // eslint-disable-next-line @typescript-eslint/no-unused-expressions
+    appearance.theme; // dependency
+    if (!host) return;
 
+    let cancelled = false;
     (async () => {
       try {
         const mermaid = (await import('mermaid')).default;
-        if (cancelled) return;
+        if (cancelled || !host) return;
         mermaid.initialize({
           startOnLoad: false,
           theme: 'base',
           securityLevel: 'loose',
           themeVariables: {
+            // Node fill: surface-1 (translucent, theme-matched).
             primaryColor: resolveColor('--color-surface-1', '#1f2937'),
-            primaryTextColor: resolveColor('--color-text', '#e5e7eb'),
-            primaryBorderColor: resolveColor('--color-border', '#374151'),
-            lineColor: resolveColor('--color-border', '#6b7280'),
+            // Node text: --color-primary (high-contrast text token).
+            primaryTextColor: resolveColor('--color-primary', '#e5e7eb'),
+            // Node border + edges: --color-primary again. The `--color-border`
+            // token is a 10% / 30% alpha rgba designed for subtle hairlines
+            // on glass surfaces — Mermaid edges need to be readable, so use
+            // the higher-contrast text token instead.
+            primaryBorderColor: resolveColor('--color-primary', '#374151'),
+            lineColor: resolveColor('--color-primary', '#6b7280'),
             fontFamily: 'inherit',
           },
         });
@@ -52,6 +65,7 @@
         if (cancelled || !host) return;
         host.innerHTML = svg;
         bindFunctions?.(host);
+        error = null;
       } catch (e) {
         if (cancelled) return;
         error = e instanceof Error ? e.message : String(e);
