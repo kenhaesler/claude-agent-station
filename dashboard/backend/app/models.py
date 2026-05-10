@@ -279,6 +279,38 @@ class AgentEvent(Base):
     created_at = Column(DateTime, default=_utcnow)
 
 
+class ConflictResolution(Base):
+    """One conflict-resolution attempt per row.
+
+    Keyed on (branch, started_at) for the rolling 24h budget query in
+    agent.conflict_resolver.budget. See spec
+    docs/superpowers/specs/2026-05-10-conflict-resolution-design.md.
+    """
+    __tablename__ = "conflict_resolutions"
+
+    id = Column(Integer, primary_key=True)
+    branch = Column(Text, nullable=False, index=True)
+    repo = Column(Text, nullable=False)
+    pr_number = Column(Integer, nullable=True)
+    started_at = Column(DateTime, nullable=False, default=_utcnow, index=True)
+    finished_at = Column(DateTime, nullable=True)
+    # mechanical / lockfile / llm / budget_exhausted
+    phase_reached = Column(Text, nullable=False)
+    # resolved / tests_failed / manager_rejected / budget_exhausted / error
+    outcome = Column(Text, nullable=False)
+    tokens_input = Column(Integer, nullable=True)
+    tokens_output = Column(Integer, nullable=True)
+    # Denormalized for cheap budget queries (sum across input + output).
+    tokens_total = Column(Integer, nullable=True)
+    model_used = Column(Text, nullable=True)
+    # How many feedback rounds were consumed across tests + manager review.
+    feedback_rounds = Column(Integer, nullable=True, default=0)
+    # pre_pr / at_merge
+    triggered_by = Column(Text, nullable=False)
+    run_id = Column(Text, nullable=True)
+    error_detail = Column(Text, nullable=True)
+
+
 class TaskOutcome(Base):
     """Tracks outcomes for adaptive scheduling and learning."""
     __tablename__ = "task_outcomes"
