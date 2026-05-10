@@ -135,6 +135,14 @@
     return t;
   });
 
+  function stripMd(s: string | null | undefined): string {
+    if (!s) return '';
+    return s
+      .replace(/\*\*([^*]+)\*\*/g, '$1')
+      .replace(/\*([^*]+)\*/g, '$1')
+      .replace(/`([^`]+)`/g, '$1');
+  }
+
   function getInitials(name: string): string {
     return name
       .split(' ')
@@ -677,8 +685,8 @@
                   <span class="ix">{String(i + 1).padStart(2, '0')}</span>
                   <span class="id">{shortTaskId(task.id)}</span>
                   <span class="title">
-                    {task.title ?? task.id}
-                    {#if task.description}<span style="color: var(--graphite)"> · {task.description}</span>{/if}
+                    {stripMd(task.title) || task.id}
+                    {#if task.description}<span style="color: var(--graphite)"> · {stripMd(task.description)}</span>{/if}
                     <span style="color: var(--role-{role}); font-family: var(--pro-mono); font-size: 10px; margin-left: 6px">[{role}]</span>
                   </span>
                   <span>
