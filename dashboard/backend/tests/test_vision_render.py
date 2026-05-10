@@ -24,3 +24,23 @@ def test_render_handles_empty_section_with_placeholder():
            "principles": "", "horizons": "", "anti_patterns": ""}
     md = render_vision_doc(doc, repo="o/r", refined_at=datetime(2026, 5, 7, 12, 0, tzinfo=timezone.utc))
     assert "_(not specified)_" in md
+
+
+def test_vision_doc_optional_fields():
+    """VisionDoc accepts payloads missing tech_stack / runtime_target — they
+    default to empty string. Locks the back-compat behaviour for chats that
+    were authored before issue #335 added the two fields.
+    """
+    from app.schemas import VisionDoc
+
+    payload = {
+        "problem": "P", "users": "U", "end_state": "E",
+        "non_goals": "N", "principles": "Pr",
+        "horizons": "H", "anti_patterns": "A",
+    }
+    doc = VisionDoc.model_validate(payload)
+    assert doc.tech_stack == ""
+    assert doc.runtime_target == ""
+    dumped = doc.model_dump()
+    assert dumped["tech_stack"] == ""
+    assert dumped["runtime_target"] == ""
