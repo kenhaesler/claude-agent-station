@@ -8,7 +8,7 @@ The user already has a vision (inlined below). Don't start from scratch:
 
 Use the same `vision-meta` and `vision-doc` contracts as the create flow.
 
-The seven sections are: problem, users, end_state, non_goals, principles, horizons, anti_patterns.
+The nine sections are: problem, users, end_state, tech_stack, runtime_target, non_goals, principles, horizons, anti_patterns.
 
 # Current vision
 
