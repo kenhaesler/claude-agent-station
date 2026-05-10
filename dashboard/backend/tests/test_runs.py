@@ -399,3 +399,92 @@ async def test_telemetry_summary_aggregates_runs_and_queue(client):
     assert data["tokens_7d"]["runs"] == 2
     assert data["tokens_7d"]["input"] == 150
     assert data["tokens_7d"]["output"] == 650
+    # spark backfilled to a length-7 array even though only 2 days had data
+    assert len(data["tokens_7d"]["spark"]) == 7
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "resources, expected_status",
+    [
+        # Plenty of headroom → NOMINAL
+        (
+            {
+                "disk_free_gb": 50.0,
+                "disk_total_gb": 100.0,
+                "memory_used_mb": 4_000,
+                "memory_total_mb": 16_000,
+                "uptime_seconds": 1234.0,
+            },
+            "NOMINAL",
+        ),
+        # Disk under 5G but above 1G, mem 75% → DEGR
+        (
+            {
+                "disk_free_gb": 3.5,
+                "disk_total_gb": 100.0,
+                "memory_used_mb": 12_000,
+                "memory_total_mb": 16_000,
+                "uptime_seconds": 1234.0,
+            },
+            "DEGR",
+        ),
+        # Disk under 1G OR mem above 90% → CRIT
+        (
+            {
+                "disk_free_gb": 0.4,
+                "disk_total_gb": 100.0,
+                "memory_used_mb": 15_000,
+                "memory_total_mb": 16_000,
+                "uptime_seconds": 1234.0,
+            },
+            "CRIT",
+        ),
+    ],
+)
+async def test_telemetry_summary_system_status_thresholds(
+    client, monkeypatch, resources, expected_status
+):
+    """`telemetry_summary.system.status` reflects the disk/memory pressure
+    thresholds in :func:`get_telemetry_summary`. Patches
+    :func:`app.services.systemd.get_system_resources` (the same symbol the
+    router imports module-level) so the test doesn't depend on /proc."""
+    from app.routers import runs as runs_router
+
+    async def fake_resources():
+        return resources
+
+    monkeypatch.setattr(runs_router, "get_system_resources", fake_resources)
+
+    resp = await client.get("/api/runs/telemetry-summary")
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["system"]["status"] == expected_status
+
+
+@pytest.mark.asyncio
+async def test_telemetry_summary_queue_other_bucket(client):
+    """Queue items in ``failed``/``paused``/``cancelled`` end up in the
+    ``other`` bucket so ``claimed + done + pending + other == total``."""
+    from app.database import async_session
+    from app.models import QueueItem
+
+    async with async_session() as s:
+        s.add_all([
+            QueueItem(project_repo="x/y", issue_number=10, mode="full", state="pending"),
+            QueueItem(project_repo="x/y", issue_number=11, mode="full", state="claimed"),
+            QueueItem(project_repo="x/y", issue_number=12, mode="full", state="completed"),
+            QueueItem(project_repo="x/y", issue_number=13, mode="full", state="failed"),
+            QueueItem(project_repo="x/y", issue_number=14, mode="full", state="cancelled"),
+        ])
+        await s.commit()
+
+    resp = await client.get("/api/runs/telemetry-summary")
+    assert resp.status_code == 200, resp.text
+    q = resp.json()["queue"]
+    assert q["total"] == 5
+    assert q["pending"] == 1
+    assert q["claimed"] == 1
+    assert q["done"] == 1
+    assert q["other"] == 2
+    assert q["pending"] + q["claimed"] + q["done"] + q["other"] == q["total"]

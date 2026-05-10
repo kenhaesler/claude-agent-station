@@ -6,7 +6,7 @@ import asyncio
 import json
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -51,7 +51,7 @@ from app.services import service_control
 from app.services.diff_parser import DiffResult, parse_unified_diff
 from app.services.event_bus import publish
 from app.services.log_importer import import_historical_runs
-from app.services.systemd import systemctl
+from app.services.systemd import get_system_resources, systemctl
 
 logger = logging.getLogger(__name__)
 
@@ -180,10 +180,6 @@ async def get_telemetry_summary(db: AsyncSession = Depends(get_db)):
     Active runs, Queue stats, Tokens (7d) summary + sparkline,
     and a coarse System health label derived from disk/memory.
     """
-    from datetime import timedelta
-
-    from app.services.systemd import get_system_resources
-
     # --- 1. Active runs / teammates / roles ---
     active_runs_res = await db.execute(
         select(Run).where(Run.status.in_(["running", "plan_reviewing", "reviewing"]))
@@ -192,6 +188,17 @@ async def get_telemetry_summary(db: AsyncSession = Depends(get_db)):
 
     roles: list[str] = []
     teammates_count = 0
+    # NOTE: ``CoordinatorTask`` does not currently carry an explicit ``role``
+    # column — see ``dashboard/backend/app/models.py`` (the only ``role`` is
+    # on ``CoordinatorMessage`` for chat direction). Until a schema migration
+    # adds one (and the orchestrator populates it), we fall back to substring
+    # matching teammate names against the canonical role tags. This is
+    # brittle: a teammate named ``frontend-spright`` matches but a renamed
+    # variant like ``ui-spright`` would silently drop out.
+    # TODO(#311): once teammate roles are first-class (either as a column on
+    # CoordinatorTask or as an explicit ``role`` field in the JSON written
+    # to ``Run.team_members``), prefer that over name-substring matching.
+    _ROLE_TAGS = ("backend", "frontend", "qa", "lead")
     if active_runs:
         for r in active_runs:
             members_raw = r.team_members
@@ -202,8 +209,15 @@ async def get_telemetry_summary(db: AsyncSession = Depends(get_db)):
                 if isinstance(members, list):
                     teammates_count += len(members)
                     for m in members:
+                        # Prefer an explicit ``role`` field if the
+                        # orchestrator started writing one; otherwise fall
+                        # back to substring-matching the name.
+                        explicit = (m.get("role") if isinstance(m, dict) else None) or ""
                         name = (m.get("name") if isinstance(m, dict) else str(m)) or ""
-                        for tag in ("backend", "frontend", "qa", "lead"):
+                        if explicit and explicit.lower() in _ROLE_TAGS and explicit.lower() not in roles:
+                            roles.append(explicit.lower())
+                            continue
+                        for tag in _ROLE_TAGS:
                             if tag in name.lower() and tag not in roles:
                                 roles.append(tag)
             except Exception:  # noqa: BLE001 — best-effort introspection
@@ -220,8 +234,10 @@ async def get_telemetry_summary(db: AsyncSession = Depends(get_db)):
             tasks = ct_res.scalars().all()
             teammates_count = len(tasks)
             for t in tasks:
+                # CoordinatorTask has no role column today; match teammate
+                # name as a brittle proxy. See TODO(#311) above.
                 name = (t.claimed_by or t.teammate_agent_id or "") or ""
-                for tag in ("backend", "frontend", "qa", "lead"):
+                for tag in _ROLE_TAGS:
                     if tag in name.lower() and tag not in roles:
                         roles.append(tag)
 
@@ -236,20 +252,31 @@ async def get_telemetry_summary(db: AsyncSession = Depends(get_db)):
         select(QueueItem.state, func.count(QueueItem.id)).group_by(QueueItem.state)
     )
     by_state = {row[0]: row[1] for row in qstate_res.all()}
-    claimed = (
-        by_state.get("claimed", 0)
-        + by_state.get("assigned", 0)
-        + by_state.get("planning", 0)
-        + by_state.get("in_progress", 0)
-    )
-    done = by_state.get("completed", 0) + by_state.get("approved", 0)
-    pending = by_state.get("pending", 0)
+    _CLAIMED_STATES = {"claimed", "assigned", "planning", "in_progress"}
+    _DONE_STATES = {"completed", "approved"}
+    _PENDING_STATES = {"pending"}
+    claimed = sum(v for k, v in by_state.items() if k in _CLAIMED_STATES)
+    done = sum(v for k, v in by_state.items() if k in _DONE_STATES)
+    pending = sum(v for k, v in by_state.items() if k in _PENDING_STATES)
     queue_total = sum(by_state.values())
+    # Anything not bucketed above (e.g. ``failed``, ``paused``, ``cancelled``,
+    # plus any future states) gets routed into ``other`` so the cells add up
+    # to ``total`` and the operator can see queue items aren't simply lost.
+    other = queue_total - (claimed + done + pending)
+    if other < 0:
+        other = 0  # defensive: shouldn't happen, but keep ``other`` non-negative.
 
-    queue = TelemetryQueue(total=queue_total, claimed=claimed, done=done, pending=pending)
+    queue = TelemetryQueue(
+        total=queue_total,
+        claimed=claimed,
+        done=done,
+        pending=pending,
+        other=other,
+    )
 
     # --- 3. Tokens (7d) — sum, run count, in/out, sparkline ---
-    cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+    now_utc = datetime.now(timezone.utc)
+    cutoff = now_utc - timedelta(days=7)
     daily_q = (
         select(
             func.date(Run.started_at).label("date"),
@@ -260,18 +287,29 @@ async def get_telemetry_summary(db: AsyncSession = Depends(get_db)):
         .order_by(func.date(Run.started_at))
     )
     daily_rows = (await db.execute(daily_q)).all()
-    spark = [int(row.tot or 0) for row in daily_rows]
+    # Backfill missing days with 0 so the sparkline always has 7 points
+    # ordered oldest → today. ``func.date(...)`` returns a string in SQLite,
+    # so we key by ISO date strings.
+    by_day = {str(row.date): int(row.tot or 0) for row in daily_rows}
+    today = now_utc.date()
+    spark: list[int] = []
+    for offset in range(6, -1, -1):
+        day = today - timedelta(days=offset)
+        spark.append(by_day.get(day.isoformat(), 0))
 
     sum_q = (
         select(
-            func.coalesce(func.sum(Run.tokens_total), 0),
-            func.coalesce(func.sum(Run.tokens_input), 0),
-            func.coalesce(func.sum(Run.tokens_output), 0),
-            func.count(Run.id),
+            func.coalesce(func.sum(Run.tokens_total), 0).label("total"),
+            func.coalesce(func.sum(Run.tokens_input), 0).label("input"),
+            func.coalesce(func.sum(Run.tokens_output), 0).label("output"),
+            func.count(Run.id).label("runs"),
         ).where(Run.started_at >= cutoff)
     )
-    sum_row = (await db.execute(sum_q)).first()
-    tot7, in7, out7, runs7 = (sum_row[0] or 0, sum_row[1] or 0, sum_row[2] or 0, sum_row[3] or 0)
+    sum_row = (await db.execute(sum_q)).mappings().one()
+    tot7 = sum_row["total"] or 0
+    in7 = sum_row["input"] or 0
+    out7 = sum_row["output"] or 0
+    runs7 = sum_row["runs"] or 0
 
     tokens_7d = TelemetryTokens7d(
         total=int(tot7),
