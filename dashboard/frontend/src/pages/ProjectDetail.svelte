@@ -52,23 +52,28 @@
   }
 </script>
 
-<div class="space-y-6 animate-fade-in-up max-w-3xl">
+<div class="space-y-6 animate-fade-in-up max-w-3xl project-detail-pro">
   {#if loading}
     <div class="text-sm text-tertiary">Loading...</div>
   {:else if !project}
     <div class="text-sm text-tertiary">Project not found</div>
   {:else}
-    <div class="flex items-center justify-between">
-      <h1 class="text-lg font-semibold text-primary">{project.repo}</h1>
-      <button onclick={handleDelete} class="text-xs text-reject hover:text-reject/80 transition-colors">Delete</button>
+    <div class="pd-crumb">
+      <a href="/projects">← Projects</a>
+      <span class="sep">/</span>
+      <b>{project.repo}</b>
+    </div>
+    <div class="pd-page-head">
+      <h1 class="pd-title mono">{project.repo}</h1>
+      <button onclick={handleDelete} class="pd-delete-btn">Delete</button>
     </div>
 
-    <!-- Tab strip -->
-    <div class="flex gap-1" style="border-bottom: 1px solid var(--color-border);">
+    <!-- Tab strip (Pro) -->
+    <div class="pd-tabs">
       {#each ['overview', 'vision', 'runs'] as t}
         <button
-          class="px-4 py-2.5 text-xs font-medium capitalize transition-colors cursor-pointer"
-          style="{activeTab === t ? 'color: var(--color-primary); border-bottom: 2px solid var(--color-violet);' : 'color: var(--color-tertiary); border-bottom: 2px solid transparent;'}"
+          class="pd-tab"
+          class:active={activeTab === t}
           onclick={() => activeTab = t as 'overview' | 'vision' | 'runs'}
         >{t}</button>
       {/each}
@@ -201,3 +206,74 @@
     {/if}
   {/if}
 </div>
+
+<style>
+  .project-detail-pro :global(.pd-crumb) {
+    display: flex; align-items: center; gap: 10px;
+    font-family: var(--pro-mono); font-size: 11px;
+    color: var(--graphite);
+    padding-bottom: 4px;
+  }
+  .project-detail-pro :global(.pd-crumb a) {
+    color: var(--graphite); text-decoration: none;
+  }
+  .project-detail-pro :global(.pd-crumb a:hover) { color: var(--ink); }
+  .project-detail-pro :global(.pd-crumb b) { color: var(--ink); font-weight: 500; }
+  .project-detail-pro :global(.pd-crumb .sep) { color: var(--ash); }
+
+  .project-detail-pro :global(.pd-page-head) {
+    display: flex; align-items: center; justify-content: space-between;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .project-detail-pro :global(.pd-title) {
+    margin: 0;
+    font-family: var(--pro-mono);
+    font-size: 18px; font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--ink);
+    word-break: break-all;
+  }
+  .project-detail-pro :global(.pd-delete-btn) {
+    font-family: var(--pro-sans);
+    font-weight: 700; font-size: 10px;
+    letter-spacing: 0.16em; text-transform: uppercase;
+    background: transparent; color: var(--abort);
+    border: 1px solid color-mix(in oklab, var(--abort) 50%, transparent);
+    padding: 4px 10px; cursor: pointer; height: 24px;
+  }
+  .project-detail-pro :global(.pd-delete-btn:hover) {
+    background: color-mix(in oklab, var(--abort) 12%, var(--paper));
+  }
+
+  .project-detail-pro :global(.pd-tabs) {
+    display: flex; gap: 0;
+    border-bottom: 1px solid var(--rule);
+  }
+  .project-detail-pro :global(.pd-tab) {
+    font-family: var(--pro-sans);
+    font-size: 11px; font-weight: 700;
+    letter-spacing: 0.16em; text-transform: uppercase;
+    color: var(--graphite);
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    padding: 10px 14px;
+    cursor: pointer;
+  }
+  .project-detail-pro :global(.pd-tab:hover) { color: var(--ink); }
+  .project-detail-pro :global(.pd-tab.active) {
+    color: var(--ink);
+    border-bottom-color: var(--ink);
+  }
+
+  /* Flatten glassmorphic .glass cards */
+  .project-detail-pro :global(.glass) {
+    background: var(--paper-2) !important;
+    border: 1px solid var(--rule) !important;
+    border-radius: 0 !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    box-shadow: none !important;
+  }
+</style>
