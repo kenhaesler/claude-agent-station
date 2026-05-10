@@ -47,6 +47,31 @@ EVENT_TYPE = "auto_mode_decision"
 # Truncation limit for stdout_tail / stderr_tail captured in audit_log rows.
 TAIL_LIMIT = 4_000
 
+# Count of pre/post hook callback failures since process start. The bundled
+# Claude CLI occasionally fails to deliver a hook callback to the Python
+# side mid-run ("error: Stream closed" emitted by cli.js sendRequest); when
+# that happens, the post_hook never runs and an audit_log row stays in
+# 'started' state forever. The orchestrator reads this counter at the end
+# of each project's session and surfaces the delta as a webhook event so
+# operators can spot affected runs without grepping launcher.out by hand.
+_HOOK_CB_FAILURE_COUNT = 0
+
+
+def get_hook_callback_failure_count() -> int:
+    """Return the process-lifetime count of pre/post hook callback failures."""
+    return _HOOK_CB_FAILURE_COUNT
+
+
+def _record_hook_failure(phase: str, run_id: str, exc: BaseException) -> None:
+    """Increment the failure counter and emit a grep-stable warning."""
+    global _HOOK_CB_FAILURE_COUNT
+    _HOOK_CB_FAILURE_COUNT += 1
+    # Stable prefix so operators can grep launcher.out for these.
+    logger.warning(
+        "[hook-cb-fail] phase=%s run_id=%s err=%s",
+        phase, run_id, exc,
+    )
+
 CanUseTool = Callable[
     [str, dict[str, Any], ToolPermissionContext],
     Awaitable[PermissionResultAllow | PermissionResultDeny],
@@ -357,7 +382,7 @@ def make_pre_tool_hook(
                     db_path=db_path,
                 )
         except Exception as exc:  # pragma: no cover — defensive
-            logger.warning("audit_hook: pre_hook error: %s", exc)
+            _record_hook_failure("pre", run_id, exc)
         return {}
 
     return pre_hook
@@ -365,7 +390,7 @@ def make_pre_tool_hook(
 
 def make_post_tool_hook(
     *,
-    run_id: str,  # noqa: ARG001 — kept for symmetry / future use
+    run_id: str,
     actor: str = "lead",  # noqa: ARG001
     db_path: str | None = None,
 ):
@@ -385,7 +410,7 @@ def make_post_tool_hook(
                     db_path=db_path,
                 )
         except Exception as exc:  # pragma: no cover — defensive
-            logger.warning("audit_hook: post_hook error: %s", exc)
+            _record_hook_failure("post", run_id, exc)
         return {}
 
     return post_hook
