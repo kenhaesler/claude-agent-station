@@ -70,24 +70,34 @@ log "Phase 1 conflicts; continuing"
 conflicted=$(git diff --name-only --diff-filter=U || true)
 
 # --- Phase 2: lockfile regen ---
+# Multi-lockfile trees (e.g. both package-lock.json and yarn.lock) are
+# uncommon and risky — `npm install` and `yarn install` would fight over
+# package-lock.json and the second one would clobber the first's work.
+# Refuse multi-manager regen and fall through to Phase 3 (review finding #3).
 if is_lockfile_only_conflict "$conflicted"; then
-    log "Phase 2: lockfile-only conflict; regenerating"
-    while IFS= read -r f; do
-        [ -z "$f" ] && continue
-        git checkout --theirs "$f" || { log "checkout --theirs $f failed"; break; }
-        if regen_lockfile "$WORKSPACE" "$(basename "$f")"; then
-            git add "$f"
-        else
-            log "regen failed for $f; falling through to Phase 3"
-            git rebase --abort 2>/dev/null || true
-            break
+    distinct_locks=$(echo "$conflicted" | xargs -n1 basename | sort -u)
+    lock_count=$(echo "$distinct_locks" | grep -c .)
+    if [ "$lock_count" -le 1 ]; then
+        log "Phase 2: lockfile-only conflict; regenerating"
+        while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            git checkout --theirs "$f" || { log "checkout --theirs $f failed"; break; }
+            if regen_lockfile "$WORKSPACE" "$(basename "$f")"; then
+                git add "$f"
+            else
+                log "regen failed for $f; falling through to Phase 3"
+                git rebase --abort 2>/dev/null || true
+                break
+            fi
+        done <<< "$conflicted"
+        if git rebase --continue >&2 2>/dev/null; then
+            log "Phase 2 clean — pushing"
+            git push --force-with-lease origin "$BRANCH" >&2 || { log "push failed"; exit 1; }
+            log "resolved at Phase 2"
+            exit 0
         fi
-    done <<< "$conflicted"
-    if git rebase --continue >&2 2>/dev/null; then
-        log "Phase 2 clean — pushing"
-        git push --force-with-lease origin "$BRANCH" >&2 || { log "push failed"; exit 1; }
-        log "resolved at Phase 2"
-        exit 0
+    else
+        log "Phase 2 skipped: multi-manager lockfile conflict ($lock_count distinct lockfiles); deferring to LLM"
     fi
 fi
 
@@ -112,6 +122,9 @@ set -e
 case "$phase3_rc" in
     0)
         log "Phase 3 resolved — pushing"
+        # TODO(v1.1): on --force-with-lease rejection, re-enter the pipeline
+        # at Phase 1 (a concurrent push may have introduced new conflicts).
+        # Spec error matrix calls for a single retry; v1 just exits 1.
         git push --force-with-lease origin "$BRANCH" >&2 || { log "push failed"; exit 1; }
         exit 0
         ;;

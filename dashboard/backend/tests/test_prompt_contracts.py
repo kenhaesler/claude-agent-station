@@ -144,6 +144,9 @@ class TestPromptRouterSync:
         # (system prompt for the agent.conflict_resolver harness, not an
         # orchestrator role agent — see
         # docs/superpowers/specs/2026-05-10-conflict-resolution-design.md).
+        # TODO(v1.1): replace this denylist with a frontmatter convention
+        # (e.g. `role: harness`) or a directory split — review finding #8.
+        # Each new harness-style prompt currently requires a manual addition.
         _NON_ROLE_PROMPTS = {"REPORT-SCHEMAS", "conflict_resolver"}
         actual_files_count = len([
             p for p in _PROMPTS_DIR.glob("*.md")

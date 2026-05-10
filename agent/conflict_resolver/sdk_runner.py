@@ -86,6 +86,12 @@ async def run_resolver(
     completed = False
 
     try:
+        # TODO(v1.1): track which model the SDK actually used per turn (it
+        # may fall back from Opus -> Sonnet -> Haiku). The caller currently
+        # records `model_used=args.model` (the configured primary), not the
+        # model that produced the work — review finding #5. To fix, capture
+        # `getattr(message, "model", None)` on each assistant message and
+        # plumb the most-recent value back to record_attempt_finish.
         async for message in query(prompt=prompt, options=options):
             mtype = getattr(message, "type", None)
             if mtype == "assistant":
