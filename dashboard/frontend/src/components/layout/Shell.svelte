@@ -1,7 +1,8 @@
 <script lang="ts">
   import VaporBackground from '../background/VaporBackground.svelte';
   import TopNav from './TopNav.svelte';
-  import { route } from '../../lib/router.svelte';
+  import LiveTicker from './LiveTicker.svelte';
+  import StationStatusFooter from './StationStatusFooter.svelte';
   import type { Snippet } from 'svelte';
 
   let {
@@ -17,14 +18,6 @@
     sseConnected?: boolean;
     activeCount?: number;
   } = $props();
-
-  // The Pro Dispatch board owns its own dense, edge-to-edge layout
-  // (strip + ticker + filters + telemetry + board + footer). Drop the
-  // shell's max-width / padding container for it so the bleed isn't
-  // boxed in. Other pages keep the centered, padded canvas.
-  let isDispatch = $derived(
-    route.page === 'command-center' || route.page === 'runs'
-  );
 </script>
 
 <VaporBackground />
@@ -36,14 +29,16 @@
   {activeCount}
 />
 
+<LiveTicker />
+
 <main
   id="main-content"
   class="relative overflow-x-hidden"
   style:z-index="1"
-  style:min-height="calc(100vh - 40px)"
-  style:padding={isDispatch ? '0' : '28px 32px 48px'}
-  style:max-width={isDispatch ? 'none' : '1600px'}
-  style:margin={isDispatch ? '0' : '0 auto'}
+  style:flex="1 1 auto"
+  style:min-height="0"
 >
   {@render children()}
 </main>
+
+<StationStatusFooter />

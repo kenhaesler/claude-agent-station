@@ -4,20 +4,17 @@
     getActiveEmployees,
     getTelemetrySummary,
     getSystemStatus,
-    getAgentEvents,
     getCoordinatorTasks,
     listProjects,
     pauseAll,
   } from '../lib/api';
   import { navigate } from '../lib/router.svelte';
-  import { agentPresence } from '../lib/agent-presence.svelte';
   import { appearance, setTheme } from '../lib/appearance.svelte';
   import { addToast } from '../lib/toast.svelte';
   import { flap } from '../lib/design/flap';
   import type {
     Run,
     ActiveEmployee,
-    AgentEvent,
     CoordinatorTask,
     Project,
     TelemetrySummary,
@@ -31,7 +28,6 @@
   let activeEmployees = $state<ActiveEmployee[]>([]);
   let telemetry = $state<TelemetrySummary | null>(null);
   let systemStatus = $state<SystemStatus | null>(null);
-  let agentEvents = $state<AgentEvent[]>([]);
   let projects = $state<Project[]>([]);
   let coordTasks = $state<CoordinatorTask[]>([]);
   let loading = $state(true);
@@ -42,7 +38,6 @@
   let searchQuery = $state('');
   let hovered = $state<Run | null>(null);
   let selectedIdx = $state<number>(-1);
-  let clockNow = $state<string>('00:00:00');
   // Persisted acked alerts: localStorage stores a sorted JSON array of
   // alert ids (Sets don't serialize directly). Keyed by `dispatch-acked-alerts`
   // so a page refresh doesn't resurrect alerts the operator already cleared.
@@ -262,40 +257,9 @@
     return out.filter((a) => !acked.has(a.id));
   });
 
-  // ── Ticker entries ────────────────────────────────────
-  let tickerSegments = $derived.by(() => {
-    const segs = agentEvents.slice(0, 20).map((e) => {
-      const actor = (e.agent_id ?? 'station').split(':').pop() ?? 'station';
-      const tool =
-        (e.event_data && (e.event_data as Record<string, unknown>).tool as string)
-        ?? e.event_type
-        ?? 'event';
-      const target =
-        (e.event_data && (e.event_data as Record<string, unknown>).summary as string)
-        ?? (e.event_data && (e.event_data as Record<string, unknown>).file_path as string)
-        ?? '';
-      return { actor, tool, target };
-    });
-    if (segs.length === 0) {
-      // Idle fallback so the rail isn't blank between bursts
-      return [
-        { actor: 'station', tool: 'idle', target: 'no recent activity' },
-      ];
-    }
-    return segs;
-  });
-
-  // ── Footer event ──────────────────────────────────────
-  let footerEvent = $derived.by(() => {
-    const e = agentEvents[0];
-    if (!e) return { actor: '—', tool: '', target: 'awaiting events' };
-    const actor = (e.agent_id ?? 'station').split(':').pop() ?? 'station';
-    const tool = ((e.event_data && (e.event_data as Record<string, unknown>).tool as string) ?? e.event_type ?? '').toString();
-    const target = ((e.event_data && (e.event_data as Record<string, unknown>).summary as string)
-      ?? (e.event_data && (e.event_data as Record<string, unknown>).file_path as string)
-      ?? '').toString();
-    return { actor, tool, target };
-  });
+  // The live ticker and station-status footer are now mounted globally in
+  // Shell.svelte (LiveTicker + StationStatusFooter) so they appear on every
+  // page. CommandCenter no longer polls /api/agent-events directly.
 
   let latestActiveRun = $derived(
     recentRuns.find((r) => {
@@ -305,14 +269,15 @@
   );
 
   // ── Loaders ──────────────────────────────────────────
-  // Fast path: live ticker + working count drivers (cheap, change quickly).
+  // Fast path: working-count driver (cheap, changes quickly). The live
+  // ticker and station footer have their own polls in Shell-mounted
+  // components.
   async function loadFast() {
-    const [empR, evR] = await Promise.allSettled([
-      getActiveEmployees(),
-      getAgentEvents({ limit: 20 }),
-    ]);
-    if (empR.status === 'fulfilled') activeEmployees = empR.value;
-    if (evR.status === 'fulfilled') agentEvents = evR.value;
+    try {
+      activeEmployees = await getActiveEmployees();
+    } catch {
+      // Keep last-good list.
+    }
   }
 
   // Slow path: heavier endpoints (telemetry runs ~5 SQL queries; system
@@ -357,17 +322,12 @@
     const isHidden = () => typeof document !== 'undefined' && document.visibilityState === 'hidden';
     const fast = setInterval(() => { if (!isHidden()) loadFast(); }, 10_000);
     const slow = setInterval(() => { if (!isHidden()) loadSlow(); }, 30_000);
-    const c = setInterval(() => {
-      const d = new Date();
-      clockNow = `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
-    }, 1000);
     // On tab refocus, pull fresh data immediately so users don't see stale-then-update.
     const onVis = () => { if (!isHidden()) loadAll(); };
     if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVis);
     return () => {
       clearInterval(fast);
       clearInterval(slow);
-      clearInterval(c);
       if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVis);
     };
   });
@@ -450,27 +410,11 @@
     navigate(`/runs/${r.run_id}`);
   }
 
-  let currentRunTokens = $derived(
-    activeEmployees[0]?.tokens_total
-      ?? agentPresence.activeRuns[0]?.tokens_total
-      ?? agentPresence.tokensBurned
-      ?? 0,
-  );
 </script>
 
 <svelte:window onkeydown={onKeydown} />
 
 <div data-testid="command-center" class="dispatch-pro animate-fade-in">
-
-  <!-- Live ticker -->
-  <div class="ticker">
-    <span class="ticker-tag">// Live</span>
-    <div class="ticker-track">
-      {#each [...tickerSegments, ...tickerSegments] as seg}
-        <span><b>{seg.actor}</b> · <em>{seg.tool}</em> {seg.target}</span>
-      {/each}
-    </div>
-  </div>
 
   <!-- Filters -->
   <div class="filters">
@@ -702,23 +646,6 @@
       </section>
     </aside>
   </section>
-
-  <!-- Footer -->
-  <footer class="tele">
-    <span class="now">
-      <span class="run-tick"></span>
-      <span>{clockNow}</span>
-    </span>
-    <span><b>{latestActiveRun ? shortId(latestActiveRun.run_id) : '—'}</b></span>
-    <span class="ev">
-      {#if footerEvent.actor !== '—'}
-        {footerEvent.actor} · <em>{footerEvent.tool}</em> {footerEvent.target}
-      {:else}
-        awaiting events
-      {/if}
-    </span>
-    <span data-testid="footer-tokens">{currentRunTokens > 0 ? `+${fmtTok(currentRunTokens)}` : '—'}</span>
-  </footer>
 
   <div class="legend" aria-hidden="true">
     <span><kbd>/</kbd>filter</span>
