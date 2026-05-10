@@ -59,6 +59,10 @@ services:
       # across rebuilds. Used as override when the App flow isn't viable
       # (e.g. dashboard reachable only on localhost / private VM).
       STATION_GITHUB_PAT_PATH: /var/lib/claude-agent-station/github_pat.json
+      # Third-party provider API keys (OpenAI Codex, Google Gemini). Same
+      # named volume so bring-your-own-key configuration survives container
+      # rebuilds. The file is chmod 0600 by the service module.
+      STATION_PROVIDER_KEYS_PATH: /var/lib/claude-agent-station/provider_keys.json
       # Public-facing dashboard URL — used in the manifest's redirect_url and
       # setup_url so GitHub can find us after creating/installing the App.
       STATION_DASHBOARD_BASE_URL: http://localhost:8420

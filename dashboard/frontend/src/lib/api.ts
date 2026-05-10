@@ -15,6 +15,7 @@ import type {
   AgentEvent, Notification,
   TelemetrySummary,
   VisionRead, VisionDoc, VisionCommitOut, VisionChatSession, VisionProposals,
+  ProviderKeyStatus, ProviderKeysOut, ProviderName,
 } from './types';
 
 import { toastError } from './toast.svelte';
@@ -337,6 +338,19 @@ export const setGitHubPAT = (token: string) =>
 
 export const clearGitHubPAT = () =>
   requestWithToast<{ status: string }>('/api/github/app/pat', { method: 'DELETE' });
+
+// --- Provider API keys (OpenAI / Gemini) ---
+
+export const getProviderKeys = () =>
+  request<ProviderKeysOut>('/api/provider-keys');
+
+export const setProviderKey = (provider: ProviderName, key: string) =>
+  requestWithToast<ProviderKeyStatus>(`/api/provider-keys/${provider}`, {
+    method: 'PUT', body: JSON.stringify({ key }),
+  });
+
+export const clearProviderKey = (provider: ProviderName) =>
+  requestWithToast<ProviderKeyStatus>(`/api/provider-keys/${provider}`, { method: 'DELETE' });
 
 export interface GitHubRepo {
   full_name: string;

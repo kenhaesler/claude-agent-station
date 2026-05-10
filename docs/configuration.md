@@ -25,6 +25,7 @@ Every variable below is prefixed with `STATION_`. They can also be placed in a `
 | `STATION_GITHUB_WEBHOOK_SECRET` | _(none)_ | Secret for verifying GitHub webhook HMAC-SHA256 signatures. |
 | `STATION_ALLOWED_ORIGINS` | `["http://localhost:5173", "http://localhost:4173", "http://127.0.0.1:5173", "http://127.0.0.1:4173"]` | CORS allowed origins. Override with a JSON list or comma-separated string. Extend this when the frontend is served from a different origin than the API. |
 | `STATION_LAUNCHER_TOKEN` | _(none — required for compose)_ | Shared secret authenticating dashboard → agent-launcher calls. **`compose.yml` fails fast if unset.** Generate with `openssl rand -hex 32` and put it in `.env` at the repo root. Bare-metal (systemd) deployments only need this when the dashboard and agent run on different hosts. |
+| `STATION_PROVIDER_KEYS_PATH` | `~/.claude-agent-station/provider_keys.json` | Path to the bring-your-own-key store for third-party LLM providers (OpenAI Codex, Google Gemini). Compose mounts this on `station-data` so saved keys survive container rebuilds. The file is chmod 0600 from creation; raw keys are never returned over the API. |
 
 ## Models
 
@@ -101,6 +102,16 @@ Authentication settings are listed in the env-vars table above. Additional behav
 - `STATION_GITHUB_WEBHOOK_SECRET` verifies HMAC-SHA256 signatures on incoming GitHub webhooks.
 
 Exempt from `STATION_API_KEY` auth (verified in `dashboard/backend/app/main.py`): the health router, the internal agent webhook router, the WebSocket log-streaming router (`logs.ws_router` at `/api/logs/ws`, which has its own inline WebSocket auth), the GitHub webhook router, and GitHub App lifecycle endpoints.
+
+### Provider auth (Settings → Auth)
+
+The Auth tab in Settings shows three provider panels:
+
+- **Claude API** — OAuth flow via `/api/oauth/*`; tokens persist to `STATION_CREDENTIALS_PATH` and are auto-refreshed by the dashboard.
+- **OpenAI Codex** — bring-your-own-key. Paste an `sk-…` API key; used by the OpenAI Codex teammate role.
+- **Google Gemini** — bring-your-own-key. Paste an `AIza…` API key; used by the Gemini analyst role.
+
+The OpenAI and Gemini keys are stored as JSON at `STATION_PROVIDER_KEYS_PATH` (chmod 0600), routed through `/api/provider-keys` (`GET` returns masked status, `PUT /{provider}` saves a key, `DELETE /{provider}` clears it). Raw keys are never returned in responses — only a redacted form like `sk-pro…aBc1`.
 
 ### Dispatch telemetry
 

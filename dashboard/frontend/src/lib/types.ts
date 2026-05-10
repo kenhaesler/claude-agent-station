@@ -3,6 +3,20 @@
 // Mirrors backend Pydantic schemas
 // ============================================
 
+// --- Provider API keys (OpenAI / Gemini) ---
+export interface ProviderKeyStatus {
+  configured: boolean;
+  masked_key: string | null;
+  last_updated: string | null;
+}
+
+export interface ProviderKeysOut {
+  openai: ProviderKeyStatus;
+  gemini: ProviderKeyStatus;
+}
+
+export type ProviderName = 'openai' | 'gemini';
+
 // --- Enums ---
 export type AgentMode = 'full' | 'analyze' | 'plan' | 'plan_only' | 'triage' | 'review' | 'fix';
 export type RunStatus = 'started' | 'employee_done' | 'reviewing' | 'finished' | 'verdict' | 'plan_reviewing' | 'plan_review_done' | 'awaiting_plan_review' | 'plan_approved' | 'plan_rejected' | string;

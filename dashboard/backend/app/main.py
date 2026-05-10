@@ -32,6 +32,7 @@ from app.routers import (
     plans,
     projects,
     prompts,
+    provider_keys,
     queue,
     runs,
     system,
@@ -217,6 +218,7 @@ app.include_router(queue.router, dependencies=_auth)
 app.include_router(agent_events.router, dependencies=_auth)
 app.include_router(audit.router, dependencies=_auth)
 app.include_router(permissions.router, dependencies=_auth)
+app.include_router(provider_keys.router, dependencies=_auth)
 app.include_router(vision_router.router, dependencies=_auth)
 
 # GitHub webhook: has own auth via HMAC signature verification
