@@ -540,8 +540,12 @@ code, .font-mono {
 }
 
 /* User-controlled animation kill switch (Settings → Appearance). Mirrors the
-   reduced-motion behavior but driven by the explicit toggle on <html>. */
-[data-animations="off"] *,
+   reduced-motion behavior but driven by the explicit toggle on <html>.
+   Exempts elements whose animation is functional / data-conveying, not
+   decorative — the live KPI ticker, the run-tick, and the live presence
+   dot all communicate state through motion. The flap intro is decorative
+   and stays disabled. */
+[data-animations="off"] *:not(.ticker-track):not(.run-tick):not(.dot.live):not(.pro-ticker-track):not(.pro-tick):not(.pro-dot.live),
 [data-animations="off"] *::before,
 [data-animations="off"] *::after {
   animation-duration: 0.01ms !important;
