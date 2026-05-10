@@ -129,6 +129,12 @@ the gap between today's state and the vision.
 ## End-state
 {end_state}
 
+## Tech Stack
+{tech_stack}
+
+## Runtime Target
+{runtime_target}
+
 ## Non-goals
 {non_goals}
 
@@ -214,6 +220,8 @@ def propose_gaps(workspace: str, vision: dict, repo: str, model: str) -> list[di
     prompt = _PROMPT.format(
         max=MAX_PROPOSALS,
         problem=vision["problem"], users=vision["users"], end_state=vision["end_state"],
+        tech_stack=vision.get("tech_stack", ""),
+        runtime_target=vision.get("runtime_target", ""),
         non_goals=vision["non_goals"], principles=vision["principles"],
         horizons=vision["horizons"], anti_patterns=vision["anti_patterns"],
         tree="\n".join(state["tree"][:80]),
