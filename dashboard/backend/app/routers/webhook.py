@@ -132,6 +132,22 @@ async def receive_run_event(
             }),
         ))
 
+    elif event_name in ("conflict_resolution_started",
+                        "conflict_resolution_phase",
+                        "conflict_resolution_completed"):
+        db.add(AgentEvent(
+            workflow_id=f"trace-{event.run_id}",
+            run_id=event.run_id,
+            agent_id=event.agent_id or "conflict-resolver",
+            event_type=event_name,
+            event_data=json.dumps({
+                "project": event.project,
+                "branch": event.branch,
+                "phase": event.phase,
+                "count": event.count,
+            }),
+        ))
+
     else:
         run = await run_lifecycle.handle_unknown(db, event, project_id, run)
 

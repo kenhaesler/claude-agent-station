@@ -362,6 +362,8 @@ class WebhookRunEvent(BaseModel):
     # by the orchestrator when nonzero so operators can spot SDK stream-close
     # incidents from Mission Control instead of grepping launcher.out.
     count: int | None = None
+    # Conflict-resolution event fields
+    phase: str | None = None  # mechanical / lockfile / llm / etc.
     plan_excerpt: str | None = None
     # Narration ("The Bridge" Phase 1): one-sentence present-tense intent
     # statements the agent emits before tool calls so the operator never
