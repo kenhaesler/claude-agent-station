@@ -24,7 +24,6 @@
   import CommandCenter from './pages/CommandCenter.svelte';
   import MissionControl from './pages/MissionControl.svelte';
   import AgentTeamsCanvas from './pages/AgentTeamsCanvas.svelte';
-  import RunsPage from './pages/RunsPage.svelte';
   import RunDetail from './pages/RunDetail.svelte';
   import QueueBoard from './pages/QueueBoard.svelte';
   import ProjectsPage from './pages/ProjectsPage.svelte';
@@ -82,12 +81,12 @@
     // `?` toggles the shortcuts cheatsheet (on many keyboards `?` = Shift+/).
     if (e.key === '?') { showShortcuts = !showShortcuts; e.preventDefault(); return; }
 
-    // Number keys for navigation (matches NavRail order)
+    // Number keys for navigation (matches TopNav order: Dispatch / Mission / Fleet / Queue / Projects / Settings)
     if (e.key === '1') { navigate('/'); return; }
-    if (e.key === '2') { navigate('/runs'); return; }
-    if (e.key === '3') { navigate('/queue'); return; }
-    if (e.key === '4') { navigate('/projects'); return; }
-    if (e.key === '5') { navigate('/agent-teams'); return; }
+    if (e.key === '2') { navigate('/mission-control'); return; }
+    if (e.key === '3') { navigate('/agent-teams'); return; }
+    if (e.key === '4') { navigate('/queue'); return; }
+    if (e.key === '5') { navigate('/projects'); return; }
     if (e.key === '6') { navigate('/settings'); return; }
   }
 </script>
@@ -110,14 +109,12 @@
     {sseConnected}
     activeCount={activeEmployees.length}
   >
-    {#if route.page === 'command-center'}
+    {#if route.page === 'command-center' || route.page === 'runs'}
       <CommandCenter {triggering} onTrigger={handleTrigger} />
     {:else if route.page === 'mission-control'}
       <MissionControl />
     {:else if route.page === 'agent-teams'}
       <AgentTeamsCanvas />
-    {:else if route.page === 'runs'}
-      <RunsPage />
     {:else if route.page === 'run-detail'}
       <RunDetail runId={route.param ?? ''} />
     {:else if route.page === 'queue'}

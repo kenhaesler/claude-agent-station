@@ -23,18 +23,20 @@
   );
 
   const navItems = [
-    { label: 'Overview', page: 'command-center', path: '/' },
-    { label: 'Mission Control', page: 'mission-control', path: '/mission-control' },
-    { label: 'Runs', page: 'runs', path: '/runs' },
+    { label: 'Dispatch', page: 'command-center', path: '/' },
+    { label: 'Mission', page: 'mission-control', path: '/mission-control' },
+    { label: 'Fleet', page: 'agent-teams', path: '/agent-teams' },
     { label: 'Queue', page: 'queue', path: '/queue' },
     { label: 'Projects', page: 'projects', path: '/projects' },
-    { label: 'Agent Teams', page: 'agent-teams', path: '/agent-teams' },
     { label: 'Settings', page: 'settings', path: '/settings' },
   ] as const;
 
   function isActive(page: string): boolean {
-    if (page === 'command-center') return route.page === 'command-center';
-    if (page === 'runs') return route.page === 'runs' || route.page === 'run-detail';
+    // Dispatch absorbs the old Runs surface — runs and run-detail
+    // both highlight the Dispatch tab.
+    if (page === 'command-center') {
+      return route.page === 'command-center' || route.page === 'runs' || route.page === 'run-detail';
+    }
     if (page === 'queue') return route.page === 'queue' || route.page === 'queue-detail';
     if (page === 'projects') return route.page === 'projects' || route.page === 'project-detail';
     return route.page === page;
