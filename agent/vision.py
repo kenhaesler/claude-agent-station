@@ -14,10 +14,16 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# Order must match dashboard/backend/app/services/vision_render.py:SECTIONS.
+# Issue #335 inserted tech_stack and runtime_target between end_state and
+# non_goals so the orchestrator-side parser returns them in the dict for
+# vision_analyst, vision_scoring, and the lead-prompt assembly to consume.
 SECTIONS = [
     ("problem", "Problem"),
     ("users", "Users"),
     ("end_state", "End-state"),
+    ("tech_stack", "Tech Stack"),
+    ("runtime_target", "Runtime Target"),
     ("non_goals", "Non-goals"),
     ("principles", "Principles"),
     ("horizons", "Horizons"),
