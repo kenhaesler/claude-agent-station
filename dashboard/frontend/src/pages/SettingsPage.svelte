@@ -4,10 +4,11 @@
            getGitHubAppStatus, startGitHubAppManifest, disconnectGitHubApp,
            setGitHubPAT, clearGitHubPAT,
            refreshOAuthToken,
+           getProviderKeys, setProviderKey, clearProviderKey,
            getAutonomyAudit, getAutonomySummary,
            type AutonomyAuditRow, type AutonomySummary,
            type GitHubAppStatus } from '../lib/api';
-  import type { PromptInfo, SystemStatus, AuthStatus } from '../lib/types';
+  import type { PromptInfo, SystemStatus, AuthStatus, ProviderKeysOut, ProviderName } from '../lib/types';
   import { toastSuccess, toastError } from '../lib/toast.svelte';
   import { navigate } from '../lib/router.svelte';
   import { appearance, setTheme, setAnimationsEnabled } from '../lib/appearance.svelte';
@@ -148,6 +149,51 @@
     oauthState = '';
     oauthCode = '';
     oauthError = '';
+  }
+
+  // ── Provider API keys (OpenAI / Gemini) ─────────────
+  let providerKeys = $state<ProviderKeysOut | null>(null);
+  let openaiInput = $state('');
+  let geminiInput = $state('');
+  let savingProvider = $state<ProviderName | null>(null);
+
+  async function loadProviderKeys() {
+    try {
+      providerKeys = await getProviderKeys();
+    } catch (e: any) {
+      // Don't toast — auth tab activation shouldn't bark on transient errors
+      console.warn('Failed to load provider keys:', e.message);
+    }
+  }
+
+  async function saveProvider(provider: ProviderName, value: string) {
+    const trimmed = value.trim();
+    if (!trimmed || savingProvider) return;
+    savingProvider = provider;
+    try {
+      const status = await setProviderKey(provider, trimmed);
+      if (providerKeys) providerKeys = { ...providerKeys, [provider]: status };
+      if (provider === 'openai') openaiInput = ''; else geminiInput = '';
+      toastSuccess(`${provider === 'openai' ? 'OpenAI' : 'Gemini'} key saved`);
+    } catch (e: any) {
+      toastError(e.message);
+    } finally {
+      savingProvider = null;
+    }
+  }
+
+  async function handleClearProvider(provider: ProviderName) {
+    const label = provider === 'openai' ? 'OpenAI' : 'Gemini';
+    if (!confirm(`Clear the saved ${label} API key? The teammate role using it will fall back to the default Anthropic-only path.`)) {
+      return;
+    }
+    try {
+      const status = await clearProviderKey(provider);
+      if (providerKeys) providerKeys = { ...providerKeys, [provider]: status };
+      toastSuccess(`${label} key cleared`);
+    } catch (e: any) {
+      toastError(e.message);
+    }
   }
 
   async function handleOAuthRefresh() {
@@ -318,6 +364,15 @@
     if (activeTab !== 'audit') return;
     runFilter; toolFilter; decisionFilter; typeFilter;
     loadAudit();
+  });
+
+  // Lazy-load provider keys when the Auth tab activates. The Claude OAuth
+  // status is fetched eagerly in loadAll() because it also feeds the
+  // sidebar's "off / OAuth" badge; the BYO-key panels only matter inside
+  // the tab so we wait until it's open.
+  $effect(() => {
+    if (activeTab !== 'auth') return;
+    if (providerKeys === null) loadProviderKeys();
   });
 
   // Donut helpers (pure SVG)
@@ -690,6 +745,96 @@
                 <div class="val" style="color: var(--abort)">{oauthError}</div>
               </div>
             {/if}
+          </div>
+
+          <!-- OpenAI Codex API key ─────────────────────── -->
+          <div class="card-block">
+            <h3>OpenAI Codex</h3>
+            <div class="key-row">
+              <span class="lbl">Status</span>
+              <div class="val">
+                {#if providerKeys?.openai.configured}
+                  <span class="status-tag go">● CONFIGURED</span>
+                  <span class="desc">{providerKeys.openai.masked_key}{providerKeys.openai.last_updated ? ` · updated ${timeAgo(providerKeys.openai.last_updated)}` : ''}</span>
+                {:else}
+                  <span class="status-tag off">NOT SET</span>
+                  <span class="desc">paste an API key — used by the OpenAI Codex teammate role</span>
+                {/if}
+              </div>
+            </div>
+            <div class="key-row">
+              <label for="openai-key-input" class="lbl">Key</label>
+              <div class="val" style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
+                <input
+                  id="openai-key-input"
+                  type="password"
+                  bind:value={openaiInput}
+                  placeholder="sk-…"
+                  data-testid="openai-key-input"
+                  autocomplete="off"
+                />
+                <button
+                  class="opbtn primary"
+                  type="button"
+                  onclick={() => saveProvider('openai', openaiInput)}
+                  disabled={savingProvider === 'openai' || !openaiInput.trim()}
+                  data-testid="openai-key-save-btn"
+                >{savingProvider === 'openai' ? 'Saving…' : 'Save'}</button>
+                {#if providerKeys?.openai.configured}
+                  <button
+                    class="opbtn danger"
+                    type="button"
+                    onclick={() => handleClearProvider('openai')}
+                    data-testid="openai-key-clear-btn"
+                  >Clear</button>
+                {/if}
+              </div>
+            </div>
+          </div>
+
+          <!-- Google Gemini API key ────────────────────── -->
+          <div class="card-block">
+            <h3>Google Gemini</h3>
+            <div class="key-row">
+              <span class="lbl">Status</span>
+              <div class="val">
+                {#if providerKeys?.gemini.configured}
+                  <span class="status-tag go">● CONFIGURED</span>
+                  <span class="desc">{providerKeys.gemini.masked_key}{providerKeys.gemini.last_updated ? ` · updated ${timeAgo(providerKeys.gemini.last_updated)}` : ''}</span>
+                {:else}
+                  <span class="status-tag off">NOT SET</span>
+                  <span class="desc">paste an API key — used by the Gemini analyst role</span>
+                {/if}
+              </div>
+            </div>
+            <div class="key-row">
+              <label for="gemini-key-input" class="lbl">Key</label>
+              <div class="val" style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
+                <input
+                  id="gemini-key-input"
+                  type="password"
+                  bind:value={geminiInput}
+                  placeholder="AIza…"
+                  data-testid="gemini-key-input"
+                  autocomplete="off"
+                />
+                <button
+                  class="opbtn primary"
+                  type="button"
+                  onclick={() => saveProvider('gemini', geminiInput)}
+                  disabled={savingProvider === 'gemini' || !geminiInput.trim()}
+                  data-testid="gemini-key-save-btn"
+                >{savingProvider === 'gemini' ? 'Saving…' : 'Save'}</button>
+                {#if providerKeys?.gemini.configured}
+                  <button
+                    class="opbtn danger"
+                    type="button"
+                    onclick={() => handleClearProvider('gemini')}
+                    data-testid="gemini-key-clear-btn"
+                  >Clear</button>
+                {/if}
+              </div>
+            </div>
           </div>
         </section>
 

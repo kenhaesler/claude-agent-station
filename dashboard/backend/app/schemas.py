@@ -254,6 +254,28 @@ class AuthStatus(BaseModel):
     expired: bool = False
 
 
+# --- Provider API keys (OpenAI / Gemini / ...) ---
+
+
+class ProviderKeyStatus(BaseModel):
+    """Public status of one provider's stored API key.
+
+    Note ``masked_key`` carries only the safe-to-display redacted form
+    (e.g. ``sk-pro…aBc1``) — the raw key is never serialised back.
+    """
+
+    configured: bool
+    masked_key: str | None = None
+    last_updated: datetime | None = None
+
+
+class ProviderKeysOut(BaseModel):
+    """Snapshot of every supported provider's status."""
+
+    openai: ProviderKeyStatus
+    gemini: ProviderKeyStatus
+
+
 # --- Webhook ---
 
 class WebhookRunEvent(BaseModel):
