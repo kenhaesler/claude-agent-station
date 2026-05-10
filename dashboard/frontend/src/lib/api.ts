@@ -13,6 +13,7 @@ import type {
   AnalyticsResponse, DiffResult, PlanUsage,
   PromptInfo, StationConfig, TokenUsage,
   AgentEvent, Notification,
+  TelemetrySummary,
   VisionRead, VisionDoc, VisionCommitOut, VisionChatSession, VisionProposals,
 } from './types';
 
@@ -184,6 +185,9 @@ export const listRuns = (params?: {
 
 export const getActiveEmployees = () =>
   request<ActiveEmployee[]>('/api/runs/active-employees');
+
+export const getTelemetrySummary = () =>
+  request<TelemetrySummary>('/api/runs/telemetry-summary');
 
 export const getActiveTeammates = () =>
   request<ActiveEmployee[]>('/api/runs/active-teammates');

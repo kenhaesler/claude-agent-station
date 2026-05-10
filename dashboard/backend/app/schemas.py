@@ -491,6 +491,43 @@ class QueueStats(BaseModel):
     avg_time_to_complete_ms: float | None = None
 
 
+# --- Dispatch telemetry ---
+
+class TelemetryActive(BaseModel):
+    count: int
+    teammates: int
+    roles: list[str] = []
+
+
+class TelemetryQueue(BaseModel):
+    total: int
+    claimed: int
+    done: int
+    pending: int
+
+
+class TelemetryTokens7d(BaseModel):
+    total: int
+    runs: int
+    input: int
+    output: int
+    spark: list[int] = []
+
+
+class TelemetrySystem(BaseModel):
+    status: str  # NOMINAL | DEGR | CRIT
+    disk_free_gb: float | None = None
+    memory_used_pct: int | None = None
+    uptime_secs: float | None = None
+
+
+class TelemetrySummaryOut(BaseModel):
+    active: TelemetryActive
+    queue: TelemetryQueue
+    tokens_7d: TelemetryTokens7d
+    system: TelemetrySystem
+
+
 # --- Analytics ---
 
 class DailyTokenUsage(BaseModel):

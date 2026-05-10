@@ -302,6 +302,19 @@ export interface AgentEvent {
   created_at: string;
 }
 
+// --- Dispatch telemetry ---
+export interface TelemetrySummary {
+  active: { count: number; teammates: number; roles: string[] };
+  queue: { total: number; claimed: number; done: number; pending: number };
+  tokens_7d: { total: number; runs: number; input: number; output: number; spark: number[] };
+  system: {
+    status: 'NOMINAL' | 'DEGR' | 'CRIT' | string;
+    disk_free_gb: number | null;
+    memory_used_pct: number | null;
+    uptime_secs: number | null;
+  };
+}
+
 // --- Notifications ---
 export interface Notification {
   id: number;
