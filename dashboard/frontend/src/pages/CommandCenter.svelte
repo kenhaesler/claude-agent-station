@@ -98,6 +98,13 @@
     if (!id) return '—';
     return id.replace(/^run-(vb-)?/, '…');
   }
+  function stripMd(s: string | null | undefined): string {
+    if (!s) return '';
+    return s
+      .replace(/\*\*([^*]+)\*\*/g, '$1')
+      .replace(/\*([^*]+)\*/g, '$1')
+      .replace(/`([^`]+)`/g, '$1');
+  }
   function fmtUptime(secs: number | null | undefined): string {
     if (secs == null) return '—';
     const d = Math.floor(secs / 86400);
@@ -606,7 +613,7 @@
             {#each coordTasks.slice(0, 8) as task (task.id)}
               <div class="task">
                 <div class="lane">{task.claimed_by ?? task.teammate_agent_id ?? 'unassigned'}</div>
-                <div class="t">{task.title}</div>
+                <div class="t">{stripMd(task.title)}</div>
                 <div class="meta">
                   <span>{(task.status ?? '—').toUpperCase()}</span>
                   {#if task.employee_index != null}<span>EMP {task.employee_index}</span>{/if}
