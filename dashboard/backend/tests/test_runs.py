@@ -333,7 +333,7 @@ async def test_telemetry_summary_shape_empty(client):
     assert resp.status_code == 200, resp.text
     data = resp.json()
 
-    assert set(data.keys()) == {"active", "queue", "tokens_7d", "system"}
+    assert set(data.keys()) == {"active", "queue", "tokens_7d", "system", "verdicts_7d"}
 
     assert data["active"]["count"] == 0
     assert data["active"]["teammates"] == 0
@@ -347,6 +347,8 @@ async def test_telemetry_summary_shape_empty(client):
     assert data["tokens_7d"]["total"] == 0
     assert data["tokens_7d"]["runs"] == 0
     assert isinstance(data["tokens_7d"]["spark"], list)
+
+    assert data["verdicts_7d"] == {"ok": 0, "pr": 0, "x": 0}
 
     # System status is NOMINAL when get_system_resources returns nothing
     # actionable (e.g. test environment without /proc/meminfo).
@@ -488,3 +490,35 @@ async def test_telemetry_summary_queue_other_bucket(client):
     assert q["done"] == 1
     assert q["other"] == 2
     assert q["pending"] + q["claimed"] + q["done"] + q["other"] == q["total"]
+
+
+@pytest.mark.asyncio
+async def test_telemetry_summary_verdicts_7d(client):
+    """Verdicts are bucketed APPROVE→ok, PR→pr, anything else non-null→x,
+    over the same 7-day cutoff used by ``tokens_7d``. Runs older than 7d or
+    with a NULL verdict are excluded."""
+    from app.database import async_session
+    from app.models import Run
+
+    now = datetime.now(timezone.utc)
+    async with async_session() as s:
+        # Within 7d window
+        s.add(Run(run_id="v1", status="completed", started_at=now, verdict="APPROVE"))
+        s.add(Run(run_id="v2", status="completed", started_at=now, verdict="APPROVE"))
+        s.add(Run(run_id="v3", status="completed", started_at=now, verdict="PR"))
+        s.add(Run(run_id="v4", status="completed", started_at=now, verdict="REJECT"))
+        # Lower-case write (defensive normalization)
+        s.add(Run(run_id="v5", status="completed", started_at=now, verdict="approve"))
+        # Excluded: NULL verdict
+        s.add(Run(run_id="v6", status="running", started_at=now, verdict=None))
+        # Excluded: older than 7 days
+        s.add(Run(
+            run_id="v7", status="completed",
+            started_at=now - timedelta(days=10), verdict="APPROVE",
+        ))
+        await s.commit()
+
+    resp = await client.get("/api/runs/telemetry-summary")
+    assert resp.status_code == 200, resp.text
+    v = resp.json()["verdicts_7d"]
+    assert v == {"ok": 3, "pr": 1, "x": 1}

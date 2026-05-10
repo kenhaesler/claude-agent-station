@@ -46,6 +46,7 @@ from app.schemas import (
     TelemetrySummaryOut,
     TelemetrySystem,
     TelemetryTokens7d,
+    TelemetryVerdicts7d,
 )
 from app.services import service_control
 from app.services.diff_parser import DiffResult, parse_unified_diff
@@ -347,11 +348,40 @@ async def get_telemetry_summary(db: AsyncSession = Depends(get_db)):
         uptime_secs=uptime,
     )
 
+    # --- 5. Verdicts (7d) — same cutoff as tokens above ---
+    # Group APPROVE → ok, PR → pr, anything else non-null (REJECT and any
+    # future terminal verdict tag) → x. NULL verdicts are skipped (run still
+    # in flight, or never reached the manager). Verdicts are stored
+    # case-sensitively as APPROVE/PR/REJECT but we lower-case the SQL output
+    # to be defensive against historical writes that mixed cases.
+    verdict_q = (
+        select(
+            func.lower(Run.verdict).label("verdict"),
+            func.count(Run.id).label("n"),
+        )
+        .where(Run.started_at >= cutoff, Run.verdict.isnot(None))
+        .group_by(func.lower(Run.verdict))
+    )
+    verdict_rows = (await db.execute(verdict_q)).all()
+    v_ok = 0
+    v_pr = 0
+    v_x = 0
+    for v, n in verdict_rows:
+        if v == "approve":
+            v_ok += int(n or 0)
+        elif v == "pr":
+            v_pr += int(n or 0)
+        else:
+            v_x += int(n or 0)
+
+    verdicts_7d = TelemetryVerdicts7d(ok=v_ok, pr=v_pr, x=v_x)
+
     return TelemetrySummaryOut(
         active=active,
         queue=queue,
         tokens_7d=tokens_7d,
         system=system,
+        verdicts_7d=verdicts_7d,
     )
 
 
