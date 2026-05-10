@@ -41,8 +41,7 @@ function parsePath(): Route {
   if (raw === 'projects' && parts.length > 1) return { page: 'project-detail', param: parts[1] };
   if (raw === 'settings' && parts.length > 1) return { page: 'settings', param: parts[1] };
 
-  // Redirect: AutonomyAudit was a top-level page; now it's a Settings tab.
-  // Preserve old bookmarks by routing to /settings/audit.
+  // Transparent redirect for old bookmarks — keep; do not remove in cleanup passes.
   if (raw === 'autonomy-audit') return { page: 'settings', param: 'audit' };
 
   const routeMap: Record<string, Page> = {
