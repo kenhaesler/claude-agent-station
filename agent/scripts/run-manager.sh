@@ -81,6 +81,63 @@ else:
 PYEOF
 }
 
+format_close_keywords() {
+    # Emit a GitHub closing-keyword line for a PR body so merging the PR
+    # auto-closes the linked issue(s). Returns nothing when there is no
+    # issue context (SKIP path, no-issue run) so the body has no dangling
+    # "Closes " line.
+    #
+    # Args:
+    #   $1 — singular issue_number (e.g. "15") or empty/None/null
+    #   $2 — JSON array of issue_numbers (e.g. "[15,16]") or empty
+    #
+    # Multi-issue runs use "Closes #15, closes #16, closes #17" — GitHub
+    # accepts a single keyword followed by comma-separated references and
+    # auto-closes all of them. The plural list takes precedence when both
+    # are supplied; falls back to the singular for back-compat with
+    # verdicts that only carry one issue.
+    local single="${1:-}" plural="${2:-}"
+    python3 - "$single" "$plural" 2>/dev/null <<'PYEOF'
+import json, sys
+single = sys.argv[1] if len(sys.argv) > 1 else ""
+plural_raw = sys.argv[2] if len(sys.argv) > 2 else ""
+
+nums: list[int] = []
+if plural_raw and plural_raw not in ("", "None", "null"):
+    try:
+        parsed = json.loads(plural_raw)
+        if isinstance(parsed, list):
+            for n in parsed:
+                try:
+                    nums.append(int(n))
+                except (TypeError, ValueError):
+                    pass
+    except json.JSONDecodeError:
+        pass
+
+if not nums and single and single not in ("None", "null", ""):
+    try:
+        nums.append(int(single))
+    except (TypeError, ValueError):
+        pass
+
+# Dedupe while preserving order.
+seen: set[int] = set()
+ordered: list[int] = []
+for n in nums:
+    if n not in seen:
+        seen.add(n)
+        ordered.append(n)
+
+if not ordered:
+    sys.exit(0)
+
+parts = [f"Closes #{ordered[0]}"]
+parts.extend(f"closes #{n}" for n in ordered[1:])
+print(", ".join(parts))
+PYEOF
+}
+
 ensure_gh_token() {
     # Load GH_TOKEN from dashboard-managed file if not already set.
     # Falls back to existing GH_TOKEN env var for backward compatibility.
@@ -1905,6 +1962,10 @@ print(json.dumps(v))
         verdict=$(echo "$verdict_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('verdict','REJECT'))")
         branch=$(echo "$verdict_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('branch',''))")
         issue_number=$(echo "$verdict_json" | python3 -c "import json,sys; v=json.load(sys.stdin).get('issue_number'); print('' if v is None else v)")
+        # Plural list — present on synthesized employee reports (PR #332)
+        # carrying multi-issue runs. Empty when verdicts only carry the
+        # singular field. format_close_keywords prefers plural over singular.
+        issue_numbers_json=$(echo "$verdict_json" | python3 -c "import json,sys; v=json.load(sys.stdin).get('issue_numbers'); print('' if v is None else json.dumps(v))" 2>/dev/null || echo "")
         reasoning=$(echo "$verdict_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('reasoning',''))")
         base_branch=$(echo "$verdict_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('base_branch','main'))")
         verdict_mode=$(echo "$verdict_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('mode',''))" 2>/dev/null || echo "")
@@ -2149,14 +2210,17 @@ Run: $RUN_ID" 2>/dev/null || true
                         if [ "$autonomy_auto" = true ]; then
                             if auto_draft_rate_limit_allowed "$project"; then
                                 log_info "Auto-draft PR (autonomy=auto, rate limit OK)"
-                                local pr_url
+                                local pr_url close_line
+                                close_line=$(format_close_keywords "$issue_number" "$issue_numbers_json")
                                 pr_url=$(gh pr create --repo "$project" --base "$base_branch" --head "$branch" \
                                     --draft \
                                     --title "autonomous (draft): $(git log -1 --format=%s)" \
                                     --body "Draft PR auto-opened under \`autonomy=auto\`.
 
 Run: $RUN_ID
-
+${close_line:+
+$close_line
+}
 **Human review required before merge.** This PR stays as a draft — mark it ready for review when satisfied.
 
 ---
@@ -2177,12 +2241,15 @@ Rate limit: max 1 auto-draft PR per project per hour. Regenerated at $(date -u +
                             fi
                         else
                             # Create PR and merge via GitHub API (works with protected branches)
-                            local pr_url
+                            local pr_url close_line
+                            close_line=$(format_close_keywords "$issue_number" "$issue_numbers_json")
                             pr_url=$(gh pr create --repo "$project" --base "$base_branch" --head "$branch" \
                                 --title "autonomous: $(git log -1 --format=%s)" \
                                 --body "Approved by autonomous manager.
 
-Run: $RUN_ID" 2>&1) || true
+Run: $RUN_ID${close_line:+
+
+$close_line}" 2>&1) || true
 
                             if [ -n "$pr_url" ]; then
                                 log_info "PR created: $pr_url"
@@ -2251,13 +2318,15 @@ Autonomous run: $RUN_ID" 2>/dev/null || log_warn "Failed to comment on issue #$i
                 log_info "PR: Pushing branch and creating PR for human review (base: $base_branch)"
                 if git push origin "$branch" 2>/dev/null; then
                     log_ok "Pushed $branch"
+                    local close_line
+                    close_line=$(format_close_keywords "$issue_number" "$issue_numbers_json")
                     gh pr create --repo "$project" --base "$base_branch" \
                         --title "autonomous: $(git log -1 --format=%s)" \
                         --body "## Needs Human Review
 
-**Manager reasoning**: $reasoning
+**Manager reasoning**: $reasoning${close_line:+
 
-**Issue**: #$issue_number
+$close_line}
 
 ---
 Autonomous run: $RUN_ID" 2>/dev/null && log_ok "PR created" || log_warn "PR creation failed"
@@ -2683,14 +2752,17 @@ for item in data.get('items', []):
 
                         # Push and create PR with [auto-pr] tag
                         if git push origin "$conf_branch" 2>/dev/null; then
-                            local pr_url
+                            local pr_url close_line
+                            close_line=$(format_close_keywords "$conf_issue" "")
                             pr_url=$(gh pr create --repo "$repo_cg" --head "$conf_branch" \
                                 --title "[auto-pr] Issue #${conf_issue}" \
                                 --body "## Auto-PR (Confidence Gate)
 
 Confidence: **${conf_confidence}** (above threshold)
 Tests: Passed
-Mode: $(python3 -c "import json; print(json.load(open('$report_cg')).get('mode',''))" 2>/dev/null || echo "unknown")
+Mode: $(python3 -c "import json; print(json.load(open('$report_cg')).get('mode',''))" 2>/dev/null || echo "unknown")${close_line:+
+
+$close_line}
 
 This PR was auto-created because the employee's work passed the confidence gate.
 Human review is still required for merge.
