@@ -104,7 +104,15 @@
           if (now - ts < oneDay) runsToday += 1;
         }
         const status = (r.status ?? '').toLowerCase();
-        if (status === 'running' || status === 'started' || status === 'plan_reviewing' || status === 'reviewing') {
+        // Active = any non-terminal pipeline state. Keep `running` to catch
+        // anything that bypasses the canonical RunStatus values.
+        if (
+          status === 'started' ||
+          status === 'running' ||
+          status === 'reviewing' ||
+          status === 'plan_reviewing' ||
+          status === 'awaiting_plan_review'
+        ) {
           active += 1;
         }
         if (r.verdict === 'APPROVE') approved += 1;
@@ -245,6 +253,9 @@
           class="proj {project.enabled ? 'enabled' : 'disabled'}"
           href={`/projects/${project.id}`}
           onclick={(e) => {
+            // Let the browser handle modifier-clicks (open in new tab/window)
+            // and non-primary mouse buttons.
+            if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
             e.preventDefault();
             navigate(`/projects/${project.id}`);
           }}
