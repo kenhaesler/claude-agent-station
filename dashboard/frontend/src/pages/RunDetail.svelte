@@ -153,10 +153,6 @@
     }
   }
 
-  function shortRunId(id: string): string {
-    if (id.length <= 12) return id;
-    return id.slice(-12);
-  }
 
   function shortTaskId(id: string): string {
     if (!id) return '—';
@@ -286,7 +282,7 @@
   }
 </script>
 
-<svelte:window on:keydown={onKey} />
+<svelte:window onkeydown={onKey} />
 
 {#if loading}
   <div class="rd-loading animate-fade-in">
@@ -617,37 +613,37 @@
             <!-- Right: metadata -->
             <div class="card-block">
               <h3>Run Metadata</h3>
-              <div class="key-row"><label>Run ID</label><val>{run.run_id}</val></div>
+              <div class="key-row"><span class="k">Run ID</span><span class="v">{run.run_id}</span></div>
               {#if run.trace_id}
-                <div class="key-row"><label>Trace</label><val class="dim">{run.trace_id}</val></div>
+                <div class="key-row"><span class="k">Trace</span><span class="v dim">{run.trace_id}</span></div>
               {/if}
               {#if run.concurrent_group_id}
-                <div class="key-row"><label>Group</label><val class="dim">{run.concurrent_group_id}</val></div>
+                <div class="key-row"><span class="k">Group</span><span class="v dim">{run.concurrent_group_id}</span></div>
               {/if}
               {#if run.team_name}
-                <div class="key-row"><label>Team</label><val>{run.team_name}</val></div>
+                <div class="key-row"><span class="k">Team</span><span class="v">{run.team_name}</span></div>
               {/if}
-              <div class="key-row"><label>Mode</label><val>{run.mode ?? '—'}</val></div>
-              <div class="key-row"><label>Autonomy</label><val>{run.autonomy_level ?? 'assisted'}</val></div>
+              <div class="key-row"><span class="k">Mode</span><span class="v">{run.mode ?? '—'}</span></div>
+              <div class="key-row"><span class="k">Autonomy</span><span class="v">{run.autonomy_level ?? 'assisted'}</span></div>
               <div class="key-row">
-                <label>Status</label>
-                <val style="color: {isLive ? 'var(--go)' : run.status === 'failed' ? 'var(--abort)' : 'var(--ink)'}">{run.status}</val>
+                <span class="k">Status</span>
+                <span class="v" style="color: {isLive ? 'var(--go)' : run.status === 'failed' ? 'var(--abort)' : 'var(--ink)'}">{run.status}</span>
               </div>
               <div class="key-row">
-                <label>Verdict</label>
-                <val class={run.verdict ? '' : 'dim'}>{run.verdict ?? '—'}</val>
+                <span class="k">Verdict</span>
+                <span class="v {run.verdict ? '' : 'dim'}">{run.verdict ?? '—'}</span>
               </div>
-              <div class="key-row"><label>Model</label><val class={run.model ? '' : 'dim'}>{run.model ?? '— (defaults)'}</val></div>
-              <div class="key-row"><label>Branch</label><val class={run.branch ? '' : 'dim'}>{run.branch ?? '—'}</val></div>
-              <div class="key-row"><label>Issue</label><val class={run.issue_number ? '' : 'dim'}>{run.issue_number ? '#' + run.issue_number : '—'}</val></div>
-              <div class="key-row"><label>Started</label><val>{run.started_at ? new Date(run.started_at + (run.started_at.endsWith('Z') ? '' : 'Z')).toLocaleString() : '—'}</val></div>
-              <div class="key-row"><label>Finished</label>
-                <val class={run.finished_at ? '' : 'dim'}>
+              <div class="key-row"><span class="k">Model</span><span class="v {run.model ? '' : 'dim'}">{run.model ?? '— (defaults)'}</span></div>
+              <div class="key-row"><span class="k">Branch</span><span class="v {run.branch ? '' : 'dim'}">{run.branch ?? '—'}</span></div>
+              <div class="key-row"><span class="k">Issue</span><span class="v {run.issue_number ? '' : 'dim'}">{run.issue_number ? '#' + run.issue_number : '—'}</span></div>
+              <div class="key-row"><span class="k">Started</span><span class="v">{run.started_at ? new Date(run.started_at + (run.started_at.endsWith('Z') ? '' : 'Z')).toLocaleString() : '—'}</span></div>
+              <div class="key-row"><span class="k">Finished</span>
+                <span class="v {run.finished_at ? '' : 'dim'}">
                   {#if run.finished_at}{new Date(run.finished_at + (run.finished_at.endsWith('Z') ? '' : 'Z')).toLocaleString()}{:else}in flight{/if}
-                </val>
+                </span>
               </div>
               {#if run.log_file}
-                <div class="key-row"><label>Log</label><val style="color: var(--data); font-size: 10px; word-break: break-all">{run.log_file}</val></div>
+                <div class="key-row"><span class="k">Log</span><span class="v" style="color: var(--data); font-size: 10px; word-break: break-all">{run.log_file}</span></div>
               {/if}
 
               {#if ctx?.queue_items && ctx.queue_items.length > 0}
@@ -1222,7 +1218,7 @@
   .rd :global(.card-block .key-row:last-child) {
     border-bottom: none;
   }
-  .rd :global(.card-block .key-row label) {
+  .rd :global(.card-block .key-row .k) {
     color: var(--ash);
     font-family: var(--pro-sans);
     font-size: 9px;
@@ -1231,11 +1227,11 @@
     text-transform: uppercase;
     align-self: center;
   }
-  .rd :global(.card-block .key-row val) {
+  .rd :global(.card-block .key-row .v) {
     color: var(--ink);
     word-break: break-all;
   }
-  .rd :global(.card-block .key-row val.dim) {
+  .rd :global(.card-block .key-row .v.dim) {
     color: var(--ash);
   }
 
