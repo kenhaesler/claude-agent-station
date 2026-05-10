@@ -1,25 +1,25 @@
 <script lang="ts">
   import HelpSection from '../components/help/HelpSection.svelte';
+  import { HELP_SECTIONS } from '../lib/help-sections';
   import { onMount } from 'svelte';
 
-  const SECTIONS: Array<{ id: string; title: string }> = [
-    { id: 'run-lifecycle', title: 'Run lifecycle' },
-    { id: 'roles', title: 'The three roles' },
-    { id: 'verdicts', title: 'Verdicts' },
-    { id: 'eligibility', title: 'Issue eligibility' },
-    { id: 'throttling', title: 'Plan-tier throttling' },
-    { id: 'plans-worktrees', title: 'Plans & worktrees' },
-    { id: 'pages-tour', title: 'Page-by-page tour' },
-    { id: 'troubleshooting', title: 'Troubleshooting' },
-  ];
+  function scrollToHash() {
+    if (!window.location.hash) return;
+    const id = window.location.hash.slice(1);
+    const el = document.getElementById(id);
+    if (!el) return;
+    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    el.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' });
+  }
 
   onMount(() => {
-    if (window.location.hash) {
-      const id = window.location.hash.slice(1);
-      requestAnimationFrame(() => {
-        document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      });
-    }
+    // Initial scroll: defer one frame so all <section> elements exist in the DOM.
+    requestAnimationFrame(scrollToHash);
+    // Re-scroll when the URL hash changes after mount (e.g. from sidebar click,
+    // browser back/forward, or HelpDrawer's "View full Help page" link when
+    // we are already on /help).
+    window.addEventListener('hashchange', scrollToHash);
+    return () => window.removeEventListener('hashchange', scrollToHash);
   });
 </script>
 
@@ -27,7 +27,7 @@
   <aside class="help-sidebar">
     <h2>Help</h2>
     <ul>
-      {#each SECTIONS as s}
+      {#each HELP_SECTIONS as s}
         <li><a href="#{s.id}">{s.title}</a></li>
       {/each}
     </ul>
@@ -37,7 +37,7 @@
     <h1>Claude Agent Station — Help</h1>
     <p class="lede">How the station works, layered for end users, operators, and contributors.</p>
 
-    {#each SECTIONS as s}
+    {#each HELP_SECTIONS as s}
       <section id={s.id} class="help-section-block">
         <h2>{s.title}</h2>
         <HelpSection id={s.id} />

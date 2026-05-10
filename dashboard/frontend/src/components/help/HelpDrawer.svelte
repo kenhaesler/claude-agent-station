@@ -3,26 +3,22 @@
   import HelpSection from './HelpSection.svelte';
   import { helpDrawer, closeHelpDrawer } from '../../lib/help-drawer.svelte';
   import { navigate } from '../../lib/router.svelte';
-
-  const TITLES: Record<string, string> = {
-    'run-lifecycle': 'Run lifecycle',
-    'roles': 'The three roles',
-    'verdicts': 'Verdicts',
-    'eligibility': 'Issue eligibility',
-    'throttling': 'Plan-tier throttling',
-    'plans-worktrees': 'Plans & worktrees',
-    'pages-tour': 'Page-by-page tour',
-    'troubleshooting': 'Troubleshooting',
-  };
+  import { HELP_SECTION_TITLES } from '../../lib/help-sections';
 
   const open = $derived(helpDrawer.openSection !== null);
   const sectionId = $derived(helpDrawer.openSection ?? '');
-  const title = $derived(TITLES[sectionId] ?? 'Help');
+  const title = $derived(HELP_SECTION_TITLES[sectionId] ?? 'Help');
 
   function viewFullPage() {
     const target = sectionId;
     closeHelpDrawer();
     navigate(`/help#${target}`);
+    // navigate() updates URL+route but does not fire `hashchange` (it uses
+    // pushState). When already on /help, HelpPage stays mounted and only
+    // re-scrolls in response to hashchange — so dispatch one explicitly.
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new HashChangeEvent('hashchange'));
+    }
   }
 </script>
 

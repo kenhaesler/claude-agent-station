@@ -337,7 +337,9 @@
             {:else}
               <span class="status done">{run.status}</span>
             {/if}
-            <HelpHint section="verdicts" label="Verdicts" />
+            {#if run.verdict}
+              <HelpHint section="verdicts" label="Verdicts" />
+            {/if}
             {#if run.mode}
               {@const m = formatRunMode(run.mode)}
               <span class="mode {run.mode === 'full' ? 'full' : run.mode === 'plan_only' || run.mode === 'plan' ? 'plan' : (run.mode as string) === 'vision-bootstrap' ? 'vision' : ''}">
