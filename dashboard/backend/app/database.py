@@ -77,6 +77,11 @@ async def _migrate_add_columns(conn) -> None:
         ("coordinator_tasks", "teammate_agent_id", "ALTER TABLE coordinator_tasks ADD COLUMN teammate_agent_id TEXT"),
         ("coordinator_tasks", "claimed_by", "ALTER TABLE coordinator_tasks ADD COLUMN claimed_by TEXT"),
         ("coordinator_tasks", "claimed_at", "ALTER TABLE coordinator_tasks ADD COLUMN claimed_at DATETIME"),
+        # Per-teammate progress columns (issue #336). Earlier code overloaded
+        # ``touched_files`` with a tokens/turns dict; these dedicated columns
+        # restore touched_files to its file-array contract.
+        ("coordinator_tasks", "tokens_total", "ALTER TABLE coordinator_tasks ADD COLUMN tokens_total INTEGER"),
+        ("coordinator_tasks", "turns", "ALTER TABLE coordinator_tasks ADD COLUMN turns INTEGER"),
         ("agent_events", "team_name", "ALTER TABLE agent_events ADD COLUMN team_name TEXT"),
         # ADR-0001: autonomy level + per-run/project budget ceiling
         ("projects", "autonomy_level", "ALTER TABLE projects ADD COLUMN autonomy_level TEXT DEFAULT 'assisted'"),

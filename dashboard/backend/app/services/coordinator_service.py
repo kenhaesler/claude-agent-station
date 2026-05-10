@@ -61,6 +61,15 @@ async def handle_task_event(
     if event.agent_id:
         ctask.teammate_agent_id = event.agent_id
 
+    # Issue #336: capture the final teammate progress snapshot when the
+    # task closes (the orchestrator includes it on teammate_completed).
+    # Monotonic max guards against a late progress event arriving after
+    # completion with a stale snapshot.
+    if event.tokens_total is not None:
+        ctask.tokens_total = max(ctask.tokens_total or 0, event.tokens_total)
+    if event.turns is not None:
+        ctask.turns = max(ctask.turns or 0, event.turns)
+
     return ctask
 
 
@@ -79,9 +88,15 @@ async def handle_teammate_progress(
     if ctask:
         tool_name = event.agent_name or "unknown"
         ctask.result_summary = f"Using {tool_name}"
-        if event.tokens_total:
-            # Store token count in touched_files as a lightweight progress indicator
-            ctask.touched_files = json.dumps({"tokens": event.tokens_total, "turns": event.turns})
+        # Issue #336: write per-teammate progress to dedicated columns.
+        # Earlier revisions stuffed a {"tokens": ..., "turns": ...} dict into
+        # ``touched_files`` (which is reserved for the JSON file array), and
+        # the Fleet page never read it back. Treat counters as monotonic so a
+        # late event with a stale snapshot can't roll the cell backwards.
+        if event.tokens_total is not None:
+            ctask.tokens_total = max(ctask.tokens_total or 0, event.tokens_total)
+        if event.turns is not None:
+            ctask.turns = max(ctask.turns or 0, event.turns)
 
     # Create a progress message for the activity feed
     msg = CoordinatorMessage(

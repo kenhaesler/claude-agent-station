@@ -256,14 +256,25 @@
           })()
         : undefined;
 
+      // Issue #336: ``touched_files`` is a JSON array of file paths populated
+      // by the orchestrator. Earlier revisions overloaded it with a
+      // {tokens,turns} dict — that path is gone; if a legacy row still has
+      // the dict shape we deliberately render '0' rather than mis-label
+      // turns as a file count.
       let files = '0';
       try {
         if (typeof t.touched_files === 'string') {
           const parsed = JSON.parse(t.touched_files);
           if (Array.isArray(parsed)) files = String(parsed.length);
-          else if (parsed?.turns != null) files = String(parsed.turns);
         }
       } catch { /* ignore */ }
+
+      // Prefer per-task counters from CoordinatorTask (issue #336). Fall
+      // back to the synthesized employee row, which now also reads from
+      // CoordinatorTask but may carry the lead's aggregate as a final
+      // fallback for non-Agent-Teams runs.
+      const tokensRaw = t.tokens_total ?? e?.tokens_total ?? null;
+      const turnsRaw = t.turns ?? e?.turns ?? null;
 
       out[role] = {
         role,
@@ -273,8 +284,8 @@
         taskIsNul,
         statusKind: statusKind(t),
         statusLabel: statusLabel(t),
-        tokens: formatTokens(e?.tokens_total ?? null),
-        turns: e?.turns != null ? String(e.turns) : (t.status === 'completed' ? '—' : '0'),
+        tokens: formatTokens(tokensRaw),
+        turns: turnsRaw != null ? String(turnsRaw) : (t.status === 'completed' ? '—' : '0'),
         files,
         duration: durationFor(t, e),
         aut: 'ASSIST',

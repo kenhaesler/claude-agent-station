@@ -207,7 +207,7 @@ claude-agent-station/
 | `runs` | Execution history | run_id, status, verdict, tokens, trace_id |
 | `config` | Key-value settings store | key, value (JSON) |
 | `plans` | Implementation plans | title, steps, status, files_affected |
-| `coordinator_tasks` | DAG task records | task_id, run_id, status, depends_on |
+| `coordinator_tasks` | DAG task records | task_id, run_id, status, depends_on, tokens_total, turns |
 | `coordinator_messages` | Guidance/conflict messages | direction, message_type, content |
 | `notifications` | Run completion alerts | type (approve/reject/pr/error) |
 | `task_queue` | Work queue with state machine | state, priority, retry_count |

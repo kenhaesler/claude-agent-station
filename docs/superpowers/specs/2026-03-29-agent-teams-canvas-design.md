@@ -103,7 +103,9 @@ Maps to existing backend models:
 | Dependencies | `CoordinatorTask.depends_on` (JSON array) |
 | Messages | `CoordinatorMessage` table (direction: to_employee/from_monitor) |
 | Activity feed | Webhook events + CoordinatorMessages |
-| File changes | `CoordinatorTask.touched_files` |
+| File changes | `CoordinatorTask.touched_files` (JSON array of paths) |
+| Per-teammate tokens | `CoordinatorTask.tokens_total` (issue #336) |
+| Per-teammate turns | `CoordinatorTask.turns` (issue #336) |
 
 ## Real-time Updates
 

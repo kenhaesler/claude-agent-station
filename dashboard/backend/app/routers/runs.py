@@ -151,18 +151,27 @@ async def get_active_employees(db: AsyncSession = Depends(get_db)):
                 project_id = proj.id if proj else 0
 
             parent_run = employees[0] if employees else None
+            # Issue #336: surface per-teammate tokens/turns from CoordinatorTask.
+            # Earlier code copied the lead's aggregate (parent_run.tokens_total)
+            # onto every teammate, which made every cell display the same number
+            # — or 0 before the first batch flush. Prefer the per-task counters
+            # populated by handle_teammate_progress; fall back to the aggregate
+            # only if the per-task counter is missing.
+            tokens = ct.tokens_total
+            if tokens is None and parent_run is not None:
+                tokens = parent_run.tokens_total
             employees.append(ActiveEmployeeOut(
                 run_id=ct.run_id,
                 project_id=project_id,
                 mode="employee",
                 status="running",
                 issue_number=ct.issue_number,
-                turns=None,
+                turns=ct.turns,
                 employee_index=ct.employee_index,
                 concurrent_group_id=ct.run_id,
                 model=None,
                 branch=ct.branch,
-                tokens_total=parent_run.tokens_total if parent_run else None,
+                tokens_total=tokens,
                 started_at=ct.started_at or (parent_run.started_at if parent_run else None),
             ))
 
