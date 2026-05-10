@@ -430,7 +430,7 @@
   .projects-pro {
     display: flex;
     flex-direction: column;
-    min-height: calc(100vh - 40px);
+    min-height: 0;
     background: var(--paper);
     color: var(--ink);
     font-family: var(--pro-sans);

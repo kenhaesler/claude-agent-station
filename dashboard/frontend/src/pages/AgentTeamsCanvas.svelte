@@ -170,6 +170,14 @@
   }
 
   // Pull a short string out of a coordinator message's `content` blob.
+  function stripMd(s: string | null | undefined): string {
+    if (!s) return '';
+    return s
+      .replace(/\*\*([^*]+)\*\*/g, '$1')   // **bold** → bold
+      .replace(/\*([^*]+)\*/g, '$1')        // *em* → em
+      .replace(/`([^`]+)`/g, '$1');         // `code` → code
+  }
+
   function messagePreview(raw: string | null): { verb: string; body: string } {
     if (!raw) return { verb: '', body: '—' };
     if (typeof raw !== 'string') {
@@ -184,10 +192,10 @@
     try {
       const parsed = JSON.parse(raw) as Record<string, unknown>;
       if (parsed.tool) return { verb: 'Use', body: `${parsed.tool}` };
-      if (typeof parsed.text === 'string') return { verb: '', body: parsed.text.slice(0, 80) };
-      return { verb: '', body: raw.slice(0, 80) };
+      if (typeof parsed.text === 'string') return { verb: '', body: stripMd(parsed.text).slice(0, 80) };
+      return { verb: '', body: stripMd(raw).slice(0, 80) };
     } catch {
-      return { verb: '', body: raw.slice(0, 80) };
+      return { verb: '', body: stripMd(raw).slice(0, 80) };
     }
   }
 
@@ -228,7 +236,7 @@
       if (out[role] && out[role]!.statusKind === 'run') continue;
       const e = empFor(t);
       const name = t.claimed_by ?? t.teammate_agent_id ?? `${role}-?`;
-      const taskTitle = t.title?.trim();
+      const taskTitle = stripMd(t.title)?.trim();
       const taskIsNul = !taskTitle;
       const taskMessages = messages.filter((m) => m.task_id === t.id).slice(-1);
       const latest = taskMessages.length
