@@ -702,7 +702,16 @@
                   </span>
                   <span class="num {task.touched_files ? '' : 'nu'}">
                     {#if task.touched_files}
-                      {(() => { try { return (JSON.parse(task.touched_files) as unknown[]).length + ' files'; } catch { return '— files'; } })()}
+                      {(() => {
+                        // Issue #336: defensive Array.isArray — older rows may
+                        // still carry a {tokens, turns} dict from the legacy
+                        // overload of this column. Treat anything non-array as
+                        // "unknown" rather than rendering "undefined files".
+                        try {
+                          const parsed = JSON.parse(task.touched_files);
+                          return Array.isArray(parsed) ? `${parsed.length} files` : '— files';
+                        } catch { return '— files'; }
+                      })()}
                     {:else}
                       — files
                     {/if}
