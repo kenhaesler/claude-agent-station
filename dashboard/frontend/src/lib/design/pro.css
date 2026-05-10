@@ -25,6 +25,7 @@
   --go:       #00B86B;
   --caution:  #E89A00;
   --abort:    #D33A2C;
+  --critical: #1A1611; /* BLACK backpressure — distinct from RED/abort */
   --data:     #1F4FD9;
 
   --dot:      rgba(26,22,17,0.06);
@@ -54,6 +55,7 @@
   --go:       #2EE085;
   --caution:  #FFB52D;
   --abort:    #FF5448;
+  --critical: #C58CFF; /* BLACK backpressure — distinct from RED/abort (deep purple in dark mode for contrast) */
   --data:     #6B82FF;
 
   --dot:      rgba(239,230,214,0.05);

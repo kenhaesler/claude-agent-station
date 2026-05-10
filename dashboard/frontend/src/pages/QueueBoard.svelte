@@ -63,13 +63,19 @@
   }
 </script>
 
-<div class="space-y-4 animate-fade-in-up">
-  <div class="flex items-center justify-between">
-    <h1 class="text-lg font-semibold text-primary">Queue Board</h1>
+<div class="space-y-4 animate-fade-in-up queue-board-pro">
+  <div class="qb-page-head">
+    <h1 class="qb-title">Queue</h1>
+    <div class="qb-meta">
+      {#if stats?.total != null}<span><b>{stats.total}</b> total</span>{/if}
+      {#if backpressure}<span class="sep">·</span><span>Backpressure <b style="color: var(--{backpressure.level === 'GREEN' ? 'go' : backpressure.level === 'YELLOW' ? 'caution' : backpressure.level === 'RED' ? 'abort' : 'critical'})">{backpressure.level}</b></span>{/if}
+    </div>
   </div>
 
-  <!-- Stats bar -->
-  <QueueStatsBar {stats} {backpressure} />
+  <!-- Stats bar (legacy component, scoped restyle below) -->
+  <div class="qb-stats">
+    <QueueStatsBar {stats} {backpressure} />
+  </div>
 
   <!-- Kanban columns -->
   {#if loading}
@@ -83,7 +89,7 @@
       />
     </div>
   {:else}
-    <div class="flex gap-3 overflow-x-auto pb-4" style="min-height: 300px;">
+    <div class="qb-kanban">
       {#each columns as col}
         <QueueColumn
           title={col.title}
@@ -95,6 +101,85 @@
     </div>
   {/if}
 </div>
+
+<style>
+  /* Pro restyle for the page chrome + column treatment */
+  .queue-board-pro :global(.qb-page-head) {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 6px 0 10px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .queue-board-pro :global(.qb-title) {
+    margin: 0;
+    font-family: var(--pro-sans);
+    font-size: 14px; font-weight: 700;
+    letter-spacing: 0.18em; text-transform: uppercase;
+    color: var(--ink);
+  }
+  .queue-board-pro :global(.qb-meta) {
+    font-family: var(--pro-mono);
+    font-size: 11px; color: var(--graphite);
+    display: flex; gap: 8px; align-items: center;
+  }
+  .queue-board-pro :global(.qb-meta b)   { color: var(--ink); font-weight: 500; }
+  .queue-board-pro :global(.qb-meta .sep){ color: var(--ash); }
+
+  .queue-board-pro :global(.qb-kanban) {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(220px, 1fr));
+    gap: 0;
+    border: 1px solid var(--rule);
+    background: var(--paper);
+    min-height: 320px;
+    overflow-x: auto;
+  }
+  /* Override QueueColumn defaults to look like a Pro kanban column */
+  .queue-board-pro :global(.qb-kanban > div) {
+    min-width: 0;
+    max-width: none;
+    border-right: 1px solid var(--rule);
+    background: var(--paper);
+  }
+  .queue-board-pro :global(.qb-kanban > div:last-child) { border-right: none; }
+  /* Column header (rendered by QueueColumn): retune to Pro stencil */
+  .queue-board-pro :global(.qb-kanban > div > div:first-child) {
+    height: 32px;
+    padding: 0 14px !important;
+    margin: 0 !important;
+    background: var(--paper-2);
+    border-bottom: 1px solid var(--rule);
+    font-family: var(--pro-sans);
+    font-size: 10px; font-weight: 700;
+    letter-spacing: 0.2em; text-transform: uppercase;
+    color: var(--ash);
+  }
+  .queue-board-pro :global(.qb-kanban > div > div:first-child > span:first-child) {
+    width: 4px !important; height: 14px !important;
+    border-radius: 0 !important;
+  }
+  .queue-board-pro :global(.qb-kanban > div > div:first-child > span:nth-child(2)) {
+    color: var(--ink) !important;
+    font-family: var(--pro-sans) !important;
+  }
+  .queue-board-pro :global(.qb-kanban > div > div:first-child > span:last-child) {
+    color: var(--graphite) !important;
+    font-family: var(--pro-mono) !important;
+    font-size: 11px !important;
+  }
+  /* Cards body: padding adjustment */
+  .queue-board-pro :global(.qb-kanban > div > div:nth-child(2)) {
+    padding: 10px !important;
+  }
+
+  /* Stats bar — restyle to flat paper strip.
+     Scoped to .qb-stats so QueueCards (also using .glass) keep their original styling. */
+  .queue-board-pro :global(.qb-stats .glass) {
+    background: var(--paper-2) !important;
+    border: 1px solid var(--rule) !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+  }
+</style>
 
 <!-- Item detail panel -->
 <SlidePanel open={panelOpen} onClose={() => panelOpen = false} title="Queue Item">
