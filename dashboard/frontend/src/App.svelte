@@ -29,6 +29,8 @@
   import ProjectsPage from './pages/ProjectsPage.svelte';
   import ProjectDetail from './pages/ProjectDetail.svelte';
   import SettingsPage from './pages/SettingsPage.svelte';
+  import HelpPage from './pages/HelpPage.svelte';
+  import HelpDrawer from './components/help/HelpDrawer.svelte';
 
   // --- App State ---
   let triggering = $state(false);
@@ -125,6 +127,8 @@
       <ProjectDetail projectId={route.param ?? ''} />
     {:else if route.page === 'settings'}
       <SettingsPage tab={route.param} />
+    {:else if route.page === 'help'}
+      <HelpPage />
     {:else}
       <div class="text-secondary text-center py-20">Page not found</div>
     {/if}
@@ -134,4 +138,5 @@
   <ShortcutsOverlay show={showShortcuts} onClose={() => (showShortcuts = false)} />
   <AuthPrompt />
   <PermissionTray />
+  <HelpDrawer />
 </div>

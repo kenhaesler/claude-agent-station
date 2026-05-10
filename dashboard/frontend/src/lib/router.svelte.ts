@@ -11,7 +11,8 @@ export type Page =
   | 'queue-detail'
   | 'projects'
   | 'project-detail'
-  | 'settings';
+  | 'settings'
+  | 'help';
 
 export interface Route {
   page: Page;
@@ -53,6 +54,7 @@ function parsePath(): Route {
     queue: 'queue',
     projects: 'projects',
     settings: 'settings',
+    help: 'help',
   };
 
   if (routeMap[raw]) return { page: routeMap[raw], param: null };
@@ -134,6 +136,7 @@ export function getPageTitle(page: Page): string {
     'projects': 'Projects',
     'project-detail': 'Project',
     'settings': 'Settings',
+    'help': 'Help',
   };
   return titles[page] ?? 'Claude Station';
 }

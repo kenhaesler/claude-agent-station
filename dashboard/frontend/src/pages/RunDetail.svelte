@@ -27,6 +27,7 @@
   } from '../lib/types';
   import { navigate } from '../lib/router.svelte';
   import LogViewer from '../components/data-display/LogViewer.svelte';
+  import HelpHint from '../components/help/HelpHint.svelte';
 
   let { runId }: { runId: string } = $props();
 
@@ -336,6 +337,9 @@
             {:else}
               <span class="status done">{run.status}</span>
             {/if}
+            {#if run.verdict}
+              <HelpHint section="verdicts" label="Verdicts" />
+            {/if}
             {#if run.mode}
               {@const m = formatRunMode(run.mode)}
               <span class="mode {run.mode === 'full' ? 'full' : run.mode === 'plan_only' || run.mode === 'plan' ? 'plan' : (run.mode as string) === 'vision-bootstrap' ? 'vision' : ''}">
@@ -396,6 +400,7 @@
           <button class="rd-action danger" onclick={onRejectPlan} disabled={rejecting}>
             {rejecting ? '…' : '✗ Reject plan'}
           </button>
+          <HelpHint section="plans-worktrees" label="Plans & worktrees" />
         {/if}
       </div>
     </div>
