@@ -72,6 +72,9 @@ async def sync_config_to_db(db: AsyncSession) -> int:
             existing.mode = proj_data.get("mode", existing.mode)
             existing.enabled = proj_data.get("enabled", True)
             existing.branch = proj_data.get("branch", existing.branch or "main")
+            existing.promotion_target = proj_data.get(
+                "promotion_target", existing.promotion_target
+            )
             existing.custom_instructions = proj_data.get(
                 "custom_instructions", existing.custom_instructions
             )
@@ -88,6 +91,7 @@ async def sync_config_to_db(db: AsyncSession) -> int:
                 mode=proj_data.get("mode", "full"),
                 enabled=proj_data.get("enabled", True),
                 branch=proj_data.get("branch", "main"),
+                promotion_target=proj_data.get("promotion_target"),
                 custom_instructions=proj_data.get("custom_instructions"),
                 setup_script=proj_data.get("setup_script"),
                 security_review_enabled=proj_data.get("security_review_enabled", False),
@@ -114,6 +118,7 @@ async def sync_db_to_config(db: AsyncSession) -> None:
             "mode": p.mode,
             **({"enabled": p.enabled} if not p.enabled else {}),
             **({"branch": p.branch} if p.branch != "main" else {}),
+            **({"promotion_target": p.promotion_target} if p.promotion_target else {}),
             **({"custom_instructions": p.custom_instructions} if p.custom_instructions else {}),
             **({"setup_script": p.setup_script} if p.setup_script else {}),
             **({"security_review_enabled": True} if p.security_review_enabled else {}),
