@@ -252,3 +252,120 @@ async def test_sync_db_to_config_includes_disabled(setup_db, tmp_path):
     assert len(written["projects"]) == 1
     assert written["projects"][0]["repo"] == "owner/disabled"
     assert written["projects"][0].get("enabled") is False
+
+
+# ---------------------------------------------------------------------------
+# promotion_target round-trip (PR #341)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_sync_config_to_db_reads_promotion_target(setup_db):
+    """JSON promotion_target is persisted to the DB column."""
+    config = {
+        "projects": [
+            {"repo": "owner/with-target", "branch": "main", "promotion_target": "dev"},
+        ]
+    }
+    with patch("app.services.config_sync._read_config_json", return_value=config):
+        async with async_session() as session:
+            await sync_config_to_db(session)
+
+    async with async_session() as session:
+        from sqlalchemy import select
+        result = await session.execute(select(Project).where(Project.repo == "owner/with-target"))
+        project = result.scalar_one()
+        assert project.promotion_target == "dev"
+
+
+@pytest.mark.asyncio
+async def test_sync_config_to_db_missing_promotion_target_is_null(setup_db):
+    """When JSON omits promotion_target, the DB column is NULL (fall back to branch)."""
+    config = {"projects": [{"repo": "owner/no-target", "branch": "main"}]}
+    with patch("app.services.config_sync._read_config_json", return_value=config):
+        async with async_session() as session:
+            await sync_config_to_db(session)
+
+    async with async_session() as session:
+        from sqlalchemy import select
+        result = await session.execute(select(Project).where(Project.repo == "owner/no-target"))
+        project = result.scalar_one()
+        assert project.promotion_target is None
+
+
+@pytest.mark.asyncio
+async def test_sync_db_to_config_writes_promotion_target(setup_db, tmp_path):
+    """sync_db_to_config emits promotion_target only when set."""
+    async with async_session() as session:
+        session.add(Project(
+            repo="owner/with-target", priority="medium", mode="full",
+            enabled=True, branch="main", promotion_target="dev",
+        ))
+        session.add(Project(
+            repo="owner/no-target", priority="medium", mode="full",
+            enabled=True, branch="main", promotion_target=None,
+        ))
+        await session.commit()
+
+    config_file = tmp_path / "config.json"
+    config_file.write_text(json.dumps({"projects": []}))
+
+    with patch("app.services.config_sync.settings") as mock_settings:
+        mock_settings.config_path = str(config_file)
+        async with async_session() as session:
+            await sync_db_to_config(session)
+
+    written = json.loads(config_file.read_text())
+    by_repo = {p["repo"]: p for p in written["projects"]}
+
+    assert by_repo["owner/with-target"]["promotion_target"] == "dev"
+    # Unset target is omitted entirely (consistent with branch/custom_instructions)
+    assert "promotion_target" not in by_repo["owner/no-target"]
+
+
+@pytest.mark.asyncio
+async def test_promotion_target_round_trip(setup_db, tmp_path):
+    """A full JSON -> DB -> JSON cycle preserves promotion_target."""
+    starting = {
+        "projects": [
+            {"repo": "owner/round-trip", "branch": "main", "promotion_target": "dev"},
+        ]
+    }
+    config_file = tmp_path / "config.json"
+    config_file.write_text(json.dumps(starting))
+
+    with patch("app.services.config_sync.settings") as mock_settings, \
+         patch("app.services.config_sync._read_config_json", return_value=starting):
+        mock_settings.config_path = str(config_file)
+        async with async_session() as session:
+            await sync_config_to_db(session)
+            await sync_db_to_config(session)
+
+    rewritten = json.loads(config_file.read_text())
+    assert rewritten["projects"][0]["promotion_target"] == "dev"
+
+
+@pytest.mark.asyncio
+async def test_sync_config_to_db_updates_promotion_target(setup_db):
+    """Re-syncing JSON with a new promotion_target updates the existing row."""
+    async with async_session() as session:
+        session.add(Project(
+            repo="owner/update-target", priority="medium", mode="full",
+            enabled=True, branch="main", promotion_target="dev",
+        ))
+        await session.commit()
+
+    # Re-sync with a different target
+    config = {
+        "projects": [
+            {"repo": "owner/update-target", "branch": "main", "promotion_target": "staging"},
+        ]
+    }
+    with patch("app.services.config_sync._read_config_json", return_value=config):
+        async with async_session() as session:
+            await sync_config_to_db(session)
+
+    async with async_session() as session:
+        from sqlalchemy import select
+        result = await session.execute(select(Project).where(Project.repo == "owner/update-target"))
+        project = result.scalar_one()
+        assert project.promotion_target == "staging"
