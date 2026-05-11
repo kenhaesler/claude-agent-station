@@ -179,11 +179,11 @@ Five GitHub issues to be created before implementation:
 
 | Issue | Title | Scope |
 |---|---|---|
-| #N1 | fix(runs): orphan stale coordinator_tasks when parent run finishes | Item 1 |
-| #N2 | feat(runs): optimistic placeholder on Trigger Run | Item 2 |
-| #N3 | feat(mission-control): explicit idle state when no active run | Item 3 |
-| #N4 | feat(runs): last_event_at heartbeat + reaper integration | Item 4 |
-| #N5 | refactor(agent): migrate run-manager.sh orchestration to Python (milestone 1) | Item 5; tracks sub-PRs 5a/5b/5c |
+| [#345](https://github.com/kenhaesler/claude-agent-station/issues/345) | fix(runs): orphan stale coordinator_tasks when parent run finishes | Item 1 |
+| [#346](https://github.com/kenhaesler/claude-agent-station/issues/346) | feat(runs): optimistic placeholder on Trigger Run | Item 2 |
+| [#347](https://github.com/kenhaesler/claude-agent-station/issues/347) | feat(mission-control): explicit idle state when no active run | Item 3 |
+| [#348](https://github.com/kenhaesler/claude-agent-station/issues/348) | feat(runs): last_event_at heartbeat + reaper integration | Item 4 |
+| [#349](https://github.com/kenhaesler/claude-agent-station/issues/349) | refactor(agent): migrate run-manager.sh orchestration to Python (milestone 1) | Item 5; tracks sub-PRs 5a/5b/5c |
 
 Each PR references its issue with `Fixes #N`.
 
