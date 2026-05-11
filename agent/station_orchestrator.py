@@ -813,6 +813,15 @@ plan does not violate the non-goals or anti-patterns below. If it does:
 ### Vision — Anti-patterns
 {anti_patterns}
 
+## Project shape (informational context, NOT misalignment criteria)
+
+The two sections below describe what the project is built with and where it
+runs. **Do NOT reject teammate plans on these grounds** — they are not
+misalignment criteria like non-goals and anti-patterns. They exist so
+teammates pick the right frameworks, base images, and runtime patterns.
+If a plan diverges from the stated tech stack for a good reason, that is a
+judgement call, not a violation.
+
 ### Vision — Tech Stack
 {tech_stack_text}
 
