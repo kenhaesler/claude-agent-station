@@ -545,12 +545,25 @@
             </div>
             <div class="key-row">
               <span class="lbl">Actions</span>
-              <div class="val" style="display: flex; gap: 8px; flex-wrap: wrap;">
-                <button class="opbtn" onclick={() => handleServiceAction('start')}>Start</button>
-                {#if systemStatus?.deploy_mode !== 'compose'}
+              <div class="val" style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
+                {#if systemStatus?.deploy_mode === 'compose'}
+                  <!--
+                    In compose mode the agent container is always up; the
+                    Start/Stop buttons route to the same launcher endpoint
+                    as Mission Control's "Trigger Run" / live-run Stop, so
+                    we expose them in one place rather than two. The Settings
+                    surface stays informational (status, schedule, deploy mode).
+                  -->
+                  <span class="desc">
+                    Run cycle controls live on
+                    <a href="/mission-control" data-testid="mc-link" style="color: var(--data); text-decoration: none;">Mission Control</a>
+                    — the agent container is always up; "Start" there triggers a run cycle.
+                  </span>
+                {:else}
+                  <button class="opbtn" onclick={() => handleServiceAction('start')}>Start</button>
                   <button class="opbtn" onclick={() => handleServiceAction('restart')}>Restart</button>
+                  <button class="opbtn danger" onclick={() => handleServiceAction('stop')}>Stop Service</button>
                 {/if}
-                <button class="opbtn danger" onclick={() => handleServiceAction('stop')}>Stop Service</button>
               </div>
             </div>
           </div>
