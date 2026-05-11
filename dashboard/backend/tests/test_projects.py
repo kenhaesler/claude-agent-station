@@ -199,6 +199,50 @@ async def test_project_defaults_to_assisted(client, sample_project):
     assert data["max_budget_usd"] is None
 
 
+# --- promotion_target (PR #341) ---
+
+@pytest.mark.asyncio
+@patch("app.routers.projects.sync_db_to_config", new_callable=AsyncMock)
+async def test_create_project_with_promotion_target(mock_sync, client):
+    """POST /api/projects accepts and persists promotion_target."""
+    resp = await client.post("/api/projects", json={
+        "repo": "owner/with-target",
+        "branch": "main",
+        "promotion_target": "dev",
+    })
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["branch"] == "main"
+    assert data["promotion_target"] == "dev"
+
+
+@pytest.mark.asyncio
+async def test_promotion_target_defaults_to_null(client, sample_project):
+    """promotion_target is NULL when unset (signals fall-back to branch)."""
+    resp = await client.get(f"/api/projects/{sample_project.id}")
+    assert resp.status_code == 200
+    assert resp.json()["promotion_target"] is None
+
+
+@pytest.mark.asyncio
+@patch("app.routers.projects.sync_db_to_config", new_callable=AsyncMock)
+async def test_update_project_sets_and_clears_promotion_target(mock_sync, client, sample_project):
+    """PUT can set promotion_target and later clear it back to NULL."""
+    # Set
+    resp = await client.put(f"/api/projects/{sample_project.id}", json={
+        "promotion_target": "dev",
+    })
+    assert resp.status_code == 200
+    assert resp.json()["promotion_target"] == "dev"
+
+    # Clear (None falls back to branch behaviour)
+    resp = await client.put(f"/api/projects/{sample_project.id}", json={
+        "promotion_target": None,
+    })
+    assert resp.status_code == 200
+    assert resp.json()["promotion_target"] is None
+
+
 # --- Delete project ---
 
 @pytest.mark.asyncio

@@ -314,6 +314,9 @@
               <h3>Project Snapshot</h3>
               <div class="key-row"><span class="key-label">Repo</span><span class="val">{project.repo}</span></div>
               <div class="key-row"><span class="key-label">Branch</span><span class="val">{project.branch}</span></div>
+              {#if project.promotion_target}
+                <div class="key-row"><span class="key-label">Promotion target</span><span class="val">{project.promotion_target}</span></div>
+              {/if}
               <div class="key-row"><span class="key-label">Mode</span><span class="val">{project.mode}</span></div>
               <div class="key-row"><span class="key-label">Autonomy</span><span class="val">{project.autonomy_level}</span></div>
               <div class="key-row">
@@ -356,6 +359,24 @@
                     value={project.branch}
                     onchange={(e) => { project!.branch = (e.currentTarget as HTMLInputElement).value; save('branch', project!.branch); }}
                   />
+                </span>
+              </div>
+              <div class="key-row">
+                <span class="key-label">Promotion target</span>
+                <span class="val">
+                  <input
+                    data-testid="project-promotion-target"
+                    placeholder="(defaults to branch)"
+                    value={project.promotion_target ?? ''}
+                    onchange={(e) => {
+                      const v = (e.currentTarget as HTMLInputElement).value.trim();
+                      project!.promotion_target = v || null;
+                      save('promotion_target', project!.promotion_target);
+                    }}
+                  />
+                  <small style="color: var(--graphite); display: block; margin-top: 4px;">
+                    Branch the integration meta-PR opens against. Leave empty to fall back to <code>{project.branch}</code>.
+                  </small>
                 </span>
               </div>
               <div class="key-row">

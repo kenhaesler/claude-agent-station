@@ -36,6 +36,7 @@ export interface Project {
   mode: AgentMode;
   enabled: boolean;
   branch: string;
+  promotion_target: string | null;
   custom_instructions: string | null;
   setup_script: string | null;
   security_review_enabled: boolean;
@@ -51,6 +52,7 @@ export interface ProjectCreate {
   mode?: AgentMode;
   enabled?: boolean;
   branch?: string;
+  promotion_target?: string | null;
   custom_instructions?: string;
   setup_script?: string;
   security_review_enabled?: boolean;

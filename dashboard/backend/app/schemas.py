@@ -16,6 +16,7 @@ class ProjectCreate(BaseModel):
     mode: str = "full"
     enabled: bool = True
     branch: str = "main"
+    promotion_target: str | None = None
     custom_instructions: str | None = None
     setup_script: str | None = None
     security_review_enabled: bool = False
@@ -29,6 +30,7 @@ class ProjectUpdate(BaseModel):
     mode: str | None = None
     enabled: bool | None = None
     branch: str | None = None
+    promotion_target: str | None = None
     custom_instructions: str | None = None
     setup_script: str | None = None
     security_review_enabled: bool | None = None
@@ -44,6 +46,7 @@ class ProjectOut(BaseModel):
     mode: str
     enabled: bool
     branch: str
+    promotion_target: str | None = None
     custom_instructions: str | None = None
     setup_script: str | None = None
     security_review_enabled: bool = False

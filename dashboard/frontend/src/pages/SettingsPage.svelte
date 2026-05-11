@@ -17,7 +17,7 @@
   let { tab = null }: { tab?: string | null } = $props();
 
   // ── Tabs ─────────────────────────────────────────────
-  const TAB_ORDER = ['general', 'models', 'auth', 'github', 'prompts', 'audit', 'appearance'] as const;
+  const TAB_ORDER = ['general', 'models', 'auth', 'github', 'integration', 'prompts', 'audit', 'appearance'] as const;
   type TabKey = typeof TAB_ORDER[number];
 
   // Map legacy/historical tab names so old deep-links keep working.
@@ -497,6 +497,7 @@
           {#if t === 'models'}<span class="meta">5 roles</span>
           {:else if t === 'auth'}<span class="meta">{authStatus?.logged_in && !authStatus?.expired ? 'OAuth' : 'off'}</span>
           {:else if t === 'github'}<span class="meta">{githubStatus?.pat_set ? 'PAT' : (githubStatus?.state === 'installed' ? 'App' : 'off')}</span>
+          {:else if t === 'integration'}<span class="meta">{config?.integration?.enabled ? 'on' : 'off'}</span>
           {:else if t === 'prompts'}<span class="meta">{promptCount}</span>
           {:else if t === 'audit'}<span class="meta">{auditDecisionCount} / 30d</span>
           {/if}
@@ -955,6 +956,105 @@
                 </div>
               </div>
             {/if}
+          </div>
+        </section>
+
+      <!-- INTEGRATION ─────────────────────────────────── -->
+      {:else if activeTab === 'integration'}
+        <section class="tab-pane active" data-testid="integration-tab">
+          <div class="card-block">
+            <h3>Integration Branch</h3>
+            <p class="desc" style="margin: 0 0 12px 0;">
+              When enabled, agent work for each project lands on a long-lived integration branch
+              (e.g. <code>claude-agent-station</code>). A single meta-PR consolidates that work into
+              each project's promotion target (configured per-project on the Projects page).
+            </p>
+
+            <div class="key-row">
+              <label for="int-enabled" class="lbl">Enabled</label>
+              <div class="val">
+                <input
+                  id="int-enabled"
+                  type="checkbox"
+                  data-testid="integration-enabled"
+                  checked={!!config?.integration?.enabled}
+                  onchange={(e) => saveConfig('integration', { ...(config.integration ?? {}), enabled: (e.target as HTMLInputElement).checked })}
+                />
+                <span class="desc">turn on the integration-branch flow for all projects</span>
+              </div>
+            </div>
+
+            <div class="key-row">
+              <label for="int-dev-branch" class="lbl">Integration branch</label>
+              <div class="val">
+                <input
+                  id="int-dev-branch"
+                  type="text"
+                  data-testid="integration-dev-branch"
+                  placeholder="autonomous/dev"
+                  value={config?.integration?.dev_branch ?? ''}
+                  onchange={(e) => saveConfig('integration', { ...(config.integration ?? {}), dev_branch: (e.target as HTMLInputElement).value.trim() || 'autonomous/dev' })}
+                />
+                <span class="desc">branch name in each target repo (default <code>autonomous/dev</code>)</span>
+              </div>
+            </div>
+
+            <div class="key-row">
+              <label for="int-strategy" class="lbl">Promotion strategy</label>
+              <div class="val">
+                <select
+                  id="int-strategy"
+                  data-testid="integration-strategy"
+                  value={config?.integration?.promotion_strategy ?? 'batch'}
+                  onchange={(e) => saveConfig('integration', { ...(config.integration ?? {}), promotion_strategy: (e.target as HTMLSelectElement).value })}
+                >
+                  <option value="batch">batch — one PR with all features</option>
+                  <option value="individual">individual — one PR per feature</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="key-row">
+              <label for="int-auto-validate" class="lbl">Auto-validate</label>
+              <div class="val">
+                <input
+                  id="int-auto-validate"
+                  type="checkbox"
+                  data-testid="integration-auto-validate"
+                  checked={config?.integration?.auto_validate !== false}
+                  onchange={(e) => saveConfig('integration', { ...(config.integration ?? {}), auto_validate: (e.target as HTMLInputElement).checked })}
+                />
+                <span class="desc">run the project's test suite on the integration branch after each merge</span>
+              </div>
+            </div>
+
+            <div class="key-row">
+              <label for="int-auto-promote" class="lbl">Auto-promote</label>
+              <div class="val">
+                <input
+                  id="int-auto-promote"
+                  type="checkbox"
+                  data-testid="integration-auto-promote"
+                  checked={!!config?.integration?.auto_promote}
+                  onchange={(e) => saveConfig('integration', { ...(config.integration ?? {}), auto_promote: (e.target as HTMLInputElement).checked })}
+                />
+                <span class="desc">open the meta-PR automatically once validation passes</span>
+              </div>
+            </div>
+
+            <div class="key-row">
+              <label for="int-auto-bisect" class="lbl">Auto-bisect</label>
+              <div class="val">
+                <input
+                  id="int-auto-bisect"
+                  type="checkbox"
+                  data-testid="integration-auto-bisect"
+                  checked={config?.integration?.auto_bisect !== false}
+                  onchange={(e) => saveConfig('integration', { ...(config.integration ?? {}), auto_bisect: (e.target as HTMLInputElement).checked })}
+                />
+                <span class="desc">revert the last merge if validation breaks the integration branch</span>
+              </div>
+            </div>
           </div>
         </section>
 

@@ -205,10 +205,14 @@ for (( i=0; i<project_count; i++ )); do
     fi
 
     base_branch=$(get_project_field "$i" "branch" 2>/dev/null || echo "main")
+    # promotion_target = where the integration meta-PR is opened.
+    # Falls back to base_branch (the project trunk) when unset.
+    promotion_target=$(get_project_field "$i" "promotion_target" 2>/dev/null || echo "")
+    [ -z "$promotion_target" ] && promotion_target="$base_branch"
     setup_script=$(get_project_field "$i" "setup_script" 2>/dev/null || echo "")
     strategy="${STRATEGY_OVERRIDE:-$(json_get "$CONFIG_FILE" "integration.promotion_strategy" 2>/dev/null || echo "batch")}"
 
-    log_info "--- Processing $project (base=$base_branch, strategy=$strategy) ---"
+    log_info "--- Processing $project (base=$base_branch, promotion_target=$promotion_target, strategy=$strategy) ---"
 
     # Ensure workspace exists
     name=$(repo_name "$project")
@@ -218,8 +222,10 @@ for (( i=0; i<project_count; i++ )); do
         continue
     fi
 
-    # Sync dev branch with main before any operation
-    if ! sync_dev_with_main "$project" "$base_branch"; then
+    # Sync dev branch with the promotion target before any operation.
+    # Rebasing onto promotion_target keeps the meta-PR diff minimal
+    # (only the agent's commits, not unrelated trunk drift).
+    if ! sync_dev_with_main "$project" "$promotion_target"; then
         log_warn "Sync failed for $project, skipping"
         overall_exit=1
         continue
@@ -238,7 +244,7 @@ for (( i=0; i<project_count; i++ )); do
 
     # --- Promote (if mode requires it) ---
     if [ "$MODE" = "validate-and-promote" ] || [ "$MODE" = "promote-only" ]; then
-        if promote_to_main "$project" "$base_branch" "$strategy"; then
+        if promote_to_main "$project" "$promotion_target" "$strategy"; then
             log_ok "Promotion complete for $project"
         else
             log_error "Promotion failed for $project"

@@ -148,7 +148,8 @@ Examples: `analyze + auto` runs read-only investigation without any approval pro
 | `priority` | string | `"medium"` | Scheduling priority: `high`, `medium`, or `low`. |
 | `mode` | string | `"full"` | Project mode — see [Project mode](#project-mode) below. |
 | `enabled` | boolean | `true` | Whether the project is picked up by the scheduler. |
-| `branch` | string | `"main"` | Default branch the agent targets. |
+| `branch` | string | `"main"` | Default branch the agent targets (the project trunk). |
+| `promotion_target` | string\|null | _(none)_ | Branch the integration meta-PR opens against. When unset, falls back to `branch`. See [Integration branch](#integration-branch). |
 | `custom_instructions` | string | _(none)_ | Extra instructions appended to the agent prompt for this project. |
 | `setup_script` | string | _(none)_ | Single command run before each agent run (e.g. `npm install`). Must not contain shell metacharacters and is capped at 1024 characters; for richer setup, commit a script to the repo and reference its path here. |
 | `security_review_enabled` | boolean | `false` | Whether a security review pass is added to the agent's workflow. |
@@ -233,6 +234,47 @@ When a project has `docs/vision.md`, two automatic triggers fire the vision anal
 - **Trigger B (vision commit):** committing a new vision via the dashboard fires the analyst when the document SHA changes. Idempotent on identical re-commits via `Project.last_vision_analyzed_sha`.
 
 Both produce `Run.mode = vision-bootstrap` rows that surface in the Runs list and Mission Control. Issues land with the `vision-suggested` label; remove the label to accept (the orchestrator's `SKIP_LABELS` blocks autonomous implementation until then).
+
+## Integration branch
+
+When `integration.enabled` is true, each project gets a long-lived integration branch
+(`integration.dev_branch`, default `autonomous/dev`). Agent work that earns an
+`APPROVE` verdict is merged into that branch instead of being PR'd to the trunk one
+feature at a time. The integration branch is later promoted into the project's
+`promotion_target` (or `branch`, if no target is set) via a single meta-PR opened by
+`agent/scripts/promote.sh`.
+
+### Top-level config (`manager-config.json`)
+
+These keys live under `integration.*` and apply to every project:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | boolean | `false` | Turns on the integration-branch flow. |
+| `dev_branch` | string | `"autonomous/dev"` | Branch name created in each target repo (e.g. `claude-agent-station`). |
+| `promotion_strategy` | string | `"batch"` | `batch` opens one meta-PR with N commits; `individual` opens one PR per cherry-picked commit. |
+| `auto_validate` | boolean | `true` | Run the project's test suite on the integration branch after each merge (`agent/scripts/integration-branch.sh::validate_dev`). |
+| `auto_promote` | boolean | `false` | When validation passes, open the meta-PR automatically. |
+| `auto_bisect` | boolean | `true` | If validation fails, revert the last merge on the integration branch to identify the culprit. |
+
+These can also be edited in **Settings → Integration**, which writes through the same
+`PUT /api/config` endpoint.
+
+### Per-project `promotion_target`
+
+`promotion_target` is the PR base used when the integration branch is promoted. When
+unset, the meta-PR opens against the project's `branch` field. Typical setup:
+
+- `branch: "main"` — the project trunk (also used as the initial base when first
+  creating the integration branch and as the conceptual source-of-truth).
+- `promotion_target: "dev"` — where the integration meta-PR opens. Keeps `main`
+  protected and lets the user promote `dev → main` separately.
+
+`promote.sh` also rebases the integration branch onto `promotion_target` before
+opening the meta-PR, so the PR diff contains only the agent's commits — not unrelated
+trunk drift.
+
+Edit per-project in **Projects → Settings → Promotion target**.
 
 ## Conflict resolution
 

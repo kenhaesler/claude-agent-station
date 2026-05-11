@@ -23,6 +23,9 @@ class Project(Base):
     mode = Column(Text, default="full")
     enabled = Column(Boolean, default=True)
     branch = Column(Text, default="main")
+    # Promotion target for the long-lived integration branch's meta-PR.
+    # NULL means fall back to ``branch``.
+    promotion_target = Column(Text, nullable=True, default=None)
     custom_instructions = Column(Text, nullable=True, default=None)
     setup_script = Column(Text, nullable=True, default=None)
     security_review_enabled = Column(Boolean, default=False)
