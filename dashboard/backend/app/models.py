@@ -83,6 +83,9 @@ class Run(Base):
     skip_reason = Column(Text, nullable=True)
     vision_bootstrap_count = Column(Integer, nullable=True)
     vision_bootstrap_proposals = Column(Text, nullable=True)  # JSON list
+    # Updated on every webhook event for this run_id. NULL for legacy
+    # rows. See issue #348.
+    last_event_at = Column(DateTime, nullable=True, default=None, index=True)
 
 
 class ConfigEntry(Base):

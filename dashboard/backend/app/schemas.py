@@ -95,6 +95,7 @@ class RunOut(BaseModel):
     vision_bootstrap_count: int | None = None
     vision_bootstrap_proposals: list[dict] | None = None
     skip_reason: str | None = None
+    last_event_at: datetime | None = None
 
     @field_validator("vision_bootstrap_proposals", mode="before")
     @classmethod
@@ -128,6 +129,7 @@ class ActiveEmployeeOut(BaseModel):
     branch: str | None = None
     tokens_total: int | None = None
     started_at: datetime | None = None
+    last_event_at: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
 

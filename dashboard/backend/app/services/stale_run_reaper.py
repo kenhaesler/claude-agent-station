@@ -37,6 +37,11 @@ logger = logging.getLogger(__name__)
 # to race-mark those.
 UNKNOWN_RUN_REAP_AGE_MINUTES = 30
 
+# Running rows whose last_event_at is older than this many seconds AND
+# whose launcher reports no active run are reaped immediately. See
+# issue #348.
+ACTIVE_HEARTBEAT_TIMEOUT_SECONDS = 120
+
 # Statuses we consider "still active" — rows in any of these states whose
 # orchestrator is dead are candidates for reaping.  ``unknown`` is included
 # only when the row is older than ``UNKNOWN_RUN_REAP_AGE_MINUTES``.
@@ -153,6 +158,42 @@ async def reap_stale_runs(db: AsyncSession) -> int:
         from app.services.queue_service import reset_orphaned_item
         await reset_orphaned_item(item, reason="stale run recovery")
 
+    # Heartbeat-based reap: if a 'running' row hasn't logged an event
+    # in ACTIVE_HEARTBEAT_TIMEOUT_SECONDS, mark it interrupted now.
+    # This kicks in even when the launcher reports the service "idle"
+    # because that's the consistent signal that the orchestrator died
+    # silently between events.
+    cutoff_heartbeat = datetime.now(timezone.utc) - timedelta(
+        seconds=ACTIVE_HEARTBEAT_TIMEOUT_SECONDS
+    )
+    heartbeat_result = await db.execute(
+        select(Run).where(
+            Run.status == "running",
+            Run.last_event_at.isnot(None),
+            Run.last_event_at < cutoff_heartbeat,
+        )
+    )
+    heartbeat_stale = heartbeat_result.scalars().all()
+    for r in heartbeat_stale:
+        # Skip if already in the stale_runs list to avoid double-counting
+        if r.run_id not in {s.run_id for s in stale_runs}:
+            r.status = "interrupted"
+            r.finished_at = datetime.now(timezone.utc)
+            logger.info(
+                "Heartbeat-reaped stale run %s (last_event_at=%s)",
+                r.run_id,
+                r.last_event_at,
+            )
+            await event_bus_publish({
+                "type": "run_complete",
+                "data": {
+                    "run_id": r.run_id,
+                    "event": "run_interrupted",
+                    "status": "interrupted",
+                    "project": None,
+                },
+            })
+
     await db.commit()
 
     # Send webhook notification for reaped runs
@@ -176,4 +217,7 @@ async def reap_stale_runs(db: AsyncSession) -> int:
             _bypass_filter=True,
         )
 
-    return len(stale_runs)
+    # Count heartbeat-reaped rows that weren't already in stale_runs
+    extra_heartbeat = len([r for r in heartbeat_stale
+                           if r.run_id not in {s.run_id for s in stale_runs}])
+    return len(stale_runs) + extra_heartbeat

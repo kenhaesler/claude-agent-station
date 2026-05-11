@@ -90,6 +90,7 @@ export interface Run {
   skip_reason?: string | null;
   vision_bootstrap_count?: number | null;
   vision_bootstrap_proposals?: { number: number; title: string; url: string }[] | null;
+  last_event_at: string | null;
 }
 
 export interface RunList {
@@ -110,6 +111,7 @@ export interface ActiveEmployee {
   branch: string | null;
   tokens_total?: number | null;
   started_at?: string | null;
+  last_event_at?: string | null;
 }
 
 export interface TeammateStatus {

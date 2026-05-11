@@ -745,6 +745,36 @@ async def test_run_event_publishes_skip_reason_to_sse(
     assert matching[0]["skip_reason"] == "no_vision_document"
 
 
+@pytest.mark.asyncio
+async def test_webhook_bumps_last_event_at(client):
+    """Every webhook event for a run must bump runs.last_event_at so
+    Mission Control and the reaper can tell live runs from dead ones
+    (issue #348)."""
+    from datetime import datetime, timezone
+    from app.models import Run
+    from sqlalchemy import select
+
+    run_id = "run-heartbeat-1"
+    async with async_session() as db:
+        db.add(Run(run_id=run_id, status="running",
+                   started_at=datetime.now(timezone.utc)))
+        await db.commit()
+
+    resp = await client.post("/api/webhook/run-event", json={
+        "event": "narration",
+        "run_id": run_id,
+    })
+    assert resp.status_code == 200
+
+    async with async_session() as db:
+        row = (await db.execute(
+            select(Run).where(Run.run_id == run_id)
+        )).scalar_one()
+        assert row.last_event_at is not None
+        delta = abs((datetime.now(timezone.utc) - row.last_event_at.replace(tzinfo=timezone.utc)).total_seconds())
+        assert delta < 5
+
+
 def test_build_notification_message():
     """Test the _build_notification_message function."""
     from app.services.run_lifecycle import build_notification_message as _build_notification_message
