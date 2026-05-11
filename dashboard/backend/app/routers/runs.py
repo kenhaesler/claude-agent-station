@@ -129,8 +129,18 @@ async def get_active_employees(db: AsyncSession = Depends(get_db)):
     # This covers the coordinated path where the Python coordinator spawns
     # employees via task_started events instead of employee_start events.
     if len(employees) <= 1:
+        # Only synthesize from coordinator_tasks whose parent run is still
+        # in a non-terminal state. Without this guard, stale rows linger
+        # after the parent run completes and the API resurrects them as
+        # phantom running employees. See issue #345.
         coord_result = await db.execute(
-            select(CoordinatorTask).where(CoordinatorTask.status == "running")
+            select(CoordinatorTask)
+            .join(Run, Run.run_id == CoordinatorTask.run_id, isouter=True)
+            .where(
+                CoordinatorTask.status == "running",
+                Run.status.in_(("running", "reviewing", "plan_reviewing"))
+                | (Run.status.is_(None)),
+            )
         )
         coord_tasks = coord_result.scalars().all()
 
