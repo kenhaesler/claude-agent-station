@@ -22,11 +22,13 @@
   </div>
 </div>
 
-<!-- CRT scanline veil -->
-<div class="fixed inset-0 z-0 pointer-events-none scanlines"></div>
-
 <!-- Vignette -->
 <div class="fixed inset-0 z-0 pointer-events-none vignette"></div>
+
+<!-- CRT scanline veil — sits ABOVE app content so the CRT effect blankets
+     the whole UI, not just the empty backdrop. Very low opacity so text
+     stays legible. -->
+<div class="fixed inset-0 pointer-events-none scanlines" style="z-index: 10;"></div>
 
 <style>
   /* ---------- Ambient drifting blobs ---------- */
@@ -127,15 +129,16 @@
     to   { background-position-y: 60px; }
   }
 
-  /* ---------- CRT scanlines ---------- */
+  /* ---------- CRT scanlines (over-the-content veil) ----------
+     Sits above #app so the CRT effect blankets the whole UI. Opacity
+     deliberately very low so it doesn't impair text legibility. */
   .scanlines {
     background: repeating-linear-gradient(
       to bottom,
       transparent 0 2px,
       rgba(0, 240, 255, 0.025) 2px 3px
     );
-    mix-blend-mode: overlay;
-    opacity: 0.6;
+    opacity: 0.35;
   }
 
   /* ---------- Vignette ---------- */
@@ -143,12 +146,15 @@
     box-shadow: inset 0 0 200px 80px rgba(0, 0, 0, 0.55);
   }
 
-  /* ---------- Animation kill-switch ---------- */
+  /* ---------- Animation kill-switch ----------
+     Also clears will-change so GPU layers aren't held while animations
+     are off (the hint exists only to smooth running animations). */
   :global([data-animations="off"]) .grid-floor,
   :global([data-animations="off"]) .blob-cyan,
   :global([data-animations="off"]) .blob-yellow,
   :global([data-animations="off"]) .blob-magenta {
     animation: none;
+    will-change: auto;
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -157,6 +163,7 @@
     .blob-yellow,
     .blob-magenta {
       animation: none;
+      will-change: auto;
     }
   }
 </style>
