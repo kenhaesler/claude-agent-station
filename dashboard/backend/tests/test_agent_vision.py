@@ -57,3 +57,40 @@ def test_load_vision_tolerates_partial_sections(tmp_path):
     assert v["users"] == "U"
     # Missing sections present as empty strings (not absent keys)
     assert v["end_state"] == ""
+
+
+def test_load_vision_parses_new_sections(tmp_path):
+    """load_vision() parses the issue-#335 sections into the dict."""
+    repo = tmp_path
+    (repo / "docs").mkdir()
+    (repo / "docs" / "vision.md").write_text(
+        "# Vision — o/r\n\n"
+        "## Problem\nP\n\n## Users\nU\n\n## End-state\nE\n\n"
+        "## Tech Stack\nPython + FastAPI + Svelte\n\n"
+        "## Runtime Target\nContainer on Linux\n\n"
+        "## Non-goals\nN\n\n## Principles\nPr\n\n"
+        "## Horizons\nH\n\n## Anti-patterns\nA\n"
+    )
+    vision = load_vision(str(repo))
+    assert vision is not None
+    assert vision["tech_stack"] == "Python + FastAPI + Svelte"
+    assert vision["runtime_target"] == "Container on Linux"
+
+
+def test_load_vision_old_file_defaults_new_keys_to_empty(tmp_path):
+    """Pre-#335 vision files with only 7 sections still parse — the new
+    keys default to empty strings in the returned dict."""
+    repo = tmp_path
+    (repo / "docs").mkdir()
+    (repo / "docs" / "vision.md").write_text(
+        "# Vision — o/r\n\n"
+        "## Problem\nP\n\n## Users\nU\n\n## End-state\nE\n\n"
+        "## Non-goals\nN\n\n## Principles\nPr\n\n"
+        "## Horizons\nH\n\n## Anti-patterns\nA\n"
+    )
+    vision = load_vision(str(repo))
+    assert vision is not None
+    assert "tech_stack" in vision
+    assert "runtime_target" in vision
+    assert vision["tech_stack"] == ""
+    assert vision["runtime_target"] == ""

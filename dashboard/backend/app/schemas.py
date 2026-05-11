@@ -891,10 +891,17 @@ class GlobalPauseState(BaseModel):
 # ── Vision (Phase 1) ───────────────────────────────────────────
 
 class VisionDoc(BaseModel):
-    """Structured vision payload — one field per section."""
+    """Structured vision payload — one field per section.
+
+    Issue #335: tech_stack and runtime_target are optional with empty-string
+    defaults so old vision-doc JSON (from chats predating the change) keeps
+    validating.
+    """
     problem: str
     users: str
     end_state: str
+    tech_stack: str = ""
+    runtime_target: str = ""
     non_goals: str
     principles: str
     horizons: str

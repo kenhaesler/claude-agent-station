@@ -777,6 +777,11 @@ most context.
     if vision is not None:
         non_goals = (vision.get("non_goals") or "").strip() or "_(not specified)_"
         anti_patterns = (vision.get("anti_patterns") or "").strip() or "_(not specified)_"
+        # Issue #335: surface tech_stack and runtime_target as informational
+        # context so the lead — and the teammates it spawns — pick the right
+        # frameworks, base images, and runtime patterns.
+        tech_stack_text = (vision.get("tech_stack") or "").strip() or "_(not specified)_"
+        runtime_target_text = (vision.get("runtime_target") or "").strip() or "_(not specified)_"
         # Resolve webhook URL with the same precedence as post_webhook():
         # STATION_WEBHOOK_URL env (set by compose) → config dashboard.webhook_url
         # → localhost default for systemd. Hardcoding "http://dashboard:8420"
@@ -807,6 +812,21 @@ plan does not violate the non-goals or anti-patterns below. If it does:
 
 ### Vision — Anti-patterns
 {anti_patterns}
+
+## Project shape (informational context, NOT misalignment criteria)
+
+The two sections below describe what the project is built with and where it
+runs. **Do NOT reject teammate plans on these grounds** — they are not
+misalignment criteria like non-goals and anti-patterns. They exist so
+teammates pick the right frameworks, base images, and runtime patterns.
+If a plan diverges from the stated tech stack for a good reason, that is a
+judgement call, not a violation.
+
+### Vision — Tech Stack
+{tech_stack_text}
+
+### Vision — Runtime Target
+{runtime_target_text}
 
 (Full vision available at `{workspace}/docs/vision.md` if you need other context.)
 """

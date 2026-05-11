@@ -141,9 +141,13 @@ async def mark_cancelled(db: AsyncSession, session_id: str) -> None:
 # SDK streaming wrapper
 # ---------------------------------------------------------------------------
 
+# Order matches dashboard/backend/app/services/vision_render.py:SECTIONS.
+# Issue #335 inserted tech_stack and runtime_target between end_state and
+# non_goals.
 _SECTIONS = [
-    "problem", "users", "end_state", "non_goals",
-    "principles", "horizons", "anti_patterns",
+    "problem", "users", "end_state",
+    "tech_stack", "runtime_target",
+    "non_goals", "principles", "horizons", "anti_patterns",
 ]
 
 
