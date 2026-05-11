@@ -85,6 +85,11 @@
 
   --dot:      rgba(0,240,255,0.10);
 
+  /* Font swap: page-level .pro components read --pro-sans for their
+     headings and labels. Swapping it to Chakra Petch gives the whole
+     dashboard the techy CP2077 display face. */
+  --pro-sans: 'Chakra Petch', system-ui, sans-serif;
+
   --role-lead:     #00F0FF;
   --role-backend:  #39FF14;
   --role-frontend: #FCEE0A;

@@ -716,6 +716,20 @@ code, .font-mono {
   box-shadow: 0 0 18px rgba(255,42,109,0.55);
 }
 
+/* Pro-system danger/abort buttons (.opbtn.danger / .opbtn.abort) get the
+   same hazard-stripe top accent. Background stays transparent so the
+   outlined magenta + glow reads as the cyberpunk danger affordance.
+   On hover the button fills solid magenta with black text for emphasis. */
+[data-theme="cyberpunk"] :is(.opbtn.danger, .opbtn.abort) {
+  border-top-width: 3px;
+  border-image: repeating-linear-gradient(135deg, #FCEE0A 0 6px, #000 6px 12px) 3;
+}
+[data-theme="cyberpunk"] :is(.opbtn.danger, .opbtn.abort):hover:not(:disabled) {
+  background: #FF2A6D !important;
+  color: #000 !important;
+  box-shadow: 0 0 16px rgba(255,42,109,0.50);
+}
+
 /* --- Neon focus --- */
 [data-theme="cyberpunk"] .input:focus,
 [data-theme="cyberpunk"] .btn:focus-visible {
