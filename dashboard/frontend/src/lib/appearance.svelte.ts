@@ -7,14 +7,16 @@
  * already on the correct theme (no flash).
  */
 
-type Theme = 'light' | 'dark';
+type Theme = 'light' | 'dark' | 'cyberpunk';
 
 const STORAGE_KEY_THEME = 'cas.appearance.theme';
 const STORAGE_KEY_ANIMATIONS = 'cas.appearance.animations';
 
 function readTheme(): Theme {
   const stored = localStorage.getItem(STORAGE_KEY_THEME);
-  return stored === 'dark' ? 'dark' : 'light';
+  if (stored === 'dark') return 'dark';
+  if (stored === 'cyberpunk') return 'cyberpunk';
+  return 'light';
 }
 
 function readAnimations(): boolean {

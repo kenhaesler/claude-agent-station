@@ -552,3 +552,319 @@ code, .font-mono {
   animation-iteration-count: 1 !important;
   transition-duration: 0.01ms !important;
 }
+
+/* ============================================
+   --- Cyberpunk theme ---
+   Hazard yellow + cyan on near-black.
+   Full-chrome FX: chromatic aberration, hazard
+   stripes, corner-cut frames, scanlines, neon
+   focus glow.
+   ============================================ */
+[data-theme="cyberpunk"] {
+  --color-void: #05060A;
+  --color-surface-0: #0B0C14;
+  --color-surface-1: rgba(15,17,28,0.70);
+  --color-surface-2: rgba(15,17,28,0.55);
+  --color-border: rgba(0,240,255,0.18);
+  --color-border-hover: rgba(0,240,255,0.35);
+  --color-border-focus: rgba(252,238,10,0.55);
+
+  --color-primary: #FCEE0A;
+  --color-secondary: #E8F6FF;
+  --color-tertiary: #8FB7C8;
+  --color-ghost: #4A5A6A;
+
+  --color-violet: #FF2A6D;
+  --color-cyan: #00F0FF;
+  --color-indigo: #00F0FF;
+  --color-amber: #FCEE0A;
+  --color-emerald: #39FF14;
+  --color-rose: #FF2A6D;
+  --color-orange: #FCEE0A;
+  --color-purple: #B026FF;
+
+  --color-success: #39FF14;
+  --color-warning: #FCEE0A;
+  --color-error: #FF2A6D;
+  --color-info: #00F0FF;
+  --color-running: #39FF14;
+
+  --color-agent-manager: #FCEE0A;
+  --color-agent-dev-0: #39FF14;
+  --color-agent-dev-1: #00F0FF;
+  --color-agent-dev-2: #B026FF;
+  --color-agent-coordinator: #FF2A6D;
+
+  --color-approve: #39FF14;
+  --color-reject: #FF2A6D;
+  --color-pr: #00F0FF;
+
+  --font-heading: 'Chakra Petch', 'Outfit', sans-serif;
+
+  --surface-glass: rgba(15,17,28,0.65);
+  --surface-card: rgba(11,12,20,0.70);
+  --surface-input: rgba(5,6,10,0.80);
+  --surface-btn-secondary: rgba(15,17,28,0.70);
+  --surface-btn-secondary-hover: rgba(0,240,255,0.10);
+  --surface-btn-ghost-hover: rgba(0,240,255,0.06);
+
+  --neu-light: rgba(0,240,255,0.04);
+  --neu-light-md: rgba(0,240,255,0.06);
+  --neu-light-lg: rgba(0,240,255,0.10);
+  --neu-dark: rgba(0,0,0,0.50);
+  --neu-dark-md: rgba(0,0,0,0.65);
+  --neu-dark-lg: rgba(0,0,0,0.75);
+
+  --shadow-sm: 0 0 0 1px rgba(0,240,255,0.10), 0 0 8px rgba(0,240,255,0.06);
+  --shadow-md: 0 0 0 1px rgba(0,240,255,0.15), 0 0 14px rgba(0,240,255,0.10);
+  --shadow-lg: 0 0 0 1px rgba(0,240,255,0.20), 0 0 24px rgba(0,240,255,0.18);
+
+  --shadow-glow-violet: 0 0 18px rgba(255,42,109,0.45);
+  --shadow-glow-cyan: 0 0 18px rgba(0,240,255,0.55);
+  --shadow-glow-amber: 0 0 18px rgba(252,238,10,0.50);
+  --shadow-glow-emerald: 0 0 18px rgba(57,255,20,0.45);
+  --shadow-glow-rose: 0 0 18px rgba(255,42,109,0.50);
+}
+
+/* Body keeps the void; the FX component (separate) paints the grid. */
+[data-theme="cyberpunk"] body {
+  background: var(--color-void);
+  color: var(--color-primary);
+}
+
+/* --- Headings: chromatic aberration ---
+   Disabled when animations are off or motion is reduced, since the
+   stacked text-shadow is an "effect" (not a hard requirement) and
+   can impair readability for some users. */
+[data-theme="cyberpunk"] h1,
+[data-theme="cyberpunk"] h2,
+[data-theme="cyberpunk"] h3 {
+  font-family: 'Chakra Petch', 'Outfit', sans-serif;
+  letter-spacing: 0.01em;
+  text-shadow:
+    -1px 0 0 #FF2A6D,
+    1px 0 0 #00F0FF,
+    0 0 6px rgba(252,238,10,0.35);
+}
+[data-theme="cyberpunk"][data-animations="off"] h1,
+[data-theme="cyberpunk"][data-animations="off"] h2,
+[data-theme="cyberpunk"][data-animations="off"] h3 {
+  text-shadow: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-theme="cyberpunk"] h1,
+  [data-theme="cyberpunk"] h2,
+  [data-theme="cyberpunk"] h3 { text-shadow: none; }
+}
+
+/* --- Cards: rectangular with corner brackets + integrated scanlines ---
+   Note: earlier iteration used clip-path for a chamfered frame, but the
+   inset-shadow "border" couldn't follow the bevel. Brackets are more
+   on-brand for the CP2077 HUD aesthetic anyway and keep the border crisp. */
+[data-theme="cyberpunk"] .card {
+  border-radius: 0;
+  border: 1px solid rgba(0,240,255,0.30);
+  background:
+    repeating-linear-gradient(to bottom, transparent 0 1px, rgba(0,240,255,0.04) 1px 2px),
+    var(--surface-card);
+  box-shadow: 0 0 14px rgba(0,240,255,0.10);
+  position: relative;
+  overflow: hidden;
+}
+[data-theme="cyberpunk"] .card:hover {
+  border-color: rgba(0,240,255,0.55);
+  box-shadow: 0 0 22px rgba(0,240,255,0.18);
+}
+[data-theme="cyberpunk"] .card::before,
+[data-theme="cyberpunk"] .card::after {
+  content: '';
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  pointer-events: none;
+}
+[data-theme="cyberpunk"] .card::before {
+  top: -1px; right: -1px;
+  border-top: 2px solid #00F0FF;
+  border-right: 2px solid #00F0FF;
+}
+[data-theme="cyberpunk"] .card::after {
+  bottom: -1px; left: -1px;
+  border-bottom: 2px solid #00F0FF;
+  border-left: 2px solid #00F0FF;
+}
+
+/* --- Hazard stripes utility (decorative surfaces only, NOT text-bearing) ---
+   Solid background for elements that have to remain legible; the stripes
+   are an accent border on the top edge via border-image. */
+[data-theme="cyberpunk"] .hazard-stripes {
+  background: repeating-linear-gradient(135deg, #FCEE0A 0 10px, #000 10px 20px);
+  color: #000;
+}
+[data-theme="cyberpunk"] .badge-failed,
+[data-theme="cyberpunk"] .badge-reject,
+[data-theme="cyberpunk"] .btn-danger {
+  background: #FF2A6D;
+  color: #000;
+  border: 1px solid #FF2A6D;
+  border-top-width: 3px;
+  border-image: repeating-linear-gradient(135deg, #FCEE0A 0 6px, #000 6px 12px) 3;
+  text-shadow: none;
+}
+[data-theme="cyberpunk"] .btn-danger:hover {
+  background: #FF4C84;
+  box-shadow: 0 0 18px rgba(255,42,109,0.55);
+}
+
+/* Pro-system danger/abort buttons (.opbtn.danger / .opbtn.abort) get the
+   same hazard-stripe top accent. Background stays transparent so the
+   outlined magenta + glow reads as the cyberpunk danger affordance.
+   On hover the button fills solid magenta with black text for emphasis. */
+[data-theme="cyberpunk"] :is(.opbtn.danger, .opbtn.abort) {
+  border-top-width: 3px;
+  border-image: repeating-linear-gradient(135deg, #FCEE0A 0 6px, #000 6px 12px) 3;
+}
+[data-theme="cyberpunk"] :is(.opbtn.danger, .opbtn.abort):hover:not(:disabled) {
+  background: #FF2A6D !important;
+  color: #000 !important;
+  box-shadow: 0 0 16px rgba(255,42,109,0.50);
+}
+
+/* --- Neon focus --- */
+[data-theme="cyberpunk"] .input:focus,
+[data-theme="cyberpunk"] .btn:focus-visible {
+  box-shadow: 0 0 0 1px #00F0FF, 0 0 16px rgba(0,240,255,0.50);
+  outline: none;
+  border-color: #00F0FF;
+}
+
+/* --- Inputs --- */
+[data-theme="cyberpunk"] .input {
+  border-radius: 2px;
+  border: 1px solid rgba(0,240,255,0.30);
+  background: var(--surface-input);
+  color: var(--color-secondary);
+  font-family: 'Chakra Petch', 'Outfit', sans-serif;
+}
+[data-theme="cyberpunk"] .input::placeholder { color: var(--color-ghost); }
+
+/* --- Status dots: hard cyan ring instead of soft halo --- */
+[data-theme="cyberpunk"] .status-dot.online,
+[data-theme="cyberpunk"] .status-dot.running { background: #39FF14; color: #39FF14; }
+[data-theme="cyberpunk"] .status-dot.warning { background: #FCEE0A; color: #FCEE0A; }
+[data-theme="cyberpunk"] .status-dot.error { background: #FF2A6D; color: #FF2A6D; }
+[data-theme="cyberpunk"] .status-dot.offline { background: #4A5A6A; color: #4A5A6A; }
+[data-theme="cyberpunk"] .status-dot::after {
+  background: transparent;
+  box-shadow: 0 0 0 1px currentColor, 0 0 12px currentColor;
+  animation: none;
+}
+[data-theme="cyberpunk"] .status-dot.offline::after { display: none; }
+
+/* --- Badges: square, uppercase, monospace-feel --- */
+[data-theme="cyberpunk"] .badge {
+  border-radius: 0;
+  font-family: 'Chakra Petch', sans-serif;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border: 1px solid currentColor;
+  background: rgba(0,0,0,0.40);
+  font-weight: 700;
+}
+[data-theme="cyberpunk"] .badge-approve,
+[data-theme="cyberpunk"] .badge-running,
+[data-theme="cyberpunk"] .badge-completed,
+[data-theme="cyberpunk"] .badge-fix { color: #39FF14; }
+[data-theme="cyberpunk"] .badge-pr,
+[data-theme="cyberpunk"] .badge-analyze,
+[data-theme="cyberpunk"] .badge-review,
+[data-theme="cyberpunk"] .badge-agent-teams { color: #00F0FF; }
+[data-theme="cyberpunk"] .badge-pending,
+[data-theme="cyberpunk"] .badge-full,
+[data-theme="cyberpunk"] .badge-plan,
+[data-theme="cyberpunk"] .badge-triage,
+[data-theme="cyberpunk"] .badge-vision-bootstrap { color: #FCEE0A; }
+
+/* --- Buttons --- */
+[data-theme="cyberpunk"] .btn {
+  border-radius: 2px;
+  font-family: 'Chakra Petch', 'Outfit', sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 700;
+}
+[data-theme="cyberpunk"] .btn-primary {
+  background: #FCEE0A;
+  color: #000;
+  border: 1px solid #FCEE0A;
+  box-shadow: 0 0 16px rgba(252,238,10,0.45);
+}
+[data-theme="cyberpunk"] .btn-primary:hover {
+  background: #FCEE0A;
+  color: #000;
+  box-shadow: 0 0 24px rgba(252,238,10,0.65);
+  transform: none;
+}
+[data-theme="cyberpunk"] .btn-secondary {
+  background: transparent;
+  color: #00F0FF;
+  border: 1px solid #00F0FF;
+}
+[data-theme="cyberpunk"] .btn-secondary:hover {
+  background: rgba(0,240,255,0.10);
+  color: #00F0FF;
+  box-shadow: 0 0 16px rgba(0,240,255,0.40);
+}
+[data-theme="cyberpunk"] .btn-ghost {
+  background: transparent;
+  color: var(--color-secondary);
+}
+[data-theme="cyberpunk"] .btn-ghost:hover {
+  background: rgba(0,240,255,0.06);
+  color: #00F0FF;
+}
+[data-theme="cyberpunk"] .btn:focus-visible { outline: none; }
+
+/* --- Glass panel --- */
+[data-theme="cyberpunk"] .glass {
+  background: var(--surface-glass);
+  border: 1px solid var(--color-border);
+  border-radius: 0;
+  box-shadow: inset 0 0 0 1px rgba(0,240,255,0.15),
+              0 0 14px rgba(0,240,255,0.10);
+}
+
+/* --- Scrollbar: thin cyan bar --- */
+[data-theme="cyberpunk"] ::-webkit-scrollbar { width: 6px; height: 6px; }
+[data-theme="cyberpunk"] ::-webkit-scrollbar-track { background: #05060A; }
+[data-theme="cyberpunk"] ::-webkit-scrollbar-thumb {
+  background: #00F0FF;
+  border-radius: 0;
+}
+[data-theme="cyberpunk"] ::-webkit-scrollbar-thumb:hover { background: #FCEE0A; }
+
+/* --- Text gradients --- */
+[data-theme="cyberpunk"] .text-gradient-violet {
+  background: linear-gradient(135deg, #FCEE0A, #00F0FF);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+[data-theme="cyberpunk"] .text-gradient-cyan {
+  background: linear-gradient(135deg, #00F0FF, #FF2A6D);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* --- Section header --- */
+[data-theme="cyberpunk"] .section-header {
+  color: #00F0FF;
+  font-family: 'Chakra Petch', sans-serif;
+}
+
+/* --- Warm glow overrides under cyberpunk (the legacy gradient blobs would
+       fight the neon palette — quiet them down) --- */
+[data-theme="cyberpunk"] .warm-glow-1 { background: radial-gradient(ellipse, rgba(0,240,255,0.10) 0%, transparent 65%); }
+[data-theme="cyberpunk"] .warm-glow-2 { background: radial-gradient(ellipse, rgba(255,42,109,0.08) 0%, transparent 65%); }
+[data-theme="cyberpunk"] .warm-glow-3 { background: radial-gradient(ellipse, rgba(252,238,10,0.06) 0%, transparent 65%); }

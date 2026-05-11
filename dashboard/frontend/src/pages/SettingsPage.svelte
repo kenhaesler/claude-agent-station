@@ -1251,12 +1251,13 @@
                 <select
                   id="theme-select"
                   value={appearance.theme}
-                  onchange={(e) => setTheme((e.target as HTMLSelectElement).value as 'light' | 'dark')}
+                  onchange={(e) => setTheme((e.target as HTMLSelectElement).value as 'light' | 'dark' | 'cyberpunk')}
                 >
                   <option value="light">Light</option>
                   <option value="dark">Dark</option>
+                  <option value="cyberpunk">Cyberpunk</option>
                 </select>
-                <span class="desc">paper-and-ink in light · charcoal-and-bone in dark</span>
+                <span class="desc">paper-and-ink · charcoal-and-bone · neon-and-chrome</span>
               </div>
             </div>
             <div class="key-row">

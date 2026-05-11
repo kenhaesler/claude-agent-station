@@ -67,6 +67,36 @@
   --role-operator: #EFE6D6;
 }
 
+[data-theme="cyberpunk"] {
+  --paper:    #0B0C14;        /* surface-0 from cyberpunk app.css */
+  --paper-2:  #11131E;        /* slightly lighter for layered panels */
+  --paper-3:  #181B2A;        /* deepest panel tint */
+  --ink:      #FCEE0A;        /* hazard yellow — main text */
+  --rule:     rgba(0,240,255,0.18);   /* cyan hairline */
+  --rule-2:   rgba(0,240,255,0.35);   /* stronger cyan rule */
+  --graphite: #8FB7C8;        /* secondary muted text */
+  --ash:      #4A5A6A;        /* tertiary / ghost text */
+
+  --go:       #39FF14;        /* lime — running/success */
+  --caution:  #FCEE0A;        /* hazard yellow */
+  --abort:    #FF2A6D;        /* magenta — errors/reject */
+  --critical: #B026FF;        /* purple — distinct backpressure signal */
+  --data:     #00F0FF;        /* cyan — info/data/PR */
+
+  --dot:      rgba(0,240,255,0.10);
+
+  /* Font swap: page-level .pro components read --pro-sans for their
+     headings and labels. Swapping it to Chakra Petch gives the whole
+     dashboard the techy CP2077 display face. */
+  --pro-sans: 'Chakra Petch', system-ui, sans-serif;
+
+  --role-lead:     #00F0FF;
+  --role-backend:  #39FF14;
+  --role-frontend: #FCEE0A;
+  --role-qa:       #B026FF;
+  --role-operator: #FCEE0A;
+}
+
 /* ──────────────────────────────────────────────────────────
    STATION · PRO · COMPONENT CLASSES
    These mirror `design-drafts/*.html` so the same component
