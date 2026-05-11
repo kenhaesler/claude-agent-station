@@ -36,6 +36,12 @@ async def system_status():
         "deploy_mode": service_control.deploy_mode(),
         "service": {
             "active": svc["service_active"],
+            # ``reachable`` distinguishes "launcher up but idle" from
+            # "launcher unresponsive" in compose mode. In systemd mode the
+            # status call either succeeded (reachable) or threw (caller
+            # sees a 5xx), so it's always True here.
+            "reachable": svc.get("error") is None,
+            "error": svc.get("error"),
         },
         "timer": {
             "active": svc["timer_active"],

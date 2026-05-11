@@ -472,7 +472,15 @@
     <h1>Settings</h1>
     <div class="meta">
       Service
-      {#if systemStatus?.service.active}
+      {#if systemStatus?.deploy_mode === 'compose'}
+        {#if systemStatus?.service.reachable === false}
+          <b style="color: var(--abort)">UNREACHABLE</b>
+        {:else if systemStatus?.service.active}
+          <b style="color: var(--go)">RUNNING</b>
+        {:else}
+          <b style="color: var(--ash)">IDLE</b>
+        {/if}
+      {:else if systemStatus?.service.active}
         <b style="color: var(--go)">ONLINE</b>
       {:else}
         <b style="color: var(--abort)">OFFLINE</b>
@@ -515,7 +523,18 @@
             <div class="key-row">
               <span class="lbl">Status</span>
               <div class="val">
-                {#if systemStatus?.service.active}
+                {#if systemStatus?.deploy_mode === 'compose'}
+                  {#if systemStatus?.service.reachable === false}
+                    <span class="status-tag off">✕ UNREACHABLE</span>
+                    <span class="desc">launcher at <code>$STATION_AGENT_LAUNCHER_URL</code> didn't respond{systemStatus.service.error ? ` — ${systemStatus.service.error}` : ''}</span>
+                  {:else if systemStatus?.service.active}
+                    <span class="status-tag go">● RUNNING</span>
+                    <span class="desc">a run is in flight</span>
+                  {:else}
+                    <span class="status-tag" style="background: var(--paper-3); color: var(--graphite);">○ IDLE</span>
+                    <span class="desc">agent container is up and waiting for a trigger</span>
+                  {/if}
+                {:else if systemStatus?.service.active}
                   <span class="status-tag go">● ONLINE</span>
                 {:else}
                   <span class="status-tag off">OFFLINE</span>
