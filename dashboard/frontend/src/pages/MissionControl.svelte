@@ -1,7 +1,7 @@
 <script lang="ts">
   import { agentPresence, type ConversationEntry } from '../lib/agent-presence.svelte';
   import IdlePanel from '../components/mission/IdlePanel.svelte';
-  import { runs as runsStore, refreshRuns, initStoreSSE } from '../lib/data-store.svelte';
+  import type { Run } from '../lib/types';
   import {
     messageRun,
     triggerRun,
@@ -13,6 +13,7 @@
     pauseAll,
     resumeAll,
     getGlobalPause,
+    getLatestRun,
   } from '../lib/api';
   import { addToast } from '../lib/toast.svelte';
   import { formatTokens, timeAgo } from '../lib/format';
@@ -31,17 +32,31 @@
   );
   let isLive = $derived(agentPresence.activeRuns.length > 0);
   let isIdle = $derived(agentPresence.activeRuns.length === 0);
-  let lastRun = $derived(runsStore.length > 0 ? runsStore[0] : null);
   let runPaused = $derived(!!agentPresence.pausedRuns[currentRunId]);
   let globalPause = $derived(agentPresence.globalPause);
   let pendingDecisions = $derived(agentPresence.pendingDecisionCount);
 
-  // Wire up SSE-driven cache invalidation (idempotent) and seed the
-  // initial runs list so the IdlePanel can show last-run summary
-  // immediately on mount. See PR #354 review.
+  // Last run summary for the IdlePanel. Fetched directly from the API
+  // rather than going through ../lib/data-store.svelte (whose `export
+  // let X = $state(...)` pattern is invalid in Svelte 5 and breaks the
+  // production build). Refreshes on mount and whenever the active-runs
+  // count drops to zero (a run just completed).
+  let lastRun = $state<Run | null>(null);
+  async function refreshLastRun() {
+    try {
+      lastRun = await getLatestRun();
+    } catch {
+      lastRun = null;
+    }
+  }
+  $effect(() => { refreshLastRun(); });
+  // When the active-runs list empties, the most recent run just finished —
+  // re-fetch so the idle panel shows it without waiting for next mount.
+  let prevActiveCount = $state(0);
   $effect(() => {
-    initStoreSSE();
-    refreshRuns();
+    const n = agentPresence.activeRuns.length;
+    if (prevActiveCount > 0 && n === 0) refreshLastRun();
+    prevActiveCount = n;
   });
 
   // Issue #266 — surface the plan-review gate so operators can see when a
