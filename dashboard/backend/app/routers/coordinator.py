@@ -14,8 +14,10 @@ from app.models import CoordinatorMessage, CoordinatorTask, Run
 from app.schemas import (
     CoordinatorDAGOut,
     CoordinatorMessageOut,
+    CoordinatorTaskCreate,
     CoordinatorTaskDetailOut,
     CoordinatorTaskOut,
+    CoordinatorTaskUpdate,
     GuidanceSend,
 )
 
@@ -41,6 +43,80 @@ async def list_tasks(
 
     result = await db.execute(query)
     return result.scalars().all()
+
+
+@router.post("/tasks", response_model=CoordinatorTaskOut, status_code=201)
+async def create_task(
+    payload: CoordinatorTaskCreate,
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a coordinator task (called by agent.coordinator_lifecycle).
+
+    Generates a stable id from run_id and the current task count for the run so
+    that retried creates are easy to track. The status defaults to 'running'
+    so the active-employees endpoint surfaces the task immediately.
+    """
+    import uuid
+    from datetime import datetime, timezone
+
+    # Generate a unique task id: "task-{run_id}-{short_uuid}"
+    task_id = f"task-{payload.run_id}-{uuid.uuid4().hex[:8]}"
+    task = CoordinatorTask(
+        id=task_id,
+        run_id=payload.run_id,
+        project_repo=payload.project_repo,
+        issue_number=payload.issue_number,
+        employee_index=payload.employee_index,
+        status=payload.status,
+        title=payload.title or "",
+        description=payload.description,
+        started_at=datetime.now(timezone.utc) if payload.status == "running" else None,
+    )
+    db.add(task)
+    await db.commit()
+    await db.refresh(task)
+    return task
+
+
+@router.put("/tasks/{task_id}", response_model=CoordinatorTaskOut)
+async def update_task(
+    task_id: str,
+    payload: CoordinatorTaskUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    """Update a coordinator task lifecycle status (called by agent.coordinator_lifecycle).
+
+    Accepted statuses: completed, failed, orphaned, running, blocked, ready.
+    Sets finished_at when a terminal status (completed/failed/orphaned) is written.
+    """
+    from datetime import datetime, timezone
+
+    result = await db.execute(
+        select(CoordinatorTask).where(CoordinatorTask.id == task_id)
+    )
+    task = result.scalar_one_or_none()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    task.status = payload.status
+    if payload.result_summary is not None:
+        task.result_summary = payload.result_summary
+    if payload.error_message is not None:
+        task.error_message = payload.error_message
+    if payload.exit_code is not None:
+        task.exit_code = payload.exit_code
+    if payload.branch is not None:
+        task.branch = payload.branch
+    if payload.touched_files is not None:
+        task.touched_files = payload.touched_files
+
+    terminal_statuses = {"completed", "failed", "orphaned"}
+    if payload.status in terminal_statuses and task.finished_at is None:
+        task.finished_at = datetime.now(timezone.utc)
+
+    await db.commit()
+    await db.refresh(task)
+    return task
 
 
 @router.get("/tasks/{task_id}", response_model=CoordinatorTaskOut)
