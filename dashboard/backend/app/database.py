@@ -100,6 +100,11 @@ async def _migrate_add_columns(conn) -> None:
         # Per-project promotion target for the integration meta-PR.
         # NULL = fall back to projects.branch.
         ("projects", "promotion_target", "ALTER TABLE projects ADD COLUMN promotion_target TEXT"),
+        # Per-run heartbeat — last webhook event timestamp. Updated on
+        # every webhook ingestion regardless of event type. Used by the
+        # reaper to detect stuck runs faster and by Mission Control to
+        # show an "active N seconds ago" badge. See issue #348.
+        ("runs", "last_event_at", "ALTER TABLE runs ADD COLUMN last_event_at DATETIME"),
     ]
     # `table` and `sql` below are hardcoded literals from the migrations tuple
     # list above; PRAGMA + ALTER TABLE do not support bound parameters for
@@ -126,6 +131,7 @@ async def _migrate_add_columns(conn) -> None:
         "CREATE INDEX IF NOT EXISTS ix_runs_concurrent_group_id ON runs(concurrent_group_id)",
         "CREATE INDEX IF NOT EXISTS ix_conflict_resolutions_branch_started "
         "ON conflict_resolutions(branch, started_at)",
+        "CREATE INDEX IF NOT EXISTS ix_runs_last_event_at ON runs(last_event_at)",
     ]
     for sql in index_migrations:
         try:

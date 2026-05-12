@@ -369,6 +369,17 @@
           <span class="br">·</span>
           <span>Started <b>{timeAgo(currentRun.started_at)}</b></span>
         {/if}
+        {#if currentRun?.last_event_at}
+          {@const _lastEventMs = currentRun.last_event_at.endsWith('Z') || /[+-]\d\d:?\d\d$/.test(currentRun.last_event_at)
+            ? new Date(currentRun.last_event_at).getTime()
+            : Date.parse(currentRun.last_event_at + 'Z')}
+          {@const ageSec = (Date.now() - _lastEventMs) / 1000}
+          <span class="heartbeat-badge"
+                class:warn={ageSec > 60 && ageSec <= 180}
+                class:stale={ageSec > 180}>
+            active {Math.round(ageSec)}s ago
+          </span>
+        {/if}
         <span class="br">·</span>
         <span>Aut <b>{autonomyLabel(currentRun.mode)}</b></span>
       {:else}
@@ -598,6 +609,17 @@
 </div>
 
 <style>
+  .heartbeat-badge {
+    margin-left: 12px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background: var(--paper-3);
+    color: var(--graphite);
+    font-size: 0.8em;
+  }
+  .heartbeat-badge.warn { background: rgba(251, 202, 4, 0.15); color: var(--abort); }
+  .heartbeat-badge.stale { background: rgba(182, 2, 5, 0.15); color: var(--abort); }
+
   /* ──────────────────────────────────────────────────────────
      Mission Control · Pro dense-console layout.
      Mirrors design-drafts/mission.html. Strip / ticker / footer

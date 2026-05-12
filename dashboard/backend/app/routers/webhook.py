@@ -11,6 +11,7 @@ import json
 import logging
 import secrets
 import uuid
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy import select
@@ -81,6 +82,12 @@ async def receive_run_event(
     # Find existing run
     result = await db.execute(select(Run).where(Run.run_id == event.run_id))
     run = result.scalar_one_or_none()
+
+    # Heartbeat: any event for a known run row bumps last_event_at.
+    # NULL persists if the run row doesn't exist yet (e.g. orchestrator
+    # is mid-spawn). See issue #348.
+    if run is not None:
+        run.last_event_at = datetime.now(timezone.utc)
 
     # Resolve project
     project_id = await _resolve_project_id(db, event.project)
