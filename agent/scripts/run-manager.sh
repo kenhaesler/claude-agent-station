@@ -522,6 +522,20 @@ trap 'queue_api POST "/api/queue/batch-pause" "{\"run_id\":\"run-$RUN_ID\"}" 2>/
 _send_run_complete_on_exit() {
     local exit_code=$?
     if [ "$INTERNAL_ITERATE" = "true" ]; then
+        # RunDriver owns run_complete emission, but bash holds the
+        # accumulated token/turn counters and the run-start epoch.
+        # Dump them to a known path so Python can fold them into the
+        # run_complete payload. Best-effort: the file is read-or-skip
+        # on the Python side. See #361.
+        if [ -n "${RUN_ID:-}" ]; then
+            local _duration_ms=0
+            [ "$_RUN_START_EPOCH" -gt 0 ] && _duration_ms=$(( ($(date +%s) - _RUN_START_EPOCH) * 1000 ))
+            local _tt=$((_TOTAL_TOKENS_IN + _TOTAL_TOKENS_OUT))
+            local _telemetry_file="${LOG_DIR:-/var/log/claude-agent}/run-${RUN_ID}-telemetry.json"
+            printf '{"exit_code":%d,"tokens_input":%d,"tokens_output":%d,"tokens_total":%d,"turns":%d,"duration_ms":%d}\n' \
+                "$exit_code" "$_TOTAL_TOKENS_IN" "$_TOTAL_TOKENS_OUT" "$_tt" "$_TOTAL_TURNS" "$_duration_ms" \
+                > "$_telemetry_file" 2>/dev/null || true
+        fi
         return
     fi
     if [ "$_RUN_COMPLETE_SENT" -eq 0 ] && [ -n "${RUN_ID:-}" ]; then
