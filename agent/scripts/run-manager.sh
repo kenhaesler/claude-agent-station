@@ -289,28 +289,37 @@ PYEOF
 }
 
 webhook_event() {
-    # webhook_event EVENT [key value]...
-    # Builds a safe JSON payload (issue #180) and POSTs to the dashboard.
+    # Args: EVENT [key value]...
+    # All extra args are JSON-encoded into a single payload object and
+    # forwarded to the Python emitter, which owns retry semantics and
+    # auth. See issue #349 sub-PR 5a.
     local event="$1"
     shift
-    local webhook_url
-    webhook_url=$(json_get "$CONFIG_FILE" "dashboard.webhook_url" 2>/dev/null || echo "")
-    # Default to local dashboard if not configured
-    [ -z "$webhook_url" ] && webhook_url="http://127.0.0.1:8420/api/webhook/run-event"
-    # Include auth token header if a webhook secret is configured
-    local webhook_secret
-    webhook_secret="${STATION_WEBHOOK_SECRET:-$(json_get "$CONFIG_FILE" "dashboard.webhook_secret" 2>/dev/null || echo "")}"
-    local -a auth_header=()
-    if [ -n "$webhook_secret" ]; then
-        auth_header=(-H "X-Webhook-Token: $webhook_secret")
+
+    local payload="{}"
+    if [ $# -gt 0 ]; then
+        payload=$(python3 - "$@" <<'PYEOF'
+import json, sys
+args = sys.argv[1:]
+out = {}
+it = iter(args)
+for k in it:
+    try:
+        v = next(it)
+    except StopIteration:
+        break
+    out[k] = v
+print(json.dumps(out))
+PYEOF
+)
     fi
-    local payload
-    payload=$(build_webhook_json "$event" "run-$RUN_ID" "$@")
-    curl -s --max-time 3 -X POST "$webhook_url" \
-        -H "Content-Type: application/json" \
-        "${auth_header[@]}" \
-        -d "$payload" \
-        >/dev/null 2>/dev/null || true
+
+    PYTHONPATH="$SCRIPT_DIR/.." \
+        python3 -m agent.webhook_emitter "$event" \
+            --run-id "run-$RUN_ID" \
+            --json "$payload" 2>&1 | while IFS= read -r line; do
+                log_info "  webhook[$event]: $line"
+            done || true
 }
 
 queue_api() {
