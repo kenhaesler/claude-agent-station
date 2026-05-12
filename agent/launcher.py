@@ -294,7 +294,18 @@ def _spawn_run_manager(hint_run_id: str | None = None) -> dict:
         env["STATION_RUN_ID_OVERRIDE"] = hint_run_id
 
     LOG_DIR.mkdir(parents=True, exist_ok=True)
-    log_path = LOG_DIR / "launcher.out"
+    # Per-run log file: matches the path run-manager.sh advertises in its
+    # run_start webhook (LOG_DIR/run-<RUN_ID>.log). Previously we wrote
+    # the subprocess's stdout/stderr to a shared launcher.out and the
+    # advertised per-run path was a phantom — the dashboard's "Run Log"
+    # tab surfaced {"error": "File not found: …"}. Falls back to
+    # launcher.out when no run_id hint is available (legacy systemd
+    # callers).
+    if hint_run_id:
+        run_id_clean = hint_run_id.removeprefix("run-")
+        log_path = LOG_DIR / f"run-{run_id_clean}.log"
+    else:
+        log_path = LOG_DIR / "launcher.out"
     log_fh = log_path.open("ab")
 
     _current = subprocess.Popen(

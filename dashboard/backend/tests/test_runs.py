@@ -203,6 +203,53 @@ async def test_get_run_not_found(client):
     assert resp.status_code == 404
 
 
+@pytest.mark.asyncio
+async def test_get_run_zeros_log_file_when_missing(client):
+    """Pre-hotfix bash advertised a phantom per-run log file that the
+    launcher never created. Historical Run rows still carry that path
+    in log_file. The endpoint must zero the field if the file doesn't
+    exist on disk so the LogViewer falls back to its "no log recorded"
+    state instead of streaming a File-not-found JSON error."""
+    from datetime import datetime, timezone
+    from app.models import Run
+
+    async with async_session() as db:
+        db.add(Run(
+            run_id="run-phantom-log",
+            status="completed",
+            started_at=datetime.now(timezone.utc),
+            log_file="/var/log/claude-agent/does-not-exist.log",
+        ))
+        await db.commit()
+
+    resp = await client.get("/api/runs/run-phantom-log")
+    assert resp.status_code == 200
+    assert resp.json()["log_file"] is None
+
+
+@pytest.mark.asyncio
+async def test_get_run_preserves_log_file_when_present(client, tmp_path):
+    """When the advertised log file actually exists, log_file must be
+    preserved so the LogViewer can stream it."""
+    from datetime import datetime, timezone
+    from app.models import Run
+
+    real_log = tmp_path / "run-real.log"
+    real_log.write_text("hello\n")
+    async with async_session() as db:
+        db.add(Run(
+            run_id="run-real-log",
+            status="completed",
+            started_at=datetime.now(timezone.utc),
+            log_file=str(real_log),
+        ))
+        await db.commit()
+
+    resp = await client.get("/api/runs/run-real-log")
+    assert resp.status_code == 200
+    assert resp.json()["log_file"] == str(real_log)
+
+
 # --- ADR-0001 autonomy fields ---
 
 @pytest.mark.asyncio
