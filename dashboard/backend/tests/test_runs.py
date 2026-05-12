@@ -250,6 +250,30 @@ async def test_get_run_preserves_log_file_when_present(client, tmp_path):
     assert resp.json()["log_file"] == str(real_log)
 
 
+@pytest.mark.asyncio
+async def test_get_run_full_zeros_log_file_when_missing(client):
+    """The /full endpoint that RunDetail.svelte actually uses must
+    apply the same zero-on-missing fix as GET /{id}."""
+    from datetime import datetime, timezone
+    from app.models import Run
+
+    async with async_session() as db:
+        db.add(Run(
+            run_id="run-phantom-log-full",
+            status="completed",
+            started_at=datetime.now(timezone.utc),
+            log_file="/var/log/claude-agent/does-not-exist-2.log",
+        ))
+        await db.commit()
+
+    resp = await client.get("/api/runs/run-phantom-log-full/full")
+    assert resp.status_code == 200
+    body = resp.json()
+    # The /full endpoint nests the run under a 'run' key
+    run_data = body.get("run", body)
+    assert run_data["log_file"] is None
+
+
 # --- ADR-0001 autonomy fields ---
 
 @pytest.mark.asyncio
