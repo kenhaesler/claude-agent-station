@@ -56,11 +56,15 @@ def _resolve_run_mode(workspace: str, project_index: int, *, config_mode: str) -
     cfg.write_text(
         f'{{"projects":[{{"repo":"x/y","mode":"{config_mode}"}}]}}'
     )
+    # Suppress the EXIT trap's webhook emission: sourcing run-manager.sh
+    # registers _send_run_complete_on_exit, which would fire on bash exit
+    # and post a run_complete webhook. Without auth the dashboard returns
+    # 401 and the emitter logs the failure to stdout, contaminating our
+    # one-line return value. Setting _RUN_COMPLETE_SENT=1 makes the trap
+    # guard short-circuit before any HTTP call.
     cmd = (
         f"export STATION_CONFIG='{cfg}'; "
         f"source '{RUN_MANAGER}' 2>/dev/null || true; "
-        # Mark run_complete as already sent so the EXIT trap does not fire the
-        # webhook emitter and pollute stdout with HTTP log lines.
         f"_RUN_COMPLETE_SENT=1; "
         f"resolve_run_mode '{workspace}' {project_index}"
     )
