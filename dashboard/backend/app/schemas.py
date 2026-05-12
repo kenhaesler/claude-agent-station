@@ -428,6 +428,27 @@ class CoordinatorDAGOut(BaseModel):
     summary: dict
 
 
+class CoordinatorTaskCreate(BaseModel):
+    """Body for POST /api/coordinator/tasks (from agent.coordinator_lifecycle)."""
+    run_id: str
+    project_repo: str
+    issue_number: int | None = None
+    employee_index: int | None = None
+    status: str = "running"
+    title: str = ""
+    description: str | None = None
+
+
+class CoordinatorTaskUpdate(BaseModel):
+    """Body for PUT /api/coordinator/tasks/{task_id} (from agent.coordinator_lifecycle)."""
+    status: str
+    result_summary: str | None = None
+    error_message: str | None = None
+    exit_code: int | None = None
+    branch: str | None = None
+    touched_files: str | None = None
+
+
 class CoordinatorMessageOut(BaseModel):
     id: int
     run_id: str
