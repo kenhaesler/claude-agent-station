@@ -70,6 +70,11 @@ class _StreamState:
     turns: int = 0
     last_webhook_time: float = 0.0
     BATCH_INTERVAL: float = 15.0  # seconds between progress webhooks
+    # The lead orchestrator's session_id, captured from the first
+    # SystemMessage(subtype="init"). Used to filter ResultMessages so
+    # teammate sub-session results don't trigger a premature
+    # orchestrator_complete webhook. See #371.
+    main_session_id: str | None = None
 
 
 async def _user_prompt_stream(text: str):
@@ -1412,6 +1417,31 @@ def handle_stream_event(
         })
 
     elif isinstance(message, ResultMessage):
+        # ResultMessages from teammate sub-sessions (spawned via the
+        # Agent tool) propagate up through the lead's stream. Each one
+        # would otherwise trigger orchestrator_complete and mark the
+        # parent run terminal — exactly the bug that left
+        # run-20260512T124731Z stuck while the lead kept working. Gate
+        # the emission on session_id matching the captured main session.
+        # See #371.
+        msg_session_id = getattr(message, "session_id", None)
+        is_main_session = (
+            state is not None
+            and state.main_session_id is not None
+            and msg_session_id is not None
+            and msg_session_id == state.main_session_id
+        )
+        if not is_main_session:
+            logger.info(
+                "Skipping orchestrator_complete emit — ResultMessage is from "
+                "sub-session %s (main=%s, subtype=%s, turns=%s)",
+                msg_session_id,
+                state.main_session_id if state else None,
+                getattr(message, "subtype", "?"),
+                getattr(message, "num_turns", "?"),
+            )
+            return
+
         # Final flush of accumulated tokens
         if state:
             post_webhook(config, "progress_update", {
@@ -1949,6 +1979,15 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
                         # Only send orchestrator_start webhook on the very first init
                         if isinstance(message, SystemMessage) and getattr(message, "subtype", "") == "init":
                             if not first_init_sent:
+                                # Lock in the lead orchestrator's session_id
+                                # so handle_stream_event can filter
+                                # teammate sub-session ResultMessages
+                                # below (and avoid the premature
+                                # orchestrator_complete emission that
+                                # marked run-20260512T124731Z completed
+                                # while it was still running). See #371.
+                                if sid and stream_state.main_session_id is None:
+                                    stream_state.main_session_id = sid
                                 post_webhook(config, "orchestrator_start", {
                                     "run_id": f"run-{run_id}",
                                     "mode": project_mode,
