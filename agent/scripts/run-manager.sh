@@ -24,7 +24,12 @@ resolve_prompt() {
         echo "$default_prompt"
     fi
 }
-RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
+if [ -n "${STATION_RUN_ID_OVERRIDE:-}" ]; then
+    _override="${STATION_RUN_ID_OVERRIDE#run-}"
+    RUN_ID="$_override"
+else
+    RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
+fi
 _RUN_COMPLETE_SENT=0  # Flag: set to 1 once run_complete webhook has been sent
 LOG_DIR=""
 DIGEST_DIR=""

@@ -65,7 +65,8 @@ def _launcher_headers() -> dict[str, str]:
     return headers
 
 
-async def _launcher_call(method: str, path: str) -> dict:
+async def _launcher_call(method: str, path: str,
+                         json_body: dict | None = None) -> dict:
     """Call the agent launcher and shape the response like systemctl()."""
     base = _launcher_base_url()
     if not base:
@@ -73,7 +74,9 @@ async def _launcher_call(method: str, path: str) -> dict:
     url = f"{base.rstrip('/')}{path}"
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.request(method, url, headers=_launcher_headers())
+            resp = await client.request(method, url,
+                                        headers=_launcher_headers(),
+                                        json=json_body)
     except httpx.HTTPError as exc:
         # 502 Bad Gateway is the right HTTP status for "upstream
         # unreachable"; trigger_run preserves status_code so the dashboard
@@ -96,10 +99,17 @@ async def _launcher_call(method: str, path: str) -> dict:
     }
 
 
-async def start_agent_service() -> dict:
-    """Start the agent (systemctl start, or POST /run on the launcher)."""
+async def start_agent_service(hint_run_id: str | None = None) -> dict:
+    """Start the agent (systemctl start, or POST /run on the launcher).
+
+    ``hint_run_id`` lets the dashboard pre-allocate a run_id so the
+    in-flight run row created on /api/runs/trigger and the bash-emitted
+    run_start webhook converge on the same id. The launcher passes this
+    to run-manager.sh as ``STATION_RUN_ID_OVERRIDE``.
+    """
     if _mode() == "compose":
-        return await _launcher_call("POST", "/run")
+        body = {"hint_run_id": hint_run_id} if hint_run_id else None
+        return await _launcher_call("POST", "/run", json_body=body)
     return await systemctl("start", DEFAULT_AGENT_UNIT)
 
 

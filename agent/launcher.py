@@ -21,6 +21,7 @@ from pathlib import Path
 
 import httpx
 from fastapi import FastAPI, Header, HTTPException
+from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -146,21 +147,18 @@ def stop(x_launcher_token: str | None = Header(default=None)) -> dict:
     return {"status": "stopping", "pid": pid}
 
 
-@app.post("/run")
-def trigger(x_launcher_token: str | None = Header(default=None)) -> dict:
-    """Spawn run-manager.sh detached. Returns once the process is forked.
+class RunHint(BaseModel):
+    hint_run_id: str | None = None
 
-    Before spawning, fetch a fresh GitHub App installation token from the
-    dashboard and export it as GH_TOKEN in the subprocess env. Lets the
-    `gh` CLI (and any tools that read GH_TOKEN) act as the App's
-    installation. If the dashboard isn't reachable or GitHub isn't
-    configured, the run still proceeds — the agent will fall back to
-    whatever auth gh already has (e.g. host bind mount on systemd).
+
+def _spawn_run_manager(hint_run_id: str | None = None) -> dict:
+    """Fork run-manager.sh detached and return immediately.
+
+    ``hint_run_id`` is propagated to the subprocess as
+    ``STATION_RUN_ID_OVERRIDE`` so the bash script adopts the pre-allocated
+    run_id from the dashboard instead of generating its own.
     """
     global _current
-
-    if LAUNCHER_TOKEN and x_launcher_token != LAUNCHER_TOKEN:
-        raise HTTPException(status_code=401, detail="invalid or missing launcher token")
 
     if _current is not None and _current.poll() is None:
         raise HTTPException(
@@ -195,6 +193,12 @@ def trigger(x_launcher_token: str | None = Header(default=None)) -> dict:
     # longer.
     env.setdefault("CLAUDE_CODE_STREAM_CLOSE_TIMEOUT", "1800000")
 
+    # Propagate the pre-allocated run_id hint so run-manager.sh adopts it
+    # via STATION_RUN_ID_OVERRIDE, converging on the placeholder row the
+    # dashboard already inserted.
+    if hint_run_id:
+        env["STATION_RUN_ID_OVERRIDE"] = hint_run_id
+
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     log_path = LOG_DIR / "launcher.out"
     log_fh = log_path.open("ab")
@@ -208,9 +212,36 @@ def trigger(x_launcher_token: str | None = Header(default=None)) -> dict:
         cwd=WORKDIR,
         env=env,
     )
-    logger.info("Spawned run-manager.sh pid=%s, logging to %s, app_auth=%s",
-                _current.pid, log_path, "yes" if gh_token else "no")
+    logger.info("Spawned run-manager.sh pid=%s, logging to %s, app_auth=%s, hint_run_id=%s",
+                _current.pid, log_path, "yes" if gh_token else "no",
+                hint_run_id or "none")
     return {"status": "triggered", "pid": _current.pid, "log": str(log_path)}
+
+
+@app.post("/run")
+def trigger(
+    body: RunHint | None = None,
+    x_launcher_token: str | None = Header(default=None),
+) -> dict:
+    """Spawn run-manager.sh detached. Returns once the process is forked.
+
+    Accepts an optional JSON body ``{"hint_run_id": "run-..."}`` which is
+    propagated to run-manager.sh as ``STATION_RUN_ID_OVERRIDE`` so the
+    script adopts the pre-allocated run_id from the dashboard's placeholder
+    row instead of generating its own timestamp-based id.
+
+    Before spawning, fetch a fresh GitHub App installation token from the
+    dashboard and export it as GH_TOKEN in the subprocess env. Lets the
+    `gh` CLI (and any tools that read GH_TOKEN) act as the App's
+    installation. If the dashboard isn't reachable or GitHub isn't
+    configured, the run still proceeds — the agent will fall back to
+    whatever auth gh already has (e.g. host bind mount on systemd).
+    """
+    if LAUNCHER_TOKEN and x_launcher_token != LAUNCHER_TOKEN:
+        raise HTTPException(status_code=401, detail="invalid or missing launcher token")
+
+    hint = body.hint_run_id if body else None
+    return _spawn_run_manager(hint_run_id=hint)
 
 
 _current_analyst: subprocess.Popen | None = None
