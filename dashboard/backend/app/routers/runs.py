@@ -423,6 +423,14 @@ async def get_run(run_id: str, db: AsyncSession = Depends(get_db)):
     run = result.scalar_one_or_none()
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
+    # Historical rows advertise a per-run log path that the launcher
+    # never created (pre-hotfix bash always emitted
+    # LOG_DIR/run-<ID>.log even though stdout went to a shared
+    # launcher.out). Zero the field if the file is missing so the
+    # frontend LogViewer falls back to its "no log recorded" message
+    # instead of streaming `{"error": "File not found: …"}`.
+    if run.log_file and not os.path.isfile(run.log_file):
+        run.log_file = None
     return run
 
 

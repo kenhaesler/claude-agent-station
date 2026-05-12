@@ -83,16 +83,41 @@ async def test_trigger_forwards_launcher_token_header(client, monkeypatch):
 @pytest.mark.asyncio
 async def test_trigger_propagates_launcher_4xx(client, monkeypatch):
     """A 409 from the launcher (run already in progress) should reach the
-    operator with the same status code so the UI can show a clean message."""
+    operator with the same status code so the UI can show a clean message.
+
+    Since PR #364, a 409 also kicks off zombie-recovery: the dashboard
+    checks /status and the most-recent active Run's last_event_at. When
+    the heartbeat is fresh (<RUN_STALE_THRESHOLD_S), recovery declines
+    and the 409 propagates. We seed a fresh-heartbeat Run row so the
+    recovery path short-circuits and the test's stated invariant is
+    preserved."""
+    from datetime import datetime, timezone
+    from app.models import Run
+    from app.database import async_session
+
     monkeypatch.setenv("STATION_DEPLOY_MODE", "compose")
     monkeypatch.setenv("STATION_AGENT_LAUNCHER_URL", "http://agent:8421")
 
+    # Seed a fresh-heartbeat orchestrator Run row so recovery declines.
+    async with async_session() as db:
+        db.add(Run(
+            run_id="run-already-running",
+            status="running",
+            employee_index=0,
+            started_at=datetime.now(timezone.utc),
+            last_event_at=datetime.now(timezone.utc),
+        ))
+        await db.commit()
+
     with respx.mock() as mock:
         mock.post(LAUNCHER_URL).respond(409, text="A run is already in progress")
+        mock.get("http://agent:8421/status").respond(
+            200, json={"running": True, "pid": 42}
+        )
         resp = await client.post("/api/runs/trigger")
 
     assert resp.status_code == 409
-    assert "already in progress" in resp.json()["detail"]
+    assert "in progress" in resp.json()["detail"]
 
 
 @pytest.mark.asyncio
