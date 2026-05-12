@@ -1,7 +1,7 @@
 <script lang="ts">
   import { agentPresence, type ConversationEntry } from '../lib/agent-presence.svelte';
   import IdlePanel from '../components/mission/IdlePanel.svelte';
-  import { runs as runsStore } from '../lib/data-store.svelte';
+  import { runs as runsStore, refreshRuns, initStoreSSE } from '../lib/data-store.svelte';
   import {
     messageRun,
     triggerRun,
@@ -35,6 +35,14 @@
   let runPaused = $derived(!!agentPresence.pausedRuns[currentRunId]);
   let globalPause = $derived(agentPresence.globalPause);
   let pendingDecisions = $derived(agentPresence.pendingDecisionCount);
+
+  // Wire up SSE-driven cache invalidation (idempotent) and seed the
+  // initial runs list so the IdlePanel can show last-run summary
+  // immediately on mount. See PR #354 review.
+  $effect(() => {
+    initStoreSSE();
+    refreshRuns();
+  });
 
   // Issue #266 — surface the plan-review gate so operators can see when a
   // plan_only run is waiting on the manager (or has been approved/rejected).
@@ -388,7 +396,6 @@
         <span>Aut <b>{autonomyLabel(currentRun.mode)}</b></span>
       {:else}
         <span><span class="dot idle"></span><b>idle</b></span>
-        <button type="button" class="trigger-btn" onclick={handleTrigger}>Trigger Run</button>
       {/if}
       {#if pendingDecisions > 0}
         <span class="br">·</span>
