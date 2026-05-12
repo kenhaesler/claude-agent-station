@@ -56,6 +56,7 @@ from agent.run_control import (
     set_run_paused,
 )
 from agent.vision_analyst import _ensure_workspace
+from agent.webhook_emitter import emit
 
 logger = logging.getLogger(__name__)
 
@@ -2027,6 +2028,61 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
     return exit_code
 
 
+# ============================================================================
+# RunDriver — issue #349 sub-PR 5c
+# ============================================================================
+
+
+class RunDriver:
+    """Owns the full run lifecycle: emits run_start at entry, emits
+    run_complete at exit (always — via try/finally), delegating the
+    project iteration to agent.project_loop.
+
+    Replaces run-manager.sh's EXIT-trap webhook construct, which had
+    reliability holes (silent drops on interrupted bash). The Python
+    try/finally cannot be skipped short of SIGKILL.
+    """
+
+    def __init__(self, *, run_id: str, config_path: str,
+                 workspaces_dir: str) -> None:
+        self.run_id = run_id
+        self.config_path = config_path
+        self.workspaces_dir = workspaces_dir
+
+    def run(self) -> int:
+        """Execute the run. Returns process exit code.
+
+        Always emits run_start and run_complete. On uncaught exception
+        in iterate_projects, emits run_complete with status='error'
+        and returns 1; does not re-raise.
+        """
+        emit("run_start", run_id=self.run_id, payload={})
+
+        status = "completed"
+        exit_code = 0
+        error: str | None = None
+
+        try:
+            from agent.project_loop import iterate_projects
+            exit_code = iterate_projects(
+                self.run_id, self.config_path, self.workspaces_dir,
+            )
+            if exit_code != 0:
+                status = "failed"
+        except Exception as e:  # noqa: BLE001 — driver MUST NOT propagate
+            logger.exception("RunDriver: iterate_projects raised")
+            status = "error"
+            exit_code = 1
+            error = f"{type(e).__name__}: {e}"
+        finally:
+            payload: dict = {"status": status}
+            if error:
+                payload["error"] = error
+            emit("run_complete", run_id=self.run_id, payload=payload)
+
+        return exit_code
+
+
 # ── CLI Entry Point ────────────────────────────────────────────
 
 def parse_args() -> argparse.Namespace:
@@ -2034,6 +2090,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", required=True, help="Path to manager-config.json")
     parser.add_argument("--run-id", required=True, help="Unique run identifier")
     parser.add_argument("--workspaces-dir", required=True, help="Directory for project workspaces")
+    parser.add_argument(
+        "--driver",
+        action="store_true",
+        default=False,
+        help=(
+            "Run via RunDriver (issue #349 migration path): emits run_start/"
+            "run_complete via Python try/finally, delegates project iteration "
+            "to agent.project_loop (which currently shells to run-manager.sh "
+            "--internal-iterate). Use this flag during the bash→Python "
+            "migration; omit it for the existing Agent Teams orchestration path."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -2044,8 +2112,19 @@ def main() -> None:
     )
 
     args = parse_args()
-    config = load_config(args.config)
 
+    if args.driver:
+        # Migration path (issue #349): RunDriver owns run_start/run_complete;
+        # bash project iteration is called via agent.project_loop.
+        driver = RunDriver(
+            run_id=args.run_id,
+            config_path=args.config,
+            workspaces_dir=args.workspaces_dir,
+        )
+        sys.exit(driver.run())
+
+    # Existing Agent Teams orchestration path — unchanged.
+    config = load_config(args.config)
     exit_code = asyncio.run(orchestrate(config, args.run_id, args.workspaces_dir))
     sys.exit(exit_code)
 
