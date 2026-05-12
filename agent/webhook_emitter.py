@@ -35,6 +35,32 @@ DEFAULT_URL = "http://127.0.0.1:8420/api/webhook/run-event"
 RETRIES = 3
 BACKOFF_BASE = 0.5  # 0.5s, 1s, 2s
 
+# env var that carries the launcher base URL (e.g. http://localhost:8421).
+# When unset (systemd installs, CI without compose) the ping is silently
+# skipped. See #360.
+LAUNCHER_URL_ENV = "STATION_AGENT_LAUNCHER_URL"
+
+
+def _ping_launcher(timeout: float = 1.0) -> None:
+    """Best-effort heartbeat to the launcher's /webhook-tick. Silently
+    swallows all errors — the launcher may not be reachable (the bash
+    might be running outside compose mode) and that's fine."""
+    base = os.environ.get(LAUNCHER_URL_ENV, "")
+    if not base:
+        return
+    token = os.environ.get("STATION_LAUNCHER_TOKEN", "")
+    headers: dict[str, str] = {}
+    if token:
+        headers["X-Launcher-Token"] = token
+    try:
+        httpx.post(
+            f"{base.rstrip('/')}/webhook-tick",
+            headers=headers,
+            timeout=timeout,
+        )
+    except Exception:
+        pass
+
 
 def _url() -> str:
     return os.environ.get("STATION_WEBHOOK_URL", DEFAULT_URL)
@@ -56,6 +82,10 @@ def emit(event: str, *, run_id: str, payload: dict[str, Any] | None = None) -> N
 
     Does not raise on final failure — the orchestrator should not be
     killed by a dashboard outage. The failure is logged.
+
+    After the retry loop (success or failure), pings the launcher's
+    /webhook-tick so the zombie reaper knows the subprocess is still
+    alive. See #360.
     """
     body: dict[str, Any] = {"event": event, "run_id": run_id}
     if payload:
@@ -66,11 +96,13 @@ def emit(event: str, *, run_id: str, payload: dict[str, Any] | None = None) -> N
         try:
             resp = httpx.post(_url(), json=body, headers=_headers(), timeout=10.0)
             if 200 <= resp.status_code < 300:
+                _ping_launcher()
                 return
             last_err = f"HTTP {resp.status_code}: {resp.text[:200]}"
             if 400 <= resp.status_code < 500:
                 logger.error("webhook_emitter: non-retryable %s for %s",
                              last_err, event)
+                _ping_launcher()
                 return
         except httpx.HTTPError as exc:
             last_err = f"transport error: {exc}"
@@ -78,6 +110,7 @@ def emit(event: str, *, run_id: str, payload: dict[str, Any] | None = None) -> N
             time.sleep(BACKOFF_BASE * (2 ** attempt))
     logger.error("webhook_emitter: gave up after %d attempts (%s) for %s",
                  RETRIES, last_err, event)
+    _ping_launcher()
 
 
 def _cli() -> int:

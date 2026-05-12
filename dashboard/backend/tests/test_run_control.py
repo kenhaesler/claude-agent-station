@@ -343,3 +343,164 @@ async def test_trigger_run_inserts_pending_placeholder(client):
         )).scalars().all()
         assert len(rows) == 1
         assert rows[0].status == "pending"
+
+
+# --- Zombie subprocess auto-recovery on 409 (#360 option 3) ----------------
+
+
+@pytest.mark.asyncio
+async def test_trigger_recovers_from_zombie_subprocess(setup_db):
+    """When the launcher reports 409 and the dashboard's last_event_at is
+    stale, start_agent_service force-stops and retries. #360 option 3."""
+    from datetime import datetime, timedelta, timezone
+    from unittest.mock import patch
+    from app.models import Run
+    from app.services import service_control
+
+    # Seed a stale run row (last_event_at > 60s ago)
+    async with async_session() as db:
+        db.add(Run(
+            run_id="run-zombie-target",
+            status="running",
+            started_at=datetime.now(timezone.utc) - timedelta(minutes=5),
+            last_event_at=datetime.now(timezone.utc) - timedelta(minutes=5),
+        ))
+        await db.commit()
+
+    # Mock the launcher conversation:
+    #   1st /run → 409
+    #   /status → running=True
+    #   /stop → 200
+    #   /status (poll) → running=False
+    #   2nd /run → 200
+    calls: list[tuple[str, str]] = []
+
+    async def fake_launcher_call(method: str, path: str, json_body=None) -> dict:
+        calls.append((method, path))
+        status_call_count = sum(1 for m, p in calls if p == "/status")
+        if path == "/run" and len(calls) == 1:
+            return {"success": False, "status_code": 409,
+                    "detail": "A run is already in progress (pid=42)"}
+        if path == "/status" and status_call_count == 1:
+            return {"success": True, "running": True, "pid": 42}
+        if path == "/stop":
+            return {"success": True, "detail": "stopped"}
+        if path == "/status":
+            return {"success": True, "running": False}
+        if path == "/run":
+            return {"success": True, "detail": "accepted", "status_code": 200}
+        return {"success": False, "error": f"unexpected call: {method} {path}"}
+
+    with patch("app.services.service_control._launcher_call",
+               side_effect=fake_launcher_call):
+        with patch.dict("os.environ", {"STATION_DEPLOY_MODE": "compose"}):
+            result = await service_control.start_agent_service(
+                hint_run_id="run-zombie-target-v2"
+            )
+
+    assert result.get("success") is True
+    # Verify the recovery dance happened
+    paths_called = [p for _, p in calls]
+    assert paths_called.count("/run") == 2   # initial + retry
+    assert "/stop" in paths_called           # zombie was killed
+
+
+@pytest.mark.asyncio
+async def test_trigger_propagates_409_when_run_is_actually_active(setup_db):
+    """When the dashboard's last_event_at is FRESH, the 409 must
+    propagate — the run is really running. #360 option 3."""
+    from datetime import datetime, timezone
+    from unittest.mock import patch
+    from app.models import Run
+    from app.services import service_control
+
+    async with async_session() as db:
+        db.add(Run(
+            run_id="run-actually-active",
+            status="running",
+            started_at=datetime.now(timezone.utc),
+            last_event_at=datetime.now(timezone.utc),
+        ))
+        await db.commit()
+
+    async def fake_launcher_call(method: str, path: str, json_body=None) -> dict:
+        if path == "/run":
+            return {"success": False, "status_code": 409,
+                    "detail": "A run is already in progress"}
+        if path == "/status":
+            return {"success": True, "running": True, "pid": 42}
+        return {"success": True}
+
+    with patch("app.services.service_control._launcher_call",
+               side_effect=fake_launcher_call):
+        with patch.dict("os.environ", {"STATION_DEPLOY_MODE": "compose"}):
+            result = await service_control.start_agent_service(hint_run_id="x")
+
+    assert result.get("success") is False
+    assert result.get("status_code") == 409
+    assert "in progress" in result.get("error", "")
+
+
+@pytest.mark.asyncio
+async def test_recovery_targets_orchestrator_not_fresh_teammate(setup_db):
+    """R3: In Agent Teams mode the launcher's _current is always the
+    orchestrator (employee_index=0, started first). If a teammate row has
+    a fresh heartbeat but the orchestrator row is stale, recovery must
+    declare the orchestrator a zombie and force-stop — not be fooled by
+    the fresh teammate. #360 R3."""
+    from datetime import datetime, timedelta, timezone
+    from unittest.mock import patch
+    from app.models import Run
+    from app.services import service_control
+
+    now = datetime.now(timezone.utc)
+
+    async with async_session() as db:
+        # Orchestrator run: stale heartbeat (> RUN_STALE_THRESHOLD_S ago)
+        db.add(Run(
+            run_id="run-orch-stale",
+            status="running",
+            employee_index=0,
+            started_at=now - timedelta(minutes=10),
+            last_event_at=now - timedelta(minutes=5),
+        ))
+        # Teammate run: fresh heartbeat (should NOT prevent recovery)
+        db.add(Run(
+            run_id="run-orch-stale-e1",
+            status="running",
+            employee_index=1,
+            started_at=now - timedelta(minutes=9),
+            last_event_at=now,  # just now
+        ))
+        await db.commit()
+
+    calls: list[tuple[str, str]] = []
+
+    async def fake_launcher_call(method: str, path: str, json_body=None) -> dict:
+        calls.append((method, path))
+        status_call_count = sum(1 for m, p in calls if p == "/status")
+        if path == "/run" and len(calls) == 1:
+            return {"success": False, "status_code": 409,
+                    "detail": "A run is already in progress (pid=77)"}
+        if path == "/status" and status_call_count == 1:
+            return {"success": True, "running": True, "pid": 77}
+        if path == "/stop":
+            return {"success": True, "detail": "stopped"}
+        if path == "/status":
+            return {"success": True, "running": False}
+        if path == "/run":
+            return {"success": True, "detail": "accepted", "status_code": 200}
+        return {"success": False, "error": f"unexpected call: {method} {path}"}
+
+    with patch("app.services.service_control._launcher_call",
+               side_effect=fake_launcher_call):
+        with patch.dict("os.environ", {"STATION_DEPLOY_MODE": "compose"}):
+            result = await service_control.start_agent_service(
+                hint_run_id="run-new-run"
+            )
+
+    # Recovery must have fired (zombie reaped and trigger retried)
+    assert result.get("success") is True, f"expected success, got: {result}"
+    paths_called = [p for _, p in calls]
+    assert paths_called.count("/run") == 2, "should have retried /run after stop"
+    assert "/stop" in paths_called, "orchestrator zombie should have been stopped"

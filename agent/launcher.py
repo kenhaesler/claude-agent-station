@@ -12,11 +12,13 @@ default) — see :mod:`app.services.service_control` for the dispatch.
 
 from __future__ import annotations
 
+import asyncio
 import glob
 import logging
 import os
 import shutil
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
@@ -66,6 +68,17 @@ def _fetch_gh_token() -> str | None:
 # without --workers; do not change that without reworking state to be shared.
 app = FastAPI(title="claude-agent-station launcher")
 _current: subprocess.Popen | None = None
+
+# Last time we observed a webhook event for the active subprocess. Used by
+# the zombie-reaper task to decide if a still-alive subprocess has gone
+# unproductive. None when no run is active. See #360.
+_last_webhook_at: datetime | None = None
+
+# Reap subprocesses whose webhook stream has gone silent for this many
+# seconds. Generous to avoid false positives during legitimate quiet
+# stretches (e.g. `gh issue list` on a slow network). See #360.
+ZOMBIE_TIMEOUT_SECONDS = int(os.environ.get("STATION_LAUNCHER_ZOMBIE_TIMEOUT_S", "120"))
+ZOMBIE_CHECK_INTERVAL_SECONDS = 30
 
 
 def _ensure_claude_config() -> None:
@@ -133,7 +146,7 @@ def stop(x_launcher_token: str | None = Header(default=None)) -> dict:
     Returns 409 if no run is in flight. The dashboard's service_control
     module calls this in compose mode where ``systemctl stop`` is unavailable.
     """
-    global _current
+    global _current, _last_webhook_at
 
     if LAUNCHER_TOKEN and x_launcher_token != LAUNCHER_TOKEN:
         raise HTTPException(status_code=401, detail="invalid or missing launcher token")
@@ -143,8 +156,89 @@ def stop(x_launcher_token: str | None = Header(default=None)) -> dict:
 
     pid = _current.pid
     _current.terminate()
+    _current = None
+    _last_webhook_at = None
     logger.info("Sent SIGTERM to run-manager.sh pid=%s", pid)
     return {"status": "stopping", "pid": pid}
+
+
+@app.post("/webhook-tick")
+async def webhook_tick(
+    x_launcher_token: str | None = Header(None, alias="X-Launcher-Token"),
+) -> dict:
+    """Called by agent/webhook_emitter.py on every webhook emit. Bumps
+    the launcher's heartbeat clock so the zombie reaper can tell a
+    productive subprocess from one stuck in a hung Claude CLI call.
+    """
+    global _last_webhook_at
+    if LAUNCHER_TOKEN and x_launcher_token != LAUNCHER_TOKEN:
+        raise HTTPException(status_code=401, detail="invalid or missing launcher token")
+    if _current is None or _current.poll() is not None:
+        # No active run — silently ignore so a slow webhook from a
+        # just-finished subprocess doesn't error.
+        return {"ok": True, "stale": True}
+    _last_webhook_at = datetime.now(timezone.utc)
+    return {"ok": True}
+
+
+def _reap_once() -> None:
+    """One synchronous iteration of the zombie reaper logic.
+
+    Checks whether ``_current`` is alive but has had no webhook activity
+    for longer than ``ZOMBIE_TIMEOUT_SECONDS``. If so, sends SIGTERM
+    (then SIGKILL if needed) and clears module state. Synchronous so
+    it is straightforward to unit-test. See #360.
+    """
+    global _current, _last_webhook_at
+
+    if _current is None:
+        return
+    if _current.poll() is not None:
+        # Already exited via its own means; clear state.
+        _current = None
+        _last_webhook_at = None
+        return
+    if _last_webhook_at is None:
+        # No webhook ever arrived — can't measure silence yet.
+        return
+    age = (datetime.now(timezone.utc) - _last_webhook_at).total_seconds()
+    if age < ZOMBIE_TIMEOUT_SECONDS:
+        return
+    pid = _current.pid
+    logger.warning(
+        "_zombie_reaper: subprocess pid=%s alive but silent for %.0fs — terminating",
+        pid, age,
+    )
+    try:
+        _current.terminate()
+        try:
+            _current.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            logger.warning("_zombie_reaper: SIGTERM did not exit in 5s — SIGKILL pid=%s", pid)
+            _current.kill()
+            _current.wait(timeout=2)
+    except Exception:
+        logger.exception("_zombie_reaper: failed to terminate pid=%s", pid)
+    finally:
+        _current = None
+        _last_webhook_at = None
+
+
+async def _zombie_reaper() -> None:
+    """Background task: if _current is alive but its webhook stream has
+    been silent for more than ZOMBIE_TIMEOUT_SECONDS, send SIGTERM,
+    wait, then SIGKILL if needed. Clears _current. See #360."""
+    while True:
+        await asyncio.sleep(ZOMBIE_CHECK_INTERVAL_SECONDS)
+        try:
+            _reap_once()
+        except Exception:
+            logger.exception("_zombie_reaper: unexpected error")
+
+
+@app.on_event("startup")
+async def _start_reaper() -> None:
+    asyncio.create_task(_zombie_reaper())
 
 
 class RunHint(BaseModel):
@@ -158,7 +252,7 @@ def _spawn_run_manager(hint_run_id: str | None = None) -> dict:
     ``STATION_RUN_ID_OVERRIDE`` so the bash script adopts the pre-allocated
     run_id from the dashboard instead of generating its own.
     """
-    global _current
+    global _current, _last_webhook_at
 
     if _current is not None and _current.poll() is None:
         raise HTTPException(
@@ -212,6 +306,7 @@ def _spawn_run_manager(hint_run_id: str | None = None) -> dict:
         cwd=WORKDIR,
         env=env,
     )
+    _last_webhook_at = datetime.now(timezone.utc)
     logger.info("Spawned run-manager.sh pid=%s, logging to %s, app_auth=%s, hint_run_id=%s",
                 _current.pid, log_path, "yes" if gh_token else "no",
                 hint_run_id or "none")
