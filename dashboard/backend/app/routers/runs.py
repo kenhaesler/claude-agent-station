@@ -446,6 +446,10 @@ async def get_run_full_context(run_id: str, db: AsyncSession = Depends(get_db)):
     run = result.scalar_one_or_none()
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
+    # Same defensive zero of log_file as GET /{id} — historical rows
+    # advertised a phantom per-run path. See PR #365.
+    if run.log_file and not os.path.isfile(run.log_file):
+        run.log_file = None
 
     # 2. Fetch coordinator tasks for this run
     tasks_result = await db.execute(
