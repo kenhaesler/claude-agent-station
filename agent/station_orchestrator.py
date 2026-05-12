@@ -1238,10 +1238,14 @@ def post_webhook(config: dict, event: str, data: dict | None = None) -> None:
 def _ping_launcher_best_effort() -> None:
     """Bump the launcher's heartbeat clock so its _zombie_reaper sees
     that the Python orchestrator is making forward progress. Mirrors
-    agent.webhook_emitter._ping_launcher. Silent on all errors."""
-    base = os.environ.get("STATION_AGENT_LAUNCHER_URL", "")
-    if not base:
-        return
+    agent.webhook_emitter._ping_launcher. Silent on all errors.
+
+    Defaults to ``http://localhost:8421`` because the orchestrator
+    runs inside the agent container and the launcher listens there.
+    The env var is the override (e.g. for tests that run the
+    orchestrator outside the container).
+    """
+    base = os.environ.get("STATION_AGENT_LAUNCHER_URL") or "http://localhost:8421"
     token = os.environ.get("STATION_LAUNCHER_TOKEN", "")
     headers = {"X-Launcher-Token": token} if token else {}
     try:

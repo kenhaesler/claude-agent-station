@@ -105,6 +105,14 @@ services:
       # service by name on the compose network. Without this it falls back
       # to localhost, which inside the agent container is the agent itself.
       STATION_WEBHOOK_URL: http://dashboard:8420/api/webhook/run-event
+      # The orchestrator and webhook_emitter ping the launcher's
+      # /webhook-tick to bump _last_webhook_at so the zombie reaper sees
+      # live progress. Inside the agent container the launcher is at
+      # localhost — the dashboard's "agent" hostname is meaningless here.
+      # Without this var set, the heartbeat ping was silently skipped
+      # and the reaper killed every run > 120s (post-mortem of
+      # run-20260512T122255Z / run-20260512T123216Z).
+      STATION_AGENT_LAUNCHER_URL: http://localhost:8421
       # Shared secret authenticating dashboard → launcher calls. Both ends
       # read the same value from the environment / .env at the repo root.
       STATION_LAUNCHER_TOKEN: "${STATION_LAUNCHER_TOKEN:?STATION_LAUNCHER_TOKEN must be set (generate with: openssl rand -hex 32)}"

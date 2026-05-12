@@ -7,14 +7,27 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 
+def _dashboard_call(mock_post):
+    """Pick out the dashboard webhook call from the captured posts.
+    Since the emitter also pings the launcher's /webhook-tick (a
+    second POST), call_args alone now points to that ping, not the
+    dashboard. Use the call list and filter by URL substring."""
+    for call in mock_post.call_args_list:
+        url = call.args[0] if call.args else ""
+        if "/api/webhook/run-event" in url:
+            return call
+    raise AssertionError(f"no dashboard webhook call seen; saw: {[c.args for c in mock_post.call_args_list]}")
+
+
 def test_emit_run_start_posts_to_webhook():
     from agent.webhook_emitter import emit
     with patch("agent.webhook_emitter.httpx.post") as mock_post:
         mock_post.return_value = MagicMock(status_code=200, text="ok")
         emit("run_start", run_id="run-test-1", payload={"project": "x/y"})
         assert mock_post.called
-        url = mock_post.call_args.args[0]
-        body = mock_post.call_args.kwargs["json"]
+        call = _dashboard_call(mock_post)
+        url = call.args[0]
+        body = call.kwargs["json"]
         assert "/api/webhook/run-event" in url
         assert body["event"] == "run_start"
         assert body["run_id"] == "run-test-1"
@@ -49,13 +62,19 @@ def test_emit_does_not_raise_on_final_failure():
 
 
 def test_emit_does_not_retry_on_4xx():
-    """4xx is a client error; retrying won't help."""
+    """4xx is a client error; retrying won't help. (The emitter still
+    pings the launcher's /webhook-tick once at the end, hence two
+    total POSTs: one dashboard attempt + one launcher ping.)"""
     from agent.webhook_emitter import emit
-    with patch("agent.webhook_emitter.httpx.post",
-               side_effect=[MagicMock(status_code=400, text="bad")]) as mock_post:
+    with patch("agent.webhook_emitter.httpx.post") as mock_post:
+        # Dashboard 400 → no retry, no further dashboard calls.
+        # Launcher ping is a separate URL — fire-and-forget.
+        mock_post.return_value = MagicMock(status_code=400, text="bad")
         emit("run_complete", run_id="run-test-4",
              payload={"status": "completed"})
-        assert mock_post.call_count == 1
+    dashboard_calls = [c for c in mock_post.call_args_list
+                       if "/api/webhook/run-event" in (c.args[0] if c.args else "")]
+    assert len(dashboard_calls) == 1, "expected exactly one dashboard attempt"
 
 
 def test_emit_uses_x_webhook_token_header():
@@ -68,7 +87,7 @@ def test_emit_uses_x_webhook_token_header():
          patch("agent.webhook_emitter.httpx.post") as mock_post:
         mock_post.return_value = MagicMock(status_code=200, text="ok")
         emit("run_start", run_id="run-h1", payload={})
-        headers = mock_post.call_args.kwargs["headers"]
+        headers = _dashboard_call(mock_post).kwargs["headers"]
         assert "X-Webhook-Token" in headers
         assert headers["X-Webhook-Token"] == "s3cr3t"
         # The wrong name must NOT be present
@@ -86,7 +105,7 @@ def test_emit_omits_token_header_when_secret_unset():
         os.environ.pop("STATION_WEBHOOK_SECRET", None)
         mock_post.return_value = MagicMock(status_code=200, text="ok")
         emit("run_start", run_id="run-h2", payload={})
-        headers = mock_post.call_args.kwargs["headers"]
+        headers = _dashboard_call(mock_post).kwargs["headers"]
         assert "X-Webhook-Token" not in headers
 
 

@@ -44,10 +44,13 @@ LAUNCHER_URL_ENV = "STATION_AGENT_LAUNCHER_URL"
 def _ping_launcher(timeout: float = 1.0) -> None:
     """Best-effort heartbeat to the launcher's /webhook-tick. Silently
     swallows all errors — the launcher may not be reachable (the bash
-    might be running outside compose mode) and that's fine."""
-    base = os.environ.get(LAUNCHER_URL_ENV, "")
-    if not base:
-        return
+    might be running outside compose mode) and that's fine.
+
+    Defaults to ``http://localhost:8421`` because the emitter runs
+    inside the agent container alongside the launcher. The env var is
+    only the override (e.g. for tests).
+    """
+    base = os.environ.get(LAUNCHER_URL_ENV) or "http://localhost:8421"
     token = os.environ.get("STATION_LAUNCHER_TOKEN", "")
     headers: dict[str, str] = {}
     if token:

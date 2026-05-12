@@ -61,9 +61,12 @@ def test_post_webhook_pings_launcher_when_url_set(monkeypatch):
             assert kwargs.get("headers", {}).get("X-Launcher-Token") == "test-token"
 
 
-def test_post_webhook_skips_launcher_ping_when_url_unset(monkeypatch):
-    """When STATION_AGENT_LAUNCHER_URL is unset (systemd deployment),
-    the launcher ping path must be silently skipped."""
+def test_post_webhook_pings_default_localhost_when_url_unset(monkeypatch):
+    """When STATION_AGENT_LAUNCHER_URL is unset, the ping must still
+    fire against the in-container default (http://localhost:8421).
+    The original 'skip' design hid a real bug: in the compose deployment
+    the env var was missing on the agent side, so every Agent Teams run
+    silently failed to ping the launcher and got reaped after 120s."""
     from agent import station_orchestrator as so
 
     monkeypatch.delenv("STATION_AGENT_LAUNCHER_URL", raising=False)
@@ -87,8 +90,9 @@ def test_post_webhook_skips_launcher_ping_when_url_unset(monkeypatch):
             {"run_id": "run-test"},
         )
 
-    assert not any("/webhook-tick" in u for u in FakeClient.last_calls), \
-        f"unexpected webhook-tick call: {FakeClient.last_calls}"
+    ticks = [u for u in FakeClient.last_calls if "/webhook-tick" in u]
+    assert len(ticks) == 1, f"expected one /webhook-tick call, saw {FakeClient.last_calls}"
+    assert "localhost:8421" in ticks[0], f"expected localhost default, got: {ticks[0]}"
 
 
 def test_launcher_ping_swallows_errors(monkeypatch):
