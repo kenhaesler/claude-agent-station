@@ -27,8 +27,26 @@ Every variable below is prefixed with `STATION_`. They can also be placed in a `
 | `STATION_LAUNCHER_TOKEN` | _(none — required for compose)_ | Shared secret authenticating dashboard → agent-launcher calls. **`compose.yml` fails fast if unset.** Generate with `openssl rand -hex 32` and put it in `.env` at the repo root. Bare-metal (systemd) deployments only need this when the dashboard and agent run on different hosts. |
 | `STATION_AGENT_LAUNCHER_URL` | _(none — required for compose)_ | Base URL of the agent launcher HTTP service (e.g. `http://agent:8421`). Used by the dashboard's `service_control` module to start/stop runs and query launcher status in compose mode. Must include scheme and port; no trailing slash needed. |
 | `STATION_LAUNCHER_ZOMBIE_TIMEOUT_S` | `120` | Seconds of webhook silence after which the launcher's proactive zombie-reaper declares an alive subprocess stale and sends SIGTERM. Set generously to avoid false positives during legitimate quiet stretches (e.g. `gh issue list` on a slow network). See #360. |
+| `STATION_LAUNCHER_USE_BASH` | _(unset)_ | Panic-revert escape hatch added in #361. When set to `1`, the launcher falls back to spawning `run-manager.sh` directly instead of `python3 -m agent.station_orchestrator --driver`. Intended for one release as a roll-back tool while the Python driver is the production default; will be removed once a release cycle confirms stability. |
 | `STATION_RUN_STALE_THRESHOLD_S` | `60` | Seconds of webhook silence after which the dashboard's reactive recovery path (triggered on a user-initiated `/api/runs/trigger` that gets a 409) considers the orchestrator's run row stale enough to justify a force-stop. Half the launcher's reaper threshold because reactive recovery fires only on explicit user retries. |
 | `STATION_PROVIDER_KEYS_PATH` | `~/.claude-agent-station/provider_keys.json` | Path to the bring-your-own-key store for third-party LLM providers (OpenAI Codex, Google Gemini). Compose mounts this on `station-data` so saved keys survive container rebuilds. The file is chmod 0600 from creation; raw keys are never returned over the API. |
+
+## Launcher entry point (#361)
+
+The agent launcher's `/run` endpoint spawns the orchestrator as a detached subprocess. Since #361 the default is the Python driver, with the legacy bash retained behind a panic-revert flag:
+
+| Mode | Command spawned | Selected by |
+|------|-----------------|-------------|
+| Python driver (default) | `python3 -m agent.station_orchestrator --driver --run-id <id> --config <path> --workspaces-dir <path>` | `STATION_LAUNCHER_USE_BASH` is unset |
+| Legacy bash (panic-revert) | `bash $STATION_RUN_MANAGER` | `STATION_LAUNCHER_USE_BASH=1` |
+
+`RunDriver` owns the `run_start` / `run_complete` lifecycle via Python `try/finally`, replacing the bash EXIT-trap construct that had reliability holes. Payload parity with the bash path is preserved: `run_start` ships `project_count` / `max_concurrent` / `concurrent_group_id` / `log_file`, and `run_complete` ships `status` / `exit_code` / `tokens_input` / `tokens_output` / `tokens_total` / `turns` / `duration_ms`. Token/turn counters come from a small telemetry JSON dump (`<log_dir>/run-<RUN_ID>-telemetry.json`) that the bash shim writes from its EXIT trap when invoked with `--internal-iterate`; this hand-off goes away once #362's full project-loop port lands.
+
+Signal handling:
+
+- **SIGINT** (Ctrl-C, `docker compose kill --signal SIGINT`) raises `KeyboardInterrupt` via Python's default handler. The driver catches it and emits `run_complete` with `status="interrupted"`, exit code 130.
+- **SIGTERM** (launcher `/stop`, `_zombie_reaper`) is mapped to `KeyboardInterrupt` by a process-level signal handler the driver installs at startup, so it flows through the same interrupted path.
+- In both cases, `iterate_projects` forwards the signal to the bash child (10 s SIGTERM grace, then SIGKILL with a 2 s grace) so the bash EXIT trap can write its telemetry dump before the Python driver emits `run_complete`.
 
 ## Models
 
