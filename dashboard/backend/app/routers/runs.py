@@ -630,47 +630,63 @@ async def rescan_logs(db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/trigger")
-async def trigger_run():
-    """Trigger the agent service immediately.
+async def trigger_run(db: AsyncSession = Depends(get_db)):
+    """Trigger an agent run immediately and surface a pending placeholder.
 
-    Delegates to :mod:`app.services.service_control` which branches on
-    ``STATION_DEPLOY_MODE`` between ``sudo systemctl start`` (systemd
-    deployments) and ``POST /run`` on the agent launcher (compose).
+    Insertion order matters: the Run row must be committed and the
+    run_start SSE event must be published BEFORE the launcher is asked
+    to spawn run-manager.sh, so a fast dashboard sees the placeholder
+    before the bash takes seconds to enumerate projects.
     """
-    result = await service_control.start_agent_service()
+    from datetime import datetime, timezone
+    from app.models import Run
+
+    # Generate a stable run_id we hand to the launcher; run-manager.sh
+    # adopts it via STATION_RUN_ID_OVERRIDE so its own webhook_event
+    # "run_start" upgrades this same row instead of inserting a duplicate.
+    run_id = f"run-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
+
+    placeholder = Run(
+        run_id=run_id,
+        status="pending",
+        started_at=datetime.now(timezone.utc),
+    )
+    db.add(placeholder)
+    await db.commit()
+
+    await publish({
+        "type": "run_start",
+        "run_id": run_id,
+        "status": "pending",
+    })
+
+    result = await service_control.start_agent_service(hint_run_id=run_id)
     if not result.get("success"):
-        # Compose path may set status_code to a launcher 4xx (e.g. 409
-        # "already running") or 502 (unreachable); systemd path returns
-        # generic 500. Preserve the upstream status so the UI can show a
-        # precise message.
+        placeholder.status = "failed"
+        placeholder.finished_at = datetime.now(timezone.utc)
+        await db.commit()
+        error_detail = (
+            result.get("error")
+            or result.get("stderr")
+            or result.get("detail")
+            or result.get("raw")
+            or "trigger failed"
+        )
+        await publish({"type": "run_complete", "run_id": run_id,
+                       "status": "failed",
+                       "error": error_detail})
         status = result.get("status_code") or 500
         if status < 400:
             status = 500
-        # Detail precedence: structured error fields first, then any
-        # JSON ``detail`` from the launcher response, then ``raw`` for
-        # plain-text 4xx bodies (the launcher's HTTPException emits JSON
-        # but tests and some clients exercise the text path), then a
-        # generic fallback.
-        raise HTTPException(
-            status_code=status,
-            detail=(
-                result.get("error")
-                or result.get("stderr")
-                or result.get("detail")
-                or result.get("raw")
-                or "Failed to trigger run"
-            ),
-        )
-    # Choose the success message based on the actual deploy mode rather
-    # than sniffing for ``pid`` in the result. The previous heuristic would
-    # silently flip to the launcher message if a future systemd
-    # implementation surfaced MainPID.
+        raise HTTPException(status_code=status, detail=error_detail)
+
     is_compose = service_control.deploy_mode() == "compose"
     detail = result.get("detail") or (
         "agent launcher accepted run" if is_compose else "claude-agent.service started"
     )
     return {
         "status": "triggered",
+        "run_id": run_id,
         "detail": detail,
         **{k: v for k, v in result.items() if k not in {"success", "status_code"}},
     }

@@ -56,6 +56,39 @@ async def test_reap_stale_heartbeat(setup_db):
 
 
 @pytest.mark.asyncio
+async def test_reap_expired_pending_placeholder(setup_db):
+    """A pending placeholder older than PENDING_REAP_AGE_SECONDS gets
+    marked failed (issue #346 safety net)."""
+    from datetime import datetime, timedelta, timezone
+    from app.models import Run
+    from app.services.stale_run_reaper import (
+        reap_stale_runs, PENDING_REAP_AGE_SECONDS,
+    )
+    from sqlalchemy import select
+    from unittest.mock import patch, AsyncMock
+
+    too_old = datetime.now(timezone.utc) - timedelta(
+        seconds=PENDING_REAP_AGE_SECONDS + 30
+    )
+    async with async_session() as db:
+        db.add(Run(run_id="run-stale-pending", status="pending",
+                   started_at=too_old))
+        await db.commit()
+
+    with patch("app.services.stale_run_reaper.get_agent_status",
+               new_callable=AsyncMock,
+               return_value={"service_active": False}):
+        async with async_session() as db:
+            reaped = await reap_stale_runs(db)
+    assert reaped >= 1
+    async with async_session() as db:
+        row = (await db.execute(
+            select(Run).where(Run.run_id == "run-stale-pending")
+        )).scalar_one()
+        assert row.status == "failed"
+
+
+@pytest.mark.asyncio
 async def test_reap_stale_heartbeat_runs_when_launcher_alive(setup_db):
     """The whole point of the heartbeat reap: it must run EVEN when the
     launcher reports an active service, because that's the case where

@@ -316,3 +316,30 @@ async def test_expire_orphan_controls_is_idempotent(client, live_run):
 
     assert len(first) == 1
     assert second == []  # nothing left to expire
+
+
+@pytest.mark.asyncio
+async def test_trigger_run_inserts_pending_placeholder(client):
+    """POST /api/runs/trigger must insert a Run(status='pending') BEFORE
+    the launcher returns, so the dashboard shows feedback immediately
+    (issue #346). The launcher call is mocked so the placeholder is the
+    only side-effect we observe."""
+    from unittest.mock import patch, AsyncMock
+    from app.models import Run
+    from sqlalchemy import select
+
+    with patch("app.routers.runs.service_control.start_agent_service",
+               new_callable=AsyncMock,
+               return_value={"success": True, "detail": "accepted",
+                             "status_code": 200}):
+        resp = await client.post("/api/runs/trigger")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body.get("run_id", "").startswith("run-")
+
+    async with async_session() as db:
+        rows = (await db.execute(
+            select(Run).where(Run.run_id == body["run_id"])
+        )).scalars().all()
+        assert len(rows) == 1
+        assert rows[0].status == "pending"

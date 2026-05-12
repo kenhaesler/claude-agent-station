@@ -42,6 +42,12 @@ UNKNOWN_RUN_REAP_AGE_MINUTES = 30
 # issue #348.
 ACTIVE_HEARTBEAT_TIMEOUT_SECONDS = 120
 
+# Pending placeholder rows that never advanced to 'running' within this
+# window — the bash never picked up the hint, or the launcher accepted
+# the call but failed before run_start — are reaped as failed.
+# See issue #346.
+PENDING_REAP_AGE_SECONDS = 90
+
 # Statuses we consider "still active" — rows in any of these states whose
 # orchestrator is dead are candidates for reaping.  ``unknown`` is included
 # only when the row is older than ``UNKNOWN_RUN_REAP_AGE_MINUTES``.
@@ -111,6 +117,41 @@ async def _reap_by_heartbeat(db: AsyncSession) -> int:
     return len(stale)
 
 
+async def _reap_pending_placeholders(db: AsyncSession) -> int:
+    """Reap ``pending`` placeholder rows that never advanced to ``running``
+    within :data:`PENDING_REAP_AGE_SECONDS`.
+
+    Runs unconditionally — pending rows are stale regardless of whether the
+    service is active, because the bash may have adopted a different run_id
+    or failed silently after the launcher accepted the POST.
+
+    Returns the number of rows reaped. Does not commit; caller is responsible.
+    """
+    cutoff_pending = datetime.now(timezone.utc) - timedelta(
+        seconds=PENDING_REAP_AGE_SECONDS
+    )
+    pending_result = await db.execute(
+        select(Run).where(
+            Run.status == "pending",
+            Run.started_at < cutoff_pending,
+        )
+    )
+    pending_rows = pending_result.scalars().all()
+    for r in pending_rows:
+        r.status = "failed"
+        r.finished_at = datetime.now(timezone.utc)
+        logger.info(
+            "Reaped expired pending placeholder %s (started %s)",
+            r.run_id,
+            r.started_at,
+        )
+        await event_bus_publish({"type": "run_complete",
+                                 "run_id": r.run_id,
+                                 "status": "failed",
+                                 "error": "pending placeholder expired"})
+    return len(pending_rows)
+
+
 async def reap_stale_runs(db: AsyncSession) -> int:
     """Mark orphaned 'running' runs as 'interrupted' if the agent service is dead.
 
@@ -121,13 +162,17 @@ async def reap_stale_runs(db: AsyncSession) -> int:
     # existing service-inactive sweep below catches the dead-launcher case.
     heartbeat_reaped = await _reap_by_heartbeat(db)
 
+    # Pending placeholder reap runs unconditionally — the placeholder row
+    # may expire regardless of whether the service later starts or not.
+    pending_reaped = await _reap_pending_placeholders(db)
+
     # Check if the agent service is actually running
     svc = await get_agent_status()
     if svc.get("service_active"):
-        # Launcher reports a run alive — heartbeat may still have reaped
-        # rows whose orchestrator died silently. Commit and return.
+        # Launcher reports a run alive — heartbeat and pending sweeps may
+        # still have reaped rows. Commit and return.
         await db.commit()
-        return heartbeat_reaped
+        return heartbeat_reaped + pending_reaped
 
     # pgrep is a useful tie-breaker for manual orchestrator invocations
     # outside the systemd unit (developer testing on the host). It's
@@ -136,7 +181,7 @@ async def reap_stale_runs(db: AsyncSession) -> int:
     # latency to every reaper tick. Skip it in compose.
     if deploy_mode() == "systemd" and _is_orchestrator_process_alive():
         await db.commit()
-        return heartbeat_reaped  # Orchestrator process is alive — nothing more to reap
+        return heartbeat_reaped + pending_reaped  # Orchestrator process is alive — nothing more to reap
 
     # Service is inactive — find any runs still marked as 'running' /
     # 'reviewing', or stuck in 'unknown' for too long.  ``unknown`` rows are
@@ -166,10 +211,6 @@ async def reap_stale_runs(db: AsyncSession) -> int:
         )
     )
     stale_runs = result.scalars().all()
-
-    if not stale_runs:
-        await db.commit()
-        return heartbeat_reaped
 
     for run in stale_runs:
         old_status = run.status
@@ -242,4 +283,4 @@ async def reap_stale_runs(db: AsyncSession) -> int:
             _bypass_filter=True,
         )
 
-    return heartbeat_reaped + len(stale_runs)
+    return heartbeat_reaped + pending_reaped + len(stale_runs)
