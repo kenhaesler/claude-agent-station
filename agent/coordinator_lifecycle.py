@@ -5,6 +5,10 @@ tracked in process-local state, and an atexit handler finalizes any
 still-open tasks as 'orphaned' on process exit. This eliminates the
 zombie-task class of bugs (issue #345 + #349).
 
+Note: atexit fires on normal exits and on unhandled exceptions, but NOT on
+SIGKILL. The dashboard's stale-run reaper is the second line of defense for
+that case (#345).
+
 Usage (Python):
     from agent.coordinator_lifecycle import create_task, complete_task
     tid = create_task(run_id="r-1", project_repo="x/y",
@@ -45,11 +49,12 @@ def _base_url() -> str:
 
 def _headers() -> dict[str, str]:
     h = {"Content-Type": "application/json"}
-    secret = os.environ.get("STATION_WEBHOOK_SECRET", "")
-    if secret:
-        # Matches the dashboard router's expected header name; same
-        # contract as agent/webhook_emitter.py.
-        h["X-Webhook-Token"] = secret
+    # /api/coordinator/* is gated by Depends(verify_api_key) — Bearer auth.
+    # The X-Webhook-Token used by /api/webhook/* is NOT accepted here. See
+    # agent/plan_review_gate.py for the canonical pattern.
+    api_key = os.environ.get("STATION_API_KEY", "")
+    if api_key:
+        h["Authorization"] = f"Bearer {api_key}"
     return h
 
 

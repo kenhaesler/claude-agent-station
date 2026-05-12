@@ -84,3 +84,38 @@ def test_fail_task_uses_failed_status():
         body = mock_put.call_args.kwargs["json"]
         assert body["status"] == "failed"
         assert body["result_summary"] == "boom"
+
+
+def test_uses_bearer_auth_header():
+    """The dashboard's /api/coordinator/* router is Bearer-gated; the
+    X-Webhook-Token header is NOT accepted there. PR #355 review."""
+    import os
+    from unittest.mock import patch, MagicMock
+    from agent.coordinator_lifecycle import create_task
+    with patch.dict(os.environ, {"STATION_API_KEY": "k3y"}, clear=False), \
+         patch("agent.coordinator_lifecycle.httpx.post") as mock_post:
+        resp = MagicMock(status_code=201)
+        resp.json.return_value = {"id": "t-auth"}
+        mock_post.return_value = resp
+        create_task(run_id="run-auth", project_repo="x/y",
+                    issue_number=1, employee_index=0)
+        headers = mock_post.call_args.kwargs["headers"]
+        assert headers["Authorization"] == "Bearer k3y"
+        # X-Webhook-Token must NOT be present on coordinator endpoints
+        assert "X-Webhook-Token" not in headers
+
+
+def test_omits_auth_header_when_api_key_unset():
+    """No STATION_API_KEY → no Authorization header. Open-access dev mode."""
+    import os
+    from unittest.mock import patch, MagicMock
+    from agent.coordinator_lifecycle import create_task
+    with patch("agent.coordinator_lifecycle.httpx.post") as mock_post:
+        os.environ.pop("STATION_API_KEY", None)
+        resp = MagicMock(status_code=201)
+        resp.json.return_value = {"id": "t-no-auth"}
+        mock_post.return_value = resp
+        create_task(run_id="run-no-auth", project_repo="x/y",
+                    issue_number=1, employee_index=0)
+        headers = mock_post.call_args.kwargs["headers"]
+        assert "Authorization" not in headers
