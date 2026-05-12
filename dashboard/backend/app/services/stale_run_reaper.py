@@ -145,10 +145,14 @@ async def _reap_pending_placeholders(db: AsyncSession) -> int:
             r.run_id,
             r.started_at,
         )
-        await event_bus_publish({"type": "run_complete",
-                                 "run_id": r.run_id,
-                                 "status": "failed",
-                                 "error": "pending placeholder expired"})
+        await event_bus_publish({
+            "type": "run_complete",
+            "data": {
+                "run_id": r.run_id,
+                "status": "failed",
+                "error": "pending placeholder expired",
+            },
+        })
     return len(pending_rows)
 
 

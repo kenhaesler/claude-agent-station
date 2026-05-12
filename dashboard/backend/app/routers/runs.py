@@ -638,9 +638,6 @@ async def trigger_run(db: AsyncSession = Depends(get_db)):
     to spawn run-manager.sh, so a fast dashboard sees the placeholder
     before the bash takes seconds to enumerate projects.
     """
-    from datetime import datetime, timezone
-    from app.models import Run
-
     # Generate a stable run_id we hand to the launcher; run-manager.sh
     # adopts it via STATION_RUN_ID_OVERRIDE so its own webhook_event
     # "run_start" upgrades this same row instead of inserting a duplicate.
@@ -656,8 +653,10 @@ async def trigger_run(db: AsyncSession = Depends(get_db)):
 
     await publish({
         "type": "run_start",
-        "run_id": run_id,
-        "status": "pending",
+        "data": {
+            "run_id": run_id,
+            "status": "pending",
+        },
     })
 
     result = await service_control.start_agent_service(hint_run_id=run_id)
@@ -672,9 +671,14 @@ async def trigger_run(db: AsyncSession = Depends(get_db)):
             or result.get("raw")
             or "trigger failed"
         )
-        await publish({"type": "run_complete", "run_id": run_id,
-                       "status": "failed",
-                       "error": error_detail})
+        await publish({
+            "type": "run_complete",
+            "data": {
+                "run_id": run_id,
+                "status": "failed",
+                "error": error_detail,
+            },
+        })
         status = result.get("status_code") or 500
         if status < 400:
             status = 500
