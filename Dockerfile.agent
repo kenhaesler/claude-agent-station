@@ -32,6 +32,13 @@ RUN pip install --no-cache-dir -r /tmp/requirements.txt
 COPY agent/ /app/agent/
 COPY dashboard/backend/ /app/dashboard/backend/
 
+# Install the gh-refresh-wrapper as /usr/local/bin/gh so it shadows the
+# real binary in PATH. The wrapper auto-refreshes GH_TOKEN on 401 by
+# fetching a fresh App-installation token from the dashboard. Without
+# this, long multi-teammate runs burn manager turns debugging stale
+# tokens (see diagnosis of run-20260512T085006Z).
+RUN install -m 0755 /app/agent/scripts/gh-refresh-wrapper.sh /usr/local/bin/gh
+
 ENV STATION_DB_PATH=/var/lib/claude-agent-station/station.db \
     STATION_LOG_DIR=/var/log/claude-agent \
     STATION_WORKSPACES=/var/lib/claude-agent-station/workspaces \
