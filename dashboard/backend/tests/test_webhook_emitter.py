@@ -88,3 +88,69 @@ def test_emit_omits_token_header_when_secret_unset():
         emit("run_start", run_id="run-h2", payload={})
         headers = mock_post.call_args.kwargs["headers"]
         assert "X-Webhook-Token" not in headers
+
+
+def test_module_importable_from_repo_root_via_pythonpath():
+    """Regression test for the run-manager.sh PYTHONPATH hotfix (issue #349).
+
+    PR #352 introduced webhook_event() with PYTHONPATH=$SCRIPT_DIR/.. which
+    resolves to agent/. Python needs the PARENT of agent/ (the repo root) to
+    resolve `import agent`. On systemd deployments the cwd is the workspaces
+    dir (not the repo root), so the import fails silently inside `|| true`,
+    dropping every bash-emitted webhook event.
+
+    This test simulates the corrected bash wrapper: PYTHONPATH=$SCRIPT_DIR/../..
+    (two levels up from agent/scripts/), cwd=/tmp, and asserts the module is
+    importable.
+    """
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    # SCRIPT_DIR is agent/scripts; two levels up reaches the repo root
+    script_dir = Path(__file__).resolve().parents[3] / "agent" / "scripts"
+    pythonpath = str((script_dir / ".." / "..").resolve())
+
+    env = {**os.environ, "PYTHONPATH": pythonpath}
+    result = subprocess.run(
+        [sys.executable, "-c", "import agent.webhook_emitter; print('ok')"],
+        cwd="/tmp",  # NOT the repo root — simulates systemd deployment cwd
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, (
+        f"agent.webhook_emitter not importable from cwd=/tmp with "
+        f"PYTHONPATH={pythonpath}; stderr: {result.stderr}"
+    )
+    assert "ok" in result.stdout
+
+
+def test_old_pythonpath_fails_from_arbitrary_cwd():
+    """Negative regression: the pre-fix PYTHONPATH ($SCRIPT_DIR/..) must NOT
+    allow `import agent` from an arbitrary cwd. This documents that the
+    one-level path was wrong and the fix is necessary."""
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    # Pre-fix: SCRIPT_DIR/.. resolves to agent/ itself, which doesn't contain
+    # an `agent` package to import.
+    script_dir = Path(__file__).resolve().parents[3] / "agent" / "scripts"
+    wrong_pythonpath = str((script_dir / "..").resolve())
+
+    env = {**os.environ, "PYTHONPATH": wrong_pythonpath}
+    result = subprocess.run(
+        [sys.executable, "-c", "import agent.webhook_emitter; print('ok')"],
+        cwd="/tmp",  # NOT the repo root
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    # With the wrong path and a non-repo cwd, the import must fail.
+    assert result.returncode != 0, (
+        "Expected import to fail with pre-fix PYTHONPATH but it succeeded; "
+        "the test environment may have agent/ on sys.path via other means."
+    )
