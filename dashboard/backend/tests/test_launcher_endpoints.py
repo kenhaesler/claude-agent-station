@@ -123,8 +123,14 @@ def test_stop_auth_check_precedes_state_check(monkeypatch):
 
 def test_run_passes_gh_token_via_env_when_dashboard_provides_one(monkeypatch, tmp_path):
     """The launcher fetches a fresh installation token from the dashboard
-    before spawning run-manager.sh and exports it as GH_TOKEN."""
+    before spawning the entry point and exports it as GH_TOKEN.
+
+    Exercises the bash panic-revert path (#361 retains
+    STATION_LAUNCHER_USE_BASH=1 for one release as an escape hatch). A
+    parallel test below exercises the new Python driver default.
+    """
     monkeypatch.setenv("STATION_LAUNCHER_TOKEN", "")
+    monkeypatch.setenv("STATION_LAUNCHER_USE_BASH", "1")
     # Provide a fake script that just records its env to a file
     sentinel = tmp_path / "env.out"
     fake_script = tmp_path / "fake-run-manager.sh"
@@ -170,3 +176,94 @@ env | grep '^GH_TOKEN=' > {sentinel}
 
     assert sentinel.exists(), "spawned script never ran"
     assert "GH_TOKEN=ghs_test_inject" in sentinel.read_text()
+
+
+def test_run_default_spawns_python_driver_with_required_args(monkeypatch, tmp_path):
+    """#361: by default the launcher spawns ``python3 -m agent.station_orchestrator
+    --driver`` with --run-id / --config / --workspaces-dir set. We replace
+    Popen with a recorder so the test doesn't actually fork python.
+    """
+    monkeypatch.setenv("STATION_LAUNCHER_TOKEN", "")
+    monkeypatch.delenv("STATION_LAUNCHER_USE_BASH", raising=False)
+    monkeypatch.setenv("STATION_DASHBOARD_BASE_URL", "http://test")
+    monkeypatch.setenv("STATION_LOG_DIR", str(tmp_path / "logs"))
+    monkeypatch.setenv("STATION_WORKDIR", str(tmp_path))
+    monkeypatch.setenv("STATION_CONFIG", str(tmp_path / "cfg.json"))
+    monkeypatch.setenv("STATION_WORKSPACES", str(tmp_path / "ws"))
+
+    import importlib
+
+    import agent.launcher as launcher_mod
+    importlib.reload(launcher_mod)
+
+    recorded: dict = {}
+
+    class _FakeProc:
+        pid = 9999
+        def poll(self):
+            return None  # pretend it's still running for /status
+
+    def _record_popen(cmd, **kwargs):
+        recorded["cmd"] = cmd
+        recorded["env"] = kwargs.get("env", {})
+        return _FakeProc()
+
+    monkeypatch.setattr(launcher_mod.subprocess, "Popen", _record_popen)
+
+    from fastapi.testclient import TestClient
+    client = TestClient(launcher_mod.app)
+    resp = client.post("/run", json={"hint_run_id": "run-test-driver"})
+
+    assert resp.status_code == 200
+    cmd = recorded["cmd"]
+    # Python entry point, --driver flag present
+    assert cmd[1:4] == ["-m", "agent.station_orchestrator", "--driver"]
+    # --run-id propagates the hint verbatim (already prefixed)
+    assert "--run-id" in cmd
+    assert cmd[cmd.index("--run-id") + 1] == "run-test-driver"
+    # --config / --workspaces-dir wired from env
+    assert cmd[cmd.index("--config") + 1] == str(tmp_path / "cfg.json")
+    assert cmd[cmd.index("--workspaces-dir") + 1] == str(tmp_path / "ws")
+    # Webhook emitter knows how to ping the launcher
+    assert "STATION_AGENT_LAUNCHER_URL" in recorded["env"]
+
+
+def test_run_with_panic_revert_flag_still_spawns_bash(monkeypatch, tmp_path):
+    """STATION_LAUNCHER_USE_BASH=1 keeps the legacy bash path alive for
+    one release as a panic-revert escape hatch.
+    """
+    monkeypatch.setenv("STATION_LAUNCHER_TOKEN", "")
+    monkeypatch.setenv("STATION_LAUNCHER_USE_BASH", "1")
+    fake_script = tmp_path / "fake.sh"
+    fake_script.write_text("#!/bin/bash\nexit 0\n")
+    fake_script.chmod(0o755)
+    monkeypatch.setenv("STATION_RUN_MANAGER", str(fake_script))
+    monkeypatch.setenv("STATION_DASHBOARD_BASE_URL", "http://test")
+    monkeypatch.setenv("STATION_LOG_DIR", str(tmp_path / "logs"))
+    monkeypatch.setenv("STATION_WORKDIR", str(tmp_path))
+
+    import importlib
+
+    import agent.launcher as launcher_mod
+    importlib.reload(launcher_mod)
+
+    recorded: dict = {}
+
+    class _FakeProc:
+        pid = 8888
+        def poll(self):
+            return None
+
+    def _record_popen(cmd, **kwargs):
+        recorded["cmd"] = cmd
+        return _FakeProc()
+
+    monkeypatch.setattr(launcher_mod.subprocess, "Popen", _record_popen)
+
+    from fastapi.testclient import TestClient
+    client = TestClient(launcher_mod.app)
+    resp = client.post("/run")
+
+    assert resp.status_code == 200
+    assert recorded["cmd"][0] == "bash"
+    assert str(fake_script) in recorded["cmd"]

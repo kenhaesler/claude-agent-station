@@ -18,6 +18,7 @@ import logging
 import os
 import shutil
 import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -33,6 +34,20 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 RUN_MANAGER = Path(os.environ.get("STATION_RUN_MANAGER", "/app/agent/scripts/run-manager.sh"))
 LOG_DIR = Path(os.environ.get("STATION_LOG_DIR", "/var/log/claude-agent"))
 WORKDIR = os.environ.get("STATION_WORKDIR", "/app")
+# #361: launcher spawns python -m agent.station_orchestrator --driver by
+# default. Set STATION_LAUNCHER_USE_BASH=1 to fall back to the legacy bash
+# entry point — panic-revert escape hatch, intended to be removed after one
+# release cycle has confirmed the Python driver path is stable.
+USE_BASH_LAUNCHER = os.environ.get("STATION_LAUNCHER_USE_BASH", "") == "1"
+# Config + workspaces paths the Python driver needs as CLI args. The bash
+# read these from env directly (STATION_CONFIG, STATION_WORKSPACES); the
+# launcher now forwards them explicitly so the driver argparse is happy.
+STATION_CONFIG = os.environ.get(
+    "STATION_CONFIG", "/home/claude-agent/.claude/autonomous/manager-config.json"
+)
+STATION_WORKSPACES = os.environ.get(
+    "STATION_WORKSPACES", "/home/claude-agent/workspaces"
+)
 # Shared secret with the dashboard. When set, /run requires a matching
 # X-Launcher-Token header. When unset we accept anonymous calls but log a
 # warning at startup — defaulting to closed would break the bare-metal
@@ -174,10 +189,13 @@ def status() -> dict:
 
 @app.post("/stop")
 def stop(x_launcher_token: str | None = Header(default=None)) -> dict:
-    """Send SIGTERM to the running run-manager.sh, if any.
+    """Send SIGTERM to the running orchestrator subprocess, if any.
 
     Returns 409 if no run is in flight. The dashboard's service_control
-    module calls this in compose mode where ``systemctl stop`` is unavailable.
+    module calls this in compose mode where ``systemctl stop`` is
+    unavailable. The Python RunDriver (#361) maps SIGTERM to a
+    ``KeyboardInterrupt`` so the run finalizes as ``status="interrupted"``
+    rather than being killed mid-emit.
     """
     global _current, _last_webhook_at
 
@@ -191,7 +209,7 @@ def stop(x_launcher_token: str | None = Header(default=None)) -> dict:
     _current.terminate()
     _current = None
     _last_webhook_at = None
-    logger.info("Sent SIGTERM to run-manager.sh pid=%s", pid)
+    logger.info("Sent SIGTERM to orchestrator pid=%s", pid)
     return {"status": "stopping", "pid": pid}
 
 
@@ -274,11 +292,16 @@ class RunHint(BaseModel):
 
 
 def _spawn_run_manager(hint_run_id: str | None = None) -> dict:
-    """Fork run-manager.sh detached and return immediately.
+    """Fork the orchestrator detached and return immediately.
 
-    ``hint_run_id`` is propagated to the subprocess as
-    ``STATION_RUN_ID_OVERRIDE`` so the bash script adopts the pre-allocated
-    run_id from the dashboard instead of generating its own.
+    Default entry point is ``python3 -m agent.station_orchestrator --driver``
+    (#361). The legacy ``run-manager.sh`` path is retained behind
+    ``STATION_LAUNCHER_USE_BASH=1`` as a panic-revert escape hatch for one
+    release cycle.
+
+    ``hint_run_id`` is propagated as ``STATION_RUN_ID_OVERRIDE`` (bash path)
+    or as ``--run-id`` (Python path) so whichever entry point adopts the
+    pre-allocated run_id from the dashboard instead of minting its own.
     """
     global _current, _last_webhook_at
 
@@ -288,7 +311,7 @@ def _spawn_run_manager(hint_run_id: str | None = None) -> dict:
             detail=f"A run is already in progress (pid={_current.pid})",
         )
 
-    if not RUN_MANAGER.is_file():
+    if USE_BASH_LAUNCHER and not RUN_MANAGER.is_file():
         raise HTTPException(
             status_code=500,
             detail=f"run-manager.sh not found at {RUN_MANAGER}",
@@ -336,8 +359,34 @@ def _spawn_run_manager(hint_run_id: str | None = None) -> dict:
         log_path = LOG_DIR / "launcher.out"
     log_fh = log_path.open("ab")
 
+    # #361: production path is the Python driver. The legacy bash entry
+    # point is retained behind STATION_LAUNCHER_USE_BASH=1 for one release
+    # as a panic-revert escape hatch.
+    if USE_BASH_LAUNCHER:
+        cmd = ["bash", str(RUN_MANAGER)]
+        entry_kind = "run-manager.sh (legacy bash)"
+    else:
+        # The driver argparse requires --run-id; if no hint was supplied we
+        # mint one here so it lines up with the (legacy) bash fallback,
+        # which also generates a timestamp run_id when STATION_RUN_ID_OVERRIDE
+        # is empty.
+        driver_run_id = hint_run_id or "run-" + datetime.now(timezone.utc).strftime(
+            "%Y%m%dT%H%M%SZ"
+        )
+        cmd = [
+            sys.executable, "-m", "agent.station_orchestrator",
+            "--driver",
+            "--run-id", driver_run_id,
+            "--config", STATION_CONFIG,
+            "--workspaces-dir", STATION_WORKSPACES,
+        ]
+        entry_kind = "agent.station_orchestrator --driver"
+        # Make the launcher's base URL discoverable so the embedded webhook
+        # emitter can ping /webhook-tick from the driver process.
+        env.setdefault("STATION_AGENT_LAUNCHER_URL", "http://localhost:8421")
+
     _current = subprocess.Popen(
-        ["bash", str(RUN_MANAGER)],
+        cmd,
         stdout=log_fh,
         stderr=subprocess.STDOUT,
         stdin=subprocess.DEVNULL,
@@ -346,9 +395,12 @@ def _spawn_run_manager(hint_run_id: str | None = None) -> dict:
         env=env,
     )
     _last_webhook_at = datetime.now(timezone.utc)
-    logger.info("Spawned run-manager.sh pid=%s, logging to %s, app_auth=%s, hint_run_id=%s",
-                _current.pid, log_path, "yes" if gh_token else "no",
-                hint_run_id or "none")
+    logger.info(
+        "Spawned %s pid=%s, logging to %s, app_auth=%s, hint_run_id=%s",
+        entry_kind, _current.pid, log_path,
+        "yes" if gh_token else "no",
+        hint_run_id or "none",
+    )
     return {"status": "triggered", "pid": _current.pid, "log": str(log_path)}
 
 

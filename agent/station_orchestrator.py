@@ -18,6 +18,7 @@ import asyncio
 import json
 import logging
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -2140,8 +2141,32 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
 
 
 # ============================================================================
-# RunDriver — issue #349 sub-PR 5c
+# RunDriver — issue #349 sub-PR 5c, enriched in #361
 # ============================================================================
+
+
+@dataclass
+class RunTelemetry:
+    """Counters and identifiers attached to a run.
+
+    ``project_count`` / ``max_concurrent`` / ``concurrent_group_id`` /
+    ``log_file`` are derived from config at startup and shipped on
+    ``run_start``. ``tokens_*`` / ``turns`` are read back from the bash
+    telemetry dump after ``iterate_projects`` returns (the bash shim
+    in `--internal-iterate` mode writes them to a known path so the
+    Python driver can include them in ``run_complete`` without
+    re-extracting from stream files).
+    """
+
+    started_at: datetime
+    project_count: int = 0
+    max_concurrent: int = 1
+    concurrent_group_id: str = ""
+    log_file: str = ""
+    tokens_input: int = 0
+    tokens_output: int = 0
+    tokens_total: int = 0
+    turns: int = 0
 
 
 class RunDriver:
@@ -2152,22 +2177,147 @@ class RunDriver:
     Replaces run-manager.sh's EXIT-trap webhook construct, which had
     reliability holes (silent drops on interrupted bash). The Python
     try/finally cannot be skipped short of SIGKILL.
+
+    Payload parity with the bash path (issue #361):
+
+    - ``run_start``: ``project_count``, ``max_concurrent``,
+      ``concurrent_group_id``, ``log_file``.
+    - ``run_complete``: ``status``, ``exit_code``, ``tokens_input``,
+      ``tokens_output``, ``tokens_total``, ``turns``, ``duration_ms``.
+
+    Signal handling:
+
+    - SIGINT (Ctrl-C, ``docker compose kill --signal SIGINT``) raises
+      ``KeyboardInterrupt`` by Python default. We catch it and map to
+      ``status="interrupted"`` with exit code 130 (POSIX convention
+      for SIGINT-triggered exit).
+    - SIGTERM (``_zombie_reaper``, launcher ``/stop``) is mapped to
+      ``KeyboardInterrupt`` via a process-level signal handler so it
+      flows through the same ``status="interrupted"`` path.
     """
+
+    # Where the bash shim drops its telemetry on exit (#361). The Python
+    # driver reads this file after iterate_projects returns.
+    _LOG_DIR_ENV = "STATION_LOG_DIR"
+    _DEFAULT_LOG_DIR = "/var/log/claude-agent"
 
     def __init__(self, *, run_id: str, config_path: str,
                  workspaces_dir: str) -> None:
         self.run_id = run_id
         self.config_path = config_path
         self.workspaces_dir = workspaces_dir
+        self._clean_id = run_id.removeprefix("run-")
+        self._log_dir = os.environ.get(self._LOG_DIR_ENV, self._DEFAULT_LOG_DIR)
+        self.telemetry = self._init_telemetry()
+
+    def _init_telemetry(self) -> RunTelemetry:
+        try:
+            config = load_config(self.config_path)
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning("RunDriver: failed to load config for telemetry (%s) — "
+                           "run_start payload will use defaults", exc)
+            config = {}
+        projects = config.get("projects") or []
+        enabled = sum(1 for p in projects if p.get("enabled", True))
+        max_concurrent = (config.get("limits") or {}).get("max_concurrent_employees", 1)
+        return RunTelemetry(
+            started_at=datetime.now(timezone.utc),
+            project_count=enabled,
+            max_concurrent=int(max_concurrent or 1),
+            concurrent_group_id=f"group-{self._clean_id}",
+            log_file=str(Path(self._log_dir) / f"run-{self._clean_id}.log"),
+        )
+
+    def _wire_run_id(self) -> str:
+        # Webhook wire convention is ``run-<id>``. Be defensive in case the
+        # caller passed the raw timestamp without the prefix.
+        return self.run_id if self.run_id.startswith("run-") else f"run-{self.run_id}"
+
+    def _read_bash_telemetry(self) -> None:
+        path = Path(self._log_dir) / f"run-{self._clean_id}-telemetry.json"
+        try:
+            data = json.loads(path.read_text())
+        except FileNotFoundError:
+            return
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning("RunDriver: telemetry dump unreadable at %s (%s) — "
+                           "tokens/turns will be zero", path, exc)
+            return
+        for key in ("tokens_input", "tokens_output", "tokens_total", "turns"):
+            value = data.get(key)
+            if value is None:
+                continue
+            try:
+                setattr(self.telemetry, key, int(value))
+            except (TypeError, ValueError):
+                pass
+
+    def _install_signal_handlers(self) -> tuple:
+        """Map SIGTERM → KeyboardInterrupt so reaper/launcher /stop calls
+        flow through the same ``interrupted`` path as Ctrl-C.
+
+        Returns the previous handler so the caller can restore it.
+        """
+
+        def _term_to_interrupt(signum, frame):  # noqa: ARG001
+            raise KeyboardInterrupt
+
+        try:
+            prev = signal.signal(signal.SIGTERM, _term_to_interrupt)
+        except ValueError:
+            # Not running in the main thread (e.g. embedded tests). Skip;
+            # the test driver can install its own handler.
+            return (signal.SIG_DFL,)
+        return (prev,)
+
+    def _emit_run_start(self) -> None:
+        emit(
+            "run_start",
+            run_id=self._wire_run_id(),
+            payload={
+                "project_count": self.telemetry.project_count,
+                "max_concurrent": self.telemetry.max_concurrent,
+                "concurrent_group_id": self.telemetry.concurrent_group_id,
+                "log_file": self.telemetry.log_file,
+            },
+        )
+
+    def _emit_run_complete(self, *, status: str, exit_code: int,
+                           error: str | None) -> None:
+        duration_ms = int(
+            (datetime.now(timezone.utc) - self.telemetry.started_at).total_seconds() * 1000
+        )
+        tokens_total = (
+            self.telemetry.tokens_total
+            or (self.telemetry.tokens_input + self.telemetry.tokens_output)
+        )
+        payload: dict = {
+            "status": status,
+            "exit_code": exit_code,
+            "tokens_input": self.telemetry.tokens_input,
+            "tokens_output": self.telemetry.tokens_output,
+            "tokens_total": tokens_total,
+            "turns": self.telemetry.turns,
+            "duration_ms": duration_ms,
+        }
+        if error:
+            payload["error"] = error
+        emit("run_complete", run_id=self._wire_run_id(), payload=payload)
 
     def run(self) -> int:
         """Execute the run. Returns process exit code.
 
-        Always emits run_start and run_complete. On uncaught exception
-        in iterate_projects, emits run_complete with status='error'
-        and returns 1; does not re-raise.
+        Always emits run_start and run_complete. Exit-code conventions:
+
+        - ``0`` → ``status="completed"``
+        - ``130`` (child or self via SIGINT) → ``status="interrupted"``
+        - SIGTERM-mapped KeyboardInterrupt → ``status="interrupted"``,
+          exit code 130
+        - Any other non-zero from ``iterate_projects`` → ``status="failed"``
+        - Uncaught Python exception → ``status="error"``, exit code 1
         """
-        emit("run_start", run_id=self.run_id, payload={})
+        self._install_signal_handlers()
+        self._emit_run_start()
 
         status = "completed"
         exit_code = 0
@@ -2178,18 +2328,22 @@ class RunDriver:
             exit_code = iterate_projects(
                 self.run_id, self.config_path, self.workspaces_dir,
             )
-            if exit_code != 0:
+            if exit_code == 130:
+                status = "interrupted"
+            elif exit_code != 0:
                 status = "failed"
+        except KeyboardInterrupt:
+            logger.warning("RunDriver: KeyboardInterrupt — marking run interrupted")
+            status = "interrupted"
+            exit_code = 130
         except Exception as e:  # noqa: BLE001 — driver MUST NOT propagate
             logger.exception("RunDriver: iterate_projects raised")
             status = "error"
             exit_code = 1
             error = f"{type(e).__name__}: {e}"
         finally:
-            payload: dict = {"status": status}
-            if error:
-                payload["error"] = error
-            emit("run_complete", run_id=self.run_id, payload=payload)
+            self._read_bash_telemetry()
+            self._emit_run_complete(status=status, exit_code=exit_code, error=error)
 
         return exit_code
 
