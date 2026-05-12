@@ -22,6 +22,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
@@ -66,7 +68,38 @@ def _fetch_gh_token() -> str | None:
 # This launcher keeps process state in module globals (``_current``), so it
 # only works correctly under a single uvicorn worker. The Dockerfile launches
 # without --workers; do not change that without reworking state to be shared.
-app = FastAPI(title="claude-agent-station launcher")
+# Module-level reference to the zombie reaper task. Without this,
+# asyncio.create_task()'s return value would be the ONLY strong
+# reference; Python's GC can collect a task with no strong refs,
+# silently stopping the background loop. See #372.
+_reaper_task: asyncio.Task | None = None
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    """Start/stop the background zombie reaper. Replaces the deprecated
+    ``@app.on_event("startup")`` hook (which had a documented bug where
+    fire-and-forget tasks could be GC'd; we hold an explicit reference
+    here as well as a belt-and-suspenders measure)."""
+    global _reaper_task
+    _reaper_task = asyncio.create_task(_zombie_reaper())
+    logger.info(
+        "Zombie reaper started (interval=%ds, timeout=%ds)",
+        ZOMBIE_CHECK_INTERVAL_SECONDS, ZOMBIE_TIMEOUT_SECONDS,
+    )
+    try:
+        yield
+    finally:
+        if _reaper_task and not _reaper_task.done():
+            _reaper_task.cancel()
+            try:
+                await _reaper_task
+            except (asyncio.CancelledError, Exception):
+                pass
+        _reaper_task = None
+
+
+app = FastAPI(title="claude-agent-station launcher", lifespan=_lifespan)
 _current: subprocess.Popen | None = None
 
 # Last time we observed a webhook event for the active subprocess. Used by
@@ -234,11 +267,6 @@ async def _zombie_reaper() -> None:
             _reap_once()
         except Exception:
             logger.exception("_zombie_reaper: unexpected error")
-
-
-@app.on_event("startup")
-async def _start_reaper() -> None:
-    asyncio.create_task(_zombie_reaper())
 
 
 class RunHint(BaseModel):
