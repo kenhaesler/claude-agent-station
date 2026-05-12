@@ -91,3 +91,16 @@ def test_skips_when_message_lacks_session_id():
 
     events = [c.args[1] for c in mock_post.call_args_list]
     assert "orchestrator_complete" not in events
+
+
+def test_stream_state_main_session_id_is_settable():
+    """Sanity: _StreamState.main_session_id is a plain attribute set
+    by the orchestrate() loop on the first message with a session_id
+    (any message type — the SDK's SystemMessage(init) does not always
+    carry session_id, so we capture broadly). See run-20260512T133721Z
+    follow-up where init had only {type, subtype}."""
+    from agent.station_orchestrator import _StreamState
+    state = _StreamState()
+    assert state.main_session_id is None
+    state.main_session_id = "captured-from-first-assistant-msg"
+    assert state.main_session_id == "captured-from-first-assistant-msg"
