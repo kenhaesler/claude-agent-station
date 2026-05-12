@@ -249,7 +249,10 @@ def execute_reject(
         verdict, body_prefix="🤖 **Manager verdict: REJECTED**",
         run_id=run_id, env=env, into=result,
     )
-    # Remove in-progress and add a needs-help label so the human knows.
+    # Clear the in-progress / done labels so the issue surfaces in the
+    # next pick_issue pass as eligible work. Mirrors the bash REJECT
+    # path at run-manager.sh:2196-2197. No new label is added — the
+    # comment alone signals the rejection to humans.
     for label in ("autonomous-agent/in-progress", "autonomous-agent/done"):
         gh_run(
             [
