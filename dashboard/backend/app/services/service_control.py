@@ -99,6 +99,77 @@ async def _launcher_call(method: str, path: str,
     }
 
 
+async def _try_recover_zombie_subprocess(hint_run_id: str | None) -> dict:
+    """Called when a /run trigger gets 409. Checks if the launcher's
+    active subprocess is a zombie (alive but no recent webhook), and if
+    so, force-stops it and retries. Returns the recovery outcome.
+    See #360 option 3.
+    """
+    import asyncio as _asyncio
+    from datetime import datetime, timezone
+    from sqlalchemy import select
+    from app.database import async_session
+    from app.models import Run
+
+    # Get launcher status
+    status_resp = await _launcher_call("GET", "/status")
+    if not status_resp.get("success"):
+        return {"success": False, "error": "launcher /status unreachable",
+                "status_code": 502}
+
+    # Need a running pid to consider this a zombie scenario
+    if not status_resp.get("running"):
+        # Launcher already idle by the time we got here — race condition.
+        # Retry the trigger.
+        logger.info("recovery: launcher already idle, retrying trigger")
+        body = {"hint_run_id": hint_run_id} if hint_run_id else None
+        return await _launcher_call("POST", "/run", json_body=body)
+
+    # Find the most recent running Run row and check its heartbeat
+    async with async_session() as db:
+        result = await db.execute(
+            select(Run).where(Run.status.in_(("running", "pending")))
+            .order_by(Run.started_at.desc()).limit(1)
+        )
+        active = result.scalar_one_or_none()
+
+    if active is None or active.last_event_at is None:
+        # No active run row in dashboard but launcher says running — the
+        # dashboard view is stale OR the launcher state is stale. Force
+        # a stop and retry.
+        logger.warning(
+            "recovery: launcher reports running but dashboard has no active run — force-stopping"
+        )
+    else:
+        age = (datetime.now(timezone.utc)
+               - active.last_event_at.replace(tzinfo=timezone.utc)).total_seconds()
+        if age < 60:
+            # The subprocess IS doing work — propagate the original 409.
+            return {"success": False, "error":
+                    f"a run is already in progress (last activity {age:.0f}s ago)",
+                    "status_code": 409}
+        logger.warning("recovery: dashboard run %s last event %.0fs ago — declaring zombie",
+                       active.run_id, age)
+
+    # Force-stop the zombie
+    stop_resp = await _launcher_call("POST", "/stop")
+    if not stop_resp.get("success"):
+        logger.error("recovery: /stop failed: %s", stop_resp.get("error"))
+        return stop_resp
+
+    # Wait briefly for the launcher to clear _current
+    for _ in range(10):
+        await _asyncio.sleep(0.5)
+        s = await _launcher_call("GET", "/status")
+        if not s.get("running"):
+            break
+
+    # Retry the trigger
+    logger.info("recovery: retrying trigger after zombie cleanup")
+    body = {"hint_run_id": hint_run_id} if hint_run_id else None
+    return await _launcher_call("POST", "/run", json_body=body)
+
+
 async def start_agent_service(hint_run_id: str | None = None) -> dict:
     """Start the agent (systemctl start, or POST /run on the launcher).
 
@@ -106,10 +177,19 @@ async def start_agent_service(hint_run_id: str | None = None) -> dict:
     in-flight run row created on /api/runs/trigger and the bash-emitted
     run_start webhook converge on the same id. The launcher passes this
     to run-manager.sh as ``STATION_RUN_ID_OVERRIDE``.
+
+    In compose mode, when the launcher returns 409 (subprocess zombie), the
+    recovery helper checks the dashboard's last_event_at and force-stops the
+    zombie before retrying. See #360 option 3.
     """
     if _mode() == "compose":
         body = {"hint_run_id": hint_run_id} if hint_run_id else None
-        return await _launcher_call("POST", "/run", json_body=body)
+        result = await _launcher_call("POST", "/run", json_body=body)
+        if result.get("status_code") == 409:
+            # Zombie subprocess might be blocking — try to recover.
+            logger.info("start_agent_service: launcher 409, attempting zombie recovery")
+            result = await _try_recover_zombie_subprocess(hint_run_id)
+        return result
     return await systemctl("start", DEFAULT_AGENT_UNIT)
 
 
