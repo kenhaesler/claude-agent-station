@@ -60,15 +60,74 @@ def _is_orchestrator_process_alive() -> bool:
         return False
 
 
+async def _reap_by_heartbeat(db: AsyncSession) -> int:
+    """Reap ``running`` rows whose ``last_event_at`` is older than the
+    heartbeat timeout.
+
+    This is the ONLY signal we have when the launcher is alive but the
+    orchestrator died silently between events (e.g. SDK hung, OOM in a
+    sub-process, segfault in a subagent). It must run regardless of the
+    launcher's ``service_active`` state — the launcher-dead case is
+    handled by the broader sweep in :func:`reap_stale_runs`.
+
+    Returns the number of rows reaped. Does not commit; the caller is
+    responsible for committing the session.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(
+        seconds=ACTIVE_HEARTBEAT_TIMEOUT_SECONDS
+    )
+    result = await db.execute(
+        select(Run).where(
+            Run.status == "running",
+            Run.last_event_at.isnot(None),
+            Run.last_event_at < cutoff,
+        )
+    )
+    stale = result.scalars().all()
+    if not stale:
+        return 0
+
+    now = datetime.now(timezone.utc)
+    for r in stale:
+        r.status = "interrupted"
+        r.finished_at = now
+        logger.info(
+            "Heartbeat-reaped stale run %s (last_event_at=%s)",
+            r.run_id,
+            r.last_event_at,
+        )
+        # Emit run_complete so SSE clients see the transition immediately,
+        # matching the existing stale-run sweep below.
+        await event_bus_publish({
+            "type": "run_complete",
+            "data": {
+                "run_id": r.run_id,
+                "event": "run_interrupted",
+                "status": "interrupted",
+                "project": None,
+            },
+        })
+
+    return len(stale)
+
+
 async def reap_stale_runs(db: AsyncSession) -> int:
     """Mark orphaned 'running' runs as 'interrupted' if the agent service is dead.
 
     Returns the number of runs reaped.
     """
+    # Heartbeat reap runs unconditionally — it's the only signal we have
+    # when the launcher is alive but the orchestrator died mid-run. The
+    # existing service-inactive sweep below catches the dead-launcher case.
+    heartbeat_reaped = await _reap_by_heartbeat(db)
+
     # Check if the agent service is actually running
     svc = await get_agent_status()
     if svc.get("service_active"):
-        return 0  # Agent is alive — nothing to reap
+        # Launcher reports a run alive — heartbeat may still have reaped
+        # rows whose orchestrator died silently. Commit and return.
+        await db.commit()
+        return heartbeat_reaped
 
     # pgrep is a useful tie-breaker for manual orchestrator invocations
     # outside the systemd unit (developer testing on the host). It's
@@ -76,7 +135,8 @@ async def reap_stale_runs(db: AsyncSession) -> int:
     # so pgrep here finds nothing, and the subprocess + 3s timeout adds
     # latency to every reaper tick. Skip it in compose.
     if deploy_mode() == "systemd" and _is_orchestrator_process_alive():
-        return 0  # Orchestrator process is alive — nothing to reap
+        await db.commit()
+        return heartbeat_reaped  # Orchestrator process is alive — nothing more to reap
 
     # Service is inactive — find any runs still marked as 'running' /
     # 'reviewing', or stuck in 'unknown' for too long.  ``unknown`` rows are
@@ -108,7 +168,8 @@ async def reap_stale_runs(db: AsyncSession) -> int:
     stale_runs = result.scalars().all()
 
     if not stale_runs:
-        return 0
+        await db.commit()
+        return heartbeat_reaped
 
     for run in stale_runs:
         old_status = run.status
@@ -158,42 +219,6 @@ async def reap_stale_runs(db: AsyncSession) -> int:
         from app.services.queue_service import reset_orphaned_item
         await reset_orphaned_item(item, reason="stale run recovery")
 
-    # Heartbeat-based reap: if a 'running' row hasn't logged an event
-    # in ACTIVE_HEARTBEAT_TIMEOUT_SECONDS, mark it interrupted now.
-    # This kicks in even when the launcher reports the service "idle"
-    # because that's the consistent signal that the orchestrator died
-    # silently between events.
-    cutoff_heartbeat = datetime.now(timezone.utc) - timedelta(
-        seconds=ACTIVE_HEARTBEAT_TIMEOUT_SECONDS
-    )
-    heartbeat_result = await db.execute(
-        select(Run).where(
-            Run.status == "running",
-            Run.last_event_at.isnot(None),
-            Run.last_event_at < cutoff_heartbeat,
-        )
-    )
-    heartbeat_stale = heartbeat_result.scalars().all()
-    for r in heartbeat_stale:
-        # Skip if already in the stale_runs list to avoid double-counting
-        if r.run_id not in {s.run_id for s in stale_runs}:
-            r.status = "interrupted"
-            r.finished_at = datetime.now(timezone.utc)
-            logger.info(
-                "Heartbeat-reaped stale run %s (last_event_at=%s)",
-                r.run_id,
-                r.last_event_at,
-            )
-            await event_bus_publish({
-                "type": "run_complete",
-                "data": {
-                    "run_id": r.run_id,
-                    "event": "run_interrupted",
-                    "status": "interrupted",
-                    "project": None,
-                },
-            })
-
     await db.commit()
 
     # Send webhook notification for reaped runs
@@ -217,7 +242,4 @@ async def reap_stale_runs(db: AsyncSession) -> int:
             _bypass_filter=True,
         )
 
-    # Count heartbeat-reaped rows that weren't already in stale_runs
-    extra_heartbeat = len([r for r in heartbeat_stale
-                           if r.run_id not in {s.run_id for s in stale_runs}])
-    return len(stale_runs) + extra_heartbeat
+    return heartbeat_reaped + len(stale_runs)

@@ -260,6 +260,27 @@ async def test_get_active_employees_empty(client):
     assert resp.json() == []
 
 
+@pytest.mark.asyncio
+async def test_active_employees_surfaces_last_event_at(client):
+    """The /api/runs/active-employees response must include
+    last_event_at so Mission Control can render the heartbeat badge.
+    Fixes the PR #351 review gap."""
+    from datetime import datetime, timezone
+    from app.models import Run
+    last_evt = datetime.now(timezone.utc)
+    async with async_session() as db:
+        db.add(Run(run_id="run-with-heartbeat", status="running",
+                   started_at=last_evt, last_event_at=last_evt))
+        await db.commit()
+
+    resp = await client.get("/api/runs/active-employees")
+    assert resp.status_code == 200
+    employees = resp.json()
+    found = [e for e in employees if e["run_id"] == "run-with-heartbeat"]
+    assert len(found) == 1
+    assert found[0]["last_event_at"] is not None
+
+
 # --- Full context (unified run detail) ---
 
 @pytest.mark.asyncio

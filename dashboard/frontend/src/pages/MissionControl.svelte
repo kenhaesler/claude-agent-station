@@ -370,7 +370,10 @@
           <span>Started <b>{timeAgo(currentRun.started_at)}</b></span>
         {/if}
         {#if currentRun?.last_event_at}
-          {@const ageSec = (Date.now() - new Date(currentRun.last_event_at).getTime()) / 1000}
+          {@const _lastEventMs = currentRun.last_event_at.endsWith('Z') || /[+-]\d\d:?\d\d$/.test(currentRun.last_event_at)
+            ? new Date(currentRun.last_event_at).getTime()
+            : Date.parse(currentRun.last_event_at + 'Z')}
+          {@const ageSec = (Date.now() - _lastEventMs) / 1000}
           <span class="heartbeat-badge"
                 class:warn={ageSec > 60 && ageSec <= 180}
                 class:stale={ageSec > 180}>
