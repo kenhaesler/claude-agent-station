@@ -307,7 +307,7 @@ review-criteria branching.
 
 ### Run-level run kinds
 
-- **Agent Teams flow** (the default for `full`/`analyze`/`plan`/`plan_only`) — lead decomposes eligible issues into tasks, spawns three teammates in isolated worktrees, manager reviews each implementation, verdicts issued (APPROVE/PR/REJECT for `full`; APPROVE_PLAN/REVISE_PLAN/REJECT_PLAN for `plan_only`).
+- **Agent Teams flow** (the default for `full`/`analyze`/`plan`/`plan_only`) — lead decomposes eligible issues into tasks, spawns three teammates in isolated worktrees, manager reviews each implementation, verdicts issued (APPROVE/PR/REJECT for `full`; APPROVE_PLAN/REVISE_PLAN/REJECT_PLAN for `plan_only`). The bash-driven manager-review phase emits a `manager_heartbeat` webhook every 30 s while `claude -p` runs so the launcher's `_zombie_reaper` and the dashboard's `stale_run_reaper` don't kill an otherwise-healthy review (see issue #376).
 - **`vision-bootstrap`** — single-shot run that dispatches `agent/vision_analyst.py` to propose new issues from `docs/vision.md`. Triggered automatically (orchestrator empty backlog, or vision commit with content-hash change) or manually from the Vision tab. Never spawns teammates, never opens PRs.
 - **`fix`** — single-issue repair mode for regressions and urgent bugs (legacy; not exposed in the project mode dropdown).
 - **`triage`** — issue classification and labeling without implementation (legacy).
