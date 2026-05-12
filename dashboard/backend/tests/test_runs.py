@@ -16,7 +16,7 @@ from httpx import ASGITransport, AsyncClient
 
 from app.database import Base, async_session, engine
 from app.main import app
-from app.models import Project, Run
+from app.models import CoordinatorTask, Project, Run
 
 
 @pytest_asyncio.fixture
@@ -522,3 +522,26 @@ async def test_telemetry_summary_verdicts_7d(client):
     assert resp.status_code == 200, resp.text
     v = resp.json()["verdicts_7d"]
     assert v == {"ok": 3, "pr": 1, "x": 1}
+
+
+@pytest.mark.asyncio
+async def test_active_employees_skips_synthesis_when_parent_terminal(client):
+    """When a Run is terminal (completed/failed/interrupted) the
+    active-employees fallback must NOT synthesize phantom employees from
+    its leftover coordinator_tasks. Fixes issue #345."""
+    run_id = "run-terminal-1"
+    async with async_session() as db:
+        db.add(Run(run_id=run_id, status="completed",
+                   started_at=datetime.now(timezone.utc),
+                   finished_at=datetime.now(timezone.utc)))
+        db.add(CoordinatorTask(id="t-stale", run_id=run_id,
+                               project_repo="x/y", title="stale task",
+                               status="running",
+                               started_at=datetime.now(timezone.utc)))
+        await db.commit()
+
+    resp = await client.get("/api/runs/active-employees")
+    assert resp.status_code == 200
+    employees = resp.json()
+    assert all(e["run_id"] != run_id for e in employees), \
+        f"phantom employee returned for terminal run: {employees}"

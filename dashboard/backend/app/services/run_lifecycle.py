@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Notification, Run, RunControl
+from app.models import CoordinatorTask, Notification, Run, RunControl
 from app.schemas import WebhookRunEvent
 from app.services.event_bus import publish as event_bus_publish
 from app.services.log_parser import parse_employee_report
@@ -181,6 +181,20 @@ async def handle_finished(
     run.turns = event.turns
     run.duration_ms = event.duration_ms
     run.finished_at = datetime.now(timezone.utc)
+
+    # Cascade: any coordinator_tasks still claimed/running for this run are
+    # marked 'orphaned' so /api/runs/active-employees does not resurrect
+    # them as phantom employees after the parent run has finalised.
+    # See issue #345 / spec 2026-05-11-run-lifecycle-overhaul-design.md.
+    await db.execute(
+        update(CoordinatorTask)
+        .where(
+            CoordinatorTask.run_id == event.run_id,
+            CoordinatorTask.status.in_(("claimed", "running")),
+        )
+        .values(status="orphaned", claimed_at=None)
+    )
+
     run.model = event.model or run.model
     if event.mode:
         run.mode = event.mode
