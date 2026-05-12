@@ -35,6 +35,10 @@ LOG_DIR=""
 DIGEST_DIR=""
 WORKSPACES_DIR="${STATION_WORKSPACES:-/home/claude-agent/workspaces}"
 DRY_RUN=false
+# --internal-iterate is set by agent/project_loop.py (issue #349 migration).
+# When true, run_start/run_complete lifecycle events are owned by RunDriver
+# (Python try/finally) and must NOT be emitted from bash to avoid duplication.
+INTERNAL_ITERATE=false
 
 # Token accumulation across all employees + manager
 _TOTAL_TOKENS_IN=0
@@ -514,8 +518,12 @@ trap 'queue_api POST "/api/queue/batch-pause" "{\"run_id\":\"run-$RUN_ID\"}" 2>/
 
 # EXIT trap: guarantee run_complete webhook fires on ALL exit paths
 # (normal exit, set -e crash, signals). Runs AFTER SIGTERM/SIGINT traps.
+# When --internal-iterate is set, RunDriver (Python) owns run_complete; skip.
 _send_run_complete_on_exit() {
     local exit_code=$?
+    if [ "$INTERNAL_ITERATE" = "true" ]; then
+        return
+    fi
     if [ "$_RUN_COMPLETE_SENT" -eq 0 ] && [ -n "${RUN_ID:-}" ]; then
         local status="error"
         [ $exit_code -eq 0 ] && status="completed"
@@ -2628,10 +2636,14 @@ for v in data.get('verdicts', []):
 main() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --config)        CONFIG_FILE="$2"; shift 2 ;;
-            --dry-run)       DRY_RUN=true; shift ;;
-            --list-projects) preflight; list_projects; exit 0 ;;
-            --help|-h)       usage ;;
+            --config)           CONFIG_FILE="$2"; shift 2 ;;
+            --dry-run)          DRY_RUN=true; shift ;;
+            --list-projects)    preflight; list_projects; exit 0 ;;
+            --help|-h)          usage ;;
+            # Private flag: used by agent/project_loop.py (issue #349 migration).
+            # Runs the project-iteration body without emitting run lifecycle
+            # events (run_start / run_complete are owned by RunDriver).
+            --internal-iterate) INTERNAL_ITERATE=true; shift ;;
             -*)              log_error "Unknown option: $1"; usage ;;
             *)               log_error "Unknown argument: $1"; usage ;;
         esac
@@ -2663,11 +2675,14 @@ main() {
     log_info "Concurrency: max_concurrent=$max_concurrent, max_per_project=$max_per_project, strategy=$budget_strategy"
 
     _RUN_START_EPOCH=$(date +%s)
-    webhook_event "run_start" \
-        project_count "$project_count" \
-        max_concurrent "$max_concurrent" \
-        concurrent_group_id "$CONCURRENT_GROUP_ID" \
-        log_file "$LOG_DIR/run-${RUN_ID}.log"
+    # When invoked with --internal-iterate, RunDriver (Python) owns run_start.
+    if [ "$INTERNAL_ITERATE" != "true" ]; then
+        webhook_event "run_start" \
+            project_count "$project_count" \
+            max_concurrent "$max_concurrent" \
+            concurrent_group_id "$CONCURRENT_GROUP_ID" \
+            log_file "$LOG_DIR/run-${RUN_ID}.log"
+    fi
 
     # ---- Count total employees to spawn (for budget calculation) ----
     local total_employees=0
@@ -2998,14 +3013,17 @@ print(json.dumps(result))
         notify "complete" "Run $RUN_ID finished (no work to review)"
         local _duration_ms_nr=0
         [ "$_RUN_START_EPOCH" -gt 0 ] && _duration_ms_nr=$(( ($(date +%s) - _RUN_START_EPOCH) * 1000 ))
-        webhook_event "run_complete" \
-            status "no_reports" \
-            tokens_input "$_TOTAL_TOKENS_IN" \
-            tokens_output "$_TOTAL_TOKENS_OUT" \
-            tokens_total "$((_TOTAL_TOKENS_IN + _TOTAL_TOKENS_OUT))" \
-            turns "$_TOTAL_TURNS" \
-            duration_ms "$_duration_ms_nr"
-        _RUN_COMPLETE_SENT=1
+        # When --internal-iterate is set, RunDriver (Python) owns run_complete.
+        if [ "$INTERNAL_ITERATE" != "true" ]; then
+            webhook_event "run_complete" \
+                status "no_reports" \
+                tokens_input "$_TOTAL_TOKENS_IN" \
+                tokens_output "$_TOTAL_TOKENS_OUT" \
+                tokens_total "$((_TOTAL_TOKENS_IN + _TOTAL_TOKENS_OUT))" \
+                turns "$_TOTAL_TURNS" \
+                duration_ms "$_duration_ms_nr"
+            _RUN_COMPLETE_SENT=1
+        fi
         exit 0
     fi
 
@@ -3014,14 +3032,17 @@ print(json.dumps(result))
         notify "rate_limit" "Rate limit reached before manager review in run $RUN_ID"
         local _duration_ms_rl=0
         [ "$_RUN_START_EPOCH" -gt 0 ] && _duration_ms_rl=$(( ($(date +%s) - _RUN_START_EPOCH) * 1000 ))
-        webhook_event "run_complete" \
-            status "rate_limited" \
-            tokens_input "$_TOTAL_TOKENS_IN" \
-            tokens_output "$_TOTAL_TOKENS_OUT" \
-            tokens_total "$((_TOTAL_TOKENS_IN + _TOTAL_TOKENS_OUT))" \
-            turns "$_TOTAL_TURNS" \
-            duration_ms "$_duration_ms_rl"
-        _RUN_COMPLETE_SENT=1
+        # When --internal-iterate is set, RunDriver (Python) owns run_complete.
+        if [ "$INTERNAL_ITERATE" != "true" ]; then
+            webhook_event "run_complete" \
+                status "rate_limited" \
+                tokens_input "$_TOTAL_TOKENS_IN" \
+                tokens_output "$_TOTAL_TOKENS_OUT" \
+                tokens_total "$((_TOTAL_TOKENS_IN + _TOTAL_TOKENS_OUT))" \
+                turns "$_TOTAL_TURNS" \
+                duration_ms "$_duration_ms_rl"
+            _RUN_COMPLETE_SENT=1
+        fi
         exit 0
     fi
 
@@ -3199,14 +3220,17 @@ print(json.dumps(result))
     notify "complete" "Run $RUN_ID finished successfully"
     local _duration_ms_ok=0
     [ "$_RUN_START_EPOCH" -gt 0 ] && _duration_ms_ok=$(( ($(date +%s) - _RUN_START_EPOCH) * 1000 ))
-    webhook_event "run_complete" \
-        status "success" \
-        tokens_input "$_TOTAL_TOKENS_IN" \
-        tokens_output "$_TOTAL_TOKENS_OUT" \
-        tokens_total "$((_TOTAL_TOKENS_IN + _TOTAL_TOKENS_OUT))" \
-        turns "$_TOTAL_TURNS" \
-        duration_ms "$_duration_ms_ok"
-    _RUN_COMPLETE_SENT=1
+    # When --internal-iterate is set, RunDriver (Python) owns run_complete.
+    if [ "$INTERNAL_ITERATE" != "true" ]; then
+        webhook_event "run_complete" \
+            status "success" \
+            tokens_input "$_TOTAL_TOKENS_IN" \
+            tokens_output "$_TOTAL_TOKENS_OUT" \
+            tokens_total "$((_TOTAL_TOKENS_IN + _TOTAL_TOKENS_OUT))" \
+            turns "$_TOTAL_TURNS" \
+            duration_ms "$_duration_ms_ok"
+        _RUN_COMPLETE_SENT=1
+    fi
 }
 
 # Only run main when executed directly; allow `source` for helper testing.
