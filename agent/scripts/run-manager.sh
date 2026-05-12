@@ -314,6 +314,15 @@ PYEOF
 )
     fi
 
+    # Preserve the pre-5a operator contract: if env vars aren't set, fall back
+    # to the dashboard.* fields in $CONFIG_FILE. Other call sites still consult
+    # the config file, so without this the bash-emitted events would diverge.
+    local _cfg_url _cfg_secret
+    _cfg_url=$(json_get "$CONFIG_FILE" "dashboard.webhook_url" 2>/dev/null || echo "")
+    _cfg_secret=$(json_get "$CONFIG_FILE" "dashboard.webhook_secret" 2>/dev/null || echo "")
+    [ -z "${STATION_WEBHOOK_URL:-}" ] && [ -n "$_cfg_url" ] && export STATION_WEBHOOK_URL="$_cfg_url"
+    [ -z "${STATION_WEBHOOK_SECRET:-}" ] && [ -n "$_cfg_secret" ] && export STATION_WEBHOOK_SECRET="$_cfg_secret"
+
     PYTHONPATH="$SCRIPT_DIR/.." \
         python3 -m agent.webhook_emitter "$event" \
             --run-id "run-$RUN_ID" \
