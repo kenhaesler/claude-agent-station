@@ -1928,6 +1928,23 @@ Read the review package file first, then evaluate each project's work against th
         return 0
     fi
 
+    # Heartbeat: the bash does not parse the manager stream (it is streamed
+    # to a file). Without a side-channel ping, the launcher's _zombie_reaper
+    # (120s timeout) and the dashboard's stale_run_reaper kill an otherwise-
+    # healthy manager review around the 2-minute mark. See issue #376.
+    local _heartbeat_pid=""
+    (
+        # Subshell suppresses all output so it cannot pollute the function's
+        # captured-output return value (the verdicts_file path echoed below).
+        while sleep 30; do
+            webhook_event "manager_heartbeat" phase "manager_review" >/dev/null 2>&1 || true
+        done
+    ) >/dev/null 2>&1 &
+    _heartbeat_pid=$!
+    # Function-scoped RETURN trap fires on every return path (success,
+    # set -e crash, signal). No existing RETURN trap to clobber.
+    trap 'kill "$_heartbeat_pid" 2>/dev/null || true; trap - RETURN' RETURN
+
     local stream_file="$LOG_DIR/run-${RUN_ID}-manager.stream.jsonl"
     local stderr_file="$LOG_DIR/run-${RUN_ID}-manager.stderr.log"
 
