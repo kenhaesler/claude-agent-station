@@ -332,7 +332,7 @@ PYEOF
     [ -z "${STATION_WEBHOOK_URL:-}" ] && [ -n "$_cfg_url" ] && export STATION_WEBHOOK_URL="$_cfg_url"
     [ -z "${STATION_WEBHOOK_SECRET:-}" ] && [ -n "$_cfg_secret" ] && export STATION_WEBHOOK_SECRET="$_cfg_secret"
 
-    PYTHONPATH="$SCRIPT_DIR/.." \
+    PYTHONPATH="$SCRIPT_DIR/../.." \
         python3 -m agent.webhook_emitter "$event" \
             --run-id "run-$RUN_ID" \
             --json "$payload" 2>&1 | while IFS= read -r line; do
