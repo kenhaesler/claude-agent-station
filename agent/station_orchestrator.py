@@ -423,6 +423,32 @@ def has_open_vision_proposals(repo: str) -> bool:
         return False
 
 
+def _resolve_project_id_by_repo(repo: str) -> int | None:
+    """Look up the dashboard's Project.id by repo name. Returns None on
+    any error (DB missing, no row, import failure).
+
+    Defensive fallback: ``handle_empty_backlog`` needs a project_id to
+    dispatch the vision_analyst. The orchestrator's config-loaded dict
+    omits ``id`` (sync_db_to_config doesn't write it), so without this
+    lookup an operator-edited config silently disables the analyst
+    dispatch path. See diagnosis of run-20260512T112429Z."""
+    try:
+        import sqlite3
+        db_path = os.environ.get(
+            "STATION_DB_PATH",
+            "/var/lib/claude-agent-station/station.db",
+        )
+        with sqlite3.connect(db_path) as conn:
+            row = conn.execute(
+                "SELECT id FROM projects WHERE repo = ?",
+                (repo,),
+            ).fetchone()
+        return int(row[0]) if row else None
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("_resolve_project_id_by_repo(%s) failed: %s", repo, exc)
+        return None
+
+
 def dispatch_vision_bootstrap(project_id: int) -> str:
     """Trigger a vision-analyst run for ``project_id``.
 
@@ -489,13 +515,23 @@ def handle_empty_backlog(
     has_vision = os.path.isfile(os.path.join(workspace, "docs", "vision.md"))
     proposals_pending = has_vision and has_open_vision_proposals(repo)
 
+    # If the project_id wasn't carried through the config (sync_db_to_config
+    # historically omitted it from the JSON), look it up from the DB by
+    # repo. Without this fallback the analyst can never be dispatched on
+    # operator-edited configs.
+    if project_id is None:
+        project_id = _resolve_project_id_by_repo(repo)
+
     if not has_vision:
         skip_reason = "no-eligible-issues-no-vision"
     elif proposals_pending:
         skip_reason = "no-eligible-issues-proposals-pending"
     elif project_id is None:
-        # Can't dispatch without a project_id (manager-config drift).
-        skip_reason = "no-eligible-issues-no-vision"
+        # Distinct from the no-vision case: vision EXISTS but we can't
+        # locate the project in the dashboard's DB to dispatch the analyst.
+        # Surfacing a different skip_reason avoids the misleading
+        # "no-vision" label that hid this bug for issue-bootstrapping.
+        skip_reason = "no-eligible-issues-vision-but-no-project-id"
     else:
         outcome = dispatch_vision_bootstrap(project_id)
         skip_reason = (
