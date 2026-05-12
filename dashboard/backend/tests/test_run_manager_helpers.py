@@ -59,6 +59,9 @@ def _resolve_run_mode(workspace: str, project_index: int, *, config_mode: str) -
     cmd = (
         f"export STATION_CONFIG='{cfg}'; "
         f"source '{RUN_MANAGER}' 2>/dev/null || true; "
+        # Mark run_complete as already sent so the EXIT trap does not fire the
+        # webhook emitter and pollute stdout with HTTP log lines.
+        f"_RUN_COMPLETE_SENT=1; "
         f"resolve_run_mode '{workspace}' {project_index}"
     )
     out = subprocess.run(
