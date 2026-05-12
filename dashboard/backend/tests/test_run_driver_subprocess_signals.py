@@ -11,9 +11,9 @@ emit logic but does NOT exercise:
 - ``iterate_projects``' Popen-based SIGTERM forwarding to a child
 
 This file spawns the driver as a real subprocess, sends a real signal,
-and reads back the emitted webhook events from a recorder file. Slow
-(~2 s per test) but the only way to verify the signal contract end-
-to-end.
+and reads back the emitted webhook events from a recorder file.
+Subprocess-based, so slower than the mocked tests — but still well
+under a second per test in practice.
 """
 
 from __future__ import annotations
@@ -126,17 +126,52 @@ def driver_fixtures(tmp_path):
 
 def _spawn_driver(cfg: Path, events: Path, tmp_path: Path,
                   sleep_for: int = 30) -> subprocess.Popen:
-    """Launch the driver as a detached subprocess."""
+    """Launch the driver as a detached subprocess.
+
+    stdout is discarded (the driver doesn't produce any; routing it to
+    PIPE would risk a latent deadlock if a future refactor adds chatty
+    logging that fills the 64KB pipe buffer). stderr is piped to a
+    file so the assertion-failure path can surface a useful diagnostic
+    without having to manually drain the pipe.
+    """
     script = _driver_script(events, cfg, sleep_for=sleep_for)
     env = os.environ.copy()
     env["STATION_LOG_DIR"] = str(tmp_path)
     env.setdefault("PYTHONPATH", str(_REPO_ROOT))
-    return subprocess.Popen(
+    stderr_path = tmp_path / "driver.stderr"
+    stderr_fh = stderr_path.open("wb")
+    proc = subprocess.Popen(
         [sys.executable, "-c", script],
         env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=stderr_fh,
     )
+    # Attach the path for the assertion helpers to read on failure.
+    proc._cas_stderr_path = stderr_path  # type: ignore[attr-defined]
+    return proc
+
+
+def _stderr_tail(proc: subprocess.Popen, limit: int = 500) -> str:
+    """Return the tail of the subprocess's stderr for failure messages."""
+    path = getattr(proc, "_cas_stderr_path", None)
+    if path is None or not Path(path).exists():
+        return ""
+    try:
+        return Path(path).read_text(errors="replace")[-limit:]
+    except OSError:
+        return ""
+
+
+def _terminate_after_test(proc: subprocess.Popen) -> None:
+    """Belt-and-suspenders cleanup: if the test left a live child (e.g.
+    proc.wait timed out), SIGKILL it AND wait so we don't leak zombies.
+    """
+    if proc.poll() is None:
+        proc.kill()
+        try:
+            proc.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            pass
 
 
 def test_real_sigint_marks_run_interrupted_with_exit_130(driver_fixtures):
@@ -150,12 +185,11 @@ def test_real_sigint_marks_run_interrupted_with_exit_130(driver_fixtures):
         proc.send_signal(signal.SIGINT)
         exit_code = proc.wait(timeout=15)
     finally:
-        if proc.poll() is None:
-            proc.kill()
+        _terminate_after_test(proc)
 
     assert exit_code == 130, (
         f"SIGINT must exit 130 (POSIX convention); got {exit_code}. "
-        f"stderr: {proc.stderr.read().decode()[:500] if proc.stderr else ''}"
+        f"stderr: {_stderr_tail(proc)}"
     )
     emitted = _read_events(events)
     event_names = [e["event"] for e in emitted]
@@ -182,12 +216,11 @@ def test_real_sigterm_marks_run_interrupted_with_exit_130(driver_fixtures):
         proc.send_signal(signal.SIGTERM)
         exit_code = proc.wait(timeout=15)
     finally:
-        if proc.poll() is None:
-            proc.kill()
+        _terminate_after_test(proc)
 
     assert exit_code == 130, (
         f"SIGTERM-mapped-to-KI must exit 130; got {exit_code}. "
-        f"stderr: {proc.stderr.read().decode()[:500] if proc.stderr else ''}"
+        f"stderr: {_stderr_tail(proc)}"
     )
     emitted = _read_events(events)
     complete = next(e for e in emitted if e["event"] == "run_complete")
