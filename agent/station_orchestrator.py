@@ -1478,6 +1478,39 @@ def handle_stream_event(
             )
             return
 
+        # Even when the session matches, this may be an intermediate
+        # ResultMessage from the lead — e.g. when the lead delegates work
+        # via the Agent tool, the SDK emits a turn-complete ResultMessage
+        # for the lead well before any actual work is done. The outer loop
+        # already uses _is_work_complete() to distinguish; mirror that
+        # check here so orchestrator_complete only fires once, when the
+        # lead signals actual completion. Without this gate the dashboard
+        # marks the run terminal on the first ResultMessage and the
+        # ongoing lead/teammate work runs orphaned. Surfaced after the
+        # _user_prompt_stream stdin fix (PR #381) removed the
+        # incidental "one-result-per-query" rate-limit that had been
+        # masking this. See run-20260512T205423Z.
+        result_text = getattr(message, "result", "")
+        if not _is_work_complete(result_text):
+            # Still flush accumulated tokens so progress_update is current,
+            # but do NOT emit orchestrator_complete — the lead is mid-flight.
+            if state:
+                post_webhook(config, "progress_update", {
+                    "run_id": f"run-{run_id}",
+                    "tokens_input": state.tokens_in,
+                    "tokens_output": state.tokens_out,
+                    "tokens_total": state.tokens_in + state.tokens_out,
+                    "turns": state.turns,
+                })
+            logger.info(
+                "Skipping orchestrator_complete emit — main-session ResultMessage "
+                "but result_text does not signal work completion (turns=%s, "
+                "result_preview=%r)",
+                getattr(message, "num_turns", "?"),
+                (result_text or "")[:120],
+            )
+            return
+
         # Final flush of accumulated tokens
         if state:
             post_webhook(config, "progress_update", {
@@ -1493,7 +1526,6 @@ def handle_stream_event(
             "duration_ms": getattr(message, "duration_ms", 0),
             "num_turns": getattr(message, "num_turns", 0),
         })
-        result_text = getattr(message, "result", "")
         if result_text:
             logger.info("Orchestrator result:\n%s", result_text[:2000])
 
