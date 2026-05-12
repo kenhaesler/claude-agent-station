@@ -23,7 +23,7 @@ export type RunStatus = 'started' | 'employee_done' | 'reviewing' | 'finished' |
 export type Verdict = 'APPROVE' | 'PR' | 'REJECT';
 export type QueueState = 'pending' | 'assigned' | 'claimed' | 'planning' | 'in_progress' | 'review' | 'verifying' | 'approved' | 'rejected' | 'escalated' | 'paused' | 'failed' | 'cancelled' | 'completed';
 export type PlanStatus = 'draft' | 'approved' | 'implementing' | 'completed' | 'rejected';
-export type CoordinatorTaskStatus = 'pending' | 'ready' | 'running' | 'completed' | 'blocked' | 'failed';
+export type CoordinatorTaskStatus = 'pending' | 'ready' | 'running' | 'completed' | 'blocked' | 'failed' | 'orphaned';
 export type BackpressureLevel = 'GREEN' | 'YELLOW' | 'RED' | 'BLACK';
 
 // --- Projects ---

@@ -138,7 +138,7 @@ async def get_active_employees(db: AsyncSession = Depends(get_db)):
             .join(Run, Run.run_id == CoordinatorTask.run_id, isouter=True)
             .where(
                 CoordinatorTask.status == "running",
-                Run.status.in_(("running", "reviewing", "plan_reviewing"))
+                Run.status.in_(["running", "plan_reviewing", "reviewing"])
                 | (Run.status.is_(None)),
             )
         )

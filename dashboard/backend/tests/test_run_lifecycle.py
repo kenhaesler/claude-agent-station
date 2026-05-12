@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 
 import pytest
 import pytest_asyncio
+from sqlalchemy import select
 
 from app.database import Base, async_session, engine
-from app.services.run_lifecycle import handle_finished
+from app.models import CoordinatorTask, Run
 from app.schemas import WebhookRunEvent
+from app.services.run_lifecycle import handle_finished
 
 
 @pytest_asyncio.fixture
@@ -52,10 +55,6 @@ async def test_handle_finished_orphans_running_coordinator_tasks(setup_db):
     """When a Run finalises, any of its coordinator_tasks left in 'running' or
     'claimed' must be cascaded to 'orphaned'. Fixes the zombie-task bug
     (issue #345) where /api/runs/active-employees surfaces stale rows."""
-    from app.models import CoordinatorTask, Run
-    from datetime import datetime, timezone
-    from sqlalchemy import select
-
     run_id = "run-orphan-test-1"
     async with async_session() as db:
         db.add(Run(run_id=run_id, status="running",
