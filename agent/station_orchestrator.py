@@ -1976,18 +1976,26 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
                         if sid:
                             session_id = sid
 
+                        # Capture the lead's session_id from the first
+                        # message that has one, regardless of message type.
+                        # SDK's SystemMessage(init) doesn't always carry
+                        # session_id (verified empirically — only {type,
+                        # subtype} fields present); the assistant/result
+                        # message right after init does. Without this
+                        # broader capture, state.main_session_id stays
+                        # None and handle_stream_event's session filter
+                        # falls back to its defensive skip-all path. See
+                        # #371 + run-20260512T133721Z follow-up.
+                        if sid and stream_state.main_session_id is None:
+                            stream_state.main_session_id = sid
+                            logger.info(
+                                "Captured lead session_id=%s for run-%s",
+                                sid, run_id,
+                            )
+
                         # Only send orchestrator_start webhook on the very first init
                         if isinstance(message, SystemMessage) and getattr(message, "subtype", "") == "init":
                             if not first_init_sent:
-                                # Lock in the lead orchestrator's session_id
-                                # so handle_stream_event can filter
-                                # teammate sub-session ResultMessages
-                                # below (and avoid the premature
-                                # orchestrator_complete emission that
-                                # marked run-20260512T124731Z completed
-                                # while it was still running). See #371.
-                                if sid and stream_state.main_session_id is None:
-                                    stream_state.main_session_id = sid
                                 post_webhook(config, "orchestrator_start", {
                                     "run_id": f"run-{run_id}",
                                     "mode": project_mode,
