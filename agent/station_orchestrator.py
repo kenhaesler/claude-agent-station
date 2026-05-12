@@ -82,18 +82,53 @@ async def _user_prompt_stream(text: str):
     """Wrap a string prompt as the AsyncIterable form the SDK requires when
     ``can_use_tool`` or ``hooks`` are supplied.
 
-    Yields one user message then ends. The SDK is designed for this shape
-    and handles stdin lifetime itself via ``_first_result_event`` and the
-    ``CLAUDE_CODE_STREAM_CLOSE_TIMEOUT`` env var (in ms; 60s default).
-    Long Agent Teams sessions need that timeout bumped; see
-    :mod:`agent.launcher` where it's set on the orchestrator subprocess.
+    **Generator must NOT return for the lifetime of the SDK session.**
+
+    The SDK's :py:meth:`Query.stream_input` (`claude_agent_sdk/_internal/query.py`)
+    is structured as::
+
+        async for message in stream:
+            await self.transport.write(...)
+        await self.wait_for_result_and_end_input()  # closes stdin
+
+    The moment this generator returns, ``stream_input`` exits its
+    ``async for`` and immediately calls ``wait_for_result_and_end_input``,
+    which closes stdin as soon as the **first** ``ResultMessage`` arrives
+    (which for an Agent Teams session is seconds in — the lead agent's
+    first turn). Every subsequent PreToolUse / PostToolUse hook callback
+    the CLI tries to make to the Python side then raises
+    ``Error("Stream closed")`` at ``cli.js:7552 sendRequest`` — the
+    audit_hook stops recording for the rest of the run.
+
+    ``CLAUDE_CODE_STREAM_CLOSE_TIMEOUT`` (set to 1800000 ms by
+    :mod:`agent.launcher`) only sets the *maximum* wait for the first
+    result event before closing stdin anyway — it does not delay the
+    close once the event fires. For a one-shot ``query()`` call this is
+    correct; for our long-running Agent Teams sessions it cripples the
+    audit log.
+
+    Fix: yield the single user message, then suspend forever on an
+    event that never fires. The SDK's ``stream_input`` blocks in the
+    ``async for``, never reaches ``wait_for_result_and_end_input``, and
+    stdin stays open. When the orchestrator's outer ``query()`` iterator
+    completes, ``InternalClient.process_query`` calls ``query.close()``
+    in its ``finally`` block; the task group cancels this generator,
+    which raises ``anyio.get_cancelled_exc_class()`` and propagates up
+    cleanly.
     """
+    import anyio  # local import — anyio is already a transitive dep via the SDK
+
     yield {
         "type": "user",
         "session_id": "",
         "message": {"role": "user", "content": text},
         "parent_tool_use_id": None,
     }
+    # Suspend for the lifetime of the SDK session. Cancellation arrives
+    # via the SDK's task group when query.close() runs in its finally
+    # block, which raises an anyio cancelled exception — the desired
+    # teardown path.
+    await anyio.Event().wait()
 
 
 SKIP_LABELS = frozenset({
