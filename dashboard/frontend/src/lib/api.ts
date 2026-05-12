@@ -206,7 +206,7 @@ export const getRunDiff = (runId: string) =>
   request<DiffResult>(`/api/runs/${runId}/diff`);
 
 export const triggerRun = () =>
-  requestWithToast<{ status: string; detail: string }>('/api/runs/trigger', { method: 'POST' });
+  requestWithToast<{ status: string; detail: string; run_id?: string }>('/api/runs/trigger', { method: 'POST' });
 
 export const rescanRuns = () =>
   requestWithToast<{ status: string; imported: number }>('/api/runs/rescan', { method: 'POST' });

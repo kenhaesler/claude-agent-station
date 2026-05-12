@@ -1,5 +1,7 @@
 <script lang="ts">
   import { agentPresence, type ConversationEntry } from '../lib/agent-presence.svelte';
+  import IdlePanel from '../components/mission/IdlePanel.svelte';
+  import { runs as runsStore, refreshRuns, initStoreSSE } from '../lib/data-store.svelte';
   import {
     messageRun,
     triggerRun,
@@ -28,9 +30,19 @@
     agentPresence.activeRuns.find((r) => r.run_id === currentRunId) ?? null,
   );
   let isLive = $derived(agentPresence.activeRuns.length > 0);
+  let isIdle = $derived(agentPresence.activeRuns.length === 0);
+  let lastRun = $derived(runsStore.length > 0 ? runsStore[0] : null);
   let runPaused = $derived(!!agentPresence.pausedRuns[currentRunId]);
   let globalPause = $derived(agentPresence.globalPause);
   let pendingDecisions = $derived(agentPresence.pendingDecisionCount);
+
+  // Wire up SSE-driven cache invalidation (idempotent) and seed the
+  // initial runs list so the IdlePanel can show last-run summary
+  // immediately on mount. See PR #354 review.
+  $effect(() => {
+    initStoreSSE();
+    refreshRuns();
+  });
 
   // Issue #266 — surface the plan-review gate so operators can see when a
   // plan_only run is waiting on the manager (or has been approved/rejected).
@@ -384,7 +396,6 @@
         <span>Aut <b>{autonomyLabel(currentRun.mode)}</b></span>
       {:else}
         <span><span class="dot idle"></span><b>idle</b></span>
-        <button type="button" class="trigger-btn" onclick={handleTrigger}>Trigger Run</button>
       {/if}
       {#if pendingDecisions > 0}
         <span class="br">·</span>
@@ -392,6 +403,10 @@
       {/if}
     </div>
   </div>
+
+  {#if isIdle}
+    <IdlePanel {lastRun} />
+  {:else}
 
   <!-- Intervention bar ──────────────────────────────────────── -->
   <div class="intervene">
@@ -606,6 +621,8 @@
       </section>
     </aside>
   </div>
+
+  {/if}
 </div>
 
 <style>
