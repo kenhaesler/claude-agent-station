@@ -106,21 +106,59 @@ async def test_launcher_4xx_body_cannot_override_success_or_status_code(monkeypa
     """Symmetric companion to the 200-path test: a launcher returning 4xx
     with ``success: True`` in the body must still surface as failure with
     the real status_code. Pins the override invariant on the failure path
-    so trigger_run's HTTPException raises with the correct upstream status."""
+    so trigger_run's HTTPException raises with the correct upstream status.
+
+    Since the 409 path now enters the zombie-recovery helper, we mock:
+    - POST /run  → 409 (the scenario under test)
+    - GET /status → running=True, pid=42 (launcher still busy)
+    And we seed a Run row with a fresh last_event_at so recovery short-circuits
+    and the original 409 is propagated unchanged.
+    """
+    from datetime import datetime, timezone
+    from unittest.mock import AsyncMock, MagicMock, patch
+    from contextlib import asynccontextmanager
+
     monkeypatch.setenv("STATION_DEPLOY_MODE", "compose")
     monkeypatch.setenv("STATION_AGENT_LAUNCHER_URL", "http://agent:8421")
     from app.services import service_control
+
+    # Build a fake Run row with a fresh heartbeat so recovery declines.
+    from app.models import Run
+    fresh_run = Run(
+        run_id="run-active-001",
+        status="running",
+        employee_index=0,
+        last_event_at=datetime.now(timezone.utc),
+    )
+
+    # Fake async_session context-manager that returns a session whose
+    # execute() yields the fresh Run row.
+    fake_result = MagicMock()
+    fake_result.scalar_one_or_none.return_value = fresh_run
+    fake_db = AsyncMock()
+    fake_db.execute = AsyncMock(return_value=fake_result)
+
+    @asynccontextmanager
+    async def fake_async_session():
+        yield fake_db
 
     with respx.mock() as mock:
         mock.post("http://agent:8421/run").respond(
             409,
             json={"success": True, "status_code": 200, "detail": "already running"},
         )
-        result = await service_control.start_agent_service()
+        mock.get("http://agent:8421/status").respond(
+            200,
+            json={"running": True, "pid": 42},
+        )
+        with patch("app.database.async_session", fake_async_session):
+            result = await service_control.start_agent_service()
 
     assert result["success"] is False  # from HTTP 409, not body's True
     assert result["status_code"] == 409
-    assert result["detail"] == "already running"
+    # Recovery declines because the heartbeat is fresh; it returns its own
+    # error message (not the raw launcher body) but the 409 invariant holds.
+    assert "in progress" in result.get("error", "") or result.get("detail") == "already running"
 
 
 @pytest.mark.asyncio

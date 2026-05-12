@@ -24,6 +24,11 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_AGENT_UNIT = "claude-agent.service"
 
+# Half the launcher's reaper threshold (default 120 s). Reactive recovery is
+# more aggressive than proactive because it only fires on user-triggered
+# retries, not on every reaper tick.
+RUN_STALE_THRESHOLD_S = int(os.environ.get("STATION_RUN_STALE_THRESHOLD_S", "60"))
+
 
 _VALID_DEPLOY_MODES = ("systemd", "compose")
 
@@ -125,25 +130,38 @@ async def _try_recover_zombie_subprocess(hint_run_id: str | None) -> dict:
         body = {"hint_run_id": hint_run_id} if hint_run_id else None
         return await _launcher_call("POST", "/run", json_body=body)
 
-    # Find the most recent running Run row and check its heartbeat
+    # Find the orchestrator Run row and check its heartbeat.
+    # In Agent Teams / bash multi-employee mode the launcher's _current is
+    # ALWAYS the orchestrator (run-manager.sh, started first, employee_index=0
+    # or NULL for legacy rows). Teammate rows have employee_index >= 1 and
+    # typically carry fresher heartbeats — picking them would mask a hung
+    # orchestrator.  We therefore filter on employee_index == 0 / IS NULL and
+    # break ties with started_at ASC so the earliest (orchestrator) row wins.
     async with async_session() as db:
+        from sqlalchemy import or_
         result = await db.execute(
-            select(Run).where(Run.status.in_(("running", "pending")))
-            .order_by(Run.started_at.desc()).limit(1)
+            select(Run).where(
+                Run.status.in_(("running", "pending")),
+                or_(Run.employee_index == 0, Run.employee_index.is_(None)),
+            ).order_by(Run.started_at.asc()).limit(1)
         )
         active = result.scalar_one_or_none()
 
     if active is None or active.last_event_at is None:
-        # No active run row in dashboard but launcher says running — the
-        # dashboard view is stale OR the launcher state is stale. Force
-        # a stop and retry.
+        # No orchestrator run row (or it has no heartbeat yet) — we lack
+        # positive evidence that the subprocess is stale, so we do NOT
+        # force-stop.  Propagate the original 409 so the caller sees it.
         logger.warning(
-            "recovery: launcher reports running but dashboard has no active run — force-stopping"
+            "recovery: launcher reports running but dashboard has no orchestrator"
+            " run row (or no heartbeat) — declining force-stop, propagating 409"
         )
+        return {"success": False,
+                "error": "launcher busy — no dashboard run to evaluate staleness",
+                "status_code": 409}
     else:
         age = (datetime.now(timezone.utc)
                - active.last_event_at.replace(tzinfo=timezone.utc)).total_seconds()
-        if age < 60:
+        if age < RUN_STALE_THRESHOLD_S:
             # The subprocess IS doing work — propagate the original 409.
             return {"success": False, "error":
                     f"a run is already in progress (last activity {age:.0f}s ago)",

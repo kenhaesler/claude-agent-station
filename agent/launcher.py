@@ -171,8 +171,7 @@ async def webhook_tick(
     productive subprocess from one stuck in a hung Claude CLI call.
     """
     global _last_webhook_at
-    token = os.environ.get("STATION_LAUNCHER_TOKEN", "")
-    if token and x_launcher_token != token:
+    if LAUNCHER_TOKEN and x_launcher_token != LAUNCHER_TOKEN:
         raise HTTPException(status_code=401, detail="invalid or missing launcher token")
     if _current is None or _current.poll() is not None:
         # No active run — silently ignore so a slow webhook from a
