@@ -1,5 +1,7 @@
 <script lang="ts">
   import { agentPresence, type ConversationEntry } from '../lib/agent-presence.svelte';
+  import IdlePanel from '../components/mission/IdlePanel.svelte';
+  import { runs as runsStore } from '../lib/data-store.svelte';
   import {
     messageRun,
     triggerRun,
@@ -28,6 +30,8 @@
     agentPresence.activeRuns.find((r) => r.run_id === currentRunId) ?? null,
   );
   let isLive = $derived(agentPresence.activeRuns.length > 0);
+  let isIdle = $derived(agentPresence.activeRuns.length === 0);
+  let lastRun = $derived(runsStore.length > 0 ? runsStore[0] : null);
   let runPaused = $derived(!!agentPresence.pausedRuns[currentRunId]);
   let globalPause = $derived(agentPresence.globalPause);
   let pendingDecisions = $derived(agentPresence.pendingDecisionCount);
@@ -393,6 +397,10 @@
     </div>
   </div>
 
+  {#if isIdle}
+    <IdlePanel {lastRun} />
+  {:else}
+
   <!-- Intervention bar ──────────────────────────────────────── -->
   <div class="intervene">
     <span class="label">Intervene</span>
@@ -606,6 +614,8 @@
       </section>
     </aside>
   </div>
+
+  {/if}
 </div>
 
 <style>
