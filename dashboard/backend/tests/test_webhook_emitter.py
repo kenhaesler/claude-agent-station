@@ -56,3 +56,35 @@ def test_emit_does_not_retry_on_4xx():
         emit("run_complete", run_id="run-test-4",
              payload={"status": "completed"})
         assert mock_post.call_count == 1
+
+
+def test_emit_uses_x_webhook_token_header():
+    """The dashboard webhook router expects X-Webhook-Token. If a future
+    refactor renames the header again, fail loudly."""
+    import os
+    from unittest.mock import patch, MagicMock
+    from agent.webhook_emitter import emit
+    with patch.dict(os.environ, {"STATION_WEBHOOK_SECRET": "s3cr3t"}), \
+         patch("agent.webhook_emitter.httpx.post") as mock_post:
+        mock_post.return_value = MagicMock(status_code=200, text="ok")
+        emit("run_start", run_id="run-h1", payload={})
+        headers = mock_post.call_args.kwargs["headers"]
+        assert "X-Webhook-Token" in headers
+        assert headers["X-Webhook-Token"] == "s3cr3t"
+        # The wrong name must NOT be present
+        assert "X-Webhook-Secret" not in headers
+
+
+def test_emit_omits_token_header_when_secret_unset():
+    """No secret → no header sent."""
+    import os
+    from unittest.mock import patch, MagicMock
+    from agent.webhook_emitter import emit
+    with patch.dict(os.environ, {}, clear=False), \
+         patch("agent.webhook_emitter.httpx.post") as mock_post:
+        # Force unset
+        os.environ.pop("STATION_WEBHOOK_SECRET", None)
+        mock_post.return_value = MagicMock(status_code=200, text="ok")
+        emit("run_start", run_id="run-h2", payload={})
+        headers = mock_post.call_args.kwargs["headers"]
+        assert "X-Webhook-Token" not in headers

@@ -15,7 +15,7 @@ Usage (bash, via CLI):
 
 Env:
     STATION_WEBHOOK_URL       (default: http://127.0.0.1:8420/api/webhook/run-event)
-    STATION_WEBHOOK_SECRET    (optional; sent as X-Webhook-Secret)
+    STATION_WEBHOOK_SECRET    (optional; sent as X-Webhook-Token)
 """
 
 from __future__ import annotations
@@ -44,7 +44,10 @@ def _headers() -> dict[str, str]:
     h = {"Content-Type": "application/json"}
     secret = os.environ.get("STATION_WEBHOOK_SECRET", "")
     if secret:
-        h["X-Webhook-Secret"] = secret
+        # Dashboard router at app/routers/webhook.py:59 expects this exact
+        # header name. The env var name (STATION_WEBHOOK_SECRET) is the
+        # operator-facing convention; the header name is the wire contract.
+        h["X-Webhook-Token"] = secret
     return h
 
 
