@@ -2079,11 +2079,25 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
                             logger.info("Stop requested; breaking SDK stream")
                             break
 
-                        # Check result for completion
+                        # Check result for completion. When matched, also
+                        # break out of the inner ``async for`` — before
+                        # PR #381 the SDK naturally closed stdin after the
+                        # first ResultMessage and the stream ended for us,
+                        # but now stdin stays open and the stream never
+                        # terminates on its own. Without this break the
+                        # orchestrator process sits in the inner loop
+                        # forever after the lead said "done", the bash
+                        # parent never observes our exit, and the
+                        # launcher's zombie reaper eventually SIGTERMs
+                        # us ~2 min later. See run-20260512T213225Z.
                         if isinstance(message, ResultMessage):
                             result_text = getattr(message, "result", "")
                             if _is_work_complete(result_text):
                                 work_complete = True
+                                logger.info(
+                                    "Work-complete signal received; breaking SDK stream"
+                                )
+                                break
 
                     if control_flags["stop"]:
                         raise OrchestratorStopRequested()
