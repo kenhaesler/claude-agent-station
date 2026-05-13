@@ -82,11 +82,39 @@ async def _user_prompt_stream(text: str):
     """Wrap a string prompt as the AsyncIterable form the SDK requires when
     ``can_use_tool`` or ``hooks`` are supplied.
 
-    Yields one user message then ends. The SDK is designed for this shape
-    and handles stdin lifetime itself via ``_first_result_event`` and the
-    ``CLAUDE_CODE_STREAM_CLOSE_TIMEOUT`` env var (in ms; 60s default).
-    Long Agent Teams sessions need that timeout bumped; see
-    :mod:`agent.launcher` where it's set on the orchestrator subprocess.
+    **Generator must NOT return for the lifetime of the SDK session.**
+
+    The SDK's :py:meth:`Query.stream_input` (`claude_agent_sdk/_internal/query.py`)
+    is structured as::
+
+        async for message in stream:
+            await self.transport.write(...)
+        await self.wait_for_result_and_end_input()  # closes stdin
+
+    The moment this generator returns, ``stream_input`` exits its
+    ``async for`` and immediately calls ``wait_for_result_and_end_input``,
+    which closes stdin as soon as the **first** ``ResultMessage`` arrives
+    (which for an Agent Teams session is seconds in — the lead agent's
+    first turn). Every subsequent PreToolUse / PostToolUse hook callback
+    the CLI tries to make to the Python side then raises
+    ``Error("Stream closed")`` at ``cli.js:7552 sendRequest`` — the
+    audit_hook stops recording for the rest of the run.
+
+    ``CLAUDE_CODE_STREAM_CLOSE_TIMEOUT`` (set to 1800000 ms by
+    :mod:`agent.launcher`) only sets the *maximum* wait for the first
+    result event before closing stdin anyway — it does not delay the
+    close once the event fires. For a one-shot ``query()`` call this is
+    correct; for our long-running Agent Teams sessions it cripples the
+    audit log.
+
+    Fix: yield the single user message, then suspend forever on an
+    event that never fires. The SDK's ``stream_input`` blocks in the
+    ``async for``, never reaches ``wait_for_result_and_end_input``, and
+    stdin stays open. When the orchestrator's outer ``query()`` iterator
+    completes, ``InternalClient.process_query`` calls ``query.close()``
+    in its ``finally`` block; the task group cancels this generator,
+    which raises ``anyio.get_cancelled_exc_class()`` and propagates up
+    cleanly.
     """
     yield {
         "type": "user",
@@ -94,6 +122,19 @@ async def _user_prompt_stream(text: str):
         "message": {"role": "user", "content": text},
         "parent_tool_use_id": None,
     }
+    # Suspend up to one hour. asyncio.sleep handles both cancellation
+    # paths the SDK uses:
+    #   - CancelledError when the SDK task group cancels us during
+    #     query.close() (propagates up cleanly)
+    #   - GeneratorExit when the consumer calls aclose() on the iterator
+    #     (Python's generator machinery handles this transparently)
+    # The earlier anyio.Event().wait() pattern left the orchestrator
+    # process lingering after teardown — see run-20260513T044331Z.
+    # asyncio.sleep with a hard cap avoids both that and the failure
+    # mode where, if cleanup signaling somehow doesn't reach us, the
+    # generator still returns within the cap and stdin is allowed to
+    # close.
+    await asyncio.sleep(3600)
 
 
 SKIP_LABELS = frozenset({
@@ -1443,6 +1484,39 @@ def handle_stream_event(
             )
             return
 
+        # Even when the session matches, this may be an intermediate
+        # ResultMessage from the lead — e.g. when the lead delegates work
+        # via the Agent tool, the SDK emits a turn-complete ResultMessage
+        # for the lead well before any actual work is done. The outer loop
+        # already uses _is_work_complete() to distinguish; mirror that
+        # check here so orchestrator_complete only fires once, when the
+        # lead signals actual completion. Without this gate the dashboard
+        # marks the run terminal on the first ResultMessage and the
+        # ongoing lead/teammate work runs orphaned. Surfaced after the
+        # _user_prompt_stream stdin fix (PR #381) removed the
+        # incidental "one-result-per-query" rate-limit that had been
+        # masking this. See run-20260512T205423Z.
+        result_text = getattr(message, "result", "")
+        if not _is_work_complete(result_text):
+            # Still flush accumulated tokens so progress_update is current,
+            # but do NOT emit orchestrator_complete — the lead is mid-flight.
+            if state:
+                post_webhook(config, "progress_update", {
+                    "run_id": f"run-{run_id}",
+                    "tokens_input": state.tokens_in,
+                    "tokens_output": state.tokens_out,
+                    "tokens_total": state.tokens_in + state.tokens_out,
+                    "turns": state.turns,
+                })
+            logger.info(
+                "Skipping orchestrator_complete emit — main-session ResultMessage "
+                "but result_text does not signal work completion (turns=%s, "
+                "result_preview=%r)",
+                getattr(message, "num_turns", "?"),
+                (result_text or "")[:120],
+            )
+            return
+
         # Final flush of accumulated tokens
         if state:
             post_webhook(config, "progress_update", {
@@ -1458,7 +1532,6 @@ def handle_stream_event(
             "duration_ms": getattr(message, "duration_ms", 0),
             "num_turns": getattr(message, "num_turns", 0),
         })
-        result_text = getattr(message, "result", "")
         if result_text:
             logger.info("Orchestrator result:\n%s", result_text[:2000])
 
@@ -2012,11 +2085,25 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
                             logger.info("Stop requested; breaking SDK stream")
                             break
 
-                        # Check result for completion
+                        # Check result for completion. When matched, also
+                        # break out of the inner ``async for`` — before
+                        # PR #381 the SDK naturally closed stdin after the
+                        # first ResultMessage and the stream ended for us,
+                        # but now stdin stays open and the stream never
+                        # terminates on its own. Without this break the
+                        # orchestrator process sits in the inner loop
+                        # forever after the lead said "done", the bash
+                        # parent never observes our exit, and the
+                        # launcher's zombie reaper eventually SIGTERMs
+                        # us ~2 min later. See run-20260512T213225Z.
                         if isinstance(message, ResultMessage):
                             result_text = getattr(message, "result", "")
                             if _is_work_complete(result_text):
                                 work_complete = True
+                                logger.info(
+                                    "Work-complete signal received; breaking SDK stream"
+                                )
+                                break
 
                     if control_flags["stop"]:
                         raise OrchestratorStopRequested()
@@ -2370,6 +2457,54 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _force_exit_with_cleanup(exit_code: int) -> None:
+    """Terminate any lingering child claude/bundled-CLI subprocesses, then
+    os._exit. Used after orchestrate() returns because the SDK's transport
+    teardown does not reliably reap its bundled CLI subprocess: production
+    has seen the bundled CLI process keep running, firing failed hooks
+    against a closed stdin, long after the Python orchestrator is "done"
+    — flooding the bash log stream and effectively leaking until SIGKILL.
+
+    Going through ``os._exit`` instead of ``sys.exit`` skips Python's
+    atexit + finalizer machinery (which has nothing useful to do at this
+    point — webhooks have already fired) and immediately closes all
+    inherited file descriptors. The kernel then reparents and reaps any
+    children to init.
+    """
+    import signal as _signal_mod
+
+    # Find any direct children of this PID (orchestrator subprocess).
+    # /proc walk is portable enough for our container target (Linux) and
+    # avoids a `psutil` dependency just for cleanup.
+    try:
+        my_pid = os.getpid()
+        for entry in os.listdir("/proc"):
+            if not entry.isdigit():
+                continue
+            try:
+                with open(f"/proc/{entry}/status") as f:
+                    parent = None
+                    for line in f:
+                        if line.startswith("PPid:"):
+                            parent = int(line.split()[1])
+                            break
+                if parent != my_pid:
+                    continue
+                # It's our child; politely SIGTERM. The kernel will
+                # reap it once we os._exit and init takes over.
+                os.kill(int(entry), _signal_mod.SIGTERM)
+            except (OSError, ValueError, FileNotFoundError):
+                continue
+    except Exception:  # noqa: BLE001 — best-effort
+        logger.debug("cleanup: failed to enumerate /proc", exc_info=True)
+    # Bypass the asyncio.run finalizer + SDK transport close path that
+    # has been observed to hang. Webhooks already fired; nothing else
+    # depends on a clean Python shutdown here.
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(exit_code)
+
+
 def main() -> None:
     logging.basicConfig(
         level=logging.INFO,
@@ -2391,7 +2526,7 @@ def main() -> None:
     # Existing Agent Teams orchestration path — unchanged.
     config = load_config(args.config)
     exit_code = asyncio.run(orchestrate(config, args.run_id, args.workspaces_dir))
-    sys.exit(exit_code)
+    _force_exit_with_cleanup(exit_code)
 
 
 if __name__ == "__main__":

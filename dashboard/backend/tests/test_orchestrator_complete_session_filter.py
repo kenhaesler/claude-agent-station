@@ -17,7 +17,8 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO_ROOT))
 
 
-def _make_result_msg(session_id: str, num_turns: int = 31, subtype: str = "error_max_turns"):
+def _make_result_msg(session_id: str, num_turns: int = 31, subtype: str = "error_max_turns",
+                     result: str = ""):
     """Build a stand-in for the SDK's ResultMessage that's identifiable
     via isinstance via the real class."""
     from claude_agent_sdk import ResultMessage
@@ -27,16 +28,22 @@ def _make_result_msg(session_id: str, num_turns: int = 31, subtype: str = "error
     m.subtype = subtype
     m.is_error = subtype.startswith("error")
     m.duration_ms = 100
-    m.result = ""
+    m.result = result
     return m
 
 
 def test_emits_orchestrator_complete_for_main_session():
     """When a ResultMessage's session_id matches the captured main
-    session, orchestrator_complete must fire."""
+    session AND its result text signals work completion,
+    orchestrator_complete must fire. (Both gates apply since the
+    work-completion gate was added — see run-20260512T205423Z post-mortem.)
+    """
     from agent.station_orchestrator import handle_stream_event, _StreamState
     state = _StreamState(main_session_id="lead-session-abc")
-    msg = _make_result_msg("lead-session-abc", num_turns=120, subtype="success")
+    msg = _make_result_msg(
+        "lead-session-abc", num_turns=120, subtype="success",
+        result="Final summary: all teammates completed; PRs opened.",
+    )
 
     with patch("agent.station_orchestrator.post_webhook") as mock_post:
         handle_stream_event(msg, config={}, run_id="r-1", state=state)
