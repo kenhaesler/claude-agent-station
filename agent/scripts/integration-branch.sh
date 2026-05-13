@@ -28,6 +28,24 @@ get_dev_branch() {
     echo "${branch:-autonomous/dev}"
 }
 
+# Resolve the `gh pr merge` strategy flag from config. Defaults to
+# `--merge` (a merge commit) — branch protection on the integration
+# branch may require `--squash` or `--rebase` instead, so let the
+# operator pick.
+get_merge_flag() {
+    local s
+    s=$(json_get "$CONFIG_FILE" "integration.merge_strategy" 2>/dev/null || echo "merge")
+    case "$s" in
+        squash) echo "--squash" ;;
+        rebase) echo "--rebase" ;;
+        merge|"") echo "--merge" ;;
+        *)
+            log_warn "Unknown integration.merge_strategy '$s' — falling back to --merge" >&2
+            echo "--merge"
+            ;;
+    esac
+}
+
 # ============================================================================
 # BRANCH LIFECYCLE
 # ============================================================================
@@ -197,9 +215,13 @@ Autonomous run: $RUN_ID" 2>&1) || true
     # if the immediate merge below fails.
     gh pr edit "$pr_url" --add-label "autonomous-agent/auto-merge" 2>/dev/null || true
 
-    # Merge the PR into the integration branch
+    # Merge the PR into the integration branch (strategy from config —
+    # branch protection may require squash or rebase instead of a merge
+    # commit).
+    local _merge_flag
+    _merge_flag=$(get_merge_flag)
     local merge_commit_sha=""
-    if gh pr merge "$pr_url" --merge --delete-branch 2>&1 | while IFS= read -r line; do log_info "  $line"; done; then
+    if gh pr merge "$pr_url" "$_merge_flag" --delete-branch 2>&1 | while IFS= read -r line; do log_info "  $line"; done; then
         log_ok "Merged PR $pr_url into $dev_branch"
         git fetch origin "$dev_branch" 2>/dev/null || true
         merge_commit_sha=$(git rev-parse "origin/$dev_branch" 2>/dev/null || echo "")
@@ -644,42 +666,58 @@ sweep_stale_integration_prs() {
     local pr_json
     pr_json=$(gh pr list --repo "$project" --state open --base "$dev_branch" \
         --label "autonomous-agent/auto-merge" \
-        --json number,title,mergeable,url --limit 50 2>/dev/null || echo "[]")
+        --json number,title,mergeable --limit 50 2>/dev/null || echo "[]")
 
-    local pr_count
-    pr_count=$(echo "$pr_json" | python3 -c "import json,sys; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "0")
+    # Parse all PRs in a single python invocation (TSV) — number<TAB>mergeable<TAB>title.
+    # Tabs inside titles are normalised so the read split stays clean.
+    local rows
+    rows=$(echo "$pr_json" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+for pr in data:
+    num = pr.get('number','')
+    merg = pr.get('mergeable','')
+    title = (pr.get('title','') or '').replace('\t', ' ')
+    print(f'{num}\t{merg}\t{title}')
+" 2>/dev/null || echo "")
 
-    if [ "$pr_count" -eq 0 ]; then
+    if [ -z "$rows" ]; then
         return 0
     fi
 
+    local pr_count
+    pr_count=$(printf '%s\n' "$rows" | grep -c .)
     log_info "Sweep: $pr_count auto-merge PR(s) open against $dev_branch in $project"
 
+    local _merge_flag
+    _merge_flag=$(get_merge_flag)
+
     local swept=0 failed=0 unknown=0
-    while IFS= read -r row; do
-        [ -z "$row" ] && continue
-        local pr_num pr_title pr_mergeable pr_url
-        pr_num=$(echo "$row" | python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('number',''))" 2>/dev/null || echo "")
-        pr_title=$(echo "$row" | python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('title',''))" 2>/dev/null || echo "")
-        pr_mergeable=$(echo "$row" | python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('mergeable',''))" 2>/dev/null || echo "")
-        pr_url=$(echo "$row" | python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('url',''))" 2>/dev/null || echo "")
+    while IFS=$'\t' read -r pr_num pr_mergeable pr_title; do
         [ -z "$pr_num" ] && continue
 
         case "$pr_mergeable" in
             MERGEABLE)
-                log_info "Sweep: merging #$pr_num — $pr_title"
-                if gh pr merge "$pr_num" --repo "$project" --merge --delete-branch 2>&1 | while IFS= read -r m; do log_info "  $m"; done; then
+                log_info "Sweep: merging #$pr_num ($_merge_flag) — $pr_title"
+                if gh pr merge "$pr_num" --repo "$project" "$_merge_flag" --delete-branch 2>&1 | while IFS= read -r m; do log_info "  $m"; done; then
                     log_ok "Sweep: merged #$pr_num into $dev_branch"
                     swept=$((swept + 1))
                 else
-                    log_warn "Sweep: merge failed for #$pr_num — labeling conflict"
-                    gh pr edit "$pr_num" --repo "$project" --add-label "autonomous-agent/conflict" 2>/dev/null || true
+                    # Swap labels — drop auto-merge so this PR doesn't get
+                    # retried (and re-notified) every sweep until a human
+                    # resolves it.
+                    log_warn "Sweep: merge failed for #$pr_num — handing off (auto-merge → conflict)"
+                    gh pr edit "$pr_num" --repo "$project" \
+                        --remove-label "autonomous-agent/auto-merge" \
+                        --add-label "autonomous-agent/conflict" 2>/dev/null || true
                     failed=$((failed + 1))
                 fi
                 ;;
             CONFLICTING)
-                log_info "Sweep: #$pr_num has conflicts — labeling and skipping"
-                gh pr edit "$pr_num" --repo "$project" --add-label "autonomous-agent/conflict" 2>/dev/null || true
+                log_info "Sweep: #$pr_num has conflicts — handing off (auto-merge → conflict)"
+                gh pr edit "$pr_num" --repo "$project" \
+                    --remove-label "autonomous-agent/auto-merge" \
+                    --add-label "autonomous-agent/conflict" 2>/dev/null || true
                 failed=$((failed + 1))
                 ;;
             *)
@@ -688,11 +726,7 @@ sweep_stale_integration_prs() {
                 unknown=$((unknown + 1))
                 ;;
         esac
-    done < <(echo "$pr_json" | python3 -c "
-import json, sys
-for pr in json.load(sys.stdin):
-    print(json.dumps(pr))
-" 2>/dev/null)
+    done <<< "$rows"
 
     webhook_event "stale_prs_swept" \
         "\"project\":\"$project\",\"dev_branch\":\"$dev_branch\",\"swept\":$swept,\"failed\":$failed,\"unknown\":$unknown,\"total\":$pr_count" >&2
