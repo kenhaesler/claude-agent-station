@@ -9,9 +9,11 @@ that crippled the audit_hook on long Agent Teams runs. See:
   ``wait_for_result_and_end_input`` the moment our generator returns,
   which closes stdin as soon as the first ResultMessage arrives (i.e.
   seconds into a 50-minute Agent Teams session).
-- Fix: keep the generator alive by ``await``ing an anyio Event that
-  never fires. ``stream_input``'s ``async for`` blocks forever, and
-  stdin only closes when ``query.close()`` cancels the task group.
+- Fix: keep the generator alive by ``await``ing an ``asyncio.sleep``
+  with a one-hour cap that bounds the worst case if cleanup fails.
+  ``stream_input``'s ``async for`` blocks while we sleep, and stdin
+  only closes when ``query.close()`` cancels the task group — or, in
+  the absolute-worst-case, when the one-hour cap is reached.
 """
 
 from __future__ import annotations
@@ -55,8 +57,8 @@ def test_generator_suspends_after_first_yield_does_not_return():
         await agen.__anext__()  # consume the user message
         # Now try to advance one more step. If the generator returned,
         # this raises StopAsyncIteration immediately. If it correctly
-        # suspends on anyio.Event().wait(), this hangs forever — so
-        # we wrap it in a tight timeout and assert the timeout fires.
+        # suspends on the asyncio.sleep cap, anext won't yield within
+        # the timeout — so we assert TimeoutError fires.
         try:
             await asyncio.wait_for(agen.__anext__(), timeout=0.5)
         except asyncio.TimeoutError:
@@ -77,9 +79,9 @@ def test_generator_suspends_after_first_yield_does_not_return():
 
 def test_generator_cancels_cleanly_when_consumer_aborts():
     """When the SDK's task group cancels the stream task (during
-    ``query.close()``), the suspended ``await anyio.Event().wait()``
-    must propagate the cancellation cleanly — no swallowed exceptions,
-    no leaked task. Models the real teardown path.
+    ``query.close()``), the suspended ``asyncio.sleep`` must propagate
+    the cancellation cleanly — no swallowed exceptions, no leaked task.
+    Models the real teardown path.
     """
     from agent.station_orchestrator import _user_prompt_stream
 
@@ -101,4 +103,35 @@ def test_generator_cancels_cleanly_when_consumer_aborts():
     outcome = asyncio.run(cancel_consumer())
     assert outcome == "cancelled", (
         f"Cancellation did not propagate: {outcome!r}"
+    )
+
+
+def test_generator_returns_cleanly_on_aclose_after_first_yield():
+    """The teardown path used by the SDK's task-group cancel is
+    ``agen.aclose()``, which throws GeneratorExit at the suspended
+    point. Our generator MUST catch + return, not propagate
+    GeneratorExit out (which would manifest as an
+    'unhandled exception during asyncio.run() shutdown' warning seen
+    in run-20260513T044331Z).
+    """
+    from agent.station_orchestrator import _user_prompt_stream
+
+    async def aclose_after_first_yield():
+        agen = _user_prompt_stream("hi")
+        await agen.__anext__()  # consume the user message
+        # Now close the generator while it's suspended. This is what
+        # the SDK runtime does when its task group cancels the
+        # stream task. Must return cleanly with no exception.
+        try:
+            await agen.aclose()
+        except Exception as exc:  # noqa: BLE001 — we WANT to flag any leak
+            return f"raised: {type(exc).__name__}: {exc}"
+        return "closed-cleanly"
+
+    outcome = asyncio.run(aclose_after_first_yield())
+    assert outcome == "closed-cleanly", (
+        f"aclose() did not close cleanly: {outcome}. "
+        f"This regression would surface in production as "
+        f"'asyncio: unhandled exception during asyncio.run() shutdown' "
+        f"and a lingering Python orchestrator process."
     )
