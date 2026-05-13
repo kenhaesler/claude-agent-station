@@ -1929,9 +1929,15 @@ run_manager_review() {
     # No --allowedTools: full VM access, prompt-enforced guardrails
 
     # Reference the review package file instead of inlining it (avoids ARG_MAX crash on large diffs)
+    # The turn budget is injected so the system prompt's tool-budget rules
+    # can stay generic and stay in sync with limits.max_manager_turns.
+    local _half_budget=$(( max_turns / 2 ))
+    [ "$_half_budget" -lt 5 ] && _half_budget=5
     local manager_prompt="Review the employee work package at: $review_package
 
 Write your verdicts to: $verdicts_file
+
+Your hard turn budget for this review is $max_turns. Treat turn $_half_budget as your soft deadline to start drafting the verdicts file — see the <tool-budget> section of your system prompt for how to spend the budget.
 
 Read the review package file first, then evaluate each project's work against the criteria in your system prompt. Be strict on completeness — never approve partial implementations."
 
