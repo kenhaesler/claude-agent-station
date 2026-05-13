@@ -143,7 +143,9 @@ merge_to_dev() {
 
     cd "$workspace" || { log_error "Workspace $workspace not found"; return 1; }
 
-    # Ensure the integration branch exists before attempting merge
+    # Ensure the integration branch exists before attempting merge. The
+    # source is the project's underlying base (typically main) so a fresh
+    # dev branch starts in sync.
     ensure_dev_branch "$project" "$base_branch" || {
         log_error "Cannot ensure dev branch for $project"
         return 1
@@ -165,49 +167,53 @@ merge_to_dev() {
     fi
     log_ok "Pushed feature branch $branch"
 
-    # Checkout dev and pull latest
-    git checkout "$dev_branch" 2>/dev/null || {
-        log_error "Cannot checkout $dev_branch"
-        return 1
-    }
-    git pull origin "$dev_branch" 2>/dev/null || true
+    # Open a PR feature → dev so the merge is observable in GitHub history
+    # and any branch protection on the integration branch is honored.
+    local close_line=""
+    if declare -F format_close_keywords >/dev/null 2>&1; then
+        close_line=$(format_close_keywords "$issue_number" "" 2>/dev/null || echo "")
+    fi
+    local pr_title
+    pr_title=$(git -C "$workspace" log -1 --format=%s "$branch" 2>/dev/null || echo "autonomous merge")
+    local pr_url
+    pr_url=$(gh pr create --repo "$project" --base "$dev_branch" --head "$branch" \
+        --title "autonomous: $pr_title" \
+        --body "Approved by autonomous manager. Merging into integration branch \`$dev_branch\`.
 
-    # Attempt the merge
-    local merge_commit_sha=""
-    if git merge "$branch" --no-edit 2>/dev/null; then
-        merge_commit_sha=$(git rev-parse HEAD 2>/dev/null || echo "")
-        log_ok "Merged $branch into $dev_branch"
+**Manager reasoning**: $reasoning${close_line:+
 
-        git push origin "$dev_branch" 2>/dev/null || {
-            log_error "Failed to push $dev_branch after merge"
-            return 1
-        }
-        log_ok "Pushed $dev_branch"
-    else
-        # Merge conflict — abort, create a PR for manual resolution instead
-        git merge --abort 2>/dev/null || true
-        log_warn "Merge conflict: $branch into $dev_branch — creating PR for manual resolution"
-
-        gh pr create --repo "$project" --base "$dev_branch" --head "$branch" \
-            --title "autonomous: merge #${issue_number} to dev (conflict)" \
-            --body "## Merge Conflict
-
-Feature branch \`$branch\` could not be cleanly merged into \`$dev_branch\`.
-
-**Issue**: #${issue_number}
-**Reasoning**: ${reasoning}
-
-Please resolve conflicts manually.
+$close_line}
 
 ---
-Autonomous run: $RUN_ID" 2>/dev/null || log_warn "PR creation failed for conflict resolution"
+Autonomous run: $RUN_ID" 2>&1) || true
+
+    if [ -z "$pr_url" ] || ! echo "$pr_url" | grep -q "http"; then
+        log_error "Failed to create PR for $branch → $dev_branch: $pr_url"
+        return 1
+    fi
+    log_ok "PR created: $pr_url"
+
+    # Merge the PR into the integration branch
+    local merge_commit_sha=""
+    if gh pr merge "$pr_url" --merge --delete-branch 2>&1 | while IFS= read -r line; do log_info "  $line"; done; then
+        log_ok "Merged PR $pr_url into $dev_branch"
+        git fetch origin "$dev_branch" 2>/dev/null || true
+        merge_commit_sha=$(git rev-parse "origin/$dev_branch" 2>/dev/null || echo "")
+    else
+        log_warn "PR merge failed for $pr_url — leaving open for manual resolution"
 
         # Label the issue so it's visible in the dashboard
         if [ -n "$issue_number" ] && [ "$issue_number" != "None" ] && [ "$issue_number" != "null" ]; then
             gh issue edit "$issue_number" --repo "$project" --add-label "autonomous-agent/conflict" 2>/dev/null || true
+            gh issue comment "$issue_number" --repo "$project" --body "## Merge Conflict
+
+PR $pr_url could not be auto-merged into \`$dev_branch\`. Please resolve conflicts manually.
+
+---
+Autonomous run: $RUN_ID" 2>/dev/null || true
         fi
 
-        webhook_event "dev_merged" "\"project\":\"$project\",\"branch\":\"$branch\",\"issue_number\":\"$issue_number\",\"status\":\"conflict\"" >&2
+        webhook_event "dev_merged" "\"project\":\"$project\",\"branch\":\"$branch\",\"issue_number\":\"$issue_number\",\"status\":\"conflict\",\"pr_url\":\"$pr_url\"" >&2
         return 0
     fi
 
@@ -219,7 +225,7 @@ Autonomous run: $RUN_ID" 2>/dev/null || log_warn "PR creation failed for conflic
 
         gh issue comment "$issue_number" --repo "$project" --body "## Merged to Integration Branch
 
-Branch \`$branch\` merged into \`$dev_branch\`.
+PR $pr_url merged \`$branch\` into \`$dev_branch\`.
 Will be promoted to \`$base_branch\` after validation.
 
 **Manager reasoning**: $reasoning

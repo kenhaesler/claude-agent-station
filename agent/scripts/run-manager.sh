@@ -2066,6 +2066,20 @@ print(json.dumps(v))
         base_branch=$(echo "$verdict_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('base_branch','main'))")
         verdict_mode=$(echo "$verdict_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('mode',''))" 2>/dev/null || echo "")
 
+        # When the integration branch is enabled, every autonomous PR
+        # targets the dev branch instead of the project's underlying base
+        # (typically main). The dev → main hop is handled by the
+        # promotion flow below, so verdict.base_branch stays as the
+        # promote-to target and pr_base_branch carries the actual PR target.
+        local pr_base_branch="$base_branch"
+        if integration_enabled; then
+            local _dev
+            _dev=$(get_dev_branch)
+            if [ -n "$_dev" ]; then
+                pr_base_branch="$_dev"
+            fi
+        fi
+
         local name
         name=$(repo_name "$project")
         local workspace="$WORKSPACES_DIR/$name"
@@ -2245,13 +2259,13 @@ Run: $RUN_ID" 2>/dev/null || true
             fi
 
             # Return to base branch and continue to next verdict
-            git checkout "$base_branch" 2>/dev/null || true
+            git checkout "$pr_base_branch" 2>/dev/null || git checkout "$base_branch" 2>/dev/null || true
             continue
         fi
 
         case "$verdict" in
             APPROVE)
-                log_info "APPROVE: Processing verdict (base: $base_branch)"
+                log_info "APPROVE: Processing verdict (pr_base: $pr_base_branch, promote_to: $base_branch)"
 
                 if integration_enabled; then
                     # Integration branch mode: merge to dev, don't close issue
@@ -2308,8 +2322,8 @@ Run: $RUN_ID" 2>/dev/null || true
                                 log_info "Auto-draft PR (autonomy=auto, rate limit OK)"
                                 local pr_url close_line
                                 close_line=$(format_close_keywords "$issue_number" "$issue_numbers_json")
-                                rebase_against_base "$workspace" "$branch" "$base_branch" "$project" "" "$RUN_ID" "pre_pr" || true
-                                pr_url=$(gh pr create --repo "$project" --base "$base_branch" --head "$branch" \
+                                rebase_against_base "$workspace" "$branch" "$pr_base_branch" "$project" "" "$RUN_ID" "pre_pr" || true
+                                pr_url=$(gh pr create --repo "$project" --base "$pr_base_branch" --head "$branch" \
                                     --draft \
                                     --title "autonomous (draft): $(git log -1 --format=%s)" \
                                     --body "Draft PR auto-opened under \`autonomy=auto\`.
@@ -2340,8 +2354,8 @@ Rate limit: max 1 auto-draft PR per project per hour. Regenerated at $(date -u +
                             # Create PR and merge via GitHub API (works with protected branches)
                             local pr_url close_line
                             close_line=$(format_close_keywords "$issue_number" "$issue_numbers_json")
-                            rebase_against_base "$workspace" "$branch" "$base_branch" "$project" "" "$RUN_ID" "pre_pr" || true
-                            pr_url=$(gh pr create --repo "$project" --base "$base_branch" --head "$branch" \
+                            rebase_against_base "$workspace" "$branch" "$pr_base_branch" "$project" "" "$RUN_ID" "pre_pr" || true
+                            pr_url=$(gh pr create --repo "$project" --base "$pr_base_branch" --head "$branch" \
                                 --title "autonomous: $(git log -1 --format=%s)" \
                                 --body "Approved by autonomous manager.
 
@@ -2364,14 +2378,14 @@ $close_line}" 2>&1) || true
                                     # shellcheck source=lib/conflict-helpers.sh
                                     source "$_script_dir/lib/conflict-helpers.sh"
                                     set +e
-                                    rebase_against_base "$workspace" "$branch" "$base_branch" "$project" "$pr_num_for_resolve" "$RUN_ID" "at_merge"
+                                    rebase_against_base "$workspace" "$branch" "$pr_base_branch" "$project" "$pr_num_for_resolve" "$RUN_ID" "at_merge"
                                     local resolve_rc=$?
                                     set -e
                                     if [ "$resolve_rc" = "0" ]; then
                                         log_info "Resolution succeeded; retrying merge"
                                         if gh pr merge "$pr_url" --merge --delete-branch 2>&1 | while IFS= read -r line; do log_info "  $line"; done; then
                                             push_merge_ok=true
-                                            log_ok "PR merged to $base_branch (after at-merge resolution)"
+                                            log_ok "PR merged to $pr_base_branch (after at-merge resolution)"
                                         else
                                             log_error "PR merge still failed after resolution — left open: $pr_url"
                                             post_resolution_outcome 1 "$project" "$pr_num_for_resolve" "$branch"
@@ -2436,13 +2450,13 @@ Autonomous run: $RUN_ID" 2>/dev/null || log_warn "Failed to comment on issue #$i
                 ;;
 
             PR)
-                log_info "PR: Pushing branch and creating PR for human review (base: $base_branch)"
-                rebase_against_base "$workspace" "$branch" "$base_branch" "$project" "" "$RUN_ID" "pre_pr" || true
+                log_info "PR: Pushing branch and creating PR for human review (base: $pr_base_branch)"
+                rebase_against_base "$workspace" "$branch" "$pr_base_branch" "$project" "" "$RUN_ID" "pre_pr" || true
                 if git push origin "$branch" 2>/dev/null; then
                     log_ok "Pushed $branch"
                     local close_line
                     close_line=$(format_close_keywords "$issue_number" "$issue_numbers_json")
-                    gh pr create --repo "$project" --base "$base_branch" \
+                    gh pr create --repo "$project" --base "$pr_base_branch" \
                         --title "autonomous: $(git log -1 --format=%s)" \
                         --body "## Needs Human Review
 
@@ -2533,7 +2547,7 @@ Run: $RUN_ID" 2>/dev/null || true
                 else
                     # Max retries exhausted — clean up
                     log_info "REJECT: Max retries ($max_retries) exhausted. Resetting workspace."
-                    git checkout "$base_branch" 2>/dev/null || true
+                    git checkout "$pr_base_branch" 2>/dev/null || git checkout "$base_branch" 2>/dev/null || true
                     git branch -D "$branch" 2>/dev/null || true
                     rm -f "$workspace/.claude-manager-feedback.json"
                     log_ok "Rejected changes cleaned up (retries exhausted)"
@@ -2576,7 +2590,7 @@ Run: $RUN_ID" 2>/dev/null || true
         esac
 
         # Always return to base branch
-        git checkout "$base_branch" 2>/dev/null || true
+        git checkout "$pr_base_branch" 2>/dev/null || git checkout "$base_branch" 2>/dev/null || true
     done
 
     # Post-verdict: validate integration branch if we had approvals
