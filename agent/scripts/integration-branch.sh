@@ -193,6 +193,10 @@ Autonomous run: $RUN_ID" 2>&1) || true
     fi
     log_ok "PR created: $pr_url"
 
+    # Tag the PR so the stale-PR sweep knows it's an auto-merge candidate
+    # if the immediate merge below fails.
+    gh pr edit "$pr_url" --add-label "autonomous-agent/auto-merge" 2>/dev/null || true
+
     # Merge the PR into the integration branch
     local merge_commit_sha=""
     if gh pr merge "$pr_url" --merge --delete-branch 2>&1 | while IFS= read -r line; do log_info "  $line"; done; then
@@ -609,6 +613,93 @@ create_integration_labels() {
         --color D93F0B --description "Merge conflict — needs manual resolution" --force 2>/dev/null || true
     gh label create "autonomous-agent/validation-failed" --repo "$project" \
         --color B60205 --description "Failed validation on integration branch" --force 2>/dev/null || true
+    gh label create "autonomous-agent/auto-merge" --repo "$project" \
+        --color FBCA04 --description "Auto-merge candidate — will be merged into the integration branch by the next sweep" --force 2>/dev/null || true
 
     log_ok "Integration labels ensured for $project"
+}
+
+# ============================================================================
+# STALE-PR SWEEP
+# ============================================================================
+#
+# Find open auto-merge PRs targeting the integration branch that didn't get
+# merged at creation time (e.g. branch protection delay, race, gh transient
+# failure, or — more importantly — a manager that ran out of turns and
+# produced no verdicts at all, leaving previously pushed branches with
+# unmerged PRs). Retry the merge for any that are now MERGEABLE.
+#
+# Only PRs carrying the `autonomous-agent/auto-merge` label are touched —
+# PR-verdict PRs (opened for human review) are intentionally left alone.
+
+sweep_stale_integration_prs() {
+    local project="$1"
+    local dev_branch
+    dev_branch=$(get_dev_branch)
+
+    if [ -z "$project" ]; then
+        return 0
+    fi
+
+    local pr_json
+    pr_json=$(gh pr list --repo "$project" --state open --base "$dev_branch" \
+        --label "autonomous-agent/auto-merge" \
+        --json number,title,mergeable,url --limit 50 2>/dev/null || echo "[]")
+
+    local pr_count
+    pr_count=$(echo "$pr_json" | python3 -c "import json,sys; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "0")
+
+    if [ "$pr_count" -eq 0 ]; then
+        return 0
+    fi
+
+    log_info "Sweep: $pr_count auto-merge PR(s) open against $dev_branch in $project"
+
+    local swept=0 failed=0 unknown=0
+    while IFS= read -r row; do
+        [ -z "$row" ] && continue
+        local pr_num pr_title pr_mergeable pr_url
+        pr_num=$(echo "$row" | python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('number',''))" 2>/dev/null || echo "")
+        pr_title=$(echo "$row" | python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('title',''))" 2>/dev/null || echo "")
+        pr_mergeable=$(echo "$row" | python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('mergeable',''))" 2>/dev/null || echo "")
+        pr_url=$(echo "$row" | python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('url',''))" 2>/dev/null || echo "")
+        [ -z "$pr_num" ] && continue
+
+        case "$pr_mergeable" in
+            MERGEABLE)
+                log_info "Sweep: merging #$pr_num — $pr_title"
+                if gh pr merge "$pr_num" --repo "$project" --merge --delete-branch 2>&1 | while IFS= read -r m; do log_info "  $m"; done; then
+                    log_ok "Sweep: merged #$pr_num into $dev_branch"
+                    swept=$((swept + 1))
+                else
+                    log_warn "Sweep: merge failed for #$pr_num — labeling conflict"
+                    gh pr edit "$pr_num" --repo "$project" --add-label "autonomous-agent/conflict" 2>/dev/null || true
+                    failed=$((failed + 1))
+                fi
+                ;;
+            CONFLICTING)
+                log_info "Sweep: #$pr_num has conflicts — labeling and skipping"
+                gh pr edit "$pr_num" --repo "$project" --add-label "autonomous-agent/conflict" 2>/dev/null || true
+                failed=$((failed + 1))
+                ;;
+            *)
+                # UNKNOWN — GitHub hasn't finished computing mergeability yet
+                log_info "Sweep: #$pr_num mergeability still computing ($pr_mergeable) — leaving for next sweep"
+                unknown=$((unknown + 1))
+                ;;
+        esac
+    done < <(echo "$pr_json" | python3 -c "
+import json, sys
+for pr in json.load(sys.stdin):
+    print(json.dumps(pr))
+" 2>/dev/null)
+
+    webhook_event "stale_prs_swept" \
+        "\"project\":\"$project\",\"dev_branch\":\"$dev_branch\",\"swept\":$swept,\"failed\":$failed,\"unknown\":$unknown,\"total\":$pr_count" >&2
+
+    if [ "$swept" -gt 0 ]; then
+        notify "sweep" "Swept $swept stale PR(s) into $dev_branch for $project"
+    fi
+
+    return 0
 }
