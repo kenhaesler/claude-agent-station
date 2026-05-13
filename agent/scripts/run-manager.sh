@@ -3034,6 +3034,25 @@ print(json.dumps(result))
         log_info "Auto-PR/escalated projects (skipping manager review): ${auto_pr_projects[*]}"
     fi
 
+    # ---- PHASE 1.9: Stale-PR sweep ----
+    # Catch auto-merge PRs that didn't merge at creation time (transient
+    # gh failure, branch protection delay, or — most importantly — a
+    # manager run that produced no verdicts, OR a cycle with no eligible
+    # backlog at all). Must run BEFORE the no-reports / no-verdicts
+    # early-exit paths below, otherwise empty-backlog cycles never get
+    # to retry their orphaned PRs. Only runs when integration is enabled;
+    # only touches PRs carrying the `autonomous-agent/auto-merge` label.
+    if integration_enabled; then
+        local _sweep_i _sweep_repo _sweep_enabled
+        for ((_sweep_i = 0; _sweep_i < project_count; _sweep_i++)); do
+            _sweep_repo=$(get_project_field "$_sweep_i" "repo")
+            _sweep_enabled=$(get_project_field "$_sweep_i" "enabled" 2>/dev/null || echo "true")
+            [ "$_sweep_enabled" = "false" ] && continue
+            [ -z "$_sweep_repo" ] && continue
+            sweep_stale_integration_prs "$_sweep_repo" || true
+        done
+    fi
+
     # ---- PHASE 2: Manager review ----
 
     # Check if any employee produced a report — skip manager if nothing to review
@@ -3106,24 +3125,6 @@ print(json.dumps(result))
 
     # ---- PHASE 3: Execute verdicts ----
     execute_verdicts "$verdicts_file"
-
-    # ---- PHASE 3.25: Stale-PR sweep ----
-    # Catch auto-merge PRs that didn't merge at creation time (transient
-    # gh failure, branch protection delay, or — most importantly — a
-    # manager run that produced no verdicts and skipped execute_verdicts
-    # entirely, leaving prior-run PRs orphaned against the integration
-    # branch). Only runs when integration is enabled; only touches PRs
-    # carrying the `autonomous-agent/auto-merge` label.
-    if integration_enabled; then
-        local _sweep_i _sweep_repo _sweep_enabled
-        for ((_sweep_i = 0; _sweep_i < project_count; _sweep_i++)); do
-            _sweep_repo=$(get_project_field "$_sweep_i" "repo")
-            _sweep_enabled=$(get_project_field "$_sweep_i" "enabled" 2>/dev/null || echo "true")
-            [ "$_sweep_enabled" = "false" ] && continue
-            [ -z "$_sweep_repo" ] && continue
-            sweep_stale_integration_prs "$_sweep_repo" || true
-        done
-    fi
 
     # ---- PHASE 3.5: Plan-review gate (issue #266) ----
     # For each plan_only project, drive the gate: parse the manager's
