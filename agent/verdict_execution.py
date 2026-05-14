@@ -45,7 +45,13 @@ from agent.gh_client import gh_run
 
 logger = logging.getLogger(__name__)
 
-VerdictKind = Literal["APPROVE", "PR", "REJECT", "SKIP"]
+VerdictKind = Literal[
+    "APPROVE",              # Direct merge to base (today's APPROVE)
+    "APPROVE_INTEGRATION",  # Non-draft PR against integration branch + --auto --squash
+    "PR",                   # Draft PR for human review
+    "REJECT",
+    "SKIP",
+]
 
 
 @dataclass
@@ -291,6 +297,18 @@ def execute_skip(
         run_id=run_id, env=env, into=result,
     )
     return result
+
+
+def execute_approve_integration(
+    verdict: Verdict,
+    *,
+    workspace: Path,
+    run_id: str | None = None,
+    env: dict[str, str] | None = None,
+    dev_branch: str | None = None,
+) -> ExecutionResult:
+    """Placeholder — implemented in Task 2."""
+    raise NotImplementedError("execute_approve_integration not yet implemented")
 
 
 _EXECUTORS = {

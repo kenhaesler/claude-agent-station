@@ -1,10 +1,13 @@
-"""Tests for agent.verdict_execution (#363).
+"""Tests for agent.verdict_execution (#363, #388).
 
 These tests pin the per-decision argv shape so reviewers can diff
 against the bash invocations in agent/scripts/run-manager.sh
 (~lines 2200–2500). Drift here means the Python module would push
 code, label issues, or comment in subtly different ways from the
 bash it replaces.
+
+Issue #388 adds APPROVE_INTEGRATION verdict: non-draft PR against
+integration branch with auto-merge armed, CI gates the merge.
 """
 
 from __future__ import annotations
@@ -272,3 +275,27 @@ def test_verdict_from_dict_handles_string_and_null_issue_number():
             "branch": "feat/foo",
         })
         assert v.issue_number is None, f"sentinel {sentinel!r} should map to None"
+
+
+# ── APPROVE_INTEGRATION (issue #388) ───────────────────────────────────
+
+
+def test_verdict_from_dict_accepts_approve_integration():
+    """Manager output with verdict='APPROVE_INTEGRATION' must round-trip."""
+    from agent.verdict_execution import Verdict
+
+    payload = {
+        "project": "owner/repo",
+        "issue_number": 42,
+        "verdict": "APPROVE_INTEGRATION",
+        "branch": "autonomous/issue-42",
+        "base_branch": "main",
+        "reasoning": "Auth refactor with passing tests",
+    }
+    parsed = Verdict.from_dict(payload)
+    assert parsed.verdict == "APPROVE_INTEGRATION"
+    assert parsed.project == "owner/repo"
+    assert parsed.issue_number == 42
+    assert parsed.branch == "autonomous/issue-42"
+
+
