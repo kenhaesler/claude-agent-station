@@ -48,3 +48,37 @@ def test_manager_agent_body_sources_prompt():
     assert "claude -p" not in body
     # Sibling framing present.
     assert "sibling" in body.lower() or "agent teams" in body.lower()
+
+
+def test_orchestrator_loads_manager_agent_definition():
+    """The orchestrator must register the manager agent alongside issue-worker."""
+    from agent.station_orchestrator import load_agent_definition
+
+    name, defn = load_agent_definition(MANAGER_AGENT)
+    assert name == "manager"
+    assert defn.model == "claude-sonnet-4-6"
+    assert defn.tools is not None
+    assert "Write" in defn.tools  # for the verdicts file
+    assert "Bash" in defn.tools   # for gh issue view
+
+
+def test_agents_dict_includes_both_issue_worker_and_manager(monkeypatch, tmp_path):
+    """A unit-level test on the loader logic the project loop uses.
+
+    Replicates the inline ``agents_dict`` construction at
+    ``station_orchestrator.py:1703-1717`` to assert both agents are loaded.
+    """
+    from agent.station_orchestrator import load_agent_definition
+
+    agent_dir = REPO / "agent" / "agents"
+    files = {
+        "issue-worker": agent_dir / "issue-worker.md",
+        "manager": agent_dir / "manager.md",
+    }
+    agents = {}
+    for name, path in files.items():
+        assert path.is_file(), f"missing {path}"
+        n, d = load_agent_definition(path)
+        agents[n] = d
+
+    assert set(agents.keys()) == {"issue-worker", "manager"}

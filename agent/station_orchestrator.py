@@ -1706,10 +1706,13 @@ async def orchestrate_project(
     manager_turns = get_limit(config, "max_manager_turns", 30)
     max_reentries = 6  # Up to 6 re-entries if lead exits prematurely
 
-    # Load issue-worker agent definition for SDK discovery
+    # Load Agent Teams sibling definitions for SDK discovery: the
+    # ``issue-worker`` (backend/frontend/qa teammates) and the ``manager``
+    # (verdict producer, added in #390).
     agent_dir = Path(__file__).parent / "agents"
-    worker_file = agent_dir / "issue-worker.md"
     agents_dict: dict[str, AgentDefinition] | None = None
+
+    worker_file = agent_dir / "issue-worker.md"
     if worker_file.exists():
         try:
             worker_name, worker_def = load_agent_definition(worker_file)
@@ -1721,9 +1724,31 @@ async def orchestrate_project(
                 )
                 worker_def = replace(worker_def, model=employee_override)
             agents_dict = {worker_name: worker_def}
-            logger.info("Loaded agent definition: %s from %s (model=%s)", worker_name, worker_file, worker_def.model)
+            logger.info(
+                "Loaded agent definition: %s from %s (model=%s)",
+                worker_name, worker_file, worker_def.model,
+            )
         except Exception as e:
             logger.warning("Failed to load agent definition %s: %s", worker_file, e)
+
+    manager_file = agent_dir / "manager.md"
+    if manager_file.exists():
+        try:
+            mgr_name, mgr_def = load_agent_definition(manager_file)
+            manager_override = get_model(config, "manager", "")
+            if manager_override and manager_override != mgr_def.model:
+                logger.info(
+                    "Overriding manager model from config: %s (was %s)",
+                    manager_override, mgr_def.model,
+                )
+                mgr_def = replace(mgr_def, model=manager_override)
+            agents_dict = {**(agents_dict or {}), mgr_name: mgr_def}
+            logger.info(
+                "Loaded agent definition: %s from %s (model=%s)",
+                mgr_name, manager_file, mgr_def.model,
+            )
+        except Exception as e:
+            logger.warning("Failed to load agent definition %s: %s", manager_file, e)
 
     exit_code = 0
 
