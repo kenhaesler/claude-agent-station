@@ -1621,29 +1621,18 @@ def test_build_team_prompt_bans_spawn_as_sleep_proxy():
 # --- Prompt stream + stream-close timeout (Stream-closed regression) -------
 
 
-@pytest.mark.asyncio
-async def test_user_prompt_stream_yields_one_message_then_suspends():
-    """``_user_prompt_stream`` yields one user message, then suspends
-    indefinitely. PR #381 changed the generator to sleep after its
-    single yield so the SDK's ``Query.stream_input`` never reaches
-    ``wait_for_result_and_end_input``; that keeps stdin open and
-    PreToolUse/PostToolUse hook callbacks survive past the first
-    ``ResultMessage``. Issue #384 will delete the generator entirely
-    once ``ClaudeSDKClient`` replaces it.
-    """
-    import asyncio
+def test_orchestrator_wiring_no_user_prompt_stream():
+    """Per #384, _user_prompt_stream no longer exists."""
+    import importlib
+    so = importlib.import_module("agent.station_orchestrator")
+    assert not hasattr(so, "_user_prompt_stream")
 
-    from agent import station_orchestrator as so
 
-    gen = so._user_prompt_stream("hello world")
-    msg = await asyncio.wait_for(gen.__anext__(), timeout=1.0)
-    assert msg["type"] == "user"
-    assert msg["message"]["content"] == "hello world"
-
-    with pytest.raises(asyncio.TimeoutError):
-        await asyncio.wait_for(gen.__anext__(), timeout=0.1)
-
-    await gen.aclose()
+def test_orchestrator_wiring_no_force_exit_with_cleanup():
+    """Per #384, _force_exit_with_cleanup no longer exists."""
+    import importlib
+    so = importlib.import_module("agent.station_orchestrator")
+    assert not hasattr(so, "_force_exit_with_cleanup")
 
 
 def test_launcher_sets_stream_close_timeout_in_run_env():
