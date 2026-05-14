@@ -11,20 +11,34 @@ import json
 import logging
 from typing import AsyncIterator
 
+import os
+
 import asyncpg
 from sqlalchemy.engine.url import make_url
-
-from app.config import settings
 
 logger = logging.getLogger(__name__)
 
 
+def _resolved_db_url() -> str:
+    """Return the DB URL to use, reading env vars fresh each call.
+
+    Reads ``STATION_DB_URL`` from the environment on each call so that
+    tests can override it with ``os.environ[...]`` after module import.
+    Falls back to ``STATION_DB_PATH`` when the URL is not set.
+    """
+    db_url = os.environ.get("STATION_DB_URL", "")
+    if db_url:
+        return db_url
+    db_path = os.environ.get("STATION_DB_PATH", "/var/lib/claude-agent-station/station.db")
+    return f"sqlite+aiosqlite:///{db_path}"
+
+
 def _is_postgres() -> bool:
-    return settings.resolved_db_url.startswith("postgresql")
+    return _resolved_db_url().startswith("postgresql")
 
 
 def _asyncpg_dsn() -> str:
-    url = make_url(settings.resolved_db_url)
+    url = make_url(_resolved_db_url())
     return (
         f"postgresql://{url.username}:{url.password}@{url.host}:{url.port or 5432}/{url.database}"
     )
