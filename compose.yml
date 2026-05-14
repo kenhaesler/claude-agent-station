@@ -10,18 +10,40 @@
 # State lives in named volumes so it survives `compose down`.
 
 services:
+  db:
+    image: postgres:16-alpine
+    container_name: cas-db
+    environment:
+      POSTGRES_USER: station
+      POSTGRES_DB: station
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    secrets:
+      - db_password
+    volumes:
+      - station-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "station"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
   dashboard:
     build:
       context: .
       dockerfile: Dockerfile.dashboard
     image: claude-agent-station/dashboard:dev
     container_name: cas-dashboard
+    depends_on:
+      db:
+        condition: service_healthy
     ports:
       - "8420:8420"
     environment:
       STATION_HOST: "0.0.0.0"
       STATION_PORT: "8420"
       STATION_DB_PATH: /var/lib/claude-agent-station/station.db
+      STATION_DB_URL: "postgresql+asyncpg://station:${DB_PASSWORD}@db:5432/station"
       STATION_LOG_DIR: /var/log/claude-agent
       STATION_WORKSPACES: /var/lib/claude-agent-station/workspaces
       # Manager config JSON — source of truth for projects/permissions.
@@ -94,8 +116,11 @@ services:
     depends_on:
       dashboard:
         condition: service_healthy
+      db:
+        condition: service_healthy
     environment:
       STATION_DB_PATH: /var/lib/claude-agent-station/station.db
+      STATION_DB_URL: "postgresql+asyncpg://station:${DB_PASSWORD}@db:5432/station"
       STATION_LOG_DIR: /var/log/claude-agent
       STATION_WORKSPACES: /var/lib/claude-agent-station/workspaces
       # Same shared config the dashboard writes to, so the orchestrator
@@ -155,3 +180,8 @@ services:
 volumes:
   station-data:
   station-logs:
+  station-pgdata:
+
+secrets:
+  db_password:
+    file: ./.secrets/db_password
