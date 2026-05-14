@@ -2,6 +2,11 @@ from __future__ import annotations
 
 """Detect and reap runs stuck in 'running' after the agent process dies.
 
+Postgres path: a ``_heartbeat_subscriber`` task resets per-run watchdog timers
+via the ``heartbeat`` LISTEN/NOTIFY channel so the tick loop can be stretched
+to 60 s without losing detection speed.  SQLite path: tick at 15 s, no
+subscriber (``listen`` exhausts immediately).
+
 When the agent is killed (hard stop, OOM, etc.) the run_complete webhook
 never fires, leaving Run.status == 'running' forever.  This module checks
 whether the agent service is actually alive (via ``service_control``, which
@@ -17,7 +22,9 @@ than :data:`UNKNOWN_RUN_REAP_AGE_MINUTES`, we reap it the same way.
 """
 
 import logging
+import os
 import subprocess
+import time
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import or_, select
@@ -52,6 +59,37 @@ PENDING_REAP_AGE_SECONDS = 90
 # orchestrator is dead are candidates for reaping.  ``unknown`` is included
 # only when the row is older than ``UNKNOWN_RUN_REAP_AGE_MINUTES``.
 _ACTIVE_STATUSES = ("running", "reviewing")
+
+
+def tick_interval_seconds() -> int:
+    """Return the stale-run check interval based on the active DB dialect.
+
+    On Postgres the ``heartbeat`` LISTEN/NOTIFY channel keeps ``_recent_heartbeats``
+    fresh, so a 60 s safety tick is sufficient.  On SQLite polling every 15 s
+    is the only detection mechanism.
+    """
+    db_url = os.environ.get("STATION_DB_URL", "")
+    if db_url and db_url.startswith("postgresql"):
+        return 60
+    return 15
+
+
+# Per-run watchdog: maps run_id -> monotonic timestamp of last heartbeat NOTIFY.
+# Populated by ``_heartbeat_subscriber``; consumed by the tick loop to skip
+# recently-heard-from runs.
+_recent_heartbeats: dict[str, float] = {}
+
+
+async def _heartbeat_subscriber() -> None:
+    """Subscribe to the ``heartbeat`` Postgres channel and refresh per-run
+    watchdog timestamps.  A no-op on SQLite (``listen`` immediately exhausts).
+    """
+    from app.services.pubsub import listen
+
+    async for msg in listen("heartbeat"):
+        run_id = msg.get("run_id")
+        if run_id:
+            _recent_heartbeats[run_id] = time.monotonic()
 
 
 def _is_orchestrator_process_alive() -> bool:
