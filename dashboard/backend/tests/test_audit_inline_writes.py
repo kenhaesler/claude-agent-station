@@ -180,3 +180,43 @@ def test_write_audit_started_uses_explicit_actor_for_subagents(fresh_db):
     ).fetchone()
     conn.close()
     assert row[0] == "teammate-backend-7"
+
+
+@pytest.mark.asyncio
+async def test_handle_stream_event_writes_audit_for_tooluseblock(fresh_db, monkeypatch):
+    """Five ToolUseBlocks → five 'started' audit_log rows."""
+    monkeypatch.setenv("STATION_DB_PATH", fresh_db)
+
+    from agent import station_orchestrator as so
+    from claude_agent_sdk.types import AssistantMessage, ToolUseBlock
+
+    # Build five fake tool calls inside one AssistantMessage.
+    blocks = [
+        ToolUseBlock(id=f"toolu_{i}", name="Bash", input={"command": f"echo {i}"})
+        for i in range(5)
+    ]
+    msg = AssistantMessage(
+        content=blocks,
+        model="claude-opus-4-7",
+    )
+    # AssistantMessage may have a usage attribute; set to empty if needed.
+    try:
+        msg.usage = {"input_tokens": 0, "output_tokens": 0}
+    except AttributeError:
+        pass
+
+    state = so._StreamState()
+    config = {"webhook_url": ""}  # post_webhook will no-op with empty URL
+
+    # handle_stream_event is async after #389.
+    await so.handle_stream_event(msg, config, "test", log_file=None, state=state)
+
+    conn = sqlite3.connect(fresh_db)
+    rows = conn.execute(
+        "SELECT idempotency_key, status FROM audit_log ORDER BY idempotency_key"
+    ).fetchall()
+    conn.close()
+    assert len(rows) == 5
+    for i, (key, status) in enumerate(rows):
+        assert key == f"toolu_{i}"
+        assert status == "started"

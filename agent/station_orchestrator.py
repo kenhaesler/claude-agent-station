@@ -39,16 +39,17 @@ from claude_agent_sdk.types import (
     TaskProgressMessage,
     TaskStartedMessage,
     TextBlock,
+    ToolResultBlock,
     ToolUseBlock,
+    UserMessage,
 )
 
 from sqlalchemy import select
 
 from agent.audit_hook import (
-    get_hook_callback_failure_count,
     make_audited_policy,
-    make_post_tool_hook,
-    make_pre_tool_hook,
+    write_audit_finished_from_block,
+    write_audit_started_from_block,
 )
 from agent.auto_mode import AutonomyLevel, _coerce_level
 from agent.run_control import (
@@ -1290,10 +1291,37 @@ def _usage_val(usage, key: str, default=0):
     return getattr(usage, key, default)
 
 
-def handle_stream_event(
+def _actor_for_message(message, *, default: str = "lead") -> str:
+    """Compute the audit_log ``actor`` for an AssistantMessage.
+
+    SDK populates ``parent_tool_use_id`` on messages that originate
+    inside a sub-agent / Agent Teams teammate. When present, prefix
+    with ``teammate-`` so the audit timeline can distinguish lead vs
+    teammate work. Falls back to ``default`` for main-thread messages.
+    """
+    parent = getattr(message, "parent_tool_use_id", None)
+    if parent:
+        # The SDK exposes the sub-agent's identifier on a sibling
+        # attribute (``agent_id`` or ``sub_agent_id`` depending on
+        # version). Try both; fall back to the parent_tool_use_id
+        # itself as a stable identifier.
+        sub_id = (
+            getattr(message, "agent_id", None)
+            or getattr(message, "sub_agent_id", None)
+            or parent
+        )
+        return f"teammate-{sub_id}"
+    return default
+
+
+async def handle_stream_event(
     message, config: dict, run_id: str, log_file=None, state: _StreamState | None = None,
 ) -> None:
-    """Forward SDK stream messages to the dashboard and write to log file."""
+    """Forward SDK stream messages to the dashboard and write to log file.
+
+    Async after #389: the stream-derived audit writer offloads sqlite3
+    via ``asyncio.to_thread``.
+    """
     # Write structured data to JSONL log (skip empty dicts)
     if log_file is not None:
         try:
@@ -1334,6 +1362,17 @@ def handle_stream_event(
                     if state:
                         state.tool_calls += 1
                     logger.info("Lead agent tool call: %s", block.name)
+                    # #389: write audit_log row inline from the block,
+                    # not from a separate SDK hook callback. Off-load
+                    # sqlite3 so the stream loop is not blocked.
+                    actor = _actor_for_message(message, default="lead")
+                    await asyncio.to_thread(
+                        write_audit_started_from_block,
+                        run_id=f"run-{run_id}",
+                        actor=actor,
+                        block=block,
+                        trace_id=f"run-{run_id}",
+                    )
                     if block.name == "RunComplete":
                         # #385: We re-validate on the stream side even though
                         # the SDK-side tool handler already validated. The
@@ -1412,6 +1451,18 @@ def handle_stream_event(
                     "tokens_total": state.tokens_in + state.tokens_out,
                     "turns": state.turns,
                 })
+
+    elif isinstance(message, UserMessage):
+        # #389: tool results arrive as ToolResultBlock items inside
+        # UserMessage.content. Walk them and write the matching audit_log
+        # finish row.
+        content = message.content if isinstance(message.content, list) else [message.content]
+        for block in content:
+            if isinstance(block, ToolResultBlock):
+                await asyncio.to_thread(
+                    write_audit_finished_from_block,
+                    block=block,
+                )
 
     elif isinstance(message, TaskStartedMessage):
         logger.info("Teammate spawned: task=%s desc=%s", message.task_id, message.description)
@@ -2061,7 +2112,7 @@ async def orchestrate_project(
                                     })
                                     first_init_sent = True
 
-                            handle_stream_event(message, config, run_id, log_file=log_file, state=stream_state)
+                            await handle_stream_event(message, config, run_id, log_file=log_file, state=stream_state)
 
                             if control_flags["stop"] and not stop_signalled:
                                 stop_signalled = True
