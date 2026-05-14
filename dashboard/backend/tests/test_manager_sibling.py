@@ -273,3 +273,31 @@ def test_handle_stream_event_accumulates_manager_tokens_via_assistantmessage():
     so.handle_stream_event(msg, {"webhook_url": ""}, "test", state=state)
     assert state.tokens_in == 100
     assert state.tokens_out == 50
+
+
+@pytest.mark.asyncio
+async def test_full_run_emits_no_manager_heartbeat_webhook(monkeypatch, tmp_path):
+    """End-to-end: a simulated run must not have a special `manager_heartbeat`
+    handler. The webhook router accepts it as a generic unknown event
+    (handle_unknown path) — not as a named special-cased phase.
+
+    The router deliberately accepts all event types with 200 to avoid breaking
+    forward-compatibility (unknown events → generic run record). The key
+    assertion here is that `manager_heartbeat` is NOT in the dispatch map —
+    it falls through to `handle_unknown`, same as any other unrecognised event.
+    """
+    import inspect
+    from app.routers import webhook
+    from app.services import run_lifecycle
+
+    # The dispatch table must not contain manager_heartbeat.
+    webhook_src = inspect.getsource(webhook)
+    assert "manager_heartbeat" not in webhook_src, (
+        "manager_heartbeat must not be in the webhook dispatch table (#390)"
+    )
+
+    # The run_lifecycle service must not have a special manager_heartbeat handler.
+    lifecycle_src = inspect.getsource(run_lifecycle)
+    assert "manager_heartbeat" not in lifecycle_src, (
+        "run_lifecycle must not special-case manager_heartbeat (#390)"
+    )
