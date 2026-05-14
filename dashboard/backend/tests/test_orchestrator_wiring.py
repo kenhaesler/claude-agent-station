@@ -1624,20 +1624,28 @@ def test_build_team_prompt_bans_spawn_as_sleep_proxy():
 
 
 @pytest.mark.asyncio
-async def test_user_prompt_stream_yields_one_message_and_exits():
-    """``_user_prompt_stream`` yields exactly one user message, then
-    StopAsyncIteration. The SDK is responsible for keeping stdin open
-    long enough for hooks via its ``CLAUDE_CODE_STREAM_CLOSE_TIMEOUT``
-    env var (set on the orchestrator subprocess by ``agent.launcher``).
+async def test_user_prompt_stream_yields_one_message_then_suspends():
+    """``_user_prompt_stream`` yields one user message, then suspends
+    indefinitely. PR #381 changed the generator to sleep after its
+    single yield so the SDK's ``Query.stream_input`` never reaches
+    ``wait_for_result_and_end_input``; that keeps stdin open and
+    PreToolUse/PostToolUse hook callbacks survive past the first
+    ``ResultMessage``. Issue #384 will delete the generator entirely
+    once ``ClaudeSDKClient`` replaces it.
     """
+    import asyncio
+
     from agent import station_orchestrator as so
 
-    items = []
-    async for msg in so._user_prompt_stream("hello world"):
-        items.append(msg)
-    assert len(items) == 1
-    assert items[0]["type"] == "user"
-    assert items[0]["message"]["content"] == "hello world"
+    gen = so._user_prompt_stream("hello world")
+    msg = await asyncio.wait_for(gen.__anext__(), timeout=1.0)
+    assert msg["type"] == "user"
+    assert msg["message"]["content"] == "hello world"
+
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(gen.__anext__(), timeout=0.1)
+
+    await gen.aclose()
 
 
 def test_launcher_sets_stream_close_timeout_in_run_env():
