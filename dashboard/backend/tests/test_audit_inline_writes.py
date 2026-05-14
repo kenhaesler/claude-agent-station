@@ -155,3 +155,28 @@ def test_write_audit_finished_from_block_marks_error_on_is_error(fresh_db):
     # row guarantees stdout_tail is populated by the started_at path.
     combined = (row[1] or "") + (row[2] or "")
     assert "permission denied" in combined
+
+
+def test_write_audit_started_uses_explicit_actor_for_subagents(fresh_db):
+    """Caller decides the actor string; the writer trusts it verbatim.
+
+    The orchestrator computes ``teammate-<agent_id>`` from the message's
+    ``parent_tool_use_id`` / agent attribution and passes the result as
+    ``actor=``. The writer must not introspect the block to override.
+    """
+    from agent.audit_hook import write_audit_started_from_block
+
+    write_audit_started_from_block(
+        run_id="run-test",
+        actor="teammate-backend-7",
+        block=_FakeToolUseBlock("toolu_sub", "Edit", {"file_path": "/x"}),
+        db_path=fresh_db,
+    )
+
+    conn = sqlite3.connect(fresh_db)
+    row = conn.execute(
+        "SELECT actor FROM audit_log WHERE idempotency_key = ?",
+        ("toolu_sub",),
+    ).fetchone()
+    conn.close()
+    assert row[0] == "teammate-backend-7"
