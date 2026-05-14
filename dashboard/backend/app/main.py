@@ -157,11 +157,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     token_task = asyncio.create_task(_periodic_token_refresh())
     vision_cleanup_task = asyncio.create_task(run_vision_cleanup_loop())
     audit_retention_task = asyncio.create_task(_periodic_audit_retention())
+    # #393 PR-3: Postgres LISTEN/NOTIFY subscribers. On SQLite the
+    # ``listen`` generator inside each subscriber immediately exhausts,
+    # so these tasks are no-ops and exit cleanly.
+    from app.services.log_importer import _run_event_subscriber  # noqa: PLC0415
+    from app.services.stale_run_reaper import _heartbeat_subscriber  # noqa: PLC0415
+    run_event_listener_task = asyncio.create_task(_run_event_subscriber())
+    heartbeat_listener_task = asyncio.create_task(_heartbeat_subscriber())
     logger.info("Started periodic log rescan (every %ds)", LOG_RESCAN_INTERVAL)
     logger.info("Started stale run reaper (every %ds)", STALE_RUN_CHECK_INTERVAL)
     logger.info("Started periodic token refresh (every %ds)", TOKEN_REFRESH_INTERVAL)
     logger.info("Started vision session cleanup (every %ds)", VISION_CLEANUP_INTERVAL)
     logger.info("Started audit retention (every %ds, %dd window)", AUDIT_RETENTION_INTERVAL, retention_days())
+    logger.info("Started LISTEN/NOTIFY subscribers (run_event, heartbeat) — no-op on SQLite")
 
     yield
 
@@ -171,7 +179,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     token_task.cancel()
     vision_cleanup_task.cancel()
     audit_retention_task.cancel()
-    for task in (rescan_task, reaper_task, token_task, vision_cleanup_task, audit_retention_task):
+    run_event_listener_task.cancel()
+    heartbeat_listener_task.cancel()
+    for task in (
+        rescan_task, reaper_task, token_task, vision_cleanup_task,
+        audit_retention_task, run_event_listener_task, heartbeat_listener_task,
+    ):
         with suppress(asyncio.CancelledError):
             await task
     logger.info("Shutting down dashboard backend")

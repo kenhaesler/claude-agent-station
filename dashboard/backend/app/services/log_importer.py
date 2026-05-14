@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,6 +22,34 @@ from app.services.log_parser import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def poll_interval_seconds() -> int:
+    """Return the log-rescan poll interval based on the active DB dialect.
+
+    On Postgres the ``run_event`` LISTEN/NOTIFY channel carries load, so a
+    5-minute safety-poll is sufficient.  On SQLite polling every 30 s is the
+    only recency mechanism.
+    """
+    db_url = os.environ.get("STATION_DB_URL", "")
+    if db_url and db_url.startswith("postgresql"):
+        return 300
+    return 30
+
+
+async def _run_event_subscriber() -> None:
+    """Subscribe to the ``run_event`` Postgres channel and trigger an import
+    on each notification.  A no-op on SQLite (``listen`` immediately exhausts).
+    """
+    from app.database import async_session
+    from app.services.pubsub import listen
+
+    async for _ in listen("run_event"):
+        try:
+            async with async_session() as db:
+                await import_historical_runs(db)
+        except Exception:
+            logger.exception("log_importer: error during NOTIFY-triggered import")
 
 
 async def import_historical_runs(db: AsyncSession) -> int:

@@ -2,6 +2,13 @@ from __future__ import annotations
 
 """Detect and reap runs stuck in 'running' after the agent process dies.
 
+Postgres path: a ``_heartbeat_subscriber`` task listens on the ``heartbeat``
+LISTEN/NOTIFY channel and rebroadcasts each event onto the in-process SSE
+event bus, so dashboard clients see liveness in real time without waiting
+for the next reaper tick.  The periodic tick is relaxed to 60 s (it's now
+the safety net, not the primary signal).  SQLite path: tick at 15 s, no
+subscriber (``listen`` exhausts immediately).
+
 When the agent is killed (hard stop, OOM, etc.) the run_complete webhook
 never fires, leaving Run.status == 'running' forever.  This module checks
 whether the agent service is actually alive (via ``service_control``, which
@@ -17,6 +24,7 @@ than :data:`UNKNOWN_RUN_REAP_AGE_MINUTES`, we reap it the same way.
 """
 
 import logging
+import os
 import subprocess
 from datetime import datetime, timedelta, timezone
 
@@ -52,6 +60,40 @@ PENDING_REAP_AGE_SECONDS = 90
 # orchestrator is dead are candidates for reaping.  ``unknown`` is included
 # only when the row is older than ``UNKNOWN_RUN_REAP_AGE_MINUTES``.
 _ACTIVE_STATUSES = ("running", "reviewing")
+
+
+def tick_interval_seconds() -> int:
+    """Return the stale-run check interval based on the active DB dialect.
+
+    On Postgres the ``heartbeat`` LISTEN/NOTIFY channel fans a heartbeat
+    out to SSE clients in real time, so the periodic reaper tick is
+    relaxed to 60 s (it's now the safety net, not the primary signal).
+    On SQLite polling every 15 s is the only detection mechanism.
+    """
+    db_url = os.environ.get("STATION_DB_URL", "")
+    if db_url and db_url.startswith("postgresql"):
+        return 60
+    return 15
+
+
+async def _heartbeat_subscriber() -> None:
+    """Subscribe to the Postgres ``heartbeat`` channel and rebroadcast on the
+    in-process SSE event bus so dashboard clients see liveness without
+    waiting for the next reaper tick.
+
+    No-op on SQLite (``listen`` immediately exhausts).
+    """
+    from app.services.event_bus import publish as _bus_publish
+    from app.services.pubsub import listen
+
+    async for msg in listen("heartbeat"):
+        run_id = msg.get("run_id")
+        if not run_id:
+            continue
+        try:
+            await _bus_publish({"type": "heartbeat", "data": {"run_id": run_id}})
+        except Exception:  # noqa: BLE001
+            logger.warning("heartbeat rebroadcast failed for %s", run_id)
 
 
 def _is_orchestrator_process_alive() -> bool:
