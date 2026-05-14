@@ -113,7 +113,14 @@ async def test_lifecycle_events_emits_run_start_and_complete(setup_db):
 
 
 from app.models import ConflictResolution, CoordinatorTask
-from app.services.run_timeline import _audit_events, _conflict_events, _teammate_events, _verdict_events
+from app.services.run_timeline import (
+    TimelineCursor,
+    _audit_events,
+    _conflict_events,
+    _teammate_events,
+    _verdict_events,
+    build_timeline,
+)
 
 
 @pytest.mark.asyncio
@@ -219,3 +226,103 @@ async def test_teammate_verdict_conflict_events(setup_db):
     assert t_events[0].agent == "backend"
     assert [e.event for e in v_events] == ["verdict_execute"]
     assert {e.event for e in c_events} == {"conflict.started", "conflict.resolved"}
+
+
+@pytest.mark.asyncio
+async def test_build_timeline_merges_all_sources_in_order(setup_db):
+    run_id = "run-tl-merge-1"
+    async with async_session() as db:
+        db.add(
+            Run(
+                run_id=run_id,
+                status="success",
+                started_at=datetime(2026, 5, 13, 15, 0, 0, tzinfo=timezone.utc),
+                finished_at=datetime(2026, 5, 13, 15, 30, 0, tzinfo=timezone.utc),
+                branch="feature/m",
+                verdict="APPROVE",
+            )
+        )
+        db.add(
+            AuditEntry(
+                idempotency_key="m-k1",
+                run_id=run_id,
+                actor="lead",
+                action_kind="tool.bash",
+                status="ok",
+                started_at=datetime(2026, 5, 13, 15, 10, 0, tzinfo=timezone.utc),
+                finished_at=datetime(2026, 5, 13, 15, 10, 1, tzinfo=timezone.utc),
+            )
+        )
+        db.add(
+            CoordinatorTask(
+                id="m-t1",
+                run_id=run_id,
+                project_repo="x/y",
+                status="completed",
+                started_at=datetime(2026, 5, 13, 15, 5, 0, tzinfo=timezone.utc),
+                claimed_at=datetime(2026, 5, 13, 15, 5, 0, tzinfo=timezone.utc),
+                finished_at=datetime(2026, 5, 13, 15, 20, 0, tzinfo=timezone.utc),
+                teammate_agent_id="qa",
+                title="qa task",
+            )
+        )
+        await db.commit()
+
+    async with async_session() as db:
+        page = await build_timeline(db, run_id, kinds=None, since=None, until=None, limit=500, cursor=None)
+
+    times = [e.t for e in page.events]
+    assert times == sorted(times)
+    assert page.has_more is False
+    assert page.next_cursor is None
+    kinds = {e.kind for e in page.events}
+    assert {"lifecycle", "tool", "teammate"} <= kinds
+
+
+@pytest.mark.asyncio
+async def test_build_timeline_filters_by_kind(setup_db):
+    async with async_session() as db:
+        page = await build_timeline(
+            db, "run-tl-merge-1", kinds={"tool"}, since=None, until=None, limit=500, cursor=None
+        )
+    assert page.events
+    assert {e.kind for e in page.events} == {"tool"}
+
+
+@pytest.mark.asyncio
+async def test_build_timeline_paginates_with_cursor(setup_db):
+    run_id = "run-tl-paginate-1"
+    async with async_session() as db:
+        db.add(Run(run_id=run_id, status="running",
+                   started_at=datetime(2026, 5, 13, 15, 0, 0, tzinfo=timezone.utc)))
+        for i in range(1200):
+            db.add(
+                AuditEntry(
+                    idempotency_key=f"p-{i}",
+                    run_id=run_id,
+                    actor="lead",
+                    action_kind="tool.bash",
+                    status="ok",
+                    started_at=datetime(2026, 5, 13, 15, 0, 0, tzinfo=timezone.utc).replace(microsecond=i),
+                )
+            )
+        await db.commit()
+
+    seen_ids: set[tuple[str, str]] = set()
+    cursor = None
+    pages = 0
+    async with async_session() as db:
+        while True:
+            page = await build_timeline(
+                db, run_id, kinds={"tool"}, since=None, until=None, limit=500, cursor=cursor
+            )
+            pages += 1
+            for ev in page.events:
+                key = (ev.source, ev.source_id)
+                assert key not in seen_ids
+                seen_ids.add(key)
+            if not page.has_more:
+                break
+            cursor = TimelineCursor.decode(page.next_cursor)
+    assert pages == 3
+    assert len(seen_ids) == 1200

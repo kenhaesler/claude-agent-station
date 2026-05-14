@@ -7,7 +7,9 @@ See spec: docs/superpowers/specs/2026-05-14-issue-387-run-timeline-api.md
 """
 from __future__ import annotations
 
+import asyncio
 import base64
+import heapq
 import json
 from dataclasses import dataclass
 from datetime import datetime
@@ -339,3 +341,62 @@ async def _audit_events(
         )
     out.sort(key=lambda e: (e.t, e.source, e.source_id))
     return out
+
+
+from app.schemas import RunTimelinePage
+
+ALL_KINDS = frozenset({"lifecycle", "tool", "teammate", "verdict", "conflict"})
+_SOURCE_FOR_KIND = {
+    "lifecycle": _lifecycle_events,
+    "tool": _audit_events,
+    "teammate": _teammate_events,
+    "verdict": _verdict_events,
+    "conflict": _conflict_events,
+}
+
+
+async def build_timeline(
+    db: AsyncSession,
+    run_id: str,
+    *,
+    kinds: set[str] | None,
+    since: datetime | None,
+    until: datetime | None,
+    limit: int,
+    cursor: TimelineCursor | None,
+) -> RunTimelinePage:
+    """Merge per-source streams, apply cursor / limit, return one page."""
+    selected = ALL_KINDS if kinds is None else (kinds & ALL_KINDS)
+    if not selected:
+        return RunTimelinePage(run_id=run_id, events=[], next_cursor=None, has_more=False)
+
+    coros = [_SOURCE_FOR_KIND[k](db, run_id, since=since, until=until) for k in selected]
+    streams = await asyncio.gather(*coros)
+    merged_iter = heapq.merge(
+        *streams,
+        key=lambda e: (e.t, e.source, e.source_id),
+    )
+
+    cursor_key = (
+        (cursor.t, cursor.source, cursor.source_id) if cursor is not None else None
+    )
+    take = limit + 1  # read one extra to compute has_more
+    out: list[RunTimelineEvent] = []
+    for ev in merged_iter:
+        if cursor_key is not None and (ev.t, ev.source, ev.source_id) <= cursor_key:
+            continue
+        out.append(ev)
+        if len(out) >= take:
+            break
+
+    has_more = len(out) > limit
+    if has_more:
+        out = out[:limit]
+    next_cursor = (
+        TimelineCursor(t=out[-1].t, source=out[-1].source, source_id=out[-1].source_id).encode()
+        if has_more and out
+        else None
+    )
+    return RunTimelinePage(
+        run_id=run_id, events=out, next_cursor=next_cursor, has_more=has_more
+    )
