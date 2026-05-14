@@ -1906,158 +1906,125 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
             )
 
             with open(stream_log_path, "a") as log_file:
-                for iteration in range(max_reentries):
-                    is_followup = iteration > 0
-
-                    # Early exit if the background poller already latched stop
-                    # (e.g. operator clicked Stop before the first iteration).
-                    if control_flags["stop"]:
-                        logger.info("Stop requested before iteration %d", iteration + 1)
-                        break
-
-                    if is_followup:
-                        prompt = build_followup_prompt(
-                            workspace,
-                            operator_messages=pending_operator_messages,
-                        )
-                        pending_operator_messages.clear()
-                        logger.info(
-                            "Re-entering lead session (iteration %d/%d, session=%s)",
-                            iteration + 1, max_reentries, session_id,
-                        )
-                    else:
-                        prompt = build_team_prompt(
-                            repo, issues, config, run_id, workspace, worktree_paths,
-                            vision=vision, project_mode=project_mode,
-                            approved_plan_paths=approved_plan_paths,
-                        )
-
-                    # Build options — use resume for follow-up iterations.
-                    # Auto Mode (ADR-0001) is wired here: can_use_tool runs
-                    # the policy engine and records every decision to
-                    # agent_events (event_type='auto_mode_decision').
-                    options = ClaudeAgentOptions(
-                        cwd=workspace,
-                        env={
-                            "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
-                            "GITHUB_REPO": repo,
+                # Build options once — ClaudeSDKClient owns the session for
+                # the lifetime of `async with`, so resume tokens are unnecessary.
+                options = ClaudeAgentOptions(
+                    cwd=workspace,
+                    env={
+                        "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
+                        "GITHUB_REPO": repo,
+                    },
+                    mcp_servers={
+                        "playwright": {
+                            "type": "stdio",
+                            "command": "npx",
+                            "args": ["-y", "@playwright/mcp@latest"],
                         },
-                        mcp_servers={
-                            "playwright": {
-                                "type": "stdio",
-                                "command": "npx",
-                                "args": ["-y", "@playwright/mcp@latest"],
-                            },
-                            "ref": {
-                                "type": "http",
-                                "url": "https://api.ref.tools/mcp",
-                            },
+                        "ref": {
+                            "type": "http",
+                            "url": "https://api.ref.tools/mcp",
                         },
-                        allowed_tools=["Read", "Bash", "Glob", "Grep", "Edit", "Write", "Agent", "mcp__playwright__*", "mcp__ref__*"],
-                        max_turns=manager_turns,
-                        model=manager_model,
-                        agents=agents_dict,
-                        can_use_tool=make_audited_policy(
-                            run_id=f"run-{run_id}",
-                            level=autonomy_level,
-                            agent_id="lead",
-                        ),
-                        # Issue #73: per-tool-call audit_log telemetry.
-                        # Pre-hook writes a 'started' row keyed by SDK tool_use_id;
-                        # Post-hook updates the same row with status + tails.
-                        hooks={
-                            "PreToolUse": [HookMatcher(hooks=[
-                                make_pre_tool_hook(
-                                    run_id=f"run-{run_id}",
-                                    actor="lead",
-                                    trace_id=f"run-{run_id}",
-                                ),
-                            ])],
-                            "PostToolUse": [HookMatcher(hooks=[
-                                make_post_tool_hook(
-                                    run_id=f"run-{run_id}",
-                                    actor="lead",
-                                ),
-                            ])],
-                        },
-                        max_budget_usd=max_budget_usd,
-                    )
-                    if is_followup and session_id:
-                        options.resume = session_id
-                        options.continue_conversation = True
+                    },
+                    allowed_tools=["Read", "Bash", "Glob", "Grep", "Edit", "Write", "Agent", "mcp__playwright__*", "mcp__ref__*"],
+                    max_turns=manager_turns,
+                    model=manager_model,
+                    agents=agents_dict,
+                    can_use_tool=make_audited_policy(
+                        run_id=f"run-{run_id}",
+                        level=autonomy_level,
+                        agent_id="lead",
+                    ),
+                    hooks={
+                        "PreToolUse": [HookMatcher(hooks=[
+                            make_pre_tool_hook(
+                                run_id=f"run-{run_id}",
+                                actor="lead",
+                                trace_id=f"run-{run_id}",
+                            ),
+                        ])],
+                        "PostToolUse": [HookMatcher(hooks=[
+                            make_post_tool_hook(
+                                run_id=f"run-{run_id}",
+                                actor="lead",
+                            ),
+                        ])],
+                    },
+                    max_budget_usd=max_budget_usd,
+                )
 
-                    async for message in query(prompt=_user_prompt_stream(prompt), options=options):
-                        # Capture session_id for resume
-                        sid = getattr(message, "session_id", None)
-                        if sid:
-                            session_id = sid
+                stop_signalled = False
+                async with ClaudeSDKClient(options=options) as client:
+                    for iteration in range(max_reentries):
+                        is_followup = iteration > 0
 
-                        # Capture the lead's session_id from the first
-                        # message that has one, regardless of message type.
-                        # SDK's SystemMessage(init) doesn't always carry
-                        # session_id (verified empirically — only {type,
-                        # subtype} fields present); the assistant/result
-                        # message right after init does. Without this
-                        # broader capture, state.main_session_id stays
-                        # None and handle_stream_event's session filter
-                        # falls back to its defensive skip-all path. See
-                        # #371 + run-20260512T133721Z follow-up.
-                        if sid and stream_state.main_session_id is None:
-                            stream_state.main_session_id = sid
-                            logger.info(
-                                "Captured lead session_id=%s for run-%s",
-                                sid, run_id,
-                            )
-
-                        # Only send orchestrator_start webhook on the very first init
-                        if isinstance(message, SystemMessage) and getattr(message, "subtype", "") == "init":
-                            if not first_init_sent:
-                                post_webhook(config, "orchestrator_start", {
-                                    "run_id": f"run-{run_id}",
-                                    "mode": project_mode,
-                                })
-                                first_init_sent = True
-
-                        handle_stream_event(message, config, run_id, log_file=log_file, state=stream_state)
-
-                        # The background control poll task is already running;
-                        # we only need to check the stop flag here to break
-                        # out of the stream loop as soon as it latches.
                         if control_flags["stop"]:
-                            logger.info("Stop requested; breaking SDK stream")
+                            logger.info("Stop requested before iteration %d", iteration + 1)
                             break
 
-                        # Check result for completion. When matched, also
-                        # break out of the inner ``async for`` — before
-                        # PR #381 the SDK naturally closed stdin after the
-                        # first ResultMessage and the stream ended for us,
-                        # but now stdin stays open and the stream never
-                        # terminates on its own. Without this break the
-                        # orchestrator process sits in the inner loop
-                        # forever after the lead said "done", the bash
-                        # parent never observes our exit, and the
-                        # launcher's zombie reaper eventually SIGTERMs
-                        # us ~2 min later. See run-20260512T213225Z.
-                        if isinstance(message, ResultMessage):
-                            result_text = getattr(message, "result", "")
-                            if _is_work_complete(result_text):
-                                work_complete = True
+                        if is_followup:
+                            prompt = build_followup_prompt(
+                                workspace,
+                                operator_messages=pending_operator_messages,
+                            )
+                            pending_operator_messages.clear()
+                            logger.info(
+                                "Re-entering lead session (iteration %d/%d)",
+                                iteration + 1, max_reentries,
+                            )
+                        else:
+                            prompt = build_team_prompt(
+                                repo, issues, config, run_id, workspace, worktree_paths,
+                                vision=vision, project_mode=project_mode,
+                                approved_plan_paths=approved_plan_paths,
+                            )
+
+                        await client.query(prompt)
+
+                        async for message in client.receive_response():
+                            sid = getattr(message, "session_id", None)
+                            if sid and stream_state.main_session_id is None:
+                                stream_state.main_session_id = sid
                                 logger.info(
-                                    "Work-complete signal received; breaking SDK stream"
+                                    "Captured lead session_id=%s for run-%s",
+                                    sid, run_id,
                                 )
+
+                            if isinstance(message, SystemMessage) and getattr(message, "subtype", "") == "init":
+                                if not first_init_sent:
+                                    post_webhook(config, "orchestrator_start", {
+                                        "run_id": f"run-{run_id}",
+                                        "mode": project_mode,
+                                    })
+                                    first_init_sent = True
+
+                            handle_stream_event(message, config, run_id, log_file=log_file, state=stream_state)
+
+                            if control_flags["stop"] and not stop_signalled:
+                                stop_signalled = True
+                                logger.info("Stop requested; interrupting client")
+                                await client.interrupt()
                                 break
 
-                    if control_flags["stop"]:
-                        raise OrchestratorStopRequested()
+                            # Completion gate — still text-heuristic; #385 replaces it
+                            # with the structured RunComplete tool. The natural exit
+                            # of receive_response() handles the SDK-side teardown.
+                            if isinstance(message, ResultMessage):
+                                result_text = getattr(message, "result", "")
+                                if _is_work_complete(result_text):
+                                    work_complete = True
+                                    logger.info("Work-complete signal received")
+                                    break
 
-                    if work_complete:
-                        logger.info("Agent Teams orchestration completed for %s", repo)
-                        break
+                        if control_flags["stop"]:
+                            raise OrchestratorStopRequested()
 
-                    # Brief pause before re-entry. The control task keeps
-                    # running during this sleep so a mid-idle stop/message
-                    # is picked up immediately.
-                    await asyncio.sleep(15)
+                        if work_complete:
+                            logger.info("Agent Teams orchestration completed for %s", repo)
+                            break
+
+                        # Brief pause before the next follow-up turn. The control
+                        # task keeps running during this sleep.
+                        await asyncio.sleep(15)
 
             if not work_complete and not control_flags["stop"]:
                 logger.warning(

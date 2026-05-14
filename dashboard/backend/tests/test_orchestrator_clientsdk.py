@@ -50,3 +50,107 @@ def test_main_returns_via_sys_exit_asyncio_run():
     assert "sys.exit(asyncio.run(orchestrate(" in src, (
         "main() should return through sys.exit(asyncio.run(...))."
     )
+
+
+import asyncio
+from unittest.mock import AsyncMock, MagicMock, patch
+
+
+class _FakeClient:
+    """Minimal stand-in for ClaudeSDKClient used by orchestrate tests."""
+
+    instances: list["_FakeClient"] = []
+
+    def __init__(self, *, options=None):
+        self.options = options
+        self.entered = 0
+        self.exited = 0
+        self.queries: list[str] = []
+        self.interrupts = 0
+        self._scripted_messages: list[list[object]] = []
+        _FakeClient.instances.append(self)
+
+    async def __aenter__(self):
+        self.entered += 1
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        self.exited += 1
+        return False
+
+    async def query(self, prompt: str):
+        self.queries.append(prompt)
+
+    async def receive_response(self):
+        if not self._scripted_messages:
+            return
+        for msg in self._scripted_messages.pop(0):
+            yield msg
+
+    async def interrupt(self):
+        self.interrupts += 1
+
+
+def _patch_orchestrate_setup(monkeypatch, so, tmp_path, client_factory):
+    """Shared monkeypatching helper: bypasses the heavyweight orchestrate setup
+    so tests can focus on the ClaudeSDKClient lifecycle.
+    """
+    monkeypatch.setattr(so, "ClaudeSDKClient", client_factory)
+    monkeypatch.setattr(so, "_ensure_workspace", lambda *a, **k: None)
+    monkeypatch.setattr(so, "post_webhook", lambda *a, **k: None)
+    monkeypatch.setattr(so, "fetch_eligible_issues", lambda *a, **k: [{"number": 1, "title": "test", "body": ""}])
+    monkeypatch.setattr(so, "claim_pending_queue_items", AsyncMock(return_value=[]))
+    monkeypatch.setattr(so, "load_vision", lambda *a, **k: None)
+    monkeypatch.setattr(so, "_combined_rank_issues", lambda issues, **k: issues)
+    monkeypatch.setattr(so, "build_team_prompt", lambda *a, **k: "test prompt")
+    monkeypatch.setattr(so, "build_followup_prompt", lambda *a, **k: "followup prompt")
+    monkeypatch.setattr(so, "handle_stream_event", lambda *a, **k: None)
+    monkeypatch.setattr(so, "_control_poll_loop", AsyncMock())
+    monkeypatch.setattr(so.asyncio, "sleep", AsyncMock())
+    # subprocess calls during worktree setup — no-op them
+    import subprocess as _sp
+    monkeypatch.setattr(_sp, "run", lambda *a, **k: MagicMock(returncode=0, stderr=""))
+
+
+def test_client_opens_and_closes_once_per_project(monkeypatch, tmp_path):
+    """ClaudeSDKClient is entered exactly once per project iteration."""
+    from agent import station_orchestrator as so
+
+    _FakeClient.instances.clear()
+    # One scripted iteration: a SystemMessage(init) + a ResultMessage with
+    # work-complete text. Wire enough of the project setup to reach the loop.
+    config = {
+        "projects": [{"repo": "owner/repo", "enabled": True}],
+        "limits": {"max_concurrent_employees": 1},
+        "models": {},
+        "logging": {"log_dir": str(tmp_path)},
+    }
+
+    init_msg = MagicMock(spec=so.SystemMessage)
+    init_msg.subtype = "init"
+    init_msg.session_id = "sess-1"
+    result_msg = MagicMock(spec=so.ResultMessage)
+    result_msg.session_id = "sess-1"
+    result_msg.result = "All teammates have completed. Final summary."
+    result_msg.is_error = False
+    result_msg.duration_ms = 100
+    result_msg.num_turns = 1
+
+    def _client_factory(options=None):
+        c = _FakeClient(options=options)
+        c._scripted_messages = [[init_msg, result_msg]]
+        return c
+
+    _patch_orchestrate_setup(monkeypatch, so, tmp_path, _client_factory)
+
+    # Minimal orchestrate invocation — passes config + run_id + workspaces_dir.
+    # This test only asserts the client is instantiated and entered exactly once.
+    asyncio.run(so.orchestrate(config, "20260514T120000Z", str(tmp_path)))
+
+    assert len(_FakeClient.instances) == 1, (
+        f"Expected exactly one ClaudeSDKClient per project; got {len(_FakeClient.instances)}"
+    )
+    client = _FakeClient.instances[0]
+    assert client.entered == 1 and client.exited == 1, (
+        f"Client lifecycle should open and close once; entered={client.entered}, exited={client.exited}"
+    )
