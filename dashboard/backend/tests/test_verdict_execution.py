@@ -478,3 +478,32 @@ def test_execute_dispatcher_routes_approve_integration(tmp_path):
     mock_fn.assert_called_once()
 
 
+def test_execute_dispatcher_forwards_dev_branch_kwarg(tmp_path):
+    """The dispatcher must thread ``dev_branch`` through to the executor.
+
+    Pins the contract so future Python callers (post-#383 bash deletion)
+    know the kwarg name to pass.
+    """
+    from agent.verdict_execution import execute, Verdict, ExecutionResult, _EXECUTORS
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    verdict = Verdict(
+        project="owner/repo",
+        issue_number=1,
+        verdict="APPROVE_INTEGRATION",
+        branch="autonomous/issue-1",
+    )
+    mock_fn = MagicMock()
+    mock_fn.return_value = ExecutionResult(
+        verdict="APPROVE_INTEGRATION",
+        project="owner/repo",
+        issue_number=1,
+        success=True,
+    )
+    with patch.dict(_EXECUTORS, {"APPROVE_INTEGRATION": mock_fn}):
+        execute(verdict, workspace=workspace, dev_branch="dev")
+    _, kwargs = mock_fn.call_args
+    assert kwargs.get("dev_branch") == "dev"
+
+
