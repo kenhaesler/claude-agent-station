@@ -28,6 +28,7 @@
   import { navigate } from '../lib/router.svelte';
   import LogViewer from '../components/data-display/LogViewer.svelte';
   import HelpHint from '../components/help/HelpHint.svelte';
+  import TimelineTab from '../components/runs/TimelineTab.svelte';
 
   let { runId }: { runId: string } = $props();
 
@@ -36,7 +37,7 @@
   let allMessages = $state<CoordinatorMessage[]>([]);
   let loading = $state(true);
   let activeTab = $state<
-    'overview' | 'dag' | 'team' | 'conversation' | 'diff' | 'logs' | 'intelligence'
+    'overview' | 'dag' | 'team' | 'conversation' | 'diff' | 'logs' | 'intelligence' | 'timeline'
   >('overview');
   let error = $state<string | null>(null);
 
@@ -96,7 +97,8 @@
     | 'conversation'
     | 'diff'
     | 'logs'
-    | 'intelligence';
+    | 'intelligence'
+    | 'timeline';
 
   let tabs = $derived.by<{ id: TabId; label: string; count?: number; disabled?: boolean }[]>(() => {
     const t: { id: TabId; label: string; count?: number; disabled?: boolean }[] = [
@@ -133,6 +135,7 @@
       count: ctx?.intelligence_decisions?.length ?? 0,
       disabled: !hasIntelligence,
     });
+    t.push({ id: 'timeline', label: 'Timeline' });
     return t;
   });
 
@@ -922,6 +925,11 @@
           {:else}
             <div class="empty">No autonomy decisions recorded for this run.</div>
           {/if}
+        </section>
+
+      {:else if activeTab === 'timeline'}
+        <section class="tab-pane">
+          <TimelineTab runId={run.run_id} />
         </section>
       {/if}
     </div>
