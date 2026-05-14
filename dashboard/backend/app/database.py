@@ -10,9 +10,19 @@ from sqlalchemy.orm import DeclarativeBase
 
 from app.config import settings
 
-DATABASE_URL = f"sqlite+aiosqlite:///{settings.db_path}"
+DATABASE_URL = settings.resolved_db_url
 
-engine = create_async_engine(DATABASE_URL, echo=False)
+
+def _engine_kwargs(url: str) -> dict:
+    is_pg = url.startswith("postgresql")
+    return {
+        "echo": False,
+        "pool_size": 20 if is_pg else 5,
+        "max_overflow": 10 if is_pg else 0,
+    }
+
+
+engine = create_async_engine(DATABASE_URL, **_engine_kwargs(DATABASE_URL))
 
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
@@ -23,11 +33,22 @@ class Base(DeclarativeBase):
 
 @event.listens_for(engine.sync_engine, "connect")
 def _set_sqlite_pragma(dbapi_conn, connection_record):
-    """Enable WAL mode for concurrent reads."""
-    cursor = dbapi_conn.cursor()
+    """Enable WAL + foreign keys — SQLite-only."""
+    if engine.dialect.name != "sqlite":
+        return
+    _set_sqlite_pragma._inner_run(dbapi_conn, connection_record)
+
+
+def _inner_run(dbapi_conn, _connection_record, *, cursor_factory=None):
+    if engine.dialect.name != "sqlite":
+        return
+    cursor = (cursor_factory or (lambda c: c.cursor()))(dbapi_conn)
     cursor.execute("PRAGMA journal_mode=WAL")
     cursor.execute("PRAGMA foreign_keys=ON")
     cursor.close()
+
+
+_set_sqlite_pragma._inner_run = _inner_run  # type: ignore[attr-defined]
 
 
 logger = logging.getLogger(__name__)
