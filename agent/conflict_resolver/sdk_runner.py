@@ -12,6 +12,7 @@ whether to push, retry, or finalize as failed.
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass
 
 from claude_agent_sdk import ClaudeAgentOptions, query
@@ -25,6 +26,15 @@ from agent.audit_hook import (
 from agent.auto_mode import AutonomyLevel
 
 logger = logging.getLogger(__name__)
+
+# This module is the last caller of the SDK's one-shot ``query()`` API
+# after issue #384's ClaudeSDKClient migration. The bundled CLI begins a
+# stdin-close countdown after emitting its first ResultMessage; once
+# stdin closes, every PreToolUse / PostToolUse hook callback raises
+# ``Error: Stream closed`` (cli.js:7552 sendRequest). The launcher used
+# to set this env var globally (PR #371); after #392 it sets nothing,
+# and modules that still rely on the hook lifecycle own the setter.
+os.environ.setdefault("CLAUDE_CODE_STREAM_CLOSE_TIMEOUT", "1800000")
 
 
 @dataclass
