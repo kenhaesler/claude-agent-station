@@ -340,6 +340,75 @@ def write_audit_finish(
         logger.warning("audit_hook: unexpected error writing audit_log finish: %s", exc)
 
 
+# --- Stream-derived audit writers (issue #389) -----------------------------
+
+
+def write_audit_started_from_block(
+    *,
+    run_id: str,
+    actor: str,
+    block,                  # claude_agent_sdk.types.ToolUseBlock (or stand-in)
+    trace_id: str | None = None,
+    db_path: str | None = None,
+) -> None:
+    """Insert a ``status='started'`` audit_log row from a ToolUseBlock.
+
+    Mirrors :func:`write_audit_start` but accepts an already-parsed
+    block instead of the SDK's hook-callback dict. Never raises.
+    """
+    tool_use_id = getattr(block, "id", None) or getattr(block, "tool_use_id", None)
+    if not tool_use_id:
+        logger.warning("audit_hook: ToolUseBlock missing id; skipping start row")
+        return
+    tool_name = getattr(block, "name", "") or ""
+    tool_input = getattr(block, "input", None) or {}
+    write_audit_start(
+        idempotency_key=str(tool_use_id),
+        run_id=run_id,
+        actor=actor,
+        tool_name=str(tool_name),
+        tool_input=tool_input if isinstance(tool_input, dict) else {"value": tool_input},
+        trace_id=trace_id,
+        db_path=db_path,
+    )
+
+
+def write_audit_finished_from_block(
+    *,
+    block,                  # claude_agent_sdk.types.ToolResultBlock (or stand-in)
+    db_path: str | None = None,
+) -> None:
+    """Update the audit_log row keyed by ``block.tool_use_id`` with the
+    terminal status drawn from ``block.content`` and ``block.is_error``.
+
+    Mirrors :func:`write_audit_finish` but consumes an SDK
+    ``ToolResultBlock`` directly. Never raises.
+    """
+    tool_use_id = getattr(block, "tool_use_id", None) or getattr(block, "id", None)
+    if not tool_use_id:
+        logger.warning("audit_hook: ToolResultBlock missing tool_use_id; skipping finish row")
+        return
+    # _extract_outcome expects the same shape as the SDK's hook
+    # ``tool_response`` dict: ``{is_error, exit_code, stdout, stderr, output}``.
+    # Build that shape from the block. The block's ``content`` is either a
+    # string (Bash output, Read result) or a list of structured items —
+    # _coerce_tail handles both.
+    content = getattr(block, "content", None)
+    is_error = bool(getattr(block, "is_error", False))
+    fake_response = {
+        "is_error": is_error,
+        "output": content,
+    }
+    if is_error:
+        fake_response["stderr"] = content
+        fake_response["output"] = None
+    write_audit_finish(
+        idempotency_key=str(tool_use_id),
+        tool_response=fake_response,
+        db_path=db_path,
+    )
+
+
 # --- SDK PreToolUse / PostToolUse hook factories ---------------------------
 
 
