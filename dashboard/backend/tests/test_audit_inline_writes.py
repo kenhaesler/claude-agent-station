@@ -291,3 +291,103 @@ def test_hook_callback_failure_count_helper_is_gone():
     from agent import audit_hook
     assert not hasattr(audit_hook, "get_hook_callback_failure_count")
     assert not hasattr(audit_hook, "_HOOK_CB_FAILURE_COUNT")
+
+
+# --- ToolResultBlock content-shape coverage (PR-review feedback) ---------
+
+
+def test_flatten_tool_result_content_string_pass_through():
+    """A string content is returned unchanged — the common Bash/Read shape."""
+    from agent.audit_hook import _flatten_tool_result_content
+    assert _flatten_tool_result_content("hello") == "hello"
+    assert _flatten_tool_result_content("") == ""
+    assert _flatten_tool_result_content(None) is None
+
+
+def test_flatten_tool_result_content_text_list_joins():
+    """A list of MCP-text items is joined into a readable string —
+    operators reading audit_log should see the actual text, not the JSON
+    envelope.
+    """
+    from agent.audit_hook import _flatten_tool_result_content
+    content = [
+        {"type": "text", "text": "first line"},
+        {"type": "text", "text": "second line"},
+    ]
+    assert _flatten_tool_result_content(content) == "first line\nsecond line"
+
+
+def test_flatten_tool_result_content_unknown_item_falls_back():
+    """An unrecognised item in the list disables the join path; the raw
+    structure is returned so _coerce_tail's JSON-dump fallback captures it.
+    """
+    from agent.audit_hook import _flatten_tool_result_content
+    content = [
+        {"type": "text", "text": "hi"},
+        {"type": "image", "data": "base64..."},
+    ]
+    result = _flatten_tool_result_content(content)
+    assert result == content  # raw structure preserved
+
+
+def test_write_audit_finished_uses_flattened_content_for_error(fresh_db):
+    """is_error=True with MCP-text-list content lands flattened text in
+    stderr_tail (not a JSON envelope) so error rows are readable.
+    """
+    from agent.audit_hook import (
+        write_audit_finished_from_block,
+        write_audit_started_from_block,
+    )
+
+    write_audit_started_from_block(
+        run_id="run-test",
+        actor="lead",
+        block=_FakeToolUseBlock("toolu_err_list", "Bash", {"command": "false"}),
+        db_path=fresh_db,
+    )
+    result_block = _FakeToolResultBlock(
+        tool_use_id="toolu_err_list",
+        content=[
+            {"type": "text", "text": "permission denied: /etc/shadow"},
+        ],
+        is_error=True,
+    )
+    write_audit_finished_from_block(block=result_block, db_path=fresh_db)
+
+    conn = sqlite3.connect(fresh_db)
+    row = conn.execute(
+        "SELECT status, stderr_tail, stdout_tail FROM audit_log WHERE idempotency_key = ?",
+        ("toolu_err_list",),
+    ).fetchone()
+    conn.close()
+    assert row[0] == "error"
+    assert "permission denied" in (row[1] or "")
+    # stdout_tail must NOT carry the structured envelope on the error path.
+    assert row[2] is None
+
+
+# --- Actor attribution simplification (PR-review feedback) ---------------
+
+
+def test_actor_for_message_returns_default_when_no_parent_tool_use_id():
+    """Main-thread messages → default actor ("lead")."""
+    from agent.station_orchestrator import _actor_for_message
+
+    class _FakeMessage:
+        parent_tool_use_id = None
+    assert _actor_for_message(_FakeMessage()) == "lead"
+
+
+def test_actor_for_message_labels_teammate_from_parent_tool_use_id():
+    """Sub-agent messages → teammate-<parent_tool_use_id>.
+
+    The SDK populates parent_tool_use_id on every message from a
+    spawned sub-agent. We use it verbatim as the correlation key;
+    readable names are resolved post-hoc by joining audit_log with
+    coordinator_tasks.
+    """
+    from agent.station_orchestrator import _actor_for_message
+
+    class _FakeMessage:
+        parent_tool_use_id = "toolu_01ABCD1234"
+    assert _actor_for_message(_FakeMessage()) == "teammate-toolu_01ABCD1234"

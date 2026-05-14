@@ -348,6 +348,39 @@ def write_audit_started_from_block(
     )
 
 
+def _flatten_tool_result_content(content: Any) -> Any:
+    """Flatten a SDK ToolResultBlock ``content`` into something audit-friendly.
+
+    The SDK populates ``ToolResultBlock.content`` in two shapes:
+    1. A plain string (Bash stdout, Read result, etc.).
+    2. A list of MCP-style content items, each typically
+       ``{"type": "text", "text": "..."}``. The list shape is what error
+       results return.
+
+    For audit purposes we want the user-facing text without the wrapping
+    JSON envelope when possible — operators reading the audit row should
+    see the actual stderr, not a JSON blob with a `type` discriminator
+    around it.
+    """
+    if content is None:
+        return None
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        # Extract text items in order; fall through to JSON dump for any
+        # non-text item the SDK may add later.
+        texts: list[str] = []
+        for item in content:
+            if isinstance(item, dict) and item.get("type") == "text":
+                texts.append(str(item.get("text", "")))
+            else:
+                # Unknown shape — preserve via _coerce_tail's JSON path.
+                return content
+        if texts:
+            return "\n".join(texts)
+    return content
+
+
 def write_audit_finished_from_block(
     *,
     block,                  # claude_agent_sdk.types.ToolResultBlock (or stand-in)
@@ -365,18 +398,18 @@ def write_audit_finished_from_block(
         return
     # _extract_outcome expects the same shape as the SDK's hook
     # ``tool_response`` dict: ``{is_error, exit_code, stdout, stderr, output}``.
-    # Build that shape from the block. The block's ``content`` is either a
-    # string (Bash output, Read result) or a list of structured items —
-    # _coerce_tail handles both.
-    content = getattr(block, "content", None)
+    # Build that shape from the block; flatten structured content shapes
+    # (list of MCP text items) so audit rows show user-readable text, not
+    # JSON envelopes.
+    raw_content = getattr(block, "content", None)
+    flat_content = _flatten_tool_result_content(raw_content)
     is_error = bool(getattr(block, "is_error", False))
-    fake_response = {
-        "is_error": is_error,
-        "output": content,
-    }
+    fake_response: dict[str, Any] = {"is_error": is_error}
     if is_error:
-        fake_response["stderr"] = content
+        fake_response["stderr"] = flat_content
         fake_response["output"] = None
+    else:
+        fake_response["output"] = flat_content
     write_audit_finish(
         idempotency_key=str(tool_use_id),
         tool_response=fake_response,

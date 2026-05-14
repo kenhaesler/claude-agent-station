@@ -1294,22 +1294,24 @@ def _actor_for_message(message, *, default: str = "lead") -> str:
     """Compute the audit_log ``actor`` for an AssistantMessage.
 
     SDK populates ``parent_tool_use_id`` on messages that originate
-    inside a sub-agent / Agent Teams teammate. When present, prefix
-    with ``teammate-`` so the audit timeline can distinguish lead vs
-    teammate work. Falls back to ``default`` for main-thread messages.
+    inside a sub-agent / Agent Teams teammate. When present, label the
+    audit row as ``teammate-<parent_tool_use_id>`` so the timeline can
+    distinguish lead vs teammate work; falls back to ``default`` for
+    main-thread messages.
+
+    The pre-#389 hook factory consulted ``agent_id`` from the SDK's
+    hook-input dict, but that field is part of the hook-callback API
+    surface, not the streamed message API. After stream-derived audit
+    (#389) we use ``parent_tool_use_id`` directly — it is the stable
+    correlation key the SDK exposes on every sub-agent message.
+    Readable names (``backend``/``frontend``/``qa``/``manager``) can be
+    resolved post-hoc by joining audit_log rows against
+    coordinator_tasks on ``tool_use_id``; we don't try to denormalise
+    here.
     """
     parent = getattr(message, "parent_tool_use_id", None)
     if parent:
-        # The SDK exposes the sub-agent's identifier on a sibling
-        # attribute (``agent_id`` or ``sub_agent_id`` depending on
-        # version). Try both; fall back to the parent_tool_use_id
-        # itself as a stable identifier.
-        sub_id = (
-            getattr(message, "agent_id", None)
-            or getattr(message, "sub_agent_id", None)
-            or parent
-        )
-        return f"teammate-{sub_id}"
+        return f"teammate-{parent}"
     return default
 
 
