@@ -353,3 +353,55 @@ async def test_timeline_endpoint_rejects_unknown_kind(client: AsyncClient):
 async def test_timeline_endpoint_404_for_unknown_run(client: AsyncClient):
     resp = await client.get("/api/runs/run-does-not-exist/timeline")
     assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_cursor_stability_under_mid_stream_inserts(setup_db):
+    run_id = "run-tl-cursor-1"
+    async with async_session() as db:
+        db.add(Run(run_id=run_id, status="running",
+                   started_at=datetime(2026, 5, 13, 15, 0, 0, tzinfo=timezone.utc)))
+        for i in range(800):
+            db.add(
+                AuditEntry(
+                    idempotency_key=f"cs-{i}",
+                    run_id=run_id,
+                    actor="lead",
+                    action_kind="tool.bash",
+                    status="ok",
+                    started_at=datetime(2026, 5, 13, 15, 0, 0, tzinfo=timezone.utc).replace(microsecond=i),
+                )
+            )
+        await db.commit()
+
+    async with async_session() as db:
+        page1 = await build_timeline(
+            db, run_id, kinds={"tool"}, since=None, until=None, limit=400, cursor=None
+        )
+
+    # Inject 100 new audit rows BEFORE page2 fetch — their timestamps fall
+    # AFTER page1's last event's timestamp, so they belong on page2.
+    last_ts = page1.events[-1].t
+    async with async_session() as db:
+        for i in range(100):
+            db.add(
+                AuditEntry(
+                    idempotency_key=f"cs-late-{i}",
+                    run_id=run_id,
+                    actor="lead",
+                    action_kind="tool.bash",
+                    status="ok",
+                    started_at=last_ts.replace(microsecond=last_ts.microsecond + 1 + i),
+                )
+            )
+        await db.commit()
+
+    cursor = TimelineCursor.decode(page1.next_cursor)
+    async with async_session() as db:
+        page2 = await build_timeline(
+            db, run_id, kinds={"tool"}, since=None, until=None, limit=10_000, cursor=cursor
+        )
+
+    page1_keys = {(e.source, e.source_id) for e in page1.events}
+    page2_keys = {(e.source, e.source_id) for e in page2.events}
+    assert page1_keys.isdisjoint(page2_keys)
