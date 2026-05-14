@@ -1969,6 +1969,9 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
             with open(stream_log_path, "a") as log_file:
                 # Build options once — ClaudeSDKClient owns the session for
                 # the lifetime of `async with`, so resume tokens are unnecessary.
+                from agent.tools.run_complete import build_run_complete_server
+                _run_complete_server = build_run_complete_server()
+
                 options = ClaudeAgentOptions(
                     cwd=workspace,
                     env={
@@ -1976,6 +1979,7 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
                         "GITHUB_REPO": repo,
                     },
                     mcp_servers={
+                        "run_complete": _run_complete_server,
                         "playwright": {
                             "type": "stdio",
                             "command": "npx",
@@ -1986,7 +1990,7 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
                             "url": "https://api.ref.tools/mcp",
                         },
                     },
-                    allowed_tools=["Read", "Bash", "Glob", "Grep", "Edit", "Write", "Agent", "mcp__playwright__*", "mcp__ref__*"],
+                    allowed_tools=["Read", "Bash", "Glob", "Grep", "Edit", "Write", "Agent", "mcp__playwright__*", "mcp__ref__*", "mcp__run_complete__RunComplete"],
                     max_turns=manager_turns,
                     model=manager_model,
                     agents=agents_dict,

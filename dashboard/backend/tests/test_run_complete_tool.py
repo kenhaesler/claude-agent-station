@@ -236,3 +236,59 @@ def test_followup_prompt_includes_run_complete_contract():
     assert "RunComplete" in prompt, (
         "build_followup_prompt must keep the RunComplete contract on every iteration"
     )
+
+
+def test_orchestrate_registers_run_complete_server(monkeypatch, tmp_path):
+    """ClaudeAgentOptions.mcp_servers must include 'run_complete' and allowed_tools includes it."""
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock
+    import subprocess as _sp
+    from agent import station_orchestrator as so
+
+    captured_options: list = []
+
+    class _FakeClient:
+        def __init__(self, *, options=None):
+            captured_options.append(options)
+
+        async def __aenter__(self): return self
+        async def __aexit__(self, *exc): return False
+        async def query(self, prompt): pass
+        async def receive_response(self):
+            init = MagicMock(spec=so.SystemMessage)
+            init.subtype = "init"; init.session_id = "sess-1"
+            yield init
+        async def interrupt(self): pass
+
+    monkeypatch.setattr(so, "ClaudeSDKClient", _FakeClient)
+    monkeypatch.setattr(so, "_ensure_workspace", lambda *a, **k: str(tmp_path))
+    monkeypatch.setattr(so, "post_webhook", lambda *a, **k: None)
+    monkeypatch.setattr(so, "fetch_eligible_issues", lambda *a, **k: [{"number": 1, "title": "test", "body": ""}])
+    monkeypatch.setattr(so, "claim_pending_queue_items", AsyncMock(return_value=[]))
+    monkeypatch.setattr(so, "load_vision", lambda *a, **k: None)
+    monkeypatch.setattr(so, "_combined_rank_issues", lambda issues, **k: issues)
+    monkeypatch.setattr(so, "build_team_prompt", lambda *a, **k: "test prompt")
+    monkeypatch.setattr(so, "build_followup_prompt", lambda *a, **k: "followup prompt")
+    monkeypatch.setattr(so, "handle_stream_event", lambda *a, **k: None)
+    monkeypatch.setattr(so, "_control_poll_loop", AsyncMock())
+    monkeypatch.setattr(so.asyncio, "sleep", AsyncMock())
+    monkeypatch.setattr(_sp, "run", lambda *a, **k: MagicMock(returncode=0, stderr=""))
+
+    config = {
+        "projects": [{"repo": "owner/repo", "enabled": True}],
+        "limits": {"max_concurrent_employees": 1},
+        "models": {},
+        "logging": {"log_dir": str(tmp_path)},
+    }
+
+    asyncio.run(so.orchestrate(config, "20260514T120000Z", str(tmp_path)))
+
+    assert captured_options, "Expected ClaudeAgentOptions to be built and captured"
+    opts = captured_options[0]
+    assert "run_complete" in (opts.mcp_servers or {}), (
+        "mcp_servers must include 'run_complete' (issue #385)"
+    )
+    allowed = opts.allowed_tools or []
+    assert any("RunComplete" in t for t in allowed), (
+        "allowed_tools must include mcp__run_complete__RunComplete"
+    )
