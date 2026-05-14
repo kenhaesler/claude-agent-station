@@ -70,3 +70,23 @@ async def test_alembic_baseline_creates_full_schema():
     }
     assert expected <= names, f"Missing tables after alembic upgrade head: {expected - names}"
     os.unlink(db_path)
+
+
+@pytest.mark.asyncio
+async def test_init_db_runs_alembic_only():
+    """init_db must invoke `alembic upgrade head`, not _migrate_add_columns."""
+    import app.database as mod
+    calls: list[str] = []
+
+    def fake_check_call(cmd, *args, **kw):
+        calls.append(" ".join(cmd))
+        return 0
+
+    import subprocess as sp
+    orig = sp.check_call
+    sp.check_call = fake_check_call
+    try:
+        await mod.init_db()
+    finally:
+        sp.check_call = orig
+    assert any("alembic" in c and "upgrade" in c for c in calls)

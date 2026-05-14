@@ -161,40 +161,24 @@ async def _migrate_add_columns(conn) -> None:
             logger.debug("Index migration skip: %s: %s", sql, e)
 
 
-async def init_db():
-    """Create all tables and run migrations."""
-    async with engine.begin() as conn:
-        from app.models import (  # noqa: F401
-            AgentEvent,
-            AuditEntry,
-            BrainstormMessage,
-            BrainstormSession,
-            ConfigEntry,
-            ConflictResolution,
-            CoordinatorMessage,
-            CoordinatorTask,
-            IntegrationFeature,
-            Notification,
-            PermissionRequest,
-            Plan,
-            PlanUsageHistory,
-            PromptVersion,
-            Project,
-            QueueItem,
-            Run,
-            RunControl,
-            StationControl,
-            TaskOutcome,
-            VisionChatSession,  # ← add
-        )
-        await conn.run_sync(Base.metadata.create_all)
-        await _migrate_add_columns(conn)
-        # Seed StationControl singleton (id=1). Idempotent via INSERT OR IGNORE.
-        await conn.execute(
-            text("INSERT OR IGNORE INTO station_control (id, global_pause) VALUES (1, 0)")
-        )
+async def init_db() -> None:
+    """Run Alembic migrations against the configured database.
 
-    # Run JSON config migrations (idempotent, safe to call every startup)
+    `_migrate_add_columns` is retired — every column it added is encoded in
+    the Alembic baseline revision (`alembic/versions/0001_baseline.py`).
+    The legacy auxiliary migration (`migrations/0003_simplify_config_schema.py`)
+    is a config-JSON transform, not schema; it still runs after upgrade.
+    """
+    import subprocess
+    from pathlib import Path
+
+    backend_root = Path(__file__).resolve().parent.parent
+    subprocess.check_call(
+        ["alembic", "upgrade", "head"],
+        cwd=str(backend_root),
+    )
+
+    # Config-JSON migration still applicable post-schema.
     try:
         import importlib
         mod = importlib.import_module("migrations.0003_simplify_config_schema")
