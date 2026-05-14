@@ -2232,24 +2232,17 @@ class RunDriver:
         # caller passed the raw timestamp without the prefix.
         return self.run_id if self.run_id.startswith("run-") else f"run-{self.run_id}"
 
-    def _read_bash_telemetry(self) -> None:
-        path = Path(self._log_dir) / f"run-{self._clean_id}-telemetry.json"
-        try:
-            data = json.loads(path.read_text())
-        except FileNotFoundError:
-            return
-        except (OSError, json.JSONDecodeError) as exc:
-            logger.warning("RunDriver: telemetry dump unreadable at %s (%s) — "
-                           "tokens/turns will be zero", path, exc)
-            return
-        for key in ("tokens_input", "tokens_output", "tokens_total", "turns"):
-            value = data.get(key)
-            if value is None:
-                continue
-            try:
-                setattr(self.telemetry, key, int(value))
-            except (TypeError, ValueError):
-                pass
+    def _finalize_telemetry(self, stream_state) -> None:
+        """Copy in-process counters from the orchestrator's stream state.
+
+        Replaces the bash telemetry JSON hand-off after #383. iterate_projects
+        is responsible for passing its accumulated _StreamState here in its
+        return path; if it doesn't, counters remain at zero.
+        """
+        self.telemetry.tokens_input = int(getattr(stream_state, "tokens_in", 0) or 0)
+        self.telemetry.tokens_output = int(getattr(stream_state, "tokens_out", 0) or 0)
+        self.telemetry.tokens_total = self.telemetry.tokens_input + self.telemetry.tokens_output
+        self.telemetry.turns = int(getattr(stream_state, "turns", 0) or 0)
 
     def _install_signal_handlers(self) -> tuple:
         """Map SIGTERM → KeyboardInterrupt so reaper/launcher /stop calls
@@ -2341,7 +2334,13 @@ class RunDriver:
             exit_code = 1
             error = f"{type(e).__name__}: {e}"
         finally:
-            self._read_bash_telemetry()
+            # Pull the last stream-state in-process. iterate_projects exposes
+            # the active state via a module variable populated during the run.
+            # _finalize_telemetry tolerates missing state.
+            from agent.project_loop import get_last_stream_state
+            state = get_last_stream_state()
+            if state is not None:
+                self._finalize_telemetry(state)
             self._emit_run_complete(status=status, exit_code=exit_code, error=error)
 
         return exit_code

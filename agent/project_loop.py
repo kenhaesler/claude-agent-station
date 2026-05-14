@@ -34,6 +34,21 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# Module-level slot for the last stream state produced by iterate_projects.
+# RunDriver._finalize_telemetry reads this after the run to copy counters
+# in-process (replaces the bash telemetry JSON hand-off, issue #383).
+_LAST_STREAM_STATE = None
+
+
+def get_last_stream_state():
+    """Return the last _StreamState set during iterate_projects, or None."""
+    return _LAST_STREAM_STATE
+
+
+def _set_last_stream_state(state) -> None:
+    global _LAST_STREAM_STATE
+    _LAST_STREAM_STATE = state
+
 
 # How long to wait for the bash child to exit on SIGTERM before
 # escalating to SIGKILL. The bash's EXIT trap writes the telemetry
