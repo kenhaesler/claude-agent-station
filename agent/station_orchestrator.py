@@ -717,6 +717,8 @@ def build_team_prompt(
     vision: dict | None = None,
     project_mode: str = "full",
     approved_plan_paths: list[str] | None = None,
+    review_package_path: str | None = None,
+    verdicts_file_path: str | None = None,
 ) -> str:
     """Build the lead agent prompt that creates and manages the team.
 
@@ -726,6 +728,11 @@ def build_team_prompt(
     matching plan file (named ``.claude-employee-plan-{index}.json``)
     as ``APPROVED_PLAN`` guidance before writing code, so the
     follow-up ``full`` run honours the work already done.
+
+    ``review_package_path`` and ``verdicts_file_path`` are injected so
+    the lead can spawn the ``manager`` sibling with the exact paths it
+    needs to read + write. Both default to ``None``; when set, a
+    "Manager review" section is appended to the prompt (#390).
     """
     issue_entries = []
     for issue in issues:
@@ -834,6 +841,46 @@ most context.
 6. Review plans — reject if they conflict with another teammate's work
 7. **Actively monitor** teammates until ALL tasks are completed (see monitoring rules)
 8. After all work is done, **synthesize a final JSON summary**
+"""
+
+    # Build the manager-spawn section (#390): inject only when the caller
+    # provides both paths (unit tests / plan-only runs may omit them).
+    manager_section = ""
+    if review_package_path and verdicts_file_path:
+        manager_section = f"""
+## Manager review (spawn the manager sibling)
+
+After every teammate has emitted `.claude-employee-report-<index>.json` (or
+the 20-minute timeout elapses with whichever reports exist), you MUST:
+
+1. Assemble the review package at `{review_package_path}` — concatenate every
+   teammate report and the diff summary. This is the manager's input.
+2. Spawn a `manager` sibling agent via the Agent tool. The manager is a
+   separate Agent Teams sibling — same SDK session, separate role/prompt/model.
+   Pass it the following spawn prompt verbatim, substituting the paths:
+
+   ```
+   Review the employee work package at: {review_package_path}
+
+   Write your verdicts to: {verdicts_file_path}
+
+   Your hard turn budget for this review is 60. Treat turn 30 as your soft
+   deadline to start drafting the verdicts file.
+
+   Read the review package file first, then evaluate each project's work
+   against the criteria in your system prompt. Be strict on completeness —
+   never approve partial implementations.
+   ```
+
+3. **Do NOT attempt to review the work yourself.** You are the orchestrator;
+   the manager is the quality gate. Spawn the manager and wait for it to
+   finish — when its turn ends, the verdicts file at `{verdicts_file_path}`
+   must exist and contain valid JSON.
+4. Only after the manager has written the verdicts file should you provide
+   the final JSON summary and end your turn.
+
+Spawn the manager exactly once per run. Do not spawn additional manager
+siblings — the orchestrator only reads one verdicts file.
 """
 
     vision_section = ""
@@ -964,7 +1011,7 @@ Follow this monitoring loop:
 **Why this matters**: If you say "I'm waiting" and end your turn, the session terminates
 and your teammates lose their work. You must keep making tool calls to stay alive —
 but those tool calls should be Bash sleeps and report-file polls, not new Task spawns.
-
+{manager_section}
 ## Rules
 
 - Spawn exactly 3 teammates (backend, frontend, qa)
@@ -2061,10 +2108,21 @@ async def orchestrate_project(
                                 iteration + 1, max_reentries,
                             )
                         else:
+                            # #390: compute review-package + verdicts paths from
+                            # the same log_dir the stream log uses, so the
+                            # manager sibling and the orchestrator agree on paths.
+                            _review_pkg_path = os.path.join(
+                                log_dir, f"run-{run_id}-review.md"
+                            )
+                            _verdicts_path = os.path.join(
+                                log_dir, f"run-{run_id}-verdicts.json"
+                            )
                             prompt = build_team_prompt(
                                 repo, issues, config, run_id, workspace, worktree_paths,
                                 vision=vision, project_mode=project_mode,
                                 approved_plan_paths=approved_plan_paths,
+                                review_package_path=_review_pkg_path,
+                                verdicts_file_path=_verdicts_path,
                             )
 
                         await client.query(prompt)

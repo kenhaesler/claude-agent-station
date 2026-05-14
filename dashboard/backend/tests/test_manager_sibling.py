@@ -82,3 +82,44 @@ def test_agents_dict_includes_both_issue_worker_and_manager(monkeypatch, tmp_pat
         agents[n] = d
 
     assert set(agents.keys()) == {"issue-worker", "manager"}
+
+
+def test_lead_prompt_instructs_lead_to_spawn_manager(tmp_path):
+    """The lead's system prompt must include a paragraph instructing it
+    to spawn the ``manager`` agent after teammates report completion.
+
+    Drives the lead-prompt builder with minimal inputs and asserts on the
+    rendered string.
+    """
+    from agent.station_orchestrator import build_team_prompt as _build_lead_prompt
+
+    issues = [{"number": 1, "title": "test issue", "body": "..."}]
+    teammates = {"backend": "/tmp/wt/backend", "frontend": "/tmp/wt/frontend", "qa": "/tmp/wt/qa"}
+
+    prompt = _build_lead_prompt(
+        repo="owner/repo",
+        issues=issues,
+        config={"dashboard": {"webhook_url": "http://localhost:8420/api/webhook/run-event"}},
+        run_id="20260514T100000Z",
+        workspace="/tmp/workspaces/repo",
+        worktree_paths=teammates,
+        vision=None,
+        approved_plan_paths=[],
+        review_package_path="/var/log/claude-agent/run-20260514T100000Z-review.md",
+        verdicts_file_path="/var/log/claude-agent/run-20260514T100000Z-verdicts.json",
+    )
+
+    # Must reference the manager sibling explicitly.
+    assert "manager" in prompt.lower()
+    assert "spawn" in prompt.lower()
+    # Must include the verdicts file path the manager writes to.
+    assert "verdicts.json" in prompt
+    # Must include the review package path the manager reads from.
+    assert "review.md" in prompt or "review" in prompt.lower()
+    # Must come AFTER the teammate-completion check (textually).
+    spawn_idx = prompt.lower().find("spawn the `manager`")
+    if spawn_idx < 0:
+        spawn_idx = prompt.lower().find("spawn a `manager`")
+    assert spawn_idx > prompt.lower().find("teammate"), (
+        "manager spawn instructions must appear after teammate completion text"
+    )
