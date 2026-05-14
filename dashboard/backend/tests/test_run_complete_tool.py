@@ -292,3 +292,28 @@ def test_orchestrate_registers_run_complete_server(monkeypatch, tmp_path):
     assert any("RunComplete" in t for t in allowed), (
         "allowed_tools must include mcp__run_complete__RunComplete"
     )
+
+
+def test_retry_after_malformed_run_complete(monkeypatch):
+    """A malformed RunComplete followed by a valid one latches on the valid call."""
+    from agent.station_orchestrator import _StreamState, handle_stream_event
+    from claude_agent_sdk.types import AssistantMessage, ToolUseBlock
+
+    state = _StreamState(main_session_id="sess-1")
+    monkeypatch.setattr("agent.station_orchestrator.post_webhook", lambda *a, **k: None)
+
+    bad = ToolUseBlock(id="tu-bad", name="RunComplete", input={"verdicts": []})
+    am1 = AssistantMessage(content=[bad], usage={}, model="x", parent_tool_use_id=None)
+    setattr(am1, "session_id", "sess-1")
+    handle_stream_event(am1, config={}, run_id="r", log_file=None, state=state)
+    assert state.run_complete_payload is None
+
+    good = ToolUseBlock(
+        id="tu-good", name="RunComplete",
+        input={"status": "success", "verdicts": [], "summary": "retry worked"},
+    )
+    am2 = AssistantMessage(content=[good], usage={}, model="x", parent_tool_use_id=None)
+    setattr(am2, "session_id", "sess-1")
+    handle_stream_event(am2, config={}, run_id="r", log_file=None, state=state)
+    assert state.run_complete_payload is not None
+    assert state.run_complete_payload["summary"] == "retry worked"
