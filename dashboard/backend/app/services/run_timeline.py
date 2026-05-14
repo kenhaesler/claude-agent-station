@@ -41,3 +41,107 @@ class TimelineCursor:
             )
         except (ValueError, KeyError, json.JSONDecodeError, UnicodeDecodeError) as exc:
             raise ValueError(f"invalid cursor: {exc}") from exc
+
+
+from datetime import datetime
+from typing import Any
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models import (
+    AgentEvent,
+    AuditEntry,
+    ConflictResolution,
+    CoordinatorTask,
+    Run,
+)
+from app.schemas import RunTimelineEvent
+
+
+def _decode_json(value: Any) -> dict | None:
+    """Dialect-agnostic JSON decoder.
+
+    SQLite returns the column as ``str``; Postgres JSONB returns dicts
+    directly. Returns None if value is None or unparseable.
+    """
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            decoded = json.loads(value)
+            return decoded if isinstance(decoded, dict) else None
+        except json.JSONDecodeError:
+            return None
+    return None
+
+
+def _within(t: datetime, since: datetime | None, until: datetime | None) -> bool:
+    if since is not None and t < since:
+        return False
+    if until is not None and t >= until:
+        return False
+    return True
+
+
+async def _lifecycle_events(
+    db: AsyncSession,
+    run_id: str,
+    *,
+    since: datetime | None,
+    until: datetime | None,
+) -> list[RunTimelineEvent]:
+    out: list[RunTimelineEvent] = []
+    run = (await db.execute(select(Run).where(Run.run_id == run_id))).scalar_one_or_none()
+    if run is not None:
+        if run.started_at is not None and _within(run.started_at, since, until):
+            out.append(
+                RunTimelineEvent(
+                    t=run.started_at,
+                    kind="lifecycle",
+                    event="run_start",
+                    source="runs",
+                    source_id=run.run_id,
+                    agent=None,
+                    data={"status": run.status, "project_id": run.project_id},
+                )
+            )
+        if run.finished_at is not None and _within(run.finished_at, since, until):
+            out.append(
+                RunTimelineEvent(
+                    t=run.finished_at,
+                    kind="lifecycle",
+                    event="run_complete",
+                    source="runs",
+                    source_id=run.run_id,
+                    agent=None,
+                    data={"verdict": run.verdict, "status": run.status},
+                )
+            )
+
+    rows = (
+        await db.execute(
+            select(AgentEvent)
+            .where(AgentEvent.run_id == run_id)
+            .where(AgentEvent.event_type.like("lifecycle.%"))
+            .order_by(AgentEvent.created_at)
+        )
+    ).scalars().all()
+    for row in rows:
+        if not _within(row.created_at, since, until):
+            continue
+        out.append(
+            RunTimelineEvent(
+                t=row.created_at,
+                kind="lifecycle",
+                event=row.event_type,
+                source="agent_events",
+                source_id=str(row.event_id),
+                agent=row.agent_id,
+                data=_decode_json(row.event_data),
+            )
+        )
+    out.sort(key=lambda e: (e.t, e.source, e.source_id))
+    return out
