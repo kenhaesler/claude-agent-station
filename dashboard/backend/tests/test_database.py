@@ -100,3 +100,23 @@ def test_decode_event_data_handles_text_and_dict():
     assert decode_event_data({"a": 1}) == {"a": 1}
     assert decode_event_data(None) is None
     assert decode_event_data("not-json") is None
+
+
+def test_no_raw_jsonloads_on_jsonb_columns():
+    import pathlib
+
+    backend_app = pathlib.Path(__file__).resolve().parent.parent / "app"
+    offenders: list[str] = []
+    for path in backend_app.rglob("*.py"):
+        text = path.read_text()
+        for needle in ("event_data", "action_detail", "employee_report", "verdict_detail"):
+            if "json.loads(" in text and needle in text:
+                # Allow services/json_compat.py through.
+                if path.name == "json_compat.py":
+                    continue
+                lines = [
+                    ln for ln in text.splitlines()
+                    if "json.loads(" in ln and needle in ln
+                ]
+                offenders.extend(f"{path}: {ln.strip()}" for ln in lines)
+    assert offenders == [], "use decode_event_data:\n" + "\n".join(offenders)

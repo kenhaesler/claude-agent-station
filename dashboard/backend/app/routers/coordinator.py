@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db
 from app.models import CoordinatorMessage, CoordinatorTask, Run
+from app.services.json_compat import decode_event_data
 from app.schemas import (
     CoordinatorDAGOut,
     CoordinatorMessageOut,
@@ -156,10 +157,7 @@ async def get_task_details(task_id: str, db: AsyncSession = Depends(get_db)):
         )
         run = run_result.scalar_one_or_none()
         if run and run.employee_report:
-            try:
-                task_data.employee_report = json.loads(run.employee_report)
-            except (json.JSONDecodeError, TypeError):
-                task_data.employee_report = None
+            task_data.employee_report = decode_event_data(run.employee_report)
 
         # Use run's log_file if task doesn't have log_path
         if not task.log_path and run and run.log_file:

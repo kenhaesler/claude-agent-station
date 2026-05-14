@@ -23,6 +23,7 @@ from app.models import AgentEvent, Project, Run
 from app.schemas import WebhookRunEvent
 from app.services.event_bus import publish as event_bus_publish
 from app.services.idempotency import is_duplicate
+from app.services.json_compat import decode_event_data
 from app.services.notifier import send_notification
 from app.services import run_lifecycle, coordinator_service
 
@@ -208,11 +209,9 @@ async def receive_run_event(
     if event_name == "verdict" and event.verdict:
         issue_title = None
         if run and run.employee_report:
-            try:
-                report = json.loads(run.employee_report)
+            report = decode_event_data(run.employee_report)
+            if report:
                 issue_title = report.get("issue_title")
-            except (json.JSONDecodeError, AttributeError):
-                pass
 
         await send_notification(
             event_type=event.verdict,
