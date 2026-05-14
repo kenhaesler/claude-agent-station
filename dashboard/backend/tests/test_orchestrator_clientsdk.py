@@ -91,6 +91,18 @@ class _FakeClient:
         self.interrupts += 1
 
 
+_real_asyncio_sleep = asyncio.sleep  # capture before any patching
+
+
+async def _zero_sleep(*a, **k):
+    """Replacement for asyncio.sleep that yields to the event loop (runs
+    pending tasks) but does not actually wait. This allows control-poll tasks
+    created with asyncio.create_task() to run during tests without introducing
+    real time delays.
+    """
+    await _real_asyncio_sleep(0)
+
+
 def _patch_orchestrate_setup(monkeypatch, so, tmp_path, client_factory):
     """Shared monkeypatching helper: bypasses the heavyweight orchestrate setup
     so tests can focus on the ClaudeSDKClient lifecycle.
@@ -106,7 +118,9 @@ def _patch_orchestrate_setup(monkeypatch, so, tmp_path, client_factory):
     monkeypatch.setattr(so, "build_followup_prompt", lambda *a, **k: "followup prompt")
     monkeypatch.setattr(so, "handle_stream_event", lambda *a, **k: None)
     monkeypatch.setattr(so, "_control_poll_loop", AsyncMock())
-    monkeypatch.setattr(so.asyncio, "sleep", AsyncMock())
+    # Use _zero_sleep instead of AsyncMock so asyncio.sleep yields to the
+    # event loop, allowing create_task()-ed coroutines to run between iterations.
+    monkeypatch.setattr(so.asyncio, "sleep", _zero_sleep)
     # subprocess calls during worktree setup — no-op them
     import subprocess as _sp
     monkeypatch.setattr(_sp, "run", lambda *a, **k: MagicMock(returncode=0, stderr=""))
@@ -202,4 +216,66 @@ def test_followup_uses_same_client_no_resume(monkeypatch, tmp_path):
     )
     assert getattr(client.options, "continue_conversation", False) is False, (
         "options.continue_conversation should never be set under ClaudeSDKClient"
+    )
+
+
+class _YieldingFakeClient(_FakeClient):
+    """Like _FakeClient but yields to the event loop between messages,
+    allowing concurrently-running tasks (e.g. the control-poll task) to
+    run and set control_flags before the next message is processed.
+    """
+
+    async def receive_response(self):
+        if not self._scripted_messages:
+            return
+        for msg in self._scripted_messages.pop(0):
+            yield msg
+            await _real_asyncio_sleep(0)  # let other tasks run (bypass mock)
+
+
+def test_interrupt_called_once_on_operator_stop(monkeypatch, tmp_path):
+    """Setting control_flags['stop'] mid-stream causes one client.interrupt() call.
+
+    Also asserts OrchestratorStopRequested propagates so the orchestrator
+    handler emits the interrupted webhook.
+    """
+    from agent import station_orchestrator as so
+
+    _FakeClient.instances.clear()
+
+    init = MagicMock(spec=so.SystemMessage)
+    init.subtype = "init"
+    init.session_id = "sess-1"
+    # A non-result message — will be visited *after* we flip the stop flag.
+    progress = MagicMock(spec=so.AssistantMessage)
+    progress.session_id = "sess-1"
+    progress.content = []
+    progress.usage = {}
+
+    def _client_factory(options=None):
+        c = _YieldingFakeClient(options=options)
+        c._scripted_messages = [[init, progress]]
+        return c
+
+    # Flip the stop flag the moment the control task starts polling.
+    async def _stop_immediately(full_run_id, config, msgs, flags, interval=1.0):
+        flags["stop"] = True
+
+    config = {
+        "projects": [{"repo": "owner/repo", "enabled": True}],
+        "limits": {"max_concurrent_employees": 1},
+        "models": {},
+        "logging": {"log_dir": str(tmp_path)},
+    }
+
+    _patch_orchestrate_setup(monkeypatch, so, tmp_path, _client_factory)
+    # Override the control poll loop after _patch_orchestrate_setup sets a no-op
+    monkeypatch.setattr(so, "_control_poll_loop", _stop_immediately)
+
+    asyncio.run(so.orchestrate(config, "20260514T120000Z", str(tmp_path)))
+
+    assert len(_FakeClient.instances) == 1
+    client = _FakeClient.instances[0]
+    assert client.interrupts == 1, (
+        f"client.interrupt() must be awaited exactly once on stop; got {client.interrupts}"
     )
