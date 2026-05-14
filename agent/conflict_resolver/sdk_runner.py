@@ -46,6 +46,9 @@ def _ensure_stream_close_timeout() -> None:
     via ``inspect.getsource``) does not mutate the process environment
     and leak state into other tests.
     """
+    # ``setdefault`` (not ``[...] = ...``) respects operator overrides:
+    # a debug session can ``CLAUDE_CODE_STREAM_CLOSE_TIMEOUT=60000`` to
+    # exercise the stdin-close path and this helper won't trample it.
     os.environ.setdefault("CLAUDE_CODE_STREAM_CLOSE_TIMEOUT", _STREAM_CLOSE_TIMEOUT_MS)
 
 
