@@ -675,6 +675,28 @@ as a real deliverable — depth matters.{revision_block}
     return ""
 
 
+# #385: Contract paragraph injected into every team/followup prompt so the
+# lead always knows how to terminate the run authoritatively.
+_RUN_COMPLETE_CONTRACT = """
+## Ending the run
+
+When all teammates are done — or you cannot proceed further — call the
+`RunComplete` tool with a structured summary. This is the ONLY way to end
+the run cleanly. Do not announce "the work is done" in prose; the
+orchestrator does not read your prose for completion.
+
+Status values:
+- "success": all in-flight issues have a verdict.
+- "partial": some issues progressed, some did not (record the rest in
+  `verdicts` with `decision: "SKIP"` and a reason).
+- "blocked": you cannot proceed without operator input.
+
+Each `verdicts` entry must include `project`, `decision`
+(APPROVE | APPROVE_INTEGRATION | PR | REJECT | SKIP), and may include
+`issue_number`, `reasoning`, `branch`, and `base_branch`.
+"""
+
+
 def build_team_prompt(
     repo: str,
     issues: list[dict],
@@ -953,7 +975,7 @@ but those tool calls should be Bash sleeps and report-file polls, not new Task s
 - Base branch: `{base_branch}` (teammates must branch FROM this)
 - GH_TOKEN is available for GitHub CLI operations
 {vision_section}
-{mode_block}"""
+{mode_block}""" + _RUN_COMPLETE_CONTRACT
 
 
 def build_followup_prompt(
@@ -984,7 +1006,7 @@ def build_followup_prompt(
         "4. Provide the final JSON summary (issues_completed, issues_failed, "
         "total_turns, conflicts_detected) only when ALL workers are done or timed out.\n\n"
         "Do NOT shut down the team or end your turn until all work is accounted for."
-    )
+    ) + _RUN_COMPLETE_CONTRACT
 
 
 # ── Dashboard Webhook ──────────────────────────────────────────

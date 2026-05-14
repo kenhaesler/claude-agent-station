@@ -207,3 +207,32 @@ def test_orchestrator_complete_emitted_exactly_once(monkeypatch):
 
     oc_count = sum(1 for (e, _p) in captured if e == "orchestrator_complete")
     assert oc_count == 1, f"Expected exactly one orchestrator_complete; got {oc_count}"
+
+
+def test_team_prompt_includes_run_complete_contract():
+    """build_team_prompt must mention RunComplete in its authoritative contract."""
+    from agent.station_orchestrator import build_team_prompt
+    prompt = build_team_prompt(
+        repo="owner/repo",
+        issues=[{"number": 1, "title": "x", "labels": []}],
+        config={"models": {}, "limits": {}},
+        run_id="run-x",
+        workspace="/tmp/ws",
+        worktree_paths={},
+        vision=None,
+        project_mode="single",
+        approved_plan_paths=[],
+    )
+    assert "RunComplete" in prompt, (
+        "build_team_prompt must instruct the lead to call RunComplete (issue #385)"
+    )
+    # Status values must be documented in the prompt so the lead picks the right one.
+    assert "success" in prompt and "partial" in prompt and "blocked" in prompt
+
+
+def test_followup_prompt_includes_run_complete_contract():
+    from agent.station_orchestrator import build_followup_prompt
+    prompt = build_followup_prompt(workspace="/tmp/ws", operator_messages=[])
+    assert "RunComplete" in prompt, (
+        "build_followup_prompt must keep the RunComplete contract on every iteration"
+    )
