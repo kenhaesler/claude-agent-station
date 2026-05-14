@@ -654,6 +654,21 @@ create_integration_labels() {
 # Only PRs carrying the `autonomous-agent/auto-merge` label are touched —
 # PR-verdict PRs (opened for human review) are intentionally left alone.
 
+# Swap labels on a PR — drop the auto-merge tag and add the conflict tag.
+# Surfaces failures instead of swallowing them; without this, a missing
+# label silently leaves the PR unlabeled and effectively invisible.
+_sweep_handoff_conflict() {
+    local project="$1" pr_num="$2"
+    local err
+    err=$(gh pr edit "$pr_num" --repo "$project" \
+        --remove-label "autonomous-agent/auto-merge" \
+        --add-label "autonomous-agent/conflict" 2>&1)
+    local rc=$?
+    if [ "$rc" -ne 0 ]; then
+        log_warn "Sweep: relabel failed for $project#$pr_num (rc=$rc): ${err:0:200}"
+    fi
+}
+
 sweep_stale_integration_prs() {
     local project="$1"
     local dev_branch
@@ -689,6 +704,20 @@ for pr in data:
     pr_count=$(printf '%s\n' "$rows" | grep -c .)
     log_info "Sweep: $pr_count auto-merge PR(s) open against $dev_branch in $project"
 
+    # Make sure the labels we relabel to actually exist on this repo before
+    # we try to apply them. Without this, `gh pr edit --add-label
+    # autonomous-agent/conflict` fails silently on repos that never had the
+    # integration labels created (e.g. brand-new project), the
+    # `--remove-label autonomous-agent/auto-merge` still takes effect, and
+    # the PR ends up with no labels at all — invisible to humans AND to
+    # subsequent sweeps. create_integration_labels is idempotent (--force).
+    local _labels_err
+    _labels_err=$(create_integration_labels "$project" 2>&1 >/dev/null)
+    local _labels_rc=$?
+    if [ "$_labels_rc" -ne 0 ]; then
+        log_warn "Sweep: could not ensure integration labels exist on $project (rc=$_labels_rc): ${_labels_err:0:200} — relabeling may fail"
+    fi
+
     local _merge_flag
     _merge_flag=$(get_merge_flag)
 
@@ -703,21 +732,14 @@ for pr in data:
                     log_ok "Sweep: merged #$pr_num into $dev_branch"
                     swept=$((swept + 1))
                 else
-                    # Swap labels — drop auto-merge so this PR doesn't get
-                    # retried (and re-notified) every sweep until a human
-                    # resolves it.
                     log_warn "Sweep: merge failed for #$pr_num — handing off (auto-merge → conflict)"
-                    gh pr edit "$pr_num" --repo "$project" \
-                        --remove-label "autonomous-agent/auto-merge" \
-                        --add-label "autonomous-agent/conflict" 2>/dev/null || true
+                    _sweep_handoff_conflict "$project" "$pr_num"
                     failed=$((failed + 1))
                 fi
                 ;;
             CONFLICTING)
                 log_info "Sweep: #$pr_num has conflicts — handing off (auto-merge → conflict)"
-                gh pr edit "$pr_num" --repo "$project" \
-                    --remove-label "autonomous-agent/auto-merge" \
-                    --add-label "autonomous-agent/conflict" 2>/dev/null || true
+                _sweep_handoff_conflict "$project" "$pr_num"
                 failed=$((failed + 1))
                 ;;
             *)
