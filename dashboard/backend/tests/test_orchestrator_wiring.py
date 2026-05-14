@@ -1340,6 +1340,11 @@ def test_frontend_dropdown_values_match_backend_modes():
     """Smoke test: the four <option value="..."> entries in ProjectDetail
     and ProjectsPage must match VALID_PROJECT_MODES on the backend.
     Drift in either direction is a defect.
+
+    Help-text phrases under the dropdown are deliberately not asserted —
+    the cyberpunk UI redesign removed them in favour of a different
+    affordance, and presence/wording of help copy is a UI decision, not
+    a backend contract.
     """
     import pathlib
     valid = set(station_orchestrator.VALID_PROJECT_MODES)
@@ -1352,13 +1357,6 @@ def test_frontend_dropdown_values_match_backend_modes():
     for mode in valid:
         assert f'value="{mode}"' in pd_text, f"ProjectDetail missing dropdown option for mode {mode}"
         assert f'value="{mode}"' in pp_text, f"ProjectsPage missing dropdown option for mode {mode}"
-
-    # ProjectDetail must have inline help text under the dropdown.
-    # We assert the existence of one short phrase per mode.
-    assert "Read-only investigation" in pd_text  # analyze
-    assert "Pre-implementation gate" in pd_text  # plan_only
-    assert "Plan-quality output" in pd_text  # plan
-    assert "Plan and implement" in pd_text  # full
 
 
 # --- Issue #266 follow-up: orchestrator drains pending queue items ---------
