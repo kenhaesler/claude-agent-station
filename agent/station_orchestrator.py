@@ -1302,6 +1302,31 @@ def handle_stream_event(
                     if state:
                         state.tool_calls += 1
                     logger.info("Lead agent tool call: %s", block.name)
+                    if block.name == "RunComplete":
+                        from agent.tools.run_complete import RunCompleteInput
+                        from pydantic import ValidationError
+                        try:
+                            parsed = RunCompleteInput.model_validate(block.input or {})
+                        except ValidationError as exc:
+                            # Schema-invalid input — the tool handler's tool_result
+                            # already tells the lead to retry. Do NOT latch.
+                            logger.warning("RunComplete malformed: %s", exc)
+                        else:
+                            if state is not None and state.run_complete_payload is None:
+                                state.run_complete_payload = parsed.model_dump()
+                                # #385: this is the authoritative
+                                # orchestrator_complete emission. The fallback
+                                # branch in the ResultMessage path is gated
+                                # below on state.run_complete_payload being None.
+                                post_webhook(config, "orchestrator_complete", {
+                                    "run_id": f"run-{run_id}",
+                                    "is_error": False,
+                                    "status": parsed.status,
+                                    "verdicts": [v.model_dump() for v in parsed.verdicts],
+                                    "summary": parsed.summary,
+                                    "duration_ms": 0,
+                                    "num_turns": state.turns,
+                                })
                     if pending_narration:
                         post_webhook(config, "narration", {
                             "run_id": f"run-{run_id}",

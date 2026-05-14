@@ -95,3 +95,84 @@ def test_streamstate_can_latch_payload():
     state = _StreamState()
     state.run_complete_payload = {"status": "success", "verdicts": [], "summary": "done"}
     assert state.run_complete_payload["status"] == "success"
+
+
+def test_handle_stream_event_latches_run_complete_payload(monkeypatch):
+    """A ToolUseBlock with name='RunComplete' latches the parsed payload onto state."""
+    from agent.station_orchestrator import _StreamState, handle_stream_event
+    from claude_agent_sdk.types import AssistantMessage, ToolUseBlock
+
+    state = _StreamState(main_session_id="sess-1")
+
+    monkeypatch.setattr("agent.station_orchestrator.post_webhook", lambda *a, **k: None)
+
+    tool_use = ToolUseBlock(
+        id="tu-1",
+        name="RunComplete",
+        input={
+            "status": "success",
+            "verdicts": [
+                {"project": "owner/repo", "issue_number": 1, "decision": "APPROVE",
+                 "branch": "autonomous/issue-1", "base_branch": "main", "reasoning": "ok"},
+            ],
+            "summary": "Done.",
+        },
+    )
+    msg = AssistantMessage(content=[tool_use], usage={}, model="claude-opus-4-7", parent_tool_use_id=None)
+    setattr(msg, "session_id", "sess-1")
+
+    handle_stream_event(msg, config={}, run_id="run-x", log_file=None, state=state)
+
+    assert state.run_complete_payload is not None
+    assert state.run_complete_payload["status"] == "success"
+    assert state.run_complete_payload["verdicts"][0]["decision"] == "APPROVE"
+
+
+def test_handle_stream_event_ignores_malformed_run_complete(monkeypatch):
+    """A malformed RunComplete tool call does NOT latch the payload."""
+    from agent.station_orchestrator import _StreamState, handle_stream_event
+    from claude_agent_sdk.types import AssistantMessage, ToolUseBlock
+
+    state = _StreamState(main_session_id="sess-1")
+    monkeypatch.setattr("agent.station_orchestrator.post_webhook", lambda *a, **k: None)
+
+    # Missing required 'status' and 'summary' fields.
+    tool_use = ToolUseBlock(id="tu-bad", name="RunComplete", input={"verdicts": []})
+    msg = AssistantMessage(content=[tool_use], usage={}, model="claude-opus-4-7", parent_tool_use_id=None)
+    setattr(msg, "session_id", "sess-1")
+
+    handle_stream_event(msg, config={}, run_id="run-x", log_file=None, state=state)
+
+    assert state.run_complete_payload is None, (
+        "Malformed RunComplete must not latch the payload — lead should retry"
+    )
+
+
+def test_handle_stream_event_orchestrator_complete_emitted_with_verdicts(monkeypatch):
+    """Once the payload latches, an orchestrator_complete webhook fires with the verdicts."""
+    from agent.station_orchestrator import _StreamState, handle_stream_event
+    from claude_agent_sdk.types import AssistantMessage, ToolUseBlock
+
+    state = _StreamState(main_session_id="sess-1")
+
+    captured: list[tuple] = []
+    monkeypatch.setattr(
+        "agent.station_orchestrator.post_webhook",
+        lambda config, event, payload: captured.append((event, payload)),
+    )
+
+    tool_use = ToolUseBlock(
+        id="tu-1", name="RunComplete",
+        input={"status": "success", "verdicts": [], "summary": "done"},
+    )
+    msg = AssistantMessage(content=[tool_use], usage={}, model="claude-opus-4-7", parent_tool_use_id=None)
+    setattr(msg, "session_id", "sess-1")
+
+    handle_stream_event(msg, config={}, run_id="run-x", log_file=None, state=state)
+
+    events = [e for (e, _p) in captured]
+    assert "orchestrator_complete" in events, "RunComplete must emit orchestrator_complete"
+    payload = next(p for (e, p) in captured if e == "orchestrator_complete")
+    assert payload["status"] == "success"
+    assert payload["summary"] == "done"
+    assert "verdicts" in payload
