@@ -69,3 +69,8 @@ def test_pool_size_scales_by_dialect():
     assert sqlite_kw["max_overflow"] == 0
     assert pg_kw["pool_size"] == 20
     assert pg_kw["max_overflow"] == 10
+
+
+def test_asyncpg_and_alembic_importable():
+    import alembic  # noqa: F401
+    import asyncpg  # noqa: F401
