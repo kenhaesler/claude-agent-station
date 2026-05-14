@@ -384,3 +384,97 @@ def test_execute_approve_integration_happy_path(tmp_path: Path):
     assert "42" in comment_args
 
 
+def test_execute_approve_integration_degrades_when_dev_branch_missing(tmp_path, caplog):
+    """No dev_branch → degrade to execute_approve and emit a warning."""
+    from agent.verdict_execution import execute_approve_integration, Verdict, ExecutionResult
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    verdict = Verdict(
+        project="owner/repo",
+        issue_number=7,
+        verdict="APPROVE_INTEGRATION",
+        branch="autonomous/issue-7",
+        base_branch="main",
+        reasoning="Manager misemitted; integration disabled.",
+    )
+
+    with patch("agent.verdict_execution.execute_approve") as approve_mock, \
+         caplog.at_level("WARNING"):
+        approve_mock.return_value = ExecutionResult(
+            verdict="APPROVE",
+            project=verdict.project,
+            issue_number=7,
+            success=True,
+            pr_url="https://github.com/owner/repo/pull/12",
+        )
+        result = execute_approve_integration(
+            verdict, workspace=workspace, run_id="r1", dev_branch=None,
+        )
+
+    assert approve_mock.called
+    assert result.success is True
+    assert any("degrading to APPROVE" in rec.message for rec in caplog.records)
+
+
+def test_execute_approve_integration_push_failure_short_circuits(tmp_path):
+    """If ``git push`` fails, no PR is opened and no auto-merge is armed."""
+    from agent.verdict_execution import execute_approve_integration, Verdict
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    verdict = Verdict(
+        project="owner/repo",
+        issue_number=99,
+        verdict="APPROVE_INTEGRATION",
+        branch="autonomous/issue-99",
+        base_branch="main",
+    )
+
+    push_fail = MagicMock()
+    push_fail.returncode = 1
+    push_fail.stderr = "remote rejected"
+    push_fail.stdout = ""
+
+    gh_calls: list[tuple] = []
+
+    def gh_run_spy(args, env=None):  # noqa: ARG001
+        gh_calls.append(tuple(args))
+        return _stub_gh_ok("")
+
+    with patch("agent.verdict_execution.subprocess.run", return_value=push_fail), \
+         patch("agent.verdict_execution.gh_run", side_effect=gh_run_spy):
+        result = execute_approve_integration(
+            verdict, workspace=workspace, dev_branch="dev",
+        )
+
+    assert result.success is False
+    assert result.error is not None
+    assert "remote rejected" in result.error
+    assert gh_calls == [], "no gh calls expected after push failure"
+
+
+def test_execute_dispatcher_routes_approve_integration(tmp_path):
+    """The ``execute`` dispatcher must route APPROVE_INTEGRATION correctly."""
+    from agent.verdict_execution import execute, Verdict, ExecutionResult, _EXECUTORS
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    verdict = Verdict(
+        project="owner/repo",
+        issue_number=1,
+        verdict="APPROVE_INTEGRATION",
+        branch="autonomous/issue-1",
+    )
+    mock_fn = MagicMock()
+    mock_fn.return_value = ExecutionResult(
+        verdict="APPROVE_INTEGRATION",
+        project=verdict.project,
+        issue_number=1,
+        success=True,
+    )
+    with patch.dict(_EXECUTORS, {"APPROVE_INTEGRATION": mock_fn}):
+        execute(verdict, workspace=workspace, dev_branch="dev")
+    mock_fn.assert_called_once()
+
+
