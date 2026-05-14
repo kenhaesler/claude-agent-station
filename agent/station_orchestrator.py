@@ -1498,6 +1498,15 @@ def handle_stream_event(
                 "tokens_total": state.tokens_in + state.tokens_out,
                 "turns": state.turns,
             })
+        # #385: if the lead already called the RunComplete tool, the
+        # authoritative orchestrator_complete fired from the ToolUseBlock
+        # branch. Skip the legacy emission to keep the contract single-firing.
+        if state is not None and state.run_complete_payload is not None:
+            logger.info(
+                "Skipping legacy ResultMessage orchestrator_complete — "
+                "RunComplete tool already latched the payload."
+            )
+            return
         post_webhook(config, "orchestrator_complete", {
             "run_id": f"run-{run_id}",
             "is_error": getattr(message, "is_error", False),

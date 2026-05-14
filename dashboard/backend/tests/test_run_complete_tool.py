@@ -176,3 +176,34 @@ def test_handle_stream_event_orchestrator_complete_emitted_with_verdicts(monkeyp
     assert payload["status"] == "success"
     assert payload["summary"] == "done"
     assert "verdicts" in payload
+
+
+def test_orchestrator_complete_emitted_exactly_once(monkeypatch):
+    """A RunComplete tool call followed by a ResultMessage emits orchestrator_complete only once."""
+    from agent.station_orchestrator import _StreamState, handle_stream_event
+    from claude_agent_sdk.types import AssistantMessage, ResultMessage, ToolUseBlock
+
+    state = _StreamState(main_session_id="sess-1")
+    captured: list[tuple] = []
+    monkeypatch.setattr(
+        "agent.station_orchestrator.post_webhook",
+        lambda config, event, payload: captured.append((event, payload)),
+    )
+
+    tool_use = ToolUseBlock(
+        id="tu-1", name="RunComplete",
+        input={"status": "success", "verdicts": [], "summary": "done"},
+    )
+    am = AssistantMessage(content=[tool_use], usage={}, model="claude-opus-4-7", parent_tool_use_id=None)
+    setattr(am, "session_id", "sess-1")
+    handle_stream_event(am, config={}, run_id="run-x", log_file=None, state=state)
+
+    rm = ResultMessage(
+        subtype="success", duration_ms=100, duration_api_ms=50, is_error=False,
+        num_turns=1, session_id="sess-1", total_cost_usd=0.0, usage=None,
+        result="Final summary. All workers have completed.",
+    )
+    handle_stream_event(rm, config={}, run_id="run-x", log_file=None, state=state)
+
+    oc_count = sum(1 for (e, _p) in captured if e == "orchestrator_complete")
+    assert oc_count == 1, f"Expected exactly one orchestrator_complete; got {oc_count}"
