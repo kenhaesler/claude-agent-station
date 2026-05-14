@@ -3,13 +3,20 @@
 import pytest
 from sqlalchemy import text
 
-from app.database import engine, init_db
+from app.database import Base, engine, _migrate_add_columns
+import app.models  # noqa: F401
+
+
+async def _setup_db(conn):
+    """Set up a fresh schema using in-process create_all + legacy column migrations."""
+    await conn.run_sync(Base.metadata.create_all)
+    await _migrate_add_columns(conn)
 
 
 @pytest.mark.asyncio
 async def test_vision_cache_columns_exist():
-    await init_db()
     async with engine.begin() as conn:
+        await _setup_db(conn)
         result = await conn.execute(text("PRAGMA table_info(projects)"))
         columns = {row[1] for row in result.fetchall()}
     assert "vision_cached_sha" in columns
@@ -19,8 +26,8 @@ async def test_vision_cache_columns_exist():
 
 @pytest.mark.asyncio
 async def test_vision_chat_sessions_table_exists():
-    await init_db()
     async with engine.begin() as conn:
+        await _setup_db(conn)
         result = await conn.execute(text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
             "SELECT name FROM sqlite_master WHERE type='table' AND name='vision_chat_sessions'"
         ))
@@ -30,8 +37,8 @@ async def test_vision_chat_sessions_table_exists():
 
 @pytest.mark.asyncio
 async def test_vision_chat_session_has_required_columns():
-    await init_db()
     async with engine.begin() as conn:
+        await _setup_db(conn)
         result = await conn.execute(text("PRAGMA table_info(vision_chat_sessions)"))  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
         columns = {row[1] for row in result.fetchall()}
     for col in ("id", "project_id", "state", "phase", "coverage",

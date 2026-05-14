@@ -168,14 +168,22 @@ async def init_db() -> None:
     the Alembic baseline revision (`alembic/versions/0001_baseline.py`).
     The legacy auxiliary migration (`migrations/0003_simplify_config_schema.py`)
     is a config-JSON transform, not schema; it still runs after upgrade.
+
+    We pass ``STATION_DB_URL`` explicitly to the subprocess so that the
+    Alembic process always targets the same database as the in-process engine,
+    regardless of any ``STATION_DB_PATH`` mutations in the environment (e.g.
+    per-test fixtures that change the path after the engine was created).
     """
+    import os
     import subprocess
     from pathlib import Path
 
     backend_root = Path(__file__).resolve().parent.parent
+    env = {**os.environ, "STATION_DB_URL": DATABASE_URL}
     subprocess.check_call(
         ["alembic", "upgrade", "head"],
         cwd=str(backend_root),
+        env=env,
     )
 
     # Config-JSON migration still applicable post-schema.
