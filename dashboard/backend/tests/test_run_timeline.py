@@ -112,7 +112,8 @@ async def test_lifecycle_events_emits_run_start_and_complete(setup_db):
     assert [e.t for e in events] == sorted(e.t for e in events)
 
 
-from app.services.run_timeline import _audit_events
+from app.models import ConflictResolution, CoordinatorTask
+from app.services.run_timeline import _audit_events, _conflict_events, _teammate_events, _verdict_events
 
 
 @pytest.mark.asyncio
@@ -157,3 +158,64 @@ async def test_audit_events_emits_ok_and_error(setup_db):
     assert events[0].agent == "teammate-backend"
     assert events[0].data["exit_code"] == 0
     assert events[1].data["truncated"] is False
+
+
+@pytest.mark.asyncio
+async def test_teammate_verdict_conflict_events(setup_db):
+    run_id = "run-tl-mixed-1"
+    async with async_session() as db:
+        db.add(
+            CoordinatorTask(
+                id="t-1",
+                run_id=run_id,
+                project_repo="x/y",
+                status="completed",
+                started_at=datetime(2026, 5, 13, 15, 20, 0, tzinfo=timezone.utc),
+                claimed_at=datetime(2026, 5, 13, 15, 20, 0, tzinfo=timezone.utc),
+                finished_at=datetime(2026, 5, 13, 15, 22, 0, tzinfo=timezone.utc),
+                teammate_agent_id="backend",
+                title="login api",
+            )
+        )
+        db.add(
+            AgentEvent(
+                workflow_id="wf-2",
+                run_id=run_id,
+                agent_id="manager",
+                event_type="verdict_execute",
+                event_data='{"verdict":"PR"}',
+                created_at=datetime(2026, 5, 13, 15, 25, 0, tzinfo=timezone.utc),
+            )
+        )
+        db.add(
+            ConflictResolution(
+                branch="feature/x",
+                repo="x/y",
+                phase_reached="llm",
+                outcome="resolved",
+                triggered_by="pre_pr",
+                started_at=datetime(2026, 5, 13, 15, 23, 0, tzinfo=timezone.utc),
+                finished_at=datetime(2026, 5, 13, 15, 23, 30, tzinfo=timezone.utc),
+            )
+        )
+        # ConflictResolution doesn't have run_id directly; tag via branch / runs.
+        # For this test we simulate by giving the run a matching branch.
+        db.add(
+            Run(
+                run_id=run_id,
+                status="running",
+                started_at=datetime(2026, 5, 13, 15, 14, 8, tzinfo=timezone.utc),
+                branch="feature/x",
+            )
+        )
+        await db.commit()
+
+    async with async_session() as db:
+        t_events = await _teammate_events(db, run_id, since=None, until=None)
+        v_events = await _verdict_events(db, run_id, since=None, until=None)
+        c_events = await _conflict_events(db, run_id, since=None, until=None)
+
+    assert {e.event for e in t_events} == {"teammate.spawned", "teammate.completed"}
+    assert t_events[0].agent == "backend"
+    assert [e.event for e in v_events] == ["verdict_execute"]
+    assert {e.event for e in c_events} == {"conflict.started", "conflict.resolved"}

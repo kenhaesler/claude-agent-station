@@ -147,6 +147,142 @@ async def _lifecycle_events(
     return out
 
 
+_VERDICT_EVENT_TYPES = (
+    "verdict_execute",
+    "manager_review",
+    "manager_review_complete",
+)
+
+
+async def _teammate_events(
+    db: AsyncSession,
+    run_id: str,
+    *,
+    since: datetime | None,
+    until: datetime | None,
+) -> list[RunTimelineEvent]:
+    rows = (
+        await db.execute(
+            select(CoordinatorTask)
+            .where(CoordinatorTask.run_id == run_id)
+            .order_by(CoordinatorTask.started_at)
+        )
+    ).scalars().all()
+    out: list[RunTimelineEvent] = []
+    for row in rows:
+        spawn_t = row.claimed_at or row.started_at
+        if spawn_t is not None and _within(spawn_t, since, until):
+            out.append(
+                RunTimelineEvent(
+                    t=spawn_t,
+                    kind="teammate",
+                    event="teammate.spawned",
+                    source="coordinator_tasks",
+                    source_id=row.id,
+                    agent=row.teammate_agent_id,
+                    data={"task_id": row.id, "title": row.title, "status": row.status},
+                )
+            )
+        terminal_t = (
+            row.finished_at if row.status in ("completed", "failed", "orphaned") else None
+        )
+        if terminal_t is not None and _within(terminal_t, since, until):
+            out.append(
+                RunTimelineEvent(
+                    t=terminal_t,
+                    kind="teammate",
+                    event="teammate.completed",
+                    source="coordinator_tasks",
+                    source_id=row.id,
+                    agent=row.teammate_agent_id,
+                    data={"status": row.status, "result_summary": row.result_summary},
+                )
+            )
+    out.sort(key=lambda e: (e.t, e.source, e.source_id))
+    return out
+
+
+async def _verdict_events(
+    db: AsyncSession,
+    run_id: str,
+    *,
+    since: datetime | None,
+    until: datetime | None,
+) -> list[RunTimelineEvent]:
+    rows = (
+        await db.execute(
+            select(AgentEvent)
+            .where(AgentEvent.run_id == run_id)
+            .where(AgentEvent.event_type.in_(_VERDICT_EVENT_TYPES))
+            .order_by(AgentEvent.created_at)
+        )
+    ).scalars().all()
+    out: list[RunTimelineEvent] = []
+    for row in rows:
+        if not _within(row.created_at, since, until):
+            continue
+        out.append(
+            RunTimelineEvent(
+                t=row.created_at,
+                kind="verdict",
+                event=row.event_type,
+                source="agent_events",
+                source_id=str(row.event_id),
+                agent=row.agent_id,
+                data=_decode_json(row.event_data),
+            )
+        )
+    return out
+
+
+async def _conflict_events(
+    db: AsyncSession,
+    run_id: str,
+    *,
+    since: datetime | None,
+    until: datetime | None,
+) -> list[RunTimelineEvent]:
+    # ConflictResolution rows aren't keyed by run_id directly — they're keyed
+    # by branch. Bridge via the Run's branch column.
+    run = (await db.execute(select(Run).where(Run.run_id == run_id))).scalar_one_or_none()
+    if run is None or run.branch is None:
+        return []
+    rows = (
+        await db.execute(
+            select(ConflictResolution)
+            .where(ConflictResolution.branch == run.branch)
+            .order_by(ConflictResolution.started_at)
+        )
+    ).scalars().all()
+    out: list[RunTimelineEvent] = []
+    for row in rows:
+        if _within(row.started_at, since, until):
+            out.append(
+                RunTimelineEvent(
+                    t=row.started_at,
+                    kind="conflict",
+                    event="conflict.started",
+                    source="conflict_resolutions",
+                    source_id=str(row.id),
+                    agent=None,
+                    data={"branch": row.branch, "phase": row.phase_reached},
+                )
+            )
+        if row.finished_at is not None and _within(row.finished_at, since, until):
+            out.append(
+                RunTimelineEvent(
+                    t=row.finished_at,
+                    kind="conflict",
+                    event=f"conflict.{row.outcome}",
+                    source="conflict_resolutions",
+                    source_id=str(row.id),
+                    agent=None,
+                    data={"outcome": row.outcome, "phase": row.phase_reached},
+                )
+            )
+    return out
+
+
 _AUDIT_TAIL_TRIM = 1024  # bytes; full payload still reachable via /api/audit
 
 
