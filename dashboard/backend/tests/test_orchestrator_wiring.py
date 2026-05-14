@@ -1570,7 +1570,7 @@ def test_build_team_prompt_bans_spawn_as_sleep_proxy():
         assert "sleep proxies" in prompt
 
 
-# --- Prompt stream + stream-close timeout (Stream-closed regression) -------
+# --- Prompt stream lifecycle -------
 
 
 def test_orchestrator_wiring_no_user_prompt_stream():
@@ -1587,26 +1587,22 @@ def test_orchestrator_wiring_no_force_exit_with_cleanup():
     assert not hasattr(so, "_force_exit_with_cleanup")
 
 
-def test_launcher_sets_stream_close_timeout_in_run_env():
-    """Regression guard: the launcher must inject
-    ``CLAUDE_CODE_STREAM_CLOSE_TIMEOUT`` into the orchestrator
-    subprocess env so post-first-result hook callbacks don't hit
-    ``Error: Stream closed``. Source-level assertion — we don't boot
-    the launcher in tests.
+def test_launcher_does_not_set_stream_close_timeout_in_run_env():
+    """Negative regression: ``agent.launcher.trigger()`` MUST NOT set
+    ``CLAUDE_CODE_STREAM_CLOSE_TIMEOUT`` in the subprocess env.
 
-    Background: the SDK closes stdin ~60s after the first ResultMessage
-    by default (CLAUDE_CODE_STREAM_CLOSE_TIMEOUT=60000ms). After stdin
-    closes, every PreToolUse / PostToolUse hook callback raises
-    ``Error: Stream closed`` because the CLI's sendRequest finds
-    inputClosed=True. Long Agent Teams runs hit this within minutes —
-    the run keeps producing tool calls but every audit hook silently
-    fails. Bumping the timeout via env var is the supported escape.
+    After issue #392 the launcher stops being the policy owner. Modules
+    that still depend on the bundled CLI's hook-callback lifetime own
+    their own setter (see ``agent.conflict_resolver.sdk_runner``).
+
+    This is a source-level test — we don't boot the launcher.
     """
     import inspect
     from agent import launcher
 
     src = inspect.getsource(launcher)
-    assert 'CLAUDE_CODE_STREAM_CLOSE_TIMEOUT' in src, (
-        "agent.launcher.trigger() must set CLAUDE_CODE_STREAM_CLOSE_TIMEOUT "
-        "in the run-manager subprocess env"
+    assert 'CLAUDE_CODE_STREAM_CLOSE_TIMEOUT' not in src, (
+        "agent.launcher must not set CLAUDE_CODE_STREAM_CLOSE_TIMEOUT "
+        "(issue #392). Move the setter into the module that owns the "
+        "surviving query() call."
     )

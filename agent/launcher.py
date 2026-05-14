@@ -307,20 +307,6 @@ def _spawn_run_manager(hint_run_id: str | None = None) -> dict:
     if gh_token:
         env["GH_TOKEN"] = gh_token
 
-    # Bump the SDK's stream-close timeout from the 60s default. After the
-    # bundled CLI emits its first ResultMessage the SDK begins a countdown
-    # before closing stdin; once stdin closes, every PreToolUse /
-    # PostToolUse hook callback the CLI tries to make to the Python side
-    # raises ``Error: Stream closed`` (cli.js:7552 sendRequest).
-    # Production hit this ~1-2 minutes into a long Agent Teams session
-    # — teammates' tool calls were still happening but their hooks
-    # silently failed, so audit_log rows stopped being written and
-    # teammates produced no commits. 30 minutes is generous enough for
-    # multi-issue Agent Teams runs without leaving stdin open
-    # indefinitely. Operators can override via the env if they need
-    # longer.
-    env.setdefault("CLAUDE_CODE_STREAM_CLOSE_TIMEOUT", "1800000")
-
     # Propagate the pre-allocated run_id hint, converging on the placeholder
     # row the dashboard already inserted.
     if hint_run_id:
