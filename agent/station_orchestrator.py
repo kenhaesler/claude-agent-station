@@ -56,8 +56,13 @@ from agent.run_control import (
     drain_pending_controls,
     set_run_paused,
 )
+from agent.tools.run_complete import (
+    RunCompleteInput,
+    build_run_complete_server,
+)
 from agent.vision_analyst import _ensure_workspace
 from agent.webhook_emitter import emit
+from pydantic import ValidationError as _PydanticValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +86,11 @@ class _StreamState:
     # ResultMessage-driven orchestrator_complete emission, and the inner
     # orchestrate loop breaks at the next iteration boundary.
     run_complete_payload: dict | None = None
+    # #385 fallback path: True after the first time the prose-matching
+    # _is_work_complete heuristic fires on this run. Keeps the
+    # "lead did not call RunComplete" WARNING log fire-once-per-run so
+    # operators get the signal without log spam on long runs.
+    fallback_warning_logged: bool = False
 
 
 
@@ -1325,11 +1335,18 @@ def handle_stream_event(
                         state.tool_calls += 1
                     logger.info("Lead agent tool call: %s", block.name)
                     if block.name == "RunComplete":
-                        from agent.tools.run_complete import RunCompleteInput
-                        from pydantic import ValidationError
+                        # #385: We re-validate on the stream side even though
+                        # the SDK-side tool handler already validated. The
+                        # tool handler runs in the SDK subprocess (whose
+                        # pydantic version we don't pin), and its rejection
+                        # only surfaces to the lead as a tool_result error.
+                        # The orchestrator must independently confirm shape
+                        # before latching anything that downstream consumers
+                        # (the webhook payload) depend on. Cheap by design;
+                        # bounded by pydantic's parsing speed for a small dict.
                         try:
                             parsed = RunCompleteInput.model_validate(block.input or {})
-                        except ValidationError as exc:
+                        except _PydanticValidationError as exc:
                             # Schema-invalid input — the tool handler's tool_result
                             # already tells the lead to retry. Do NOT latch.
                             logger.warning("RunComplete malformed: %s", exc)
@@ -1969,7 +1986,6 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
             with open(stream_log_path, "a") as log_file:
                 # Build options once — ClaudeSDKClient owns the session for
                 # the lifetime of `async with`, so resume tokens are unnecessary.
-                from agent.tools.run_complete import build_run_complete_server
                 _run_complete_server = build_run_complete_server()
 
                 options = ClaudeAgentOptions(
@@ -2082,18 +2098,22 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
                                 break
 
                             # Fallback (one release window) — _is_work_complete
-                            # prose match. Logged loudly so operators can
-                            # spot runs whose lead hasn't migrated to the
-                            # tool contract.
+                            # prose match. Warning is fire-once-per-run on
+                            # ``stream_state.fallback_warning_logged`` so
+                            # long runs with multiple matches don't spam
+                            # the log; operators still see the signal once
+                            # per run, which is what triage needs.
                             if isinstance(message, ResultMessage):
                                 result_text = getattr(message, "result", "")
                                 if _is_work_complete(result_text):
-                                    logger.warning(
-                                        "RunComplete fallback engaged: lead did "
-                                        "not call the tool; relying on prose "
-                                        "match. Run: run-%s",
-                                        run_id,
-                                    )
+                                    if not stream_state.fallback_warning_logged:
+                                        logger.warning(
+                                            "RunComplete fallback engaged: lead did "
+                                            "not call the tool; relying on prose "
+                                            "match. Run: run-%s",
+                                            run_id,
+                                        )
+                                        stream_state.fallback_warning_logged = True
                                     work_complete = True
                                     break
 

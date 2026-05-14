@@ -387,13 +387,15 @@ def test_inner_loop_exits_on_run_complete(monkeypatch, tmp_path):
         return c
 
     monkeypatch.setattr(so, "ClaudeSDKClient", _client_factory)
+    from unittest.mock import AsyncMock
+
     monkeypatch.setattr(so, "_ensure_workspace", lambda *a, **k: str(tmp_path))
     monkeypatch.setattr(so, "post_webhook", lambda *a, **k: None)
     monkeypatch.setattr(so, "fetch_eligible_issues", lambda *a, **k: [{"number": 1, "title": "test", "body": ""}])
-    monkeypatch.setattr(so, "claim_pending_queue_items", asyncio.coroutine(lambda *a, **k: []) if False else __import__("unittest.mock", fromlist=["AsyncMock"]).AsyncMock(return_value=[]))
+    monkeypatch.setattr(so, "claim_pending_queue_items", AsyncMock(return_value=[]))
     monkeypatch.setattr(so, "load_vision", lambda *a, **k: None)
     monkeypatch.setattr(so, "_combined_rank_issues", lambda issues, **k: issues)
-    monkeypatch.setattr(so, "_control_poll_loop", __import__("unittest.mock", fromlist=["AsyncMock"]).AsyncMock())
+    monkeypatch.setattr(so, "_control_poll_loop", AsyncMock())
     monkeypatch.setattr(so.asyncio, "sleep", _zero_sleep)
     import subprocess as _sp
     monkeypatch.setattr(_sp, "run", lambda *a, **k: MagicMock(returncode=0, stderr=""))
