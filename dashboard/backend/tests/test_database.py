@@ -27,12 +27,13 @@ def test_resolved_db_url_blank_falls_back_to_sqlite():
 from sqlalchemy.ext.asyncio import create_async_engine
 
 
-def test_pragma_listener_no_op_on_postgres():
+def test_pragma_listener_no_op_on_postgres(monkeypatch):
     """Postgres connections must not run sqlite PRAGMAs."""
-    from app.database import _set_sqlite_pragma  # noqa
+    from app.database import _run_sqlite_pragmas
 
     class FakeCursor:
-        ran: list[str] = []
+        def __init__(self):
+            self.ran: list[str] = []
 
         def execute(self, sql):
             self.ran.append(sql)
@@ -50,14 +51,10 @@ def test_pragma_listener_no_op_on_postgres():
 
     # Override the engine reference used by the listener guard.
     import app.database as mod
-    orig = mod.engine
-    try:
-        mod.engine = FakeEngine()  # type: ignore[assignment]
-        cur = FakeCursor()
-        _set_sqlite_pragma._inner_run(FakeConn(), None, cursor_factory=lambda c: cur)  # type: ignore[attr-defined]
-        assert cur.ran == [], "should not run pragmas under postgres"
-    finally:
-        mod.engine = orig
+    monkeypatch.setattr(mod, "engine", FakeEngine())
+    cur = FakeCursor()
+    _run_sqlite_pragmas(FakeConn(), None, cursor_factory=lambda c: cur)
+    assert cur.ran == [], "should not run pragmas under postgres"
 
 
 def test_pool_size_scales_by_dialect():

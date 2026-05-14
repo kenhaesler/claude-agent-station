@@ -7,6 +7,7 @@ test_alembic_migrations.py to avoid collision. See PR-1 drift notes.
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -18,7 +19,7 @@ def test_alembic_config_exists():
 
 def test_alembic_history_runs():
     proc = subprocess.run(
-        ["alembic", "history"],
+        [sys.executable, "-m", "alembic", "history"],
         cwd=Path(__file__).parent.parent,
         capture_output=True,
         text=True,
@@ -36,22 +37,25 @@ from app.database import Base
 @pytest.mark.asyncio
 async def test_alembic_baseline_creates_full_schema():
     """A fresh `alembic upgrade head` produces a schema isomorphic to
-    Base.metadata.create_all + everything _migrate_add_columns adds."""
+    Base.metadata.create_all + everything _migrate_add_columns adds.
+
+    NOTE: We avoid importlib.reload(app.database) here because it replaces the
+    module-level engine and corrupts the shared in-process test DB used by
+    subsequent tests. Instead, we pass STATION_DB_URL only to the subprocess.
+    """
     import os
     import tempfile
 
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
         db_path = f.name
-    os.environ["STATION_DB_URL"] = f"sqlite+aiosqlite:///{db_path}"
-    importlib.reload(importlib.import_module("app.config"))
-    importlib.reload(importlib.import_module("app.database"))
 
+    env = {**os.environ, "STATION_DB_URL": f"sqlite+aiosqlite:///{db_path}"}
     proc = subprocess.run(
-        ["alembic", "upgrade", "head"],
+        [sys.executable, "-m", "alembic", "upgrade", "head"],
         cwd=Path(__file__).parent.parent,
         capture_output=True,
         text=True,
-        env={**os.environ},
+        env=env,
     )
     assert proc.returncode == 0, proc.stderr
 
@@ -61,9 +65,8 @@ async def test_alembic_baseline_creates_full_schema():
             "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
         )
         names = {r[0] for r in rows.fetchall()}
+    await engine.dispose()
     # Check a fixed set of key tables that must exist after the baseline revision.
-    # (importlib.reload creates a new Base with no registered models, so we use
-    # explicit table names instead of Base.metadata.sorted_tables.)
     expected = {
         "runs", "projects", "agent_events", "audit_log", "coordinator_tasks",
         "task_queue", "task_outcomes", "config", "station_control",
