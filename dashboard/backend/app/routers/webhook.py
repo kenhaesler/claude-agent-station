@@ -173,7 +173,13 @@ async def receive_run_event(
     logger.info("Processed webhook event: %s (normalized: %s) for %s", event.event, event_name, event.run_id)
 
     # ---- Postgres LISTEN/NOTIFY broadcast (#393) ----
+    # ``run_event`` wakes the log_importer subscriber so the dashboard
+    # picks up new runs in sub-second time on Postgres (vs the 300s
+    # safety poll). ``heartbeat`` wakes the stale_run_reaper subscriber
+    # so SSE clients see liveness in real time (vs the 60s safety tick).
     await notify("run_event", {"run_id": event.run_id, "kind": event.event})
+    if run is not None:
+        await notify("heartbeat", {"run_id": event.run_id})
 
     # ---- SSE broadcast ----
     await event_bus_publish({

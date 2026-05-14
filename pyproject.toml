@@ -11,10 +11,6 @@ pythonpath = ["."]
 filterwarnings = [
     "ignore::pytest.PytestUnknownMarkWarning",
 ]
-markers = [
-    "postgres_only: skip on SQLite-only runs",
-    "sqlite_only: skip on Postgres-only runs",
-]
 
 [tool.ruff]
 target-version = "py311"

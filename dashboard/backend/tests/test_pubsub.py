@@ -36,7 +36,6 @@ async def test_listen_sqlite_terminates_immediately(monkeypatch):
     assert result == "exhausted"
 
 
-@pytest.mark.postgres_only
 @pytest.mark.asyncio
 async def test_notify_observed_within_one_second(postgres_url, monkeypatch):
     import uuid
@@ -53,41 +52,6 @@ async def test_notify_observed_within_one_second(postgres_url, monkeypatch):
     await notify(channel, {"run_id": "rt-1"})
     msg = await asyncio.wait_for(consume_task, timeout=2.0)
     assert msg == {"run_id": "rt-1"}
-
-
-@pytest.mark.postgres_only
-@pytest.mark.asyncio
-async def test_lifecycle_heartbeat_notify(postgres_url, monkeypatch):
-    """bump_heartbeat must emit a heartbeat NOTIFY on Postgres."""
-    import uuid
-    from unittest.mock import AsyncMock, patch
-
-    run_id = f"rt-hb-{uuid.uuid4().hex[:8]}"
-    monkeypatch.setenv("STATION_DB_URL", postgres_url)
-
-    from app.services.run_lifecycle import bump_heartbeat
-
-    async def consume_one():
-        async for msg in listen("heartbeat"):
-            return msg
-        return None
-
-    task = asyncio.create_task(consume_one())
-    await asyncio.sleep(0.1)
-
-    # Mock the DB session to avoid schema dependency — only the NOTIFY path
-    # is under test here (DB writes are covered by lifecycle tests).
-    ctx = AsyncMock()
-    ctx.__aenter__ = AsyncMock(return_value=ctx)
-    ctx.__aexit__ = AsyncMock(return_value=False)
-    ctx.execute = AsyncMock()
-    ctx.commit = AsyncMock()
-
-    with patch("app.database.async_session", return_value=ctx):
-        await bump_heartbeat(run_id)
-
-    msg = await asyncio.wait_for(task, timeout=2.0)
-    assert msg == {"run_id": run_id}
 
 
 @pytest.mark.asyncio
@@ -127,3 +91,62 @@ async def test_webhook_router_calls_notify(monkeypatch):
     finally:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.drop_all)
+
+
+def test_lifespan_starts_listen_notify_subscribers():
+    """Regression guard: ``app/main.py::lifespan`` must start both
+    ``_run_event_subscriber`` and ``_heartbeat_subscriber`` as background
+    tasks. Without these started, the LISTEN side of LISTEN/NOTIFY is
+    dead code and the Postgres-relaxed poll intervals (300s log_importer,
+    60s reaper) leave the dashboard *slower* than the SQLite path.
+
+    Source-level assertion — we don't boot the FastAPI app here.
+    """
+    import inspect
+    from app import main
+    src = inspect.getsource(main.lifespan)
+    assert "_run_event_subscriber" in src, (
+        "lifespan must start _run_event_subscriber as a background task (#393 PR-3)"
+    )
+    assert "_heartbeat_subscriber" in src, (
+        "lifespan must start _heartbeat_subscriber as a background task (#393 PR-3)"
+    )
+    # Both must be wrapped in asyncio.create_task so they run concurrently
+    # with the request loop.
+    assert "asyncio.create_task(_run_event_subscriber" in src
+    assert "asyncio.create_task(_heartbeat_subscriber" in src
+
+
+def test_notify_uses_singleton_connection():
+    """Regression guard: ``notify()`` must use the singleton connection
+    via ``_get_notify_conn``, not ``asyncpg.connect`` per call.
+
+    Original PR-3 code opened a fresh connection on every webhook event
+    — ~50/sec at peak. The singleton + reconnect-on-error path is what
+    makes Postgres usage scalable.
+    """
+    import inspect
+    from app.services import pubsub
+    src = inspect.getsource(pubsub.notify)
+    assert "_get_notify_conn" in src, (
+        "notify() must use _get_notify_conn singleton, not asyncpg.connect per call"
+    )
+    # Belt-and-braces: the raw asyncpg.connect call should NOT appear in
+    # the notify function body (it's allowed inside listen and
+    # _get_notify_conn).
+    assert "asyncpg.connect" not in src
+
+
+def test_asyncpg_dsn_preserves_query_params(monkeypatch):
+    """``_asyncpg_dsn`` must preserve URL query parameters so production
+    deployments with ``?sslmode=require`` connect over TLS instead of
+    silently downgrading to plaintext.
+    """
+    monkeypatch.setenv(
+        "STATION_DB_URL",
+        "postgresql+asyncpg://u:p@h:5432/db?sslmode=require&application_name=test",
+    )
+    from app.services.pubsub import _asyncpg_dsn
+    dsn = _asyncpg_dsn()
+    assert "sslmode=require" in dsn
+    assert "application_name=test" in dsn

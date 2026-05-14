@@ -24,7 +24,6 @@ than :data:`UNKNOWN_RUN_REAP_AGE_MINUTES`, we reap it the same way.
 import logging
 import os
 import subprocess
-import time
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import or_, select
@@ -64,9 +63,10 @@ _ACTIVE_STATUSES = ("running", "reviewing")
 def tick_interval_seconds() -> int:
     """Return the stale-run check interval based on the active DB dialect.
 
-    On Postgres the ``heartbeat`` LISTEN/NOTIFY channel keeps ``_recent_heartbeats``
-    fresh, so a 60 s safety tick is sufficient.  On SQLite polling every 15 s
-    is the only detection mechanism.
+    On Postgres the ``heartbeat`` LISTEN/NOTIFY channel fans a heartbeat
+    out to SSE clients in real time, so the periodic reaper tick is
+    relaxed to 60 s (it's now the safety net, not the primary signal).
+    On SQLite polling every 15 s is the only detection mechanism.
     """
     db_url = os.environ.get("STATION_DB_URL", "")
     if db_url and db_url.startswith("postgresql"):
@@ -74,22 +74,24 @@ def tick_interval_seconds() -> int:
     return 15
 
 
-# Per-run watchdog: maps run_id -> monotonic timestamp of last heartbeat NOTIFY.
-# Populated by ``_heartbeat_subscriber``; consumed by the tick loop to skip
-# recently-heard-from runs.
-_recent_heartbeats: dict[str, float] = {}
-
-
 async def _heartbeat_subscriber() -> None:
-    """Subscribe to the ``heartbeat`` Postgres channel and refresh per-run
-    watchdog timestamps.  A no-op on SQLite (``listen`` immediately exhausts).
+    """Subscribe to the Postgres ``heartbeat`` channel and rebroadcast on the
+    in-process SSE event bus so dashboard clients see liveness without
+    waiting for the next reaper tick.
+
+    No-op on SQLite (``listen`` immediately exhausts).
     """
+    from app.services.event_bus import publish as _bus_publish
     from app.services.pubsub import listen
 
     async for msg in listen("heartbeat"):
         run_id = msg.get("run_id")
-        if run_id:
-            _recent_heartbeats[run_id] = time.monotonic()
+        if not run_id:
+            continue
+        try:
+            await _bus_publish({"type": "heartbeat", "data": {"run_id": run_id}})
+        except Exception:  # noqa: BLE001
+            logger.warning("heartbeat rebroadcast failed for %s", run_id)
 
 
 def _is_orchestrator_process_alive() -> bool:

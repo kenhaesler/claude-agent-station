@@ -479,26 +479,6 @@ async def handle_unknown(
     return run
 
 
-async def bump_heartbeat(run_id: str) -> None:
-    """Bump runs.last_event_at and broadcast a heartbeat NOTIFY (#393).
-
-    Postgres only — on SQLite ``notify`` is a no-op, so callers need not guard.
-    """
-    # Late import to avoid circular dependency (database -> models -> lifecycle).
-    from app.database import async_session as _async_session  # noqa: PLC0415
-    from app.services.pubsub import notify  # noqa: PLC0415
-    from sqlalchemy import update as sa_update  # noqa: PLC0415
-
-    async with _async_session() as db:
-        await db.execute(
-            sa_update(Run)
-            .where(Run.run_id == run_id)
-            .values(last_event_at=datetime.now(timezone.utc))
-        )
-        await db.commit()
-    await notify("heartbeat", {"run_id": run_id})
-
-
 def build_notification_message(event: WebhookRunEvent) -> str:
     """Build a human-readable notification message."""
     project = event.project or "unknown"
