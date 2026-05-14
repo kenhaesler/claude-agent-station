@@ -71,3 +71,24 @@ def test_pool_size_scales_by_dialect():
 def test_asyncpg_and_alembic_importable():
     import alembic  # noqa: F401
     import asyncpg  # noqa: F401
+
+
+def test_jsontype_uses_jsonb_on_postgres():
+    from app.models import JsonType  # noqa: PLC0415
+    from sqlalchemy.dialects.postgresql import JSONB
+
+    pg_impl = JsonType.dialect_impl(
+        __import__("sqlalchemy.dialects.postgresql", fromlist=["dialect"]).dialect()
+    )
+    assert isinstance(pg_impl, JSONB), f"expected JSONB, got {pg_impl.__class__.__name__}"
+
+
+def test_jsontype_uses_json_on_sqlite():
+    from app.models import JsonType  # noqa: PLC0415
+    from sqlalchemy import JSON
+
+    sq_impl = JsonType.dialect_impl(
+        __import__("sqlalchemy.dialects.sqlite", fromlist=["dialect"]).dialect()
+    )
+    # On SQLite, JSON is used (no JSONB variant). The impl is a JSON subclass.
+    assert isinstance(sq_impl, JSON), f"expected JSON, got {sq_impl.__class__.__name__}"
