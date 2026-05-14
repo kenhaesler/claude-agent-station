@@ -717,6 +717,9 @@ def build_team_prompt(
     vision: dict | None = None,
     project_mode: str = "full",
     approved_plan_paths: list[str] | None = None,
+    review_package_path: str | None = None,
+    verdicts_file_path: str | None = None,
+    manager_max_turns: int = 60,
 ) -> str:
     """Build the lead agent prompt that creates and manages the team.
 
@@ -726,7 +729,20 @@ def build_team_prompt(
     matching plan file (named ``.claude-employee-plan-{index}.json``)
     as ``APPROVED_PLAN`` guidance before writing code, so the
     follow-up ``full`` run honours the work already done.
+
+    ``review_package_path`` and ``verdicts_file_path`` are injected so
+    the lead can spawn the ``manager`` sibling with the exact paths it
+    needs to read + write. Both default to ``None``; when set, a
+    "Manager review" section is appended to the prompt (#390).
+
+    ``manager_max_turns`` is the hard turn budget passed to the manager
+    in the spawn prompt. The default (60) matches the ``maxTurns: 60``
+    frontmatter in ``agent/agents/manager.md``; the soft drafting
+    deadline is half of this value. Pass the same number from config
+    (``config.limits.max_manager_turns``) at the call site so the
+    prompt and the SDK constraint stay in lockstep.
     """
+    manager_soft_deadline = max(1, manager_max_turns // 2)
     issue_entries = []
     for issue in issues:
         labels_str = ", ".join(l.get("name", "") for l in issue.get("labels", []))
@@ -834,6 +850,56 @@ most context.
 6. Review plans — reject if they conflict with another teammate's work
 7. **Actively monitor** teammates until ALL tasks are completed (see monitoring rules)
 8. After all work is done, **synthesize a final JSON summary**
+"""
+
+    # Build the manager-spawn section (#390): inject only when the caller
+    # provides both paths (unit tests / plan-only runs may omit them).
+    # #411 update: paths are no longer interpolated into the spawn prompt
+    # narrative. The orchestrator writes ``.claude-manager-paths.json``
+    # to the workspace before the session starts; the manager reads it
+    # on its own first turn (per its agent definition). This eliminates
+    # the markdown-parse failure mode that could send the manager to
+    # the wrong write path.
+    manager_section = ""
+    if review_package_path and verdicts_file_path:
+        manager_section = f"""
+## Manager review (spawn the manager sibling)
+
+After every teammate has emitted `.claude-employee-report-<index>.json` (or
+the 20-minute timeout elapses with whichever reports exist), you MUST:
+
+1. Spawn a `manager` sibling agent via the Agent tool. The manager is a
+   separate Agent Teams sibling — same SDK session, separate role/prompt/model.
+   The orchestrator has already written `.claude-manager-paths.json` to
+   the workspace; the manager reads it on its first turn to discover where
+   to read the review package and where to write its verdicts. **You do not
+   need to interpolate paths into the spawn prompt.**
+
+   Pass this spawn prompt verbatim:
+
+   ```
+   Read .claude-manager-paths.json from the current workspace to find
+   the review package and verdicts file paths plus your turn budget.
+   Then evaluate each project's work against your system-prompt criteria
+   and write the verdicts JSON to the path the sidecar names. Be strict
+   on completeness — never approve partial implementations.
+   ```
+
+2. The orchestrator (Python) composes the review package contents and
+   writes the sidecar before your turn began. If the sidecar is missing
+   or the manager reports a parse error, surface it in your final summary
+   and end the turn — do not guess paths.
+3. **Do NOT attempt to review the work yourself.** You are the orchestrator;
+   the manager is the quality gate. Spawn the manager and wait for it to
+   finish — when its turn ends, the verdicts file must exist and contain
+   valid JSON at the path the orchestrator named.
+4. Only after the manager has written the verdicts file should you provide
+   the final JSON summary and end your turn.
+
+Spawn the manager exactly once per run. Do not spawn additional manager
+siblings — the orchestrator only reads one verdicts file.
+
+Hard turn budget for the manager: {manager_max_turns}. Soft deadline: turn {manager_soft_deadline}.
 """
 
     vision_section = ""
@@ -964,7 +1030,7 @@ Follow this monitoring loop:
 **Why this matters**: If you say "I'm waiting" and end your turn, the session terminates
 and your teammates lose their work. You must keep making tool calls to stay alive —
 but those tool calls should be Bash sleeps and report-file polls, not new Task spawns.
-
+{manager_section}
 ## Rules
 
 - Spawn exactly 3 teammates (backend, frontend, qa)
@@ -1734,6 +1800,120 @@ def _synthesize_employee_report(
         return False
 
 
+# ── Review Package & Verdict Helpers (#390) ────────────────────
+
+
+def _ensure_review_package(
+    *,
+    run_id: str,
+    log_dir: Path,
+    workspaces: list[Path],
+    mode: str,
+) -> Path:
+    """Produce the manager's review-package file at
+    ``{log_dir}/run-{run_id}-review.md``.
+
+    Concatenates each workspace's ``.claude-employee-report-*.json`` and
+    a short diff summary. Returns the file path. Idempotent: if the file
+    already exists (e.g. the bash phase produced it), the path is
+    returned without rewriting.
+    """
+    log_dir.mkdir(parents=True, exist_ok=True)
+    out = log_dir / f"run-{run_id}-review.md"
+    if out.exists() and out.stat().st_size > 0:
+        return out
+
+    lines: list[str] = []
+    lines.append(f"# Review package for run {run_id}")
+    lines.append(f"MODE: {mode.upper()}")
+    lines.append("")
+    for wt in workspaces:
+        reports = sorted(wt.glob(".claude-employee-report-*.json"))
+        if not reports:
+            continue
+        lines.append(f"## Workspace: `{wt}`")
+        for rpt in reports:
+            lines.append(f"### Report: `{rpt.name}`")
+            lines.append("```json")
+            lines.append(rpt.read_text(encoding="utf-8"))
+            lines.append("```")
+            lines.append("")
+        # Diff summary (best-effort; never fail the review-package write)
+        try:
+            diff = subprocess.run(
+                ["git", "-C", str(wt), "diff", "--stat", "HEAD"],
+                capture_output=True, text=True, timeout=30,
+            )
+            if diff.stdout.strip():
+                lines.append("### Diff summary")
+                lines.append("```")
+                lines.append(diff.stdout)
+                lines.append("```")
+        except Exception:  # noqa: BLE001
+            pass
+
+    out.write_text("\n".join(lines), encoding="utf-8")
+    return out
+
+
+MANAGER_PATHS_SIDECAR = ".claude-manager-paths.json"
+
+
+def _write_manager_paths_sidecar(
+    *,
+    workspace: str,
+    review_package_path: str,
+    verdicts_file_path: str,
+    hard_deadline_turns: int,
+) -> Path:
+    """Write the manager-sibling's path/budget sidecar to ``workspace``.
+
+    The orchestrator owns the path strings (it created them); the
+    manager sibling reads this sidecar on its first turn (per
+    ``agent/agents/manager.md``) to discover where to read the review
+    package and where to write the verdicts file. This replaces the
+    earlier mechanism where the lead's prompt interpolated the same
+    paths into a markdown narrative that the manager had to parse —
+    issue #411 follow-up to #390. A structured JSON file eliminates the
+    markdown-parse failure mode.
+
+    Returns the sidecar path. The sidecar is workspace-scoped because
+    the manager's CWD inside the SDK session is the workspace.
+    """
+    sidecar = Path(workspace) / MANAGER_PATHS_SIDECAR
+    payload = {
+        "review_package": review_package_path,
+        "verdicts_file": verdicts_file_path,
+        "hard_deadline_turns": int(hard_deadline_turns),
+        "soft_deadline_turns": max(1, int(hard_deadline_turns) // 2),
+    }
+    sidecar.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    logger.info(
+        "manager paths sidecar written: %s -> review=%s, verdicts=%s",
+        sidecar, review_package_path, verdicts_file_path,
+    )
+    return sidecar
+
+
+def _read_verdicts_file(path: Path) -> dict | None:
+    """Read and parse the manager-produced verdicts JSON.
+
+    Returns the parsed dict, or ``None`` if the file is missing /
+    unparseable. Never raises — the caller is expected to degrade
+    gracefully when the manager produced no verdicts (timeout, crash).
+    """
+    try:
+        if not path.is_file():
+            return None
+        text = path.read_text(encoding="utf-8")
+        if not text.strip():
+            return None
+        return json.loads(text)
+    except (ValueError, OSError) as exc:
+        logger.warning("verdicts file %s unparseable: %s", path, exc)
+        return None
+
+
 # ── Main Orchestration ─────────────────────────────────────────
 
 
@@ -1758,10 +1938,13 @@ async def orchestrate_project(
     manager_turns = get_limit(config, "max_manager_turns", 30)
     max_reentries = 6  # Up to 6 re-entries if lead exits prematurely
 
-    # Load issue-worker agent definition for SDK discovery
+    # Load Agent Teams sibling definitions for SDK discovery: the
+    # ``issue-worker`` (backend/frontend/qa teammates) and the ``manager``
+    # (verdict producer, added in #390).
     agent_dir = Path(__file__).parent / "agents"
-    worker_file = agent_dir / "issue-worker.md"
     agents_dict: dict[str, AgentDefinition] | None = None
+
+    worker_file = agent_dir / "issue-worker.md"
     if worker_file.exists():
         try:
             worker_name, worker_def = load_agent_definition(worker_file)
@@ -1773,9 +1956,31 @@ async def orchestrate_project(
                 )
                 worker_def = replace(worker_def, model=employee_override)
             agents_dict = {worker_name: worker_def}
-            logger.info("Loaded agent definition: %s from %s (model=%s)", worker_name, worker_file, worker_def.model)
+            logger.info(
+                "Loaded agent definition: %s from %s (model=%s)",
+                worker_name, worker_file, worker_def.model,
+            )
         except Exception as e:
             logger.warning("Failed to load agent definition %s: %s", worker_file, e)
+
+    manager_file = agent_dir / "manager.md"
+    if manager_file.exists():
+        try:
+            mgr_name, mgr_def = load_agent_definition(manager_file)
+            manager_override = get_model(config, "manager", "")
+            if manager_override and manager_override != mgr_def.model:
+                logger.info(
+                    "Overriding manager model from config: %s (was %s)",
+                    manager_override, mgr_def.model,
+                )
+                mgr_def = replace(mgr_def, model=manager_override)
+            agents_dict = {**(agents_dict or {}), mgr_name: mgr_def}
+            logger.info(
+                "Loaded agent definition: %s from %s (model=%s)",
+                mgr_name, manager_file, mgr_def.model,
+            )
+        except Exception as e:
+            logger.warning("Failed to load agent definition %s: %s", manager_file, e)
 
     exit_code = 0
 
@@ -2068,10 +2273,54 @@ async def orchestrate_project(
                                 iteration + 1, max_reentries,
                             )
                         else:
+                            # #390: compute review-package + verdicts paths from
+                            # the same log_dir the stream log uses, so the
+                            # manager sibling and the orchestrator agree on paths.
+                            _review_pkg_path = os.path.join(
+                                log_dir, f"run-{run_id}-review.md"
+                            )
+                            _verdicts_path = os.path.join(
+                                log_dir, f"run-{run_id}-verdicts.json"
+                            )
+                            # #411: write the structured paths sidecar to the
+                            # workspace BEFORE the lead's first turn so the
+                            # manager sibling can Read it on its own first
+                            # turn instead of parsing markdown narrative.
+                            try:
+                                _write_manager_paths_sidecar(
+                                    workspace=workspace,
+                                    review_package_path=_review_pkg_path,
+                                    verdicts_file_path=_verdicts_path,
+                                    hard_deadline_turns=manager_turns,
+                                )
+                            except Exception as exc:  # noqa: BLE001
+                                # When the sidecar fails to write, the manager
+                                # spawned by the lead will Read the sidecar,
+                                # find it missing, and emit a failure summary
+                                # rather than guessing paths (per manager.md
+                                # `<context>`). The orchestrator's existing
+                                # ``manager_no_verdicts`` webhook + exit_code=6
+                                # path then fires. Manual triage required —
+                                # there is no silent fallback.
+                                logger.warning(
+                                    "manager paths sidecar write failed for %s: %s "
+                                    "— manager will fail loudly via "
+                                    "manager_no_verdicts; manual triage required",
+                                    repo, exc,
+                                )
                             prompt = build_team_prompt(
                                 repo, issues, config, run_id, workspace, worktree_paths,
                                 vision=vision, project_mode=project_mode,
                                 approved_plan_paths=approved_plan_paths,
+                                review_package_path=_review_pkg_path,
+                                verdicts_file_path=_verdicts_path,
+                                # Single source of truth for the manager turn
+                                # budget: the same number we configure the SDK
+                                # with (manager_turns above) is what the prompt
+                                # tells the manager about. Frontmatter
+                                # ``maxTurns: 60`` in agent/agents/manager.md
+                                # is the SDK's enforcement ceiling.
+                                manager_max_turns=manager_turns,
                             )
 
                         await client.query(prompt)
@@ -2142,6 +2391,37 @@ async def orchestrate_project(
                         # Brief pause before the next follow-up turn. The control
                         # task keeps running during this sleep.
                         await asyncio.sleep(15)
+
+            # #390: post-session review-package safety net.
+            #
+            # Ideally the lead composes the package mid-session (right
+            # before spawning the manager) and the manager reads it
+            # in-session. Today the lead is asked to Bash/Read/Write the
+            # composition itself via the prompt's "Manager review"
+            # section, which is fragile — if the lead misparses the path
+            # or skips composition, the manager has nothing to read.
+            #
+            # Belt-and-braces: after the session ends, the orchestrator
+            # writes the package itself using ``_ensure_review_package``.
+            # If the manager already ran and wrote verdicts, this is a
+            # no-op (file exists, helper short-circuits). If the manager
+            # did NOT run, the human-triage path now has a complete
+            # package on disk for re-running manager review separately.
+            # See follow-up issue for the deeper architectural fix
+            # (mid-session intercept or CLI-driven composition).
+            try:
+                _wt_paths = [Path(p) for p in (worktree_paths or {}).values()]
+                _ensure_review_package(
+                    run_id=run_id,
+                    log_dir=Path(log_dir),
+                    workspaces=_wt_paths,
+                    mode=project_mode,
+                )
+            except Exception as exc:  # noqa: BLE001 — best-effort post-session write
+                logger.warning(
+                    "post-session review-package write failed for %s: %s",
+                    repo, exc,
+                )
 
             if not work_complete and not control_flags["stop"]:
                 logger.warning(

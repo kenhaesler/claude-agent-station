@@ -140,8 +140,7 @@ def iterate_projects(
     )
     from agent.run_control import OrchestratorStopRequested
     from agent.workspace_setup import ensure_workspace, WorkspaceError
-    from agent.station_orchestrator import orchestrate_project
-    from agent.manager_review import run_manager_review, ManagerReviewError
+    from agent.station_orchestrator import orchestrate_project, _read_verdicts_file
     from agent.verdict_execution import execute as execute_verdict
     from agent.integration_branch import merge_to_dev, IntegrationBranchError
     from agent.digest import write_digest
@@ -199,13 +198,44 @@ def iterate_projects(
             results.append({"project": project["name"], "decision": "ERROR", "error": str(exc)})
             continue
 
-        # Manager review consumes the review package the orchestrator wrote.
-        pkg = Path(log_dir) / f"{run_id}-{project['name'].replace('/', '__')}-review.md"
-        try:
-            verdicts = run_manager_review(str(pkg), run_id, config)
-        except ManagerReviewError as exc:
-            logger.warning("manager_review: %s", exc)
-            verdicts = []
+        # #390: the manager is now a sibling agent inside the lead's SDK
+        # session. It writes verdicts to this path during the run; we just
+        # confirm the file exists and hand each verdict to the executor.
+        verdicts_path = Path(log_dir) / f"run-{run_id}-verdicts.json"
+        verdicts_payload = _read_verdicts_file(verdicts_path)
+        if verdicts_payload is None:
+            # Missing verdicts is a real failure: the run did work but
+            # we have no way to action it. Make this visible — log loudly,
+            # emit a webhook so the dashboard can surface it, and bump
+            # the per-project exit_code so the run is not falsely
+            # marked clean. Operators triaging "why was my issue not
+            # touched?" need a visible signal here.
+            logger.error(
+                "manager sibling produced no verdicts file at %s — "
+                "the in-session manager either crashed, hit max-turns, "
+                "or the lead never spawned it. All teammate work for "
+                "this project is unactioned.",
+                verdicts_path,
+            )
+            try:
+                from agent.webhook_emitter import emit as _emit
+                _emit("manager_no_verdicts", {
+                    "run_id": f"run-{run_id}",
+                    "project": project.get("name", ""),
+                    "verdicts_path": str(verdicts_path),
+                })
+            except Exception:  # noqa: BLE001 — best-effort signal
+                logger.warning("manager_no_verdicts webhook emit failed")
+            exit_code = max(exit_code, 6)
+            results.append({
+                "project": project.get("name", ""),
+                "decision": "ERROR",
+                "error": f"manager produced no verdicts file at {verdicts_path}",
+            })
+        raw_verdicts = (verdicts_payload or {}).get("verdicts", [])
+
+        from agent.verdict_execution import Verdict as _Verdict
+        verdicts = [_Verdict.from_dict(v) for v in raw_verdicts]
 
         for verdict in verdicts:
             execute_verdict(verdict, run_id=run_id)
