@@ -711,8 +711,12 @@ for pr in data:
     # `--remove-label autonomous-agent/auto-merge` still takes effect, and
     # the PR ends up with no labels at all — invisible to humans AND to
     # subsequent sweeps. create_integration_labels is idempotent (--force).
-    create_integration_labels "$project" >/dev/null 2>&1 || \
-        log_warn "Sweep: could not ensure integration labels exist on $project — relabeling may fail"
+    local _labels_err
+    _labels_err=$(create_integration_labels "$project" 2>&1 >/dev/null)
+    local _labels_rc=$?
+    if [ "$_labels_rc" -ne 0 ]; then
+        log_warn "Sweep: could not ensure integration labels exist on $project (rc=$_labels_rc): ${_labels_err:0:200} — relabeling may fail"
+    fi
 
     local _merge_flag
     _merge_flag=$(get_merge_flag)
