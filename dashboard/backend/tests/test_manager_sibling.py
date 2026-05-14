@@ -239,3 +239,17 @@ def test_stale_run_reaper_has_no_manager_carveout():
     src = inspect.getsource(stale_run_reaper)
     assert "manager_heartbeat" not in src
     assert "manager_review_window" not in src.lower()
+
+
+def test_canonical_manager_prompt_reflects_sibling_context():
+    """``agent/prompts/manager.md`` continues to be the canonical source.
+
+    After #390 it must reflect the new context (sibling agent in lead's
+    SDK session) rather than the legacy ``claude -p`` invocation.
+    """
+    text = MANAGER_PROMPT.read_text(encoding="utf-8")
+    assert "claude -p" not in text, (
+        "canonical prompt still references `claude -p`; should describe "
+        "the manager as an Agent Teams sibling"
+    )
+    assert "sibling" in text.lower() or "agent teams" in text.lower()
