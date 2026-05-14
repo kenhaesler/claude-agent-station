@@ -32,7 +32,6 @@ from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
 from claude_agent_sdk.types import (
     AgentDefinition,
     AssistantMessage,
-    HookMatcher,
     ResultMessage,
     SystemMessage,
     TaskNotificationMessage,
@@ -1784,11 +1783,6 @@ async def orchestrate_project(
         workspace = os.path.join(workspaces_dir, repo_name)
         project_branch = project.get("branch") or "main"
 
-        # Snapshot the hook-callback failure counter so we can compute the
-        # per-project delta in the finally block and surface it to the
-        # operator. See agent/audit_hook.py for context.
-        hook_cb_failures_baseline = get_hook_callback_failure_count()
-
         # Refresh the workspace to the tip of the project's default branch
         # before deciding eligibility. Without this, persistent compose
         # volumes keep stale checkouts that hide newly-committed
@@ -2049,21 +2043,6 @@ async def orchestrate_project(
                         level=autonomy_level,
                         agent_id="lead",
                     ),
-                    hooks={
-                        "PreToolUse": [HookMatcher(hooks=[
-                            make_pre_tool_hook(
-                                run_id=f"run-{run_id}",
-                                actor="lead",
-                                trace_id=f"run-{run_id}",
-                            ),
-                        ])],
-                        "PostToolUse": [HookMatcher(hooks=[
-                            make_post_tool_hook(
-                                run_id=f"run-{run_id}",
-                                actor="lead",
-                            ),
-                        ])],
-                    },
                     max_budget_usd=max_budget_usd,
                 )
 
@@ -2198,25 +2177,6 @@ async def orchestrate_project(
                     await control_task
                 except (asyncio.CancelledError, Exception):
                     pass
-
-            # Surface hook-callback failures for this project's session.
-            # The bundled CLI sometimes drops mid-run with "error: Stream
-            # closed", which leaves audit rows stuck in 'started' state and
-            # can lose can_use_tool decisions. Posting the count as a webhook
-            # event lets the operator see affected runs without grepping
-            # launcher.out by hand.
-            hook_cb_failures = get_hook_callback_failure_count() - hook_cb_failures_baseline
-            if hook_cb_failures > 0:
-                logger.warning(
-                    "[hook-cb-fail] run_id=run-%s project=%s total_failures=%d "
-                    "(post_hook never updated some audit_log rows)",
-                    run_id, repo, hook_cb_failures,
-                )
-                post_webhook(config, "hook_failures", {
-                    "run_id": f"run-{run_id}",
-                    "project": repo,
-                    "count": hook_cb_failures,
-                })
 
             # Synthesize fallback employee reports BEFORE removing worktrees:
             # see _synthesize_employee_report. Without this, run-manager.sh

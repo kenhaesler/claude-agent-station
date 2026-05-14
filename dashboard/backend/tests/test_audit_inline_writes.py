@@ -262,3 +262,32 @@ async def test_handle_stream_event_completes_rows_on_userresult(fresh_db, monkey
     ).fetchall())
     conn.close()
     assert rows == {"toolu_a": "ok", "toolu_b": "error"}
+
+
+def test_pre_post_tool_hook_factories_are_gone():
+    """#389 acceptance: ``make_pre_tool_hook`` / ``make_post_tool_hook`` are
+    deleted from audit_hook and not imported anywhere under agent/.
+    """
+    import subprocess
+    from pathlib import Path
+
+    repo = Path(__file__).resolve().parents[3]
+    result = subprocess.run(
+        ["grep", "-rn", "make_pre_tool_hook\\|make_post_tool_hook\\|PreToolUse\\|PostToolUse", "agent/"],
+        cwd=repo, capture_output=True, text=True,
+    )
+    hits = [l for l in result.stdout.splitlines() if l]
+    # The audit_hook module itself MAY retain a one-line docstring or
+    # migration note that mentions the old names — but nothing imports
+    # or registers them.
+    forbidden_substrings = ("make_pre_tool_hook(", "make_post_tool_hook(", "HookMatcher(hooks=")
+    for line in hits:
+        for sub in forbidden_substrings:
+            assert sub not in line, f"orphan reference: {line}"
+
+
+def test_hook_callback_failure_count_helper_is_gone():
+    """get_hook_callback_failure_count and the counter are deleted (#389)."""
+    from agent import audit_hook
+    assert not hasattr(audit_hook, "get_hook_callback_failure_count")
+    assert not hasattr(audit_hook, "_HOOK_CB_FAILURE_COUNT")
