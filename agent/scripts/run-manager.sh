@@ -2168,7 +2168,7 @@ print(best if scores[best] > 0 else 'mixed')
 
         # Redundant task outcome recording via HTTP API (fallback if decide.py fails)
         local _outcome_success="false"
-        [[ "$verdict" == "APPROVE" || "$verdict" == "PR" ]] && _outcome_success="true"
+        [[ "$verdict" == "APPROVE" || "$verdict" == "APPROVE_INTEGRATION" || "$verdict" == "PR" ]] && _outcome_success="true"
         local _oi="${issue_number:-}"
         [[ -z "$_oi" || "$_oi" == "None" || "$_oi" == "null" ]] && _oi=""
         local _outcome_json
@@ -2218,8 +2218,8 @@ print(json.dumps(d))
         if [ "$is_analyze_mode" = true ]; then
             log_info "Analyze mode detected — skipping push/merge operations"
 
-            if [ "$verdict" = "APPROVE" ]; then
-                log_ok "APPROVE (analyze mode): Analysis work accepted"
+            if [ "$verdict" = "APPROVE" ] || [ "$verdict" = "APPROVE_INTEGRATION" ]; then
+                log_ok "$verdict (analyze mode): Analysis work accepted"
 
                 if [ -n "$issue_number" ] && [ "$issue_number" != "None" ] && [ "$issue_number" != "null" ]; then
                     gh issue comment "$issue_number" --repo "$project" --body "## Analyze Mode Review: APPROVED
@@ -2270,6 +2270,69 @@ Run: $RUN_ID" 2>/dev/null || true
         fi
 
         case "$verdict" in
+            APPROVE_INTEGRATION)
+                log_info "APPROVE_INTEGRATION: pushing $branch, opening auto-merge PR against $pr_base_branch"
+                if ! integration_enabled; then
+                    log_warn "APPROVE_INTEGRATION but integration disabled — falling through to APPROVE"
+                    merge_to_dev "$project" "$branch" "$base_branch" "$issue_number" "$reasoning"
+                    if [ $? -eq 0 ]; then
+                        notify "approve" "APPROVED (fallback from APPROVE_INTEGRATION): $project #$issue_number"
+                        # Queue: walk to completed (fallback merge succeeded)
+                        local _aiid
+                        _aiid=$(queue_api GET "/api/queue?project_repo=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$project'))" 2>/dev/null)&run_id=run-$RUN_ID&limit=1" | python3 -c "import json,sys; items=json.load(sys.stdin).get('items',[]); print(items[0]['id'] if items else '')" 2>/dev/null || echo "")
+                        if [ -n "$_aiid" ]; then
+                            queue_complete_item "$_aiid"
+                        fi
+                    else
+                        notify "error" "APPROVE_INTEGRATION fallback to APPROVE-merge failed: $project #$issue_number"
+                    fi
+                else
+                    if ! git push -u origin "$branch" 2>&1; then
+                        log_error "git push failed for $branch"
+                        notify "error" "APPROVE_INTEGRATION push failed: $project #$issue_number"
+                        continue
+                    fi
+                    local pr_url
+                    pr_url=$(gh pr create --repo "$project" \
+                        --head "$branch" \
+                        --base "$pr_base_branch" \
+                        --title "autonomous: resolve #$issue_number" \
+                        --body "$reasoning
+
+Closes #$issue_number
+
+---
+Autonomous run: $RUN_ID
+Manager verdict: APPROVE_INTEGRATION — auto-merge armed against \`$pr_base_branch\`. CI gates merge." 2>&1) || {
+                        log_error "gh pr create failed: $pr_url"
+                        notify "error" "APPROVE_INTEGRATION pr create failed: $project #$issue_number"
+                        continue
+                    }
+                    log_ok "APPROVE_INTEGRATION: opened PR $pr_url"
+                    if ! gh pr merge --auto --squash "$pr_url" 2>&1; then
+                        log_warn "gh pr merge --auto failed for $pr_url — PR is open but auto-merge not armed"
+                    else
+                        log_ok "Auto-merge armed for $pr_url"
+                    fi
+                    if [ -n "$issue_number" ] && [ "$issue_number" != "None" ] && [ "$issue_number" != "null" ]; then
+                        gh issue comment "$issue_number" --repo "$project" --body "🤖 **Manager verdict: APPROVE_INTEGRATION** — auto-merge armed against \`$pr_base_branch\` ($pr_url). CI gates merge.
+
+$reasoning
+
+Run: $RUN_ID" 2>/dev/null || log_warn "Failed to comment on issue #$issue_number"
+                        gh issue edit "$issue_number" --repo "$project" --remove-label "autonomous-agent/done" 2>/dev/null || true
+                    fi
+                    notify "approve" "APPROVE_INTEGRATION (auto-merge armed): $project #$issue_number $pr_url"
+                    # Queue: walk to completed (auto-merge PR armed)
+                    local _aiid
+                    _aiid=$(queue_api GET "/api/queue?project_repo=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$project'))" 2>/dev/null)&run_id=run-$RUN_ID&limit=1" | python3 -c "import json,sys; items=json.load(sys.stdin).get('items',[]); print(items[0]['id'] if items else '')" 2>/dev/null || echo "")
+                    if [ -n "$_aiid" ]; then
+                        queue_complete_item "$_aiid"
+                    fi
+                    webhook_event "verdict_execute" project "$project" verdict "APPROVE_INTEGRATION" >&2
+                fi
+                ;;
+
             APPROVE)
                 log_info "APPROVE: Processing verdict (pr_base: $pr_base_branch, promote_to: $base_branch)"
 
@@ -2664,7 +2727,7 @@ print()
 
 print('## Verdicts')
 for v in data.get('verdicts', []):
-    icon = {'APPROVE': 'APPROVED', 'PR': 'PR CREATED', 'REJECT': 'REJECTED'}.get(v['verdict'], v['verdict'])
+    icon = {'APPROVE': 'APPROVED', 'APPROVE_INTEGRATION': 'APPROVED (auto-merge)', 'PR': 'PR CREATED', 'REJECT': 'REJECTED'}.get(v['verdict'], v['verdict'])
     print(f\"### {v['project']} - {icon}\")
     print(f\"Issue: #{v.get('issue_number', '?')}\")
     print(f\"Branch: {v.get('branch', '?')}\")
