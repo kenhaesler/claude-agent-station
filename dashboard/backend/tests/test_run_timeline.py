@@ -405,3 +405,35 @@ async def test_cursor_stability_under_mid_stream_inserts(setup_db):
     page1_keys = {(e.source, e.source_id) for e in page1.events}
     page2_keys = {(e.source, e.source_id) for e in page2.events}
     assert page1_keys.isdisjoint(page2_keys)
+
+
+import time
+
+
+@pytest.mark.asyncio
+async def test_timeline_first_page_under_500ms_for_10k_events(setup_db):
+    run_id = "run-tl-perf-1"
+    async with async_session() as db:
+        db.add(Run(run_id=run_id, status="running",
+                   started_at=datetime(2026, 5, 13, 15, 0, 0, tzinfo=timezone.utc)))
+        for i in range(10_000):
+            db.add(
+                AuditEntry(
+                    idempotency_key=f"perf-{i}",
+                    run_id=run_id,
+                    actor="lead",
+                    action_kind="tool.bash",
+                    status="ok",
+                    started_at=datetime(2026, 5, 13, 15, 0, 0, tzinfo=timezone.utc).replace(microsecond=i % 1_000_000),
+                )
+            )
+        await db.commit()
+
+    async with async_session() as db:
+        t0 = time.perf_counter()
+        page = await build_timeline(
+            db, run_id, kinds=None, since=None, until=None, limit=500, cursor=None
+        )
+        elapsed = time.perf_counter() - t0
+    assert len(page.events) == 500
+    assert elapsed < 0.5, f"first page took {elapsed*1000:.0f}ms (>500ms budget)"
