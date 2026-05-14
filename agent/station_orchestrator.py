@@ -2418,10 +2418,11 @@ def main() -> None:
         )
         sys.exit(driver.run())
 
-    # Existing Agent Teams orchestration path — unchanged.
+    # Existing Agent Teams orchestration path. ClaudeSDKClient (#384) owns
+    # subprocess teardown via its __aexit__, so asyncio.run() can finalise
+    # cleanly without the /proc-walk shutdown hack.
     config = load_config(args.config)
-    exit_code = asyncio.run(orchestrate(config, args.run_id, args.workspaces_dir))
-    _force_exit_with_cleanup(exit_code)
+    sys.exit(asyncio.run(orchestrate(config, args.run_id, args.workspaces_dir)))
 
 
 if __name__ == "__main__":
