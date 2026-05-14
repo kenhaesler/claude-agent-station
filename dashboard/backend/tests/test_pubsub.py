@@ -10,6 +10,10 @@ import os
 
 import pytest
 
+# Import app.database early so the module-level engine is created with the
+# SQLite URL from conftest (before any test sets STATION_DB_URL to Postgres).
+import app.database  # noqa: F401
+
 from app.services.pubsub import listen, notify
 
 
@@ -49,6 +53,41 @@ async def test_notify_observed_within_one_second(postgres_url, monkeypatch):
     await notify(channel, {"run_id": "rt-1"})
     msg = await asyncio.wait_for(consume_task, timeout=2.0)
     assert msg == {"run_id": "rt-1"}
+
+
+@pytest.mark.postgres_only
+@pytest.mark.asyncio
+async def test_lifecycle_heartbeat_notify(postgres_url, monkeypatch):
+    """bump_heartbeat must emit a heartbeat NOTIFY on Postgres."""
+    import uuid
+    from unittest.mock import AsyncMock, patch
+
+    run_id = f"rt-hb-{uuid.uuid4().hex[:8]}"
+    monkeypatch.setenv("STATION_DB_URL", postgres_url)
+
+    from app.services.run_lifecycle import bump_heartbeat
+
+    async def consume_one():
+        async for msg in listen("heartbeat"):
+            return msg
+        return None
+
+    task = asyncio.create_task(consume_one())
+    await asyncio.sleep(0.1)
+
+    # Mock the DB session to avoid schema dependency — only the NOTIFY path
+    # is under test here (DB writes are covered by lifecycle tests).
+    ctx = AsyncMock()
+    ctx.__aenter__ = AsyncMock(return_value=ctx)
+    ctx.__aexit__ = AsyncMock(return_value=False)
+    ctx.execute = AsyncMock()
+    ctx.commit = AsyncMock()
+
+    with patch("app.database.async_session", return_value=ctx):
+        await bump_heartbeat(run_id)
+
+    msg = await asyncio.wait_for(task, timeout=2.0)
+    assert msg == {"run_id": run_id}
 
 
 @pytest.mark.asyncio
