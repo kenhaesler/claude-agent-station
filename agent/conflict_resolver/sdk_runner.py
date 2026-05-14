@@ -27,14 +27,26 @@ from agent.auto_mode import AutonomyLevel
 
 logger = logging.getLogger(__name__)
 
-# This module is the last caller of the SDK's one-shot ``query()`` API
-# after issue #384's ClaudeSDKClient migration. The bundled CLI begins a
-# stdin-close countdown after emitting its first ResultMessage; once
-# stdin closes, every PreToolUse / PostToolUse hook callback raises
-# ``Error: Stream closed`` (cli.js:7552 sendRequest). The launcher used
-# to set this env var globally (PR #371); after #392 it sets nothing,
-# and modules that still rely on the hook lifecycle own the setter.
-os.environ.setdefault("CLAUDE_CODE_STREAM_CLOSE_TIMEOUT", "1800000")
+_STREAM_CLOSE_TIMEOUT_MS = "1800000"
+
+
+def _ensure_stream_close_timeout() -> None:
+    """Set ``CLAUDE_CODE_STREAM_CLOSE_TIMEOUT`` on the current process env.
+
+    This module is the last caller of the SDK's one-shot ``query()`` API
+    after issue #384's ClaudeSDKClient migration. The bundled CLI begins a
+    stdin-close countdown after emitting its first ResultMessage; once
+    stdin closes, every PreToolUse / PostToolUse hook callback raises
+    ``Error: Stream closed`` (cli.js:7552 sendRequest). The launcher used
+    to set this env var globally (PR #371); after #392 it sets nothing,
+    and modules that still rely on the hook lifecycle own the setter.
+
+    Called from :func:`run_resolver` rather than at module import time
+    so that importing this module for tests (or for symbol inspection
+    via ``inspect.getsource``) does not mutate the process environment
+    and leak state into other tests.
+    """
+    os.environ.setdefault("CLAUDE_CODE_STREAM_CLOSE_TIMEOUT", _STREAM_CLOSE_TIMEOUT_MS)
 
 
 @dataclass
@@ -60,6 +72,11 @@ async def run_resolver(
     """Run the resolver inside `workspace`. Tool calls audited as
     actor='conflict-resolver'.
     """
+    # #392: set the SDK stream-close timeout for this caller's lifetime.
+    # Side effect deferred from import time to here so module-import
+    # tests don't leak env state across the suite.
+    _ensure_stream_close_timeout()
+
     options = ClaudeAgentOptions(
         cwd=workspace,
         env={"GITHUB_REPO": ""},  # set by caller via os.environ if desired
