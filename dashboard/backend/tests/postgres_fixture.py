@@ -22,6 +22,23 @@ def _docker_available() -> bool:
         return False
 
 
+def _container_is_running(name: str) -> tuple[bool, str]:
+    """Return ``(running, status_text)`` for a docker container by name.
+
+    Used by ``_ephemeral_postgres`` to fail-fast: if the container exited
+    immediately after ``docker run -d`` (port conflict, image pull
+    failure, OOM at startup), the long pg_isready loop below would
+    waste 30 s before raising. Inspecting status surfaces the failure
+    in milliseconds.
+    """
+    inspect = subprocess.run(
+        ["docker", "inspect", "--format={{.State.Status}}", name],
+        capture_output=True, text=True,
+    )
+    status = inspect.stdout.strip() or "<unknown>"
+    return inspect.returncode == 0 and status == "running", status
+
+
 @contextmanager
 def _ephemeral_postgres():
     name = f"cas-pg-test-{uuid.uuid4().hex[:8]}"
@@ -36,6 +53,26 @@ def _ephemeral_postgres():
     ])
     try:
         url = f"postgresql+asyncpg://test:test@127.0.0.1:{port}/test"
+
+        # Fail-fast: if the container is not in "running" state shortly
+        # after docker run -d, the readiness loop below would burn 30 s
+        # before raising. A status check surfaces start-up failures
+        # (port already bound, image not pulled, OOM) in <1 s.
+        running, status = _container_is_running(name)
+        if not running:
+            # One brief retry — the start transition is async.
+            time.sleep(0.5)
+            running, status = _container_is_running(name)
+        if not running:
+            logs = subprocess.run(
+                ["docker", "logs", name],
+                capture_output=True, text=True,
+            ).stdout[-500:]
+            raise RuntimeError(
+                f"postgres test container failed to start (status={status}). "
+                f"Last 500 chars of docker logs:\n{logs}"
+            )
+
         # Wait for readiness (max 30 s).
         deadline = time.time() + 30
         while time.time() < deadline:

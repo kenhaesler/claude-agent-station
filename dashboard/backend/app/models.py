@@ -10,6 +10,10 @@ from sqlalchemy.dialects.postgresql import JSONB
 from app.database import Base
 
 # Dialect-aware JSON type: JSONB on Postgres, plain JSON on SQLite (#393).
+# Intentionally a module-level singleton TypeEngine instance — every Column
+# declaration references the same object. Future column-specific options
+# (e.g. JSONB(astext_type=...)) should construct a fresh JSON().with_variant
+# rather than mutate this shared instance.
 JsonType = JSON().with_variant(JSONB(), "postgresql")
 
 

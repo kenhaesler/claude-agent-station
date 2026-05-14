@@ -112,8 +112,12 @@ async def test_smoke_insert_select(async_session_factory):
     from app.models import Run
     from datetime import datetime
 
-    # Use naive datetime: Run.started_at is TIMESTAMP WITHOUT TIME ZONE (both
-    # SQLite and Postgres). Postgres rejects tz-aware values for tz-naive cols.
+    # TODO(#414): switch to ``datetime.now(timezone.utc)`` once #393 PR-4
+    # migrates the schema to ``DateTime(timezone=True)``. Today the columns
+    # are declared as naive (TIMESTAMP WITHOUT TIME ZONE on Postgres);
+    # Postgres rejects tz-aware writes against them while SQLite is lax. The
+    # naive ``utcnow()`` here is the workaround — it also emits a Python 3.12
+    # DeprecationWarning that goes away once #414 lands.
     async with async_session_factory() as db:
         db.add(Run(run_id="run-smoke", status="running",
                    started_at=datetime.utcnow()))

@@ -23,15 +23,16 @@ from tests.postgres_fixture import postgres_url  # noqa: F401, re-export
 
 
 @pytest.fixture(scope="session", params=["sqlite", "postgres"])
-def db_url(request, postgres_url):
+def db_url(request, postgres_url, tmp_path_factory):
     if request.param == "sqlite":
         # Use a file-based URL: alembic runs in a subprocess and creates the
         # schema on disk; the in-process engine then connects to the same file.
         # sqlite:///:memory: creates an isolated per-connection database that
         # cannot be shared with a subprocess-created schema.
-        import tempfile
-        fd, path = tempfile.mkstemp(suffix="-parametrized.db")
-        os.close(fd)
+        # Use pytest's tmp_path_factory so the file is cleaned up automatically
+        # when the test session ends, rather than accumulating in /tmp across
+        # runs.
+        path = tmp_path_factory.mktemp("parametrized-sqlite") / "test.db"
         return f"sqlite+aiosqlite:///{path}"
     return postgres_url
 
