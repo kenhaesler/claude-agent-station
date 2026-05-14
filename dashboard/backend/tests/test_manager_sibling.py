@@ -123,3 +123,33 @@ def test_lead_prompt_instructs_lead_to_spawn_manager(tmp_path):
     assert spawn_idx > prompt.lower().find("teammate"), (
         "manager spawn instructions must appear after teammate completion text"
     )
+
+
+def test_orchestrator_builds_review_package_before_manager_spawn(tmp_path, monkeypatch):
+    """The orchestrator must produce the review package file before the
+    lead's session is asked to spawn the manager. We don't run a live
+    SDK; we just assert the helper exists and produces a file.
+    """
+    from agent.station_orchestrator import _ensure_review_package
+
+    # Synthesise a minimal workspace + reports.
+    workspaces = tmp_path / "workspaces"
+    repo = workspaces / "repo"
+    repo.mkdir(parents=True)
+    (repo / ".claude-employee-report-0.json").write_text(
+        '{"mode":"full","issue_number":1,"verdict_request":"APPROVE","summary":"x"}',
+        encoding="utf-8",
+    )
+    log_dir = tmp_path / "log"
+    log_dir.mkdir()
+
+    out_path = _ensure_review_package(
+        run_id="run-test",
+        log_dir=log_dir,
+        workspaces=[repo],
+        mode="full",
+    )
+
+    assert out_path.is_file()
+    assert "issue 1" in out_path.read_text(encoding="utf-8") \
+        or "issue_number" in out_path.read_text(encoding="utf-8")

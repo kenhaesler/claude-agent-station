@@ -1729,6 +1729,83 @@ def _synthesize_employee_report(
         return False
 
 
+# ── Review Package & Verdict Helpers (#390) ────────────────────
+
+
+def _ensure_review_package(
+    *,
+    run_id: str,
+    log_dir: Path,
+    workspaces: list[Path],
+    mode: str,
+) -> Path:
+    """Produce the manager's review-package file at
+    ``{log_dir}/run-{run_id}-review.md``.
+
+    Concatenates each workspace's ``.claude-employee-report-*.json`` and
+    a short diff summary. Returns the file path. Idempotent: if the file
+    already exists (e.g. the bash phase produced it), the path is
+    returned without rewriting.
+    """
+    log_dir.mkdir(parents=True, exist_ok=True)
+    out = log_dir / f"run-{run_id}-review.md"
+    if out.exists() and out.stat().st_size > 0:
+        return out
+
+    lines: list[str] = []
+    lines.append(f"# Review package for run {run_id}")
+    lines.append(f"MODE: {mode.upper()}")
+    lines.append("")
+    for wt in workspaces:
+        reports = sorted(wt.glob(".claude-employee-report-*.json"))
+        if not reports:
+            continue
+        lines.append(f"## Workspace: `{wt}`")
+        for rpt in reports:
+            lines.append(f"### Report: `{rpt.name}`")
+            lines.append("```json")
+            lines.append(rpt.read_text(encoding="utf-8"))
+            lines.append("```")
+            lines.append("")
+        # Diff summary
+        try:
+            import subprocess as _subprocess
+            diff = _subprocess.run(
+                ["git", "-C", str(wt), "diff", "--stat", "HEAD"],
+                capture_output=True, text=True, timeout=30,
+            )
+            if diff.stdout.strip():
+                lines.append("### Diff summary")
+                lines.append("```")
+                lines.append(diff.stdout)
+                lines.append("```")
+        except Exception:
+            pass
+
+    out.write_text("\n".join(lines), encoding="utf-8")
+    return out
+
+
+def _read_verdicts_file(path: Path) -> dict | None:
+    """Read and parse the manager-produced verdicts JSON.
+
+    Returns the parsed dict, or ``None`` if the file is missing /
+    unparseable. Never raises — the caller is expected to degrade
+    gracefully when the manager produced no verdicts (timeout, crash).
+    """
+    try:
+        if not path.is_file():
+            return None
+        text = path.read_text(encoding="utf-8")
+        if not text.strip():
+            return None
+        import json as _json
+        return _json.loads(text)
+    except (ValueError, OSError) as exc:
+        logger.warning("verdicts file %s unparseable: %s", path, exc)
+        return None
+
+
 # ── Main Orchestration ─────────────────────────────────────────
 
 
