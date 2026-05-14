@@ -5,16 +5,16 @@ Two append-only audit trails:
 * ``agent_events`` (event_type=``auto_mode_decision``) — every
   ``can_use_tool`` decision and the autonomy level that produced it.
 * ``audit_log`` — per-tool-call telemetry (status, exit code, stdout/stderr
-  tails, durations). Written in two phases via the SDK's
-  ``PreToolUse`` / ``PostToolUse`` hooks; rows are matched by
-  ``idempotency_key`` (= SDK ``tool_use_id``).
+  tails, durations). Written inline from the SDK stream loop via
+  ``write_audit_started_from_block`` / ``write_audit_finished_from_block``;
+  rows are matched by ``idempotency_key`` (= SDK ``tool_use_id``).
 
 Design:
 - ``make_audited_policy(run_id, level)`` composes the policy engine with a
   best-effort sqlite write. The returned coroutine matches the SDK's
   ``can_use_tool`` signature.
-- ``make_pre_tool_hook`` / ``make_post_tool_hook`` return ``HookCallback``s
-  for SDK ``hooks={"PreToolUse": [...], "PostToolUse": [...]}``.
+- ``write_audit_started_from_block`` / ``write_audit_finished_from_block``
+  are called from ``handle_stream_event`` in the stream loop (#389).
 - Audit writes never raise — a failure to log must not break tool execution.
   Errors are logged at WARNING.
 - Uses raw ``sqlite3`` so the agent does not import the dashboard backend.
@@ -46,31 +46,6 @@ EVENT_TYPE = "auto_mode_decision"
 
 # Truncation limit for stdout_tail / stderr_tail captured in audit_log rows.
 TAIL_LIMIT = 4_000
-
-# Count of pre/post hook callback failures since process start. The bundled
-# Claude CLI occasionally fails to deliver a hook callback to the Python
-# side mid-run ("error: Stream closed" emitted by cli.js sendRequest); when
-# that happens, the post_hook never runs and an audit_log row stays in
-# 'started' state forever. The orchestrator reads this counter at the end
-# of each project's session and surfaces the delta as a webhook event so
-# operators can spot affected runs without grepping launcher.out by hand.
-_HOOK_CB_FAILURE_COUNT = 0
-
-
-def get_hook_callback_failure_count() -> int:
-    """Return the process-lifetime count of pre/post hook callback failures."""
-    return _HOOK_CB_FAILURE_COUNT
-
-
-def _record_hook_failure(phase: str, run_id: str, exc: BaseException) -> None:
-    """Increment the failure counter and emit a grep-stable warning."""
-    global _HOOK_CB_FAILURE_COUNT
-    _HOOK_CB_FAILURE_COUNT += 1
-    # Stable prefix so operators can grep launcher.out for these.
-    logger.warning(
-        "[hook-cb-fail] phase=%s run_id=%s err=%s",
-        phase, run_id, exc,
-    )
 
 CanUseTool = Callable[
     [str, dict[str, Any], ToolPermissionContext],
@@ -340,77 +315,104 @@ def write_audit_finish(
         logger.warning("audit_hook: unexpected error writing audit_log finish: %s", exc)
 
 
-# --- SDK PreToolUse / PostToolUse hook factories ---------------------------
+# --- Stream-derived audit writers (issue #389) -----------------------------
 
 
-def make_pre_tool_hook(
+def write_audit_started_from_block(
     *,
     run_id: str,
-    actor: str = "lead",
+    actor: str,
+    block,                  # claude_agent_sdk.types.ToolUseBlock (or stand-in)
     trace_id: str | None = None,
     db_path: str | None = None,
-):
-    """Return an SDK ``PreToolUse`` hook callback that writes a 'started' row."""
+) -> None:
+    """Insert a ``status='started'`` audit_log row from a ToolUseBlock.
 
-    async def pre_hook(input_data, _tool_use_id_arg, _ctx):
-        try:
-            tool_name = input_data.get("tool_name") if isinstance(input_data, dict) else getattr(input_data, "tool_name", "")
-            tool_input = input_data.get("tool_input") if isinstance(input_data, dict) else getattr(input_data, "tool_input", {})
-            tool_use_id = input_data.get("tool_use_id") if isinstance(input_data, dict) else getattr(input_data, "tool_use_id", None)
-            # Sub-agent attribution: the SDK populates ``agent_id`` on tool-
-            # lifecycle hook inputs when the call originated inside an Agent
-            # Teams teammate. Use it to label the audit row correctly so the
-            # timeline can distinguish lead vs. teammate work. Falls back to
-            # the configured ``actor`` for main-thread tool calls.
-            sub_agent_id = (
-                input_data.get("agent_id")
-                if isinstance(input_data, dict)
-                else getattr(input_data, "agent_id", None)
-            )
-            row_actor = f"teammate-{sub_agent_id}" if sub_agent_id else actor
-            if tool_use_id:
-                # Off-load the blocking sqlite3 write so the orchestrator's
-                # event loop is not held up by WAL contention.
-                await asyncio.to_thread(
-                    write_audit_start,
-                    idempotency_key=str(tool_use_id),
-                    run_id=run_id,
-                    actor=row_actor,
-                    tool_name=str(tool_name or ""),
-                    tool_input=tool_input or {},
-                    trace_id=trace_id,
-                    db_path=db_path,
-                )
-        except Exception as exc:  # pragma: no cover — defensive
-            _record_hook_failure("pre", run_id, exc)
-        return {}
-
-    return pre_hook
+    Mirrors :func:`write_audit_start` but accepts an already-parsed
+    block instead of the SDK's hook-callback dict. Never raises.
+    """
+    tool_use_id = getattr(block, "id", None) or getattr(block, "tool_use_id", None)
+    if not tool_use_id:
+        logger.warning("audit_hook: ToolUseBlock missing id; skipping start row")
+        return
+    tool_name = getattr(block, "name", "") or ""
+    tool_input = getattr(block, "input", None) or {}
+    write_audit_start(
+        idempotency_key=str(tool_use_id),
+        run_id=run_id,
+        actor=actor,
+        tool_name=str(tool_name),
+        tool_input=tool_input if isinstance(tool_input, dict) else {"value": tool_input},
+        trace_id=trace_id,
+        db_path=db_path,
+    )
 
 
-def make_post_tool_hook(
+def _flatten_tool_result_content(content: Any) -> Any:
+    """Flatten a SDK ToolResultBlock ``content`` into something audit-friendly.
+
+    The SDK populates ``ToolResultBlock.content`` in two shapes:
+    1. A plain string (Bash stdout, Read result, etc.).
+    2. A list of MCP-style content items, each typically
+       ``{"type": "text", "text": "..."}``. The list shape is what error
+       results return.
+
+    For audit purposes we want the user-facing text without the wrapping
+    JSON envelope when possible — operators reading the audit row should
+    see the actual stderr, not a JSON blob with a `type` discriminator
+    around it.
+    """
+    if content is None:
+        return None
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        # Extract text items in order; fall through to JSON dump for any
+        # non-text item the SDK may add later.
+        texts: list[str] = []
+        for item in content:
+            if isinstance(item, dict) and item.get("type") == "text":
+                texts.append(str(item.get("text", "")))
+            else:
+                # Unknown shape — preserve via _coerce_tail's JSON path.
+                return content
+        if texts:
+            return "\n".join(texts)
+    return content
+
+
+def write_audit_finished_from_block(
     *,
-    run_id: str,
-    actor: str = "lead",  # noqa: ARG001
+    block,                  # claude_agent_sdk.types.ToolResultBlock (or stand-in)
     db_path: str | None = None,
-):
-    """Return an SDK ``PostToolUse`` hook callback that updates the row."""
+) -> None:
+    """Update the audit_log row keyed by ``block.tool_use_id`` with the
+    terminal status drawn from ``block.content`` and ``block.is_error``.
 
-    async def post_hook(input_data, _tool_use_id_arg, _ctx):
-        try:
-            tool_use_id = input_data.get("tool_use_id") if isinstance(input_data, dict) else getattr(input_data, "tool_use_id", None)
-            tool_response = input_data.get("tool_response") if isinstance(input_data, dict) else getattr(input_data, "tool_response", None)
-            if tool_use_id:
-                # Off-load the blocking sqlite3 write so the orchestrator's
-                # event loop is not held up by WAL contention.
-                await asyncio.to_thread(
-                    write_audit_finish,
-                    idempotency_key=str(tool_use_id),
-                    tool_response=tool_response,
-                    db_path=db_path,
-                )
-        except Exception as exc:  # pragma: no cover — defensive
-            _record_hook_failure("post", run_id, exc)
-        return {}
+    Mirrors :func:`write_audit_finish` but consumes an SDK
+    ``ToolResultBlock`` directly. Never raises.
+    """
+    tool_use_id = getattr(block, "tool_use_id", None) or getattr(block, "id", None)
+    if not tool_use_id:
+        logger.warning("audit_hook: ToolResultBlock missing tool_use_id; skipping finish row")
+        return
+    # _extract_outcome expects the same shape as the SDK's hook
+    # ``tool_response`` dict: ``{is_error, exit_code, stdout, stderr, output}``.
+    # Build that shape from the block; flatten structured content shapes
+    # (list of MCP text items) so audit rows show user-readable text, not
+    # JSON envelopes.
+    raw_content = getattr(block, "content", None)
+    flat_content = _flatten_tool_result_content(raw_content)
+    is_error = bool(getattr(block, "is_error", False))
+    fake_response: dict[str, Any] = {"is_error": is_error}
+    if is_error:
+        fake_response["stderr"] = flat_content
+        fake_response["output"] = None
+    else:
+        fake_response["output"] = flat_content
+    write_audit_finish(
+        idempotency_key=str(tool_use_id),
+        tool_response=fake_response,
+        db_path=db_path,
+    )
 
-    return post_hook

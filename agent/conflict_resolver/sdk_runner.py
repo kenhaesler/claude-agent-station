@@ -15,12 +15,9 @@ import logging
 from dataclasses import dataclass
 
 from claude_agent_sdk import ClaudeAgentOptions, query
-from claude_agent_sdk.types import HookMatcher
 
 from agent.audit_hook import (
     make_audited_policy,
-    make_post_tool_hook,
-    make_pre_tool_hook,
 )
 from agent.auto_mode import AutonomyLevel
 
@@ -61,21 +58,6 @@ async def run_resolver(
             level=AutonomyLevel.AUTO,  # resolver runs autonomously by design
             agent_id="conflict-resolver",
         ),
-        hooks={
-            "PreToolUse": [HookMatcher(hooks=[
-                make_pre_tool_hook(
-                    run_id=run_id,
-                    actor="conflict-resolver",
-                    trace_id=run_id,
-                ),
-            ])],
-            "PostToolUse": [HookMatcher(hooks=[
-                make_post_tool_hook(
-                    run_id=run_id,
-                    actor="conflict-resolver",
-                ),
-            ])],
-        },
         max_budget_usd=max_budget_usd,
     )
 

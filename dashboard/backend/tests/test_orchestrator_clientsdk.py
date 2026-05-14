@@ -116,7 +116,7 @@ def _patch_orchestrate_setup(monkeypatch, so, tmp_path, client_factory):
     monkeypatch.setattr(so, "_combined_rank_issues", lambda issues, **k: issues)
     monkeypatch.setattr(so, "build_team_prompt", lambda *a, **k: "test prompt")
     monkeypatch.setattr(so, "build_followup_prompt", lambda *a, **k: "followup prompt")
-    monkeypatch.setattr(so, "handle_stream_event", lambda *a, **k: None)
+    monkeypatch.setattr(so, "handle_stream_event", AsyncMock())
     monkeypatch.setattr(so, "_control_poll_loop", AsyncMock())
     # Use _zero_sleep instead of AsyncMock so asyncio.sleep yields to the
     # event loop, allowing create_task()-ed coroutines to run between iterations.
@@ -278,51 +278,6 @@ def test_interrupt_called_once_on_operator_stop(monkeypatch, tmp_path):
     client = _FakeClient.instances[0]
     assert client.interrupts == 1, (
         f"client.interrupt() must be awaited exactly once on stop; got {client.interrupts}"
-    )
-
-
-def test_hook_failure_counter_zero_after_six_iterations(monkeypatch, tmp_path):
-    """6 follow-up iterations must complete without a hook-callback failure."""
-    from agent import station_orchestrator as so
-
-    _FakeClient.instances.clear()
-
-    # 6 iterations: each yields a single ResultMessage with no completion text.
-    # The loop terminates by exhausting max_reentries; that path also exercises
-    # the per-iteration follow-up prompt build.
-    def _r(text):
-        m = MagicMock(spec=so.ResultMessage)
-        m.session_id = "sess-1"
-        m.result = text
-        m.is_error = False
-        m.duration_ms = 100
-        m.num_turns = 1
-        return m
-
-    def _client_factory(options=None):
-        c = _FakeClient(options=options)
-        # 7 iterations of "no completion" — orchestrate caps at max_reentries=6
-        c._scripted_messages = [[_r("still working")] for _ in range(7)]
-        return c
-
-    _patch_orchestrate_setup(monkeypatch, so, tmp_path, _client_factory)
-
-    # Capture baseline; the orchestrator measures the delta from this number.
-    from agent.audit_hook import get_hook_callback_failure_count
-    baseline = get_hook_callback_failure_count()
-
-    config = {
-        "projects": [{"repo": "owner/repo", "enabled": True}],
-        "limits": {"max_concurrent_employees": 1},
-        "models": {},
-        "logging": {"log_dir": str(tmp_path)},
-    }
-
-    asyncio.run(so.orchestrate(config, "20260514T120000Z", str(tmp_path)))
-
-    delta = get_hook_callback_failure_count() - baseline
-    assert delta == 0, (
-        f"Hook callback failures must remain zero across iterations; delta={delta}"
     )
 
 

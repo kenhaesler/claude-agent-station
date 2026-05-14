@@ -6,12 +6,10 @@ Covers:
 - write_audit_finish updates the row with status/exit_code/tails/finished_at
 - _extract_outcome handles dict bash-style responses + non-dict fallback
 - Best-effort: writers don't raise when the table or DB is missing
-- Pre/Post hook callbacks can be composed end-to-end
 """
 
 from __future__ import annotations
 
-import asyncio
 import json
 import sqlite3
 from pathlib import Path
@@ -20,8 +18,6 @@ import pytest
 
 from agent.audit_hook import (
     _extract_outcome,
-    make_post_tool_hook,
-    make_pre_tool_hook,
     write_audit_finish,
     write_audit_start,
 )
@@ -233,86 +229,3 @@ def test_extract_outcome_truncates_long_strings():
     assert "+" in out  # marker like "[+96000 chars]"
 
 
-# --- pre/post hook callbacks ----------------------------------------------
-
-
-def _run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
-
-
-def test_pre_then_post_hooks_compose_end_to_end(tmp_path):
-    db = tmp_path / "test.db"
-    _init_audit_db(db)
-
-    pre = make_pre_tool_hook(run_id="run-h", actor="lead", trace_id="trace-h", db_path=str(db))
-    post = make_post_tool_hook(run_id="run-h", actor="lead", db_path=str(db))
-
-    pre_input = {
-        "tool_name": "Bash",
-        "tool_input": {"command": "true"},
-        "tool_use_id": "tu_hook",
-    }
-    post_input = {
-        "tool_use_id": "tu_hook",
-        "tool_response": {"stdout": "ok", "exit_code": 0, "is_error": False},
-    }
-
-    asyncio.run(pre(pre_input, None, {"signal": None}))
-    asyncio.run(post(post_input, None, {"signal": None}))
-
-    rows = _rows(db)
-    assert len(rows) == 1
-    r = rows[0]
-    assert r["status"] == "ok"
-    assert r["action_kind"] == "tool.bash"
-    assert r["trace_id"] == "trace-h"
-    assert r["finished_at"] is not None
-
-
-def test_pre_hook_attributes_to_teammate_when_agent_id_present(tmp_path):
-    """SDK populates agent_id on hook inputs from sub-agents — use it for actor."""
-    db = tmp_path / "test.db"
-    _init_audit_db(db)
-
-    pre = make_pre_tool_hook(run_id="run-h", actor="lead", db_path=str(db))
-    asyncio.run(pre(
-        {
-            "tool_name": "Bash",
-            "tool_input": {"command": "true"},
-            "tool_use_id": "tu_team",
-            "agent_id": "issue-worker",
-        },
-        None,
-        {"signal": None},
-    ))
-
-    rows = _rows(db)
-    assert len(rows) == 1
-    assert rows[0]["actor"] == "teammate-issue-worker"
-
-
-def test_pre_hook_falls_back_to_lead_when_agent_id_absent(tmp_path):
-    """Main-thread tool calls (no agent_id) keep the configured actor."""
-    db = tmp_path / "test.db"
-    _init_audit_db(db)
-
-    pre = make_pre_tool_hook(run_id="run-h", actor="lead", db_path=str(db))
-    asyncio.run(pre(
-        {"tool_name": "Bash", "tool_input": {}, "tool_use_id": "tu_lead"},
-        None,
-        {"signal": None},
-    ))
-
-    rows = _rows(db)
-    assert len(rows) == 1
-    assert rows[0]["actor"] == "lead"
-
-
-def test_hooks_are_silent_when_tool_use_id_missing(tmp_path):
-    db = tmp_path / "test.db"
-    _init_audit_db(db)
-
-    pre = make_pre_tool_hook(run_id="run-h", db_path=str(db))
-    asyncio.run(pre({"tool_name": "Read", "tool_input": {}}, None, {"signal": None}))
-
-    assert _rows(db) == []

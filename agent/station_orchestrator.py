@@ -32,23 +32,23 @@ from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
 from claude_agent_sdk.types import (
     AgentDefinition,
     AssistantMessage,
-    HookMatcher,
     ResultMessage,
     SystemMessage,
     TaskNotificationMessage,
     TaskProgressMessage,
     TaskStartedMessage,
     TextBlock,
+    ToolResultBlock,
     ToolUseBlock,
+    UserMessage,
 )
 
 from sqlalchemy import select
 
 from agent.audit_hook import (
-    get_hook_callback_failure_count,
     make_audited_policy,
-    make_post_tool_hook,
-    make_pre_tool_hook,
+    write_audit_finished_from_block,
+    write_audit_started_from_block,
 )
 from agent.auto_mode import AutonomyLevel, _coerce_level
 from agent.run_control import (
@@ -1290,10 +1290,39 @@ def _usage_val(usage, key: str, default=0):
     return getattr(usage, key, default)
 
 
-def handle_stream_event(
+def _actor_for_message(message, *, default: str = "lead") -> str:
+    """Compute the audit_log ``actor`` for an AssistantMessage.
+
+    SDK populates ``parent_tool_use_id`` on messages that originate
+    inside a sub-agent / Agent Teams teammate. When present, label the
+    audit row as ``teammate-<parent_tool_use_id>`` so the timeline can
+    distinguish lead vs teammate work; falls back to ``default`` for
+    main-thread messages.
+
+    The pre-#389 hook factory consulted ``agent_id`` from the SDK's
+    hook-input dict, but that field is part of the hook-callback API
+    surface, not the streamed message API. After stream-derived audit
+    (#389) we use ``parent_tool_use_id`` directly — it is the stable
+    correlation key the SDK exposes on every sub-agent message.
+    Readable names (``backend``/``frontend``/``qa``/``manager``) can be
+    resolved post-hoc by joining audit_log rows against
+    coordinator_tasks on ``tool_use_id``; we don't try to denormalise
+    here.
+    """
+    parent = getattr(message, "parent_tool_use_id", None)
+    if parent:
+        return f"teammate-{parent}"
+    return default
+
+
+async def handle_stream_event(
     message, config: dict, run_id: str, log_file=None, state: _StreamState | None = None,
 ) -> None:
-    """Forward SDK stream messages to the dashboard and write to log file."""
+    """Forward SDK stream messages to the dashboard and write to log file.
+
+    Async after #389: the stream-derived audit writer offloads sqlite3
+    via ``asyncio.to_thread``.
+    """
     # Write structured data to JSONL log (skip empty dicts)
     if log_file is not None:
         try:
@@ -1334,6 +1363,17 @@ def handle_stream_event(
                     if state:
                         state.tool_calls += 1
                     logger.info("Lead agent tool call: %s", block.name)
+                    # #389: write audit_log row inline from the block,
+                    # not from a separate SDK hook callback. Off-load
+                    # sqlite3 so the stream loop is not blocked.
+                    actor = _actor_for_message(message, default="lead")
+                    await asyncio.to_thread(
+                        write_audit_started_from_block,
+                        run_id=f"run-{run_id}",
+                        actor=actor,
+                        block=block,
+                        trace_id=f"run-{run_id}",
+                    )
                     if block.name == "RunComplete":
                         # #385: We re-validate on the stream side even though
                         # the SDK-side tool handler already validated. The
@@ -1412,6 +1452,18 @@ def handle_stream_event(
                     "tokens_total": state.tokens_in + state.tokens_out,
                     "turns": state.turns,
                 })
+
+    elif isinstance(message, UserMessage):
+        # #389: tool results arrive as ToolResultBlock items inside
+        # UserMessage.content. Walk them and write the matching audit_log
+        # finish row.
+        content = message.content if isinstance(message.content, list) else [message.content]
+        for block in content:
+            if isinstance(block, ToolResultBlock):
+                await asyncio.to_thread(
+                    write_audit_finished_from_block,
+                    block=block,
+                )
 
     elif isinstance(message, TaskStartedMessage):
         logger.info("Teammate spawned: task=%s desc=%s", message.task_id, message.description)
@@ -1733,11 +1785,6 @@ async def orchestrate_project(
         workspace = os.path.join(workspaces_dir, repo_name)
         project_branch = project.get("branch") or "main"
 
-        # Snapshot the hook-callback failure counter so we can compute the
-        # per-project delta in the finally block and surface it to the
-        # operator. See agent/audit_hook.py for context.
-        hook_cb_failures_baseline = get_hook_callback_failure_count()
-
         # Refresh the workspace to the tip of the project's default branch
         # before deciding eligibility. Without this, persistent compose
         # volumes keep stale checkouts that hide newly-committed
@@ -1998,21 +2045,6 @@ async def orchestrate_project(
                         level=autonomy_level,
                         agent_id="lead",
                     ),
-                    hooks={
-                        "PreToolUse": [HookMatcher(hooks=[
-                            make_pre_tool_hook(
-                                run_id=f"run-{run_id}",
-                                actor="lead",
-                                trace_id=f"run-{run_id}",
-                            ),
-                        ])],
-                        "PostToolUse": [HookMatcher(hooks=[
-                            make_post_tool_hook(
-                                run_id=f"run-{run_id}",
-                                actor="lead",
-                            ),
-                        ])],
-                    },
                     max_budget_usd=max_budget_usd,
                 )
 
@@ -2061,7 +2093,7 @@ async def orchestrate_project(
                                     })
                                     first_init_sent = True
 
-                            handle_stream_event(message, config, run_id, log_file=log_file, state=stream_state)
+                            await handle_stream_event(message, config, run_id, log_file=log_file, state=stream_state)
 
                             if control_flags["stop"] and not stop_signalled:
                                 stop_signalled = True
@@ -2147,25 +2179,6 @@ async def orchestrate_project(
                     await control_task
                 except (asyncio.CancelledError, Exception):
                     pass
-
-            # Surface hook-callback failures for this project's session.
-            # The bundled CLI sometimes drops mid-run with "error: Stream
-            # closed", which leaves audit rows stuck in 'started' state and
-            # can lose can_use_tool decisions. Posting the count as a webhook
-            # event lets the operator see affected runs without grepping
-            # launcher.out by hand.
-            hook_cb_failures = get_hook_callback_failure_count() - hook_cb_failures_baseline
-            if hook_cb_failures > 0:
-                logger.warning(
-                    "[hook-cb-fail] run_id=run-%s project=%s total_failures=%d "
-                    "(post_hook never updated some audit_log rows)",
-                    run_id, repo, hook_cb_failures,
-                )
-                post_webhook(config, "hook_failures", {
-                    "run_id": f"run-{run_id}",
-                    "project": repo,
-                    "count": hook_cb_failures,
-                })
 
             # Synthesize fallback employee reports BEFORE removing worktrees:
             # see _synthesize_employee_report. Without this, run-manager.sh

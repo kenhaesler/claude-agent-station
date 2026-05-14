@@ -102,7 +102,8 @@ def test_orchestrator_options_block_contains_can_use_tool():
 # --- The Bridge Phase 1: narration emission --------------------------------
 
 
-def test_narration_emitted_for_text_before_tool_use(monkeypatch):
+@pytest.mark.asyncio
+async def test_narration_emitted_for_text_before_tool_use(monkeypatch):
     """Lead text immediately preceding a tool_use must be posted as a
     narration webhook with kind='directive'. This is the headline behavior
     of "The Bridge" Phase 1.
@@ -124,7 +125,7 @@ def test_narration_emitted_for_text_before_tool_use(monkeypatch):
         ],
         model="claude-sonnet-4-6",
     )
-    station_orchestrator.handle_stream_event(msg, config={}, run_id="run-narr-1")
+    await station_orchestrator.handle_stream_event(msg, config={}, run_id="run-narr-1")
 
     narrations = [d for e, d in captured if e == "narration"]
     assert len(narrations) == 1
@@ -135,7 +136,8 @@ def test_narration_emitted_for_text_before_tool_use(monkeypatch):
     assert n["run_id"] == "run-run-narr-1"
 
 
-def test_narration_flushed_when_no_tool_follows(monkeypatch):
+@pytest.mark.asyncio
+async def test_narration_flushed_when_no_tool_follows(monkeypatch):
     """A trailing text block (no tool after it) must still be flushed —
     otherwise the lead's final intent statement is silently dropped.
     """
@@ -153,7 +155,7 @@ def test_narration_flushed_when_no_tool_follows(monkeypatch):
         content=[TextBlock(text="Done. All teammates have reported.")],
         model="claude-sonnet-4-6",
     )
-    station_orchestrator.handle_stream_event(msg, config={}, run_id="run-narr-2")
+    await station_orchestrator.handle_stream_event(msg, config={}, run_id="run-narr-2")
 
     narrations = [d for e, d in captured if e == "narration"]
     assert len(narrations) == 1
@@ -161,7 +163,8 @@ def test_narration_flushed_when_no_tool_follows(monkeypatch):
     assert "Done" in narrations[0]["narration"]
 
 
-def test_narration_skips_pure_tool_use_without_preceding_text(monkeypatch):
+@pytest.mark.asyncio
+async def test_narration_skips_pure_tool_use_without_preceding_text(monkeypatch):
     """A tool_use with no preceding text emits no narration — the prompt
     asks for one before each tool, but if the lead skips it we must not
     fabricate one.
@@ -180,7 +183,7 @@ def test_narration_skips_pure_tool_use_without_preceding_text(monkeypatch):
         content=[ToolUseBlock(id="tu_x", name="Bash", input={"command": "ls"})],
         model="claude-sonnet-4-6",
     )
-    station_orchestrator.handle_stream_event(msg, config={}, run_id="run-narr-3")
+    await station_orchestrator.handle_stream_event(msg, config={}, run_id="run-narr-3")
 
     narrations = [d for e, d in captured if e == "narration"]
     assert narrations == []

@@ -21,6 +21,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
+
 
 _MAIN_SESSION = "session-main-abc"
 _SUB_SESSION = "session-teammate-xyz"
@@ -61,7 +63,7 @@ def _state():
     return s
 
 
-def _collect_emits(handler_fn, message):
+async def _collect_emits(handler_fn, message):
     """Drive handle_stream_event under a patched post_webhook and return
     the list of (event_name, payload) emitted.
     """
@@ -69,15 +71,16 @@ def _collect_emits(handler_fn, message):
     seen: list[tuple[str, dict]] = []
     with patch("agent.station_orchestrator.post_webhook",
                side_effect=lambda cfg, event, payload: seen.append((event, payload))):
-        handle_stream_event(message, config={}, run_id="testrun",
-                            log_file=None, state=_state())
+        await handle_stream_event(message, config={}, run_id="testrun",
+                                  log_file=None, state=_state())
     return seen
 
 
 # ── The new gate ──────────────────────────────────────────────────────
 
 
-def test_intermediate_lead_result_does_not_emit_orchestrator_complete():
+@pytest.mark.asyncio
+async def test_intermediate_lead_result_does_not_emit_orchestrator_complete():
     """A ResultMessage from the lead's main session with prose that doesn't
     match _is_work_complete (no 'final summary', no 'issues_completed', no
     'all teammates completed') MUST NOT emit orchestrator_complete. This
@@ -90,7 +93,7 @@ def test_intermediate_lead_result_does_not_emit_orchestrator_complete():
     msg = _result_message(
         "I've delegated the work to the team. They will report back.",
     )
-    seen = _collect_emits(handle_stream_event, msg)
+    seen = await _collect_emits(handle_stream_event, msg)
 
     events = [e for e, _ in seen]
     assert "orchestrator_complete" not in events, (
@@ -102,7 +105,8 @@ def test_intermediate_lead_result_does_not_emit_orchestrator_complete():
     assert "progress_update" in events
 
 
-def test_completion_lead_result_with_final_summary_emits_orchestrator_complete():
+@pytest.mark.asyncio
+async def test_completion_lead_result_with_final_summary_emits_orchestrator_complete():
     """The terminal ResultMessage (matching _is_work_complete) MUST fire
     orchestrator_complete. Pins that the fix didn't over-correct.
     """
@@ -111,7 +115,7 @@ def test_completion_lead_result_with_final_summary_emits_orchestrator_complete()
         "reviewed each. PR verdicts opened for human review.",
         num_turns=42,
     )
-    seen = _collect_emits(None, msg)
+    seen = await _collect_emits(None, msg)
 
     events = [e for e, _ in seen]
     assert "orchestrator_complete" in events, (
@@ -124,18 +128,20 @@ def test_completion_lead_result_with_final_summary_emits_orchestrator_complete()
     assert complete_payload["is_error"] is False
 
 
-def test_completion_lead_result_with_structured_json_summary_emits():
+@pytest.mark.asyncio
+async def test_completion_lead_result_with_structured_json_summary_emits():
     """_is_work_complete also matches the structured JSON form
     ('issues_completed' + 'issues_failed' keys). Cover it too.
     """
     msg = _result_message(
         '```json\n{"issues_completed": [27], "issues_failed": []}\n```',
     )
-    seen = _collect_emits(None, msg)
+    seen = await _collect_emits(None, msg)
     assert "orchestrator_complete" in [e for e, _ in seen]
 
 
-def test_subsession_result_message_still_filtered():
+@pytest.mark.asyncio
+async def test_subsession_result_message_still_filtered():
     """The session_id gate from #371 must still apply: a ResultMessage with
     a session_id that doesn't match the captured main session must be
     skipped, regardless of result_text. Regression guard.
@@ -144,7 +150,7 @@ def test_subsession_result_message_still_filtered():
         "Final summary: I did some work.",
         session_id=_SUB_SESSION,  # NOT the main session
     )
-    seen = _collect_emits(None, msg)
+    seen = await _collect_emits(None, msg)
     events = [e for e, _ in seen]
     # Neither orchestrator_complete nor progress_update should fire — the
     # whole branch returns early when the session doesn't match.
