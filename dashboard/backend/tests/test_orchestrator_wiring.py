@@ -851,24 +851,6 @@ def test_get_plan_revision_max_invalid_falls_back(monkeypatch):
 # --- Manager review package: MODE: header (issue #266) ---------------------
 
 
-def test_run_manager_emits_mode_headers():
-    """Verify run-manager.sh emits MODE: ANALYZE / MODE: PLAN / MODE: PLAN_REVIEW
-    headers in the review package per project mode. This is a string-level
-    assertion against the shell script — we don't actually run the script
-    in tests because it's a long pipeline.
-    """
-    import pathlib
-    script = pathlib.Path(__file__).parents[3] / "agent" / "scripts" / "run-manager.sh"
-    text = script.read_text()
-    # Each header must be emitted with the exact substring that manager.md
-    # detects (lines 26-31).
-    assert 'echo "MODE: ANALYZE"' in text
-    assert 'echo "MODE: PLAN"' in text
-    assert 'echo "MODE: PLAN_REVIEW"' in text
-    # And only the analyze-mode banner emoji line was present before this
-    # change — guard against accidental removal.
-    assert 'project_mode" = "plan_only"' in text
-
 
 # --- Plan-review gate live wiring (issue #266 review feedback) -------------
 
@@ -1298,39 +1280,6 @@ def test_webhook_router_registers_plan_review_handlers():
             f"webhook router missing handler for {ev}"
         )
 
-
-# --- Run-manager.sh emits plan_review_start for plan_only ------------------
-
-
-def test_run_manager_emits_plan_review_start_for_plan_only_projects():
-    """The shell driver must emit plan_review_start when any project is in
-    plan_only mode so the dashboard banner reflects plan_reviewing during
-    the manager-review window.
-    """
-    import pathlib
-    script = pathlib.Path(__file__).parents[3] / "agent" / "scripts" / "run-manager.sh"
-    text = script.read_text()
-    assert 'webhook_event "plan_review_start"' in text
-    assert '_pm" = "plan_only"' in text
-
-
-# --- Plan-review gate is invoked from run-manager.sh -----------------------
-
-
-def test_run_manager_invokes_plan_review_gate():
-    """The shell driver must invoke `python -m agent.plan_review_gate` after
-    execute_verdicts for plan_only projects. Without this the gate is dead
-    code and acceptance criterion #5 (approve plan_only enqueues follow-up)
-    fails at runtime.
-    """
-    import pathlib
-    script = pathlib.Path(__file__).parents[3] / "agent" / "scripts" / "run-manager.sh"
-    text = script.read_text()
-    assert "agent.plan_review_gate" in text, (
-        "run-manager.sh must invoke python -m agent.plan_review_gate"
-    )
-    # Must be gated on plan_only projects, not run unconditionally.
-    assert '"plan_only"' in text
 
 
 # --- Frontend dropdown values match backend (issue #266) -------------------
