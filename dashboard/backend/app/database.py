@@ -15,11 +15,19 @@ DATABASE_URL = settings.resolved_db_url
 
 def _engine_kwargs(url: str) -> dict:
     is_pg = url.startswith("postgresql")
-    return {
-        "echo": False,
-        "pool_size": 20 if is_pg else 5,
-        "max_overflow": 10 if is_pg else 0,
-    }
+    kwargs: dict = {"echo": False}
+    if is_pg:
+        # QueuePool params; not valid for SQLite's StaticPool.
+        kwargs["pool_size"] = 20
+        kwargs["max_overflow"] = 10
+    else:
+        # SQLite uses QueuePool for file URLs and StaticPool for :memory:.
+        # pool_size/max_overflow are accepted by QueuePool but rejected by
+        # StaticPool, so we only add them for non-memory file URLs.
+        if ":memory:" not in url:
+            kwargs["pool_size"] = 5
+            kwargs["max_overflow"] = 0
+    return kwargs
 
 
 engine = create_async_engine(DATABASE_URL, **_engine_kwargs(DATABASE_URL))

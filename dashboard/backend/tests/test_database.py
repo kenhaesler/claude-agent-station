@@ -60,10 +60,14 @@ def test_pragma_listener_no_op_on_postgres(monkeypatch):
 def test_pool_size_scales_by_dialect():
     from app.database import _engine_kwargs
 
-    sqlite_kw = _engine_kwargs("sqlite+aiosqlite:///:memory:")
+    # Use a file URL for SQLite (pool_size/max_overflow valid on QueuePool only).
+    sqlite_kw = _engine_kwargs("sqlite+aiosqlite:////tmp/test.db")
+    # In-memory SQLite skips pool params (StaticPool doesn't accept them).
+    mem_kw = _engine_kwargs("sqlite+aiosqlite:///:memory:")
     pg_kw = _engine_kwargs("postgresql+asyncpg://u:p@h/db")
     assert sqlite_kw["pool_size"] == 5
     assert sqlite_kw["max_overflow"] == 0
+    assert "pool_size" not in mem_kw
     assert pg_kw["pool_size"] == 20
     assert pg_kw["max_overflow"] == 10
 
@@ -100,6 +104,25 @@ def test_decode_event_data_handles_text_and_dict():
     assert decode_event_data({"a": 1}) == {"a": 1}
     assert decode_event_data(None) is None
     assert decode_event_data("not-json") is None
+
+
+@pytest.mark.asyncio
+async def test_smoke_insert_select(async_session_factory):
+    """Parametrized over sqlite/postgres via async_session_factory fixture."""
+    from app.models import Run
+    from datetime import datetime
+
+    # Use naive datetime: Run.started_at is TIMESTAMP WITHOUT TIME ZONE (both
+    # SQLite and Postgres). Postgres rejects tz-aware values for tz-naive cols.
+    async with async_session_factory() as db:
+        db.add(Run(run_id="run-smoke", status="running",
+                   started_at=datetime.utcnow()))
+        await db.commit()
+
+    from sqlalchemy import select
+    async with async_session_factory() as db:
+        row = (await db.execute(select(Run).where(Run.run_id == "run-smoke"))).scalar_one()
+        assert row.status == "running"
 
 
 def test_no_raw_jsonloads_on_jsonb_columns():

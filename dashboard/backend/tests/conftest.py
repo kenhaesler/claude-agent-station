@@ -15,3 +15,49 @@ os.environ["STATION_DB_PATH"] = _tmp_db
 os.environ["STATION_API_KEY"] = ""
 os.environ["STATION_WEBHOOK_SECRET"] = ""
 os.environ["STATION_GITHUB_WEBHOOK_SECRET"] = ""
+
+import pytest
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+from tests.postgres_fixture import postgres_url  # noqa: F401, re-export
+
+
+@pytest.fixture(scope="session", params=["sqlite", "postgres"])
+def db_url(request, postgres_url):
+    if request.param == "sqlite":
+        # Use a file-based URL: alembic runs in a subprocess and creates the
+        # schema on disk; the in-process engine then connects to the same file.
+        # sqlite:///:memory: creates an isolated per-connection database that
+        # cannot be shared with a subprocess-created schema.
+        import tempfile
+        fd, path = tempfile.mkstemp(suffix="-parametrized.db")
+        os.close(fd)
+        return f"sqlite+aiosqlite:///{path}"
+    return postgres_url
+
+
+@pytest.fixture(scope="session")
+def async_session_factory(db_url):
+    """Per-backend session factory.
+
+    Runs Alembic upgrade head against the chosen URL once per session.
+    Tests share the schema.
+    """
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    backend_root = Path(__file__).resolve().parent.parent
+    env = {
+        **os.environ,
+        "STATION_DB_URL": db_url,
+        "PYTHONPATH": str(backend_root),
+    }
+    subprocess.check_call(
+        [sys.executable, "-m", "alembic", "upgrade", "head"],
+        cwd=str(backend_root),
+        env=env,
+    )
+    engine = create_async_engine(db_url)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    yield factory
