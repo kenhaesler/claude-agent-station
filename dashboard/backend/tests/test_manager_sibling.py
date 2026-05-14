@@ -253,3 +253,23 @@ def test_canonical_manager_prompt_reflects_sibling_context():
         "the manager as an Agent Teams sibling"
     )
     assert "sibling" in text.lower() or "agent teams" in text.lower()
+
+
+def test_handle_stream_event_accumulates_manager_tokens_via_assistantmessage():
+    """The manager's AssistantMessage.usage must flow through the same
+    state.tokens_in / state.tokens_out the lead and teammates already use.
+    """
+    from agent import station_orchestrator as so
+    from claude_agent_sdk.types import AssistantMessage
+
+    msg = AssistantMessage(content=[], model="claude-sonnet-4-6")
+    try:
+        msg.usage = {"input_tokens": 100, "output_tokens": 50}
+    except AttributeError:
+        msg.usage = {"input_tokens": 100, "output_tokens": 50}
+
+    state = so._StreamState()
+    # handle_stream_event is synchronous (not async)
+    so.handle_stream_event(msg, {"webhook_url": ""}, "test", state=state)
+    assert state.tokens_in == 100
+    assert state.tokens_out == 50
