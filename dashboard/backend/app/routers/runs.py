@@ -39,6 +39,7 @@ from app.schemas import (
     RunList,
     RunMessage,
     RunOut,
+    RunTimelinePage,
     TeamSummary,
     TeammateStatus,
     TelemetryActive,
@@ -48,7 +49,9 @@ from app.schemas import (
     TelemetryTokens7d,
     TelemetryVerdicts7d,
 )
+from app.services import run_timeline as run_timeline_service
 from app.services import service_control
+from app.services.run_timeline import ALL_KINDS, TimelineCursor
 from app.services.diff_parser import DiffResult, parse_unified_diff
 from app.services.event_bus import publish
 from app.services.log_importer import import_historical_runs
@@ -543,6 +546,44 @@ async def get_run_full_context(run_id: str, db: AsyncSession = Depends(get_db)):
         project_repo=project_repo,
         intelligence_decisions=[AgentEventOut.model_validate(e) for e in intel_events],
         team_summary=team_summary,
+    )
+
+
+def _parse_kinds(raw: str | None) -> set[str] | None:
+    if raw is None or raw == "":
+        return None
+    requested = {part.strip() for part in raw.split(",") if part.strip()}
+    unknown = requested - ALL_KINDS
+    if unknown:
+        raise HTTPException(
+            status_code=400,
+            detail=f"unknown kinds: {sorted(unknown)}",
+        )
+    return requested
+
+
+@router.get("/{run_id}/timeline", response_model=RunTimelinePage)
+async def get_run_timeline(
+    run_id: str,
+    kinds: str | None = Query(None, description="Comma-separated subset of kinds"),
+    since: datetime | None = Query(None),
+    until: datetime | None = Query(None),
+    limit: int = Query(500, ge=1, le=5000),
+    cursor: str | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+) -> RunTimelinePage:
+    run = (await db.execute(select(Run).where(Run.run_id == run_id))).scalar_one_or_none()
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"run {run_id} not found")
+    decoded_cursor = TimelineCursor.decode(cursor) if cursor else None
+    return await run_timeline_service.build_timeline(
+        db,
+        run_id,
+        kinds=_parse_kinds(kinds),
+        since=since,
+        until=until,
+        limit=limit,
+        cursor=decoded_cursor,
     )
 
 

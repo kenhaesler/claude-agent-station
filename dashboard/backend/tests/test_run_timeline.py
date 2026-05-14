@@ -326,3 +326,30 @@ async def test_build_timeline_paginates_with_cursor(setup_db):
             cursor = TimelineCursor.decode(page.next_cursor)
     assert pages == 3
     assert len(seen_ids) == 1200
+
+
+from httpx import AsyncClient
+
+
+@pytest.mark.asyncio
+async def test_timeline_endpoint_returns_page(client: AsyncClient):
+    # Reuse `run-tl-merge-1` seeded earlier — tests run in order on shared db.
+    resp = await client.get("/api/runs/run-tl-merge-1/timeline")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["run_id"] == "run-tl-merge-1"
+    assert isinstance(body["events"], list)
+    assert body["events"], "expected at least one event"
+    assert body["has_more"] is False
+
+
+@pytest.mark.asyncio
+async def test_timeline_endpoint_rejects_unknown_kind(client: AsyncClient):
+    resp = await client.get("/api/runs/run-tl-merge-1/timeline?kinds=lifecycle,bogus")
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_timeline_endpoint_404_for_unknown_run(client: AsyncClient):
+    resp = await client.get("/api/runs/run-does-not-exist/timeline")
+    assert resp.status_code == 404
