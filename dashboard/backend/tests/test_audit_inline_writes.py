@@ -220,3 +220,45 @@ async def test_handle_stream_event_writes_audit_for_tooluseblock(fresh_db, monke
     for i, (key, status) in enumerate(rows):
         assert key == f"toolu_{i}"
         assert status == "started"
+
+
+@pytest.mark.asyncio
+async def test_handle_stream_event_completes_rows_on_userresult(fresh_db, monkeypatch):
+    """Started rows transition to ok/error when the ToolResultBlock arrives."""
+    monkeypatch.setenv("STATION_DB_PATH", fresh_db)
+
+    from agent import station_orchestrator as so
+    from claude_agent_sdk.types import (
+        AssistantMessage,
+        ToolResultBlock,
+        ToolUseBlock,
+        UserMessage,
+    )
+
+    use_blocks = [
+        ToolUseBlock(id="toolu_a", name="Bash", input={"command": "echo a"}),
+        ToolUseBlock(id="toolu_b", name="Read", input={"file_path": "/x"}),
+    ]
+    asst = AssistantMessage(content=use_blocks, model="claude-opus-4-7")
+    try:
+        asst.usage = {"input_tokens": 0, "output_tokens": 0}
+    except AttributeError:
+        pass
+
+    state = so._StreamState()
+    await so.handle_stream_event(asst, {"webhook_url": ""}, "test", state=state)
+
+    # Result message: one ok, one error.
+    result_blocks = [
+        ToolResultBlock(tool_use_id="toolu_a", content="a\n", is_error=False),
+        ToolResultBlock(tool_use_id="toolu_b", content="EACCES", is_error=True),
+    ]
+    user = UserMessage(content=result_blocks)
+    await so.handle_stream_event(user, {"webhook_url": ""}, "test", state=state)
+
+    conn = sqlite3.connect(fresh_db)
+    rows = dict(conn.execute(
+        "SELECT idempotency_key, status FROM audit_log"
+    ).fetchall())
+    conn.close()
+    assert rows == {"toolu_a": "ok", "toolu_b": "error"}
