@@ -44,7 +44,7 @@ def test_run_start_payload_carries_full_bash_field_set(tmp_path):
 
     cfg_path = _write_config(tmp_path)
     with patch("agent.station_orchestrator.emit") as mock_emit, \
-         patch("agent.project_loop.iterate_projects", return_value=0), \
+         patch("agent.project_loop.iterate_projects", return_value=(0, None)), \
          patch.dict("os.environ", {"STATION_LOG_DIR": str(tmp_path)}):
         driver = RunDriver(run_id="run-test-1",
                            config_path=str(cfg_path),
@@ -70,7 +70,7 @@ def test_run_complete_falls_back_to_zero_telemetry_when_dump_missing(tmp_path):
 
     cfg_path = _write_config(tmp_path)
     with patch("agent.station_orchestrator.emit") as mock_emit, \
-         patch("agent.project_loop.iterate_projects", return_value=0), \
+         patch("agent.project_loop.iterate_projects", return_value=(0, None)), \
          patch.dict("os.environ", {"STATION_LOG_DIR": str(tmp_path)}):
         driver = RunDriver(run_id="run-test-3",
                            config_path=str(cfg_path),
@@ -114,7 +114,7 @@ def test_run_complete_status_interrupted_on_child_exit_130(tmp_path):
 
     cfg_path = _write_config(tmp_path)
     with patch("agent.station_orchestrator.emit") as mock_emit, \
-         patch("agent.project_loop.iterate_projects", return_value=130), \
+         patch("agent.project_loop.iterate_projects", return_value=(130, None)), \
          patch.dict("os.environ", {"STATION_LOG_DIR": str(tmp_path)}):
         driver = RunDriver(run_id="run-test-5",
                            config_path=str(cfg_path),
@@ -135,7 +135,7 @@ def test_run_id_is_normalized_to_run_prefix_on_the_wire(tmp_path):
     cfg_path = _write_config(tmp_path)
     # Caller passes without the prefix.
     with patch("agent.station_orchestrator.emit") as mock_emit, \
-         patch("agent.project_loop.iterate_projects", return_value=0), \
+         patch("agent.project_loop.iterate_projects", return_value=(0, None)), \
          patch.dict("os.environ", {"STATION_LOG_DIR": str(tmp_path)}):
         driver = RunDriver(run_id="bareid-1",
                            config_path=str(cfg_path),
@@ -154,7 +154,7 @@ def test_run_complete_status_failed_on_nonzero_non_130_exit(tmp_path):
 
     cfg_path = _write_config(tmp_path)
     with patch("agent.station_orchestrator.emit") as mock_emit, \
-         patch("agent.project_loop.iterate_projects", return_value=1), \
+         patch("agent.project_loop.iterate_projects", return_value=(1, None)), \
          patch.dict("os.environ", {"STATION_LOG_DIR": str(tmp_path)}):
         driver = RunDriver(run_id="run-test-6",
                            config_path=str(cfg_path),
@@ -175,7 +175,7 @@ def test_telemetry_init_handles_missing_or_invalid_config(tmp_path):
     from agent.station_orchestrator import RunDriver
 
     with patch("agent.station_orchestrator.emit"), \
-         patch("agent.project_loop.iterate_projects", return_value=0), \
+         patch("agent.project_loop.iterate_projects", return_value=(0, None)), \
          patch.dict("os.environ", {"STATION_LOG_DIR": str(tmp_path)}):
         driver = RunDriver(run_id="run-test-7",
                            config_path=str(tmp_path / "nonexistent.json"),

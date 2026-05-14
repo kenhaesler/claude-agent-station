@@ -26,7 +26,9 @@ def test_iterate_projects_calls_each_phase(tmp_path, monkeypatch):
 
     async def _fake_orchestrate(project, config, run_id, workspaces_dir):
         call_log.append("orchestrate_project")
-        return 0
+        # orchestrate_project returns (exit_code, stream_state) — None state
+        # is the documented value when the orchestrator session never ran.
+        return 0, None
 
     monkeypatch.setattr("agent.station_orchestrator.orchestrate_project", _fake_orchestrate)
     monkeypatch.setattr(
@@ -35,9 +37,10 @@ def test_iterate_projects_calls_each_phase(tmp_path, monkeypatch):
     )
     monkeypatch.setattr("agent.digest.write_digest", lambda **kw: call_log.append("digest") or "")
 
-    rc = pl.iterate_projects("run-test", str(cfg), str(tmp_path))
+    rc, last_state = pl.iterate_projects("run-test", str(cfg), str(tmp_path))
 
     assert rc == 0
+    assert last_state is None  # fake returned None state
     assert call_log == [
         "preflight",
         "purge",

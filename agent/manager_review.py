@@ -53,7 +53,13 @@ def run_manager_review(
     env["STATION_RUN_ID"] = run_id
 
     logger.info("manager_review: invoking claude -p (run=%s, model=%s)", run_id, model)
-    result = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=1800)
+    # No subprocess-level timeout: matches the prior bash behavior, where
+    # the parent process (RunDriver) owns interruption via SIGTERM. A
+    # local timeout here would invent a new failure mode the bash version
+    # did not have — a manager review that's still streaming useful
+    # output at 29min would be killed mid-thought. The parent's lifecycle
+    # remains the gate.
+    result = subprocess.run(cmd, capture_output=True, text=True, env=env)
     if result.returncode != 0:
         raise ManagerReviewError(
             f"claude -p exited {result.returncode}: {result.stderr.strip()[:500]}"

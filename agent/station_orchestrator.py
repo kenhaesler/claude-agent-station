@@ -1609,12 +1609,19 @@ def _synthesize_employee_report(
 
 async def orchestrate_project(
     project: dict, config: dict, run_id: str, workspaces_dir: str,
-) -> int:
-    """Run the Agent Teams session for a single project. Returns project-level exit code.
+) -> tuple[int, "_StreamState | None"]:
+    """Run the Agent Teams session for a single project.
+
+    Returns ``(exit_code, stream_state)``. ``stream_state`` is ``None`` if
+    the project short-circuited before the orchestrator session began
+    (no eligible issues, workspace error, etc.). Callers use the returned
+    state for telemetry aggregation — see :class:`RunDriver._finalize_telemetry`.
 
     Extracted from orchestrate() in #383 so iterate_projects (Python-only)
     can drive per-project work directly without delegating the outer loop
-    to bash.
+    to bash. The tuple return supersedes the prior ``_LAST_STREAM_STATE``
+    module-global hand-off so concurrent or repeated calls cannot trample
+    each other's telemetry.
     """
     max_per_project = get_limit(config, "max_employees_per_project", 3)
     manager_model = get_model(config, "manager", "claude-sonnet-4-6")
@@ -1731,7 +1738,10 @@ async def orchestrate_project(
                 workspace=workspace,
                 run_id=run_id,
             )
-            return exit_code  # no issues: treat as clean exit for this project
+            # No issues: clean exit. ``stream_state`` is uninitialised here
+            # because the orchestrator session never started — return None so
+            # telemetry aggregation in the caller can skip this project.
+            return exit_code, None
 
         # Hook 1: vision-aware prioritisation
         vision = load_vision(workspace)
@@ -2106,7 +2116,7 @@ async def orchestrate_project(
                         repo, exc,
                     )
 
-    return exit_code
+    return exit_code, stream_state
 
 
 async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
@@ -2133,7 +2143,12 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
 
     exit_code = 0
     for project in enabled_projects:
-        proj_rc = await orchestrate_project(project, config, run_id, workspaces_dir)
+        # orchestrate_project now returns (exit_code, stream_state); the
+        # legacy `orchestrate()` driver only cares about the exit code,
+        # discards the state.
+        proj_rc, _state = await orchestrate_project(
+            project, config, run_id, workspaces_dir,
+        )
         if proj_rc != 0:
             exit_code = proj_rc
     return exit_code
@@ -2314,10 +2329,11 @@ class RunDriver:
         status = "completed"
         exit_code = 0
         error: str | None = None
+        last_state = None
 
         try:
             from agent.project_loop import iterate_projects
-            exit_code = iterate_projects(
+            exit_code, last_state = iterate_projects(
                 self.run_id, self.config_path, self.workspaces_dir,
             )
             if exit_code == 130:
@@ -2334,13 +2350,12 @@ class RunDriver:
             exit_code = 1
             error = f"{type(e).__name__}: {e}"
         finally:
-            # Pull the last stream-state in-process. iterate_projects exposes
-            # the active state via a module variable populated during the run.
-            # _finalize_telemetry tolerates missing state.
-            from agent.project_loop import get_last_stream_state
-            state = get_last_stream_state()
-            if state is not None:
-                self._finalize_telemetry(state)
+            # Telemetry is threaded through iterate_projects's tuple return
+            # (last_state). _finalize_telemetry tolerates None — the
+            # iterate_projects exception paths leave last_state at its
+            # initialiser.
+            if last_state is not None:
+                self._finalize_telemetry(last_state)
             self._emit_run_complete(status=status, exit_code=exit_code, error=error)
 
         return exit_code

@@ -17,21 +17,6 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Module-level slot for the last stream state produced by iterate_projects.
-# RunDriver._finalize_telemetry reads this after the run to copy counters
-# in-process (replaces the bash telemetry JSON hand-off, issue #383).
-_LAST_STREAM_STATE = None
-
-
-def get_last_stream_state():
-    """Return the last _StreamState set during iterate_projects, or None."""
-    return _LAST_STREAM_STATE
-
-
-def _set_last_stream_state(state) -> None:
-    global _LAST_STREAM_STATE
-    _LAST_STREAM_STATE = state
-
 
 
 # Labels that exclude an issue from the analyzable set. Mirrors the
@@ -124,18 +109,36 @@ def pick_issue(
     )
 
 
-def iterate_projects(run_id: str, config_path: str,
-                     workspaces_dir: str) -> int:
+def iterate_projects(
+    run_id: str, config_path: str, workspaces_dir: str,
+) -> tuple[int, "Any | None"]:
     """Drive a full run in-process: preflight → recovery → per-project → digest.
 
     Each former bash phase is a Python module; this function composes them
     (issue #383 bash deletion).
+
+    Returns ``(exit_code, last_stream_state)``. ``last_stream_state`` is the
+    most recent per-project stream state produced by
+    :func:`agent.station_orchestrator.orchestrate_project`, or ``None`` if
+    no project ran successfully far enough to initialise one. RunDriver's
+    ``_finalize_telemetry`` consumes it. Threading state via the return
+    value (rather than a module global) is correct under any concurrent
+    invocation pattern.
+
+    Exception policy: ``OrchestratorStopRequested`` and
+    ``KeyboardInterrupt`` always propagate up so the driver's finally
+    block can mark the run interrupted. Other exceptions per-project are
+    caught, logged, and counted as project failures.
     """
     import asyncio
     import json
+    import os as _os
 
     from agent.preflight import run_preflight, PreflightError
-    from agent.queue_recovery import purge_and_recover, resume_paused
+    from agent.queue_recovery import (
+        purge_and_recover, resume_paused, QueueRecoveryError,
+    )
+    from agent.run_control import OrchestratorStopRequested
     from agent.workspace_setup import ensure_workspace, WorkspaceError
     from agent.station_orchestrator import orchestrate_project
     from agent.manager_review import run_manager_review, ManagerReviewError
@@ -147,17 +150,25 @@ def iterate_projects(run_id: str, config_path: str,
         run_preflight(config_path)
     except PreflightError as exc:
         logger.error("preflight: %s", exc)
-        return 2
+        return 2, None
 
-    purge_and_recover(run_id)
-    resume_paused()
+    # Queue recovery errors are surfaced (dashboard returning 4xx/5xx is a
+    # real problem); transient connect failures already degrade to a no-op
+    # inside the recovery functions, so reaching the except branch means
+    # something is genuinely wrong.
+    try:
+        purge_and_recover(run_id)
+        resume_paused()
+    except QueueRecoveryError as exc:
+        logger.error("queue_recovery: %s", exc)
+        return 5, None
 
     config = json.loads(Path(config_path).read_text())
     enabled = [p for p in config.get("projects", []) if p.get("enabled", True)]
 
     results: list[dict] = []
     exit_code = 0
-    import os as _os
+    last_state = None
     log_dir = _os.environ.get("STATION_LOG_DIR", "/var/log/claude-agent")
 
     for project in enabled:
@@ -170,10 +181,17 @@ def iterate_projects(run_id: str, config_path: str,
             continue
 
         try:
-            proj_rc = asyncio.run(orchestrate_project(project, config, run_id, workspaces_dir))
+            proj_rc, proj_state = asyncio.run(
+                orchestrate_project(project, config, run_id, workspaces_dir)
+            )
+            if proj_state is not None:
+                last_state = proj_state
             if proj_rc != 0:
                 exit_code = proj_rc
-        except KeyboardInterrupt:
+        except (KeyboardInterrupt, OrchestratorStopRequested):
+            # Operator stop / SIGTERM-mapped interrupt — propagate so the
+            # RunDriver's finally block can write the interrupted-run
+            # record. NEVER absorb these into a "project failed" bucket.
             raise
         except Exception as exc:  # noqa: BLE001
             logger.exception("orchestrate_project failed for %s", project["name"])
@@ -218,4 +236,4 @@ def iterate_projects(run_id: str, config_path: str,
                     })
 
     write_digest(run_id=run_id, results=results, log_dir=log_dir)
-    return exit_code
+    return exit_code, last_state
