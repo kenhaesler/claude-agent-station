@@ -2070,14 +2070,31 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
                                 await client.interrupt()
                                 break
 
-                            # Completion gate — still text-heuristic; #385 replaces it
-                            # with the structured RunComplete tool. The natural exit
-                            # of receive_response() handles the SDK-side teardown.
+                            # #385 primary completion gate: the lead called
+                            # the RunComplete tool. handle_stream_event
+                            # latched state.run_complete_payload; we exit
+                            # the iterator naturally.
+                            if stream_state.run_complete_payload is not None:
+                                work_complete = True
+                                logger.info(
+                                    "RunComplete tool received; breaking SDK stream"
+                                )
+                                break
+
+                            # Fallback (one release window) — _is_work_complete
+                            # prose match. Logged loudly so operators can
+                            # spot runs whose lead hasn't migrated to the
+                            # tool contract.
                             if isinstance(message, ResultMessage):
                                 result_text = getattr(message, "result", "")
                                 if _is_work_complete(result_text):
+                                    logger.warning(
+                                        "RunComplete fallback engaged: lead did "
+                                        "not call the tool; relying on prose "
+                                        "match. Run: run-%s",
+                                        run_id,
+                                    )
                                     work_complete = True
-                                    logger.info("Work-complete signal received")
                                     break
 
                         if control_flags["stop"]:
