@@ -123,22 +123,6 @@ async def receive_run_event(
             }),
         ))
 
-    elif event_name == "hook_failures":
-        # Posted by the orchestrator when the bundled CLI's hook callback
-        # to Python fails mid-run (see agent/audit_hook.py). Persist as an
-        # AgentEvent so dashboard queries can count affected runs without
-        # operators grepping launcher.out by hand.
-        db.add(AgentEvent(
-            workflow_id=f"trace-{event.run_id}",
-            run_id=event.run_id,
-            agent_id=event.agent_id or "lead",
-            event_type="hook_callback_failure",
-            event_data=json.dumps({
-                "project": event.project,
-                "count": event.count,
-            }),
-        ))
-
     elif event_name in ("conflict_resolution_started",
                         "conflict_resolution_phase",
                         "conflict_resolution_completed"):

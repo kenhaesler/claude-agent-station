@@ -97,7 +97,8 @@ def test_streamstate_can_latch_payload():
     assert state.run_complete_payload["status"] == "success"
 
 
-def test_handle_stream_event_latches_run_complete_payload(monkeypatch):
+@pytest.mark.asyncio
+async def test_handle_stream_event_latches_run_complete_payload(monkeypatch):
     """A ToolUseBlock with name='RunComplete' latches the parsed payload onto state."""
     from agent.station_orchestrator import _StreamState, handle_stream_event
     from claude_agent_sdk.types import AssistantMessage, ToolUseBlock
@@ -121,7 +122,7 @@ def test_handle_stream_event_latches_run_complete_payload(monkeypatch):
     msg = AssistantMessage(content=[tool_use], usage={}, model="claude-opus-4-7", parent_tool_use_id=None)
     setattr(msg, "session_id", "sess-1")
 
-    handle_stream_event(msg, config={}, run_id="run-x", log_file=None, state=state)
+    await handle_stream_event(msg, config={}, run_id="run-x", log_file=None, state=state)
 
     assert state.run_complete_payload is not None
     assert state.run_complete_payload["status"] == "success"
@@ -130,6 +131,7 @@ def test_handle_stream_event_latches_run_complete_payload(monkeypatch):
 
 def test_handle_stream_event_ignores_malformed_run_complete(monkeypatch):
     """A malformed RunComplete tool call does NOT latch the payload."""
+    import asyncio
     from agent.station_orchestrator import _StreamState, handle_stream_event
     from claude_agent_sdk.types import AssistantMessage, ToolUseBlock
 
@@ -141,14 +143,15 @@ def test_handle_stream_event_ignores_malformed_run_complete(monkeypatch):
     msg = AssistantMessage(content=[tool_use], usage={}, model="claude-opus-4-7", parent_tool_use_id=None)
     setattr(msg, "session_id", "sess-1")
 
-    handle_stream_event(msg, config={}, run_id="run-x", log_file=None, state=state)
+    asyncio.run(handle_stream_event(msg, config={}, run_id="run-x", log_file=None, state=state))
 
     assert state.run_complete_payload is None, (
         "Malformed RunComplete must not latch the payload — lead should retry"
     )
 
 
-def test_handle_stream_event_orchestrator_complete_emitted_with_verdicts(monkeypatch):
+@pytest.mark.asyncio
+async def test_handle_stream_event_orchestrator_complete_emitted_with_verdicts(monkeypatch):
     """Once the payload latches, an orchestrator_complete webhook fires with the verdicts."""
     from agent.station_orchestrator import _StreamState, handle_stream_event
     from claude_agent_sdk.types import AssistantMessage, ToolUseBlock
@@ -168,7 +171,7 @@ def test_handle_stream_event_orchestrator_complete_emitted_with_verdicts(monkeyp
     msg = AssistantMessage(content=[tool_use], usage={}, model="claude-opus-4-7", parent_tool_use_id=None)
     setattr(msg, "session_id", "sess-1")
 
-    handle_stream_event(msg, config={}, run_id="run-x", log_file=None, state=state)
+    await handle_stream_event(msg, config={}, run_id="run-x", log_file=None, state=state)
 
     events = [e for (e, _p) in captured]
     assert "orchestrator_complete" in events, "RunComplete must emit orchestrator_complete"
@@ -178,7 +181,8 @@ def test_handle_stream_event_orchestrator_complete_emitted_with_verdicts(monkeyp
     assert "verdicts" in payload
 
 
-def test_orchestrator_complete_emitted_exactly_once(monkeypatch):
+@pytest.mark.asyncio
+async def test_orchestrator_complete_emitted_exactly_once(monkeypatch):
     """A RunComplete tool call followed by a ResultMessage emits orchestrator_complete only once."""
     from agent.station_orchestrator import _StreamState, handle_stream_event
     from claude_agent_sdk.types import AssistantMessage, ResultMessage, ToolUseBlock
@@ -196,14 +200,14 @@ def test_orchestrator_complete_emitted_exactly_once(monkeypatch):
     )
     am = AssistantMessage(content=[tool_use], usage={}, model="claude-opus-4-7", parent_tool_use_id=None)
     setattr(am, "session_id", "sess-1")
-    handle_stream_event(am, config={}, run_id="run-x", log_file=None, state=state)
+    await handle_stream_event(am, config={}, run_id="run-x", log_file=None, state=state)
 
     rm = ResultMessage(
         subtype="success", duration_ms=100, duration_api_ms=50, is_error=False,
         num_turns=1, session_id="sess-1", total_cost_usd=0.0, usage=None,
         result="Final summary. All workers have completed.",
     )
-    handle_stream_event(rm, config={}, run_id="run-x", log_file=None, state=state)
+    await handle_stream_event(rm, config={}, run_id="run-x", log_file=None, state=state)
 
     oc_count = sum(1 for (e, _p) in captured if e == "orchestrator_complete")
     assert oc_count == 1, f"Expected exactly one orchestrator_complete; got {oc_count}"
@@ -269,7 +273,7 @@ def test_orchestrate_registers_run_complete_server(monkeypatch, tmp_path):
     monkeypatch.setattr(so, "_combined_rank_issues", lambda issues, **k: issues)
     monkeypatch.setattr(so, "build_team_prompt", lambda *a, **k: "test prompt")
     monkeypatch.setattr(so, "build_followup_prompt", lambda *a, **k: "followup prompt")
-    monkeypatch.setattr(so, "handle_stream_event", lambda *a, **k: None)
+    monkeypatch.setattr(so, "handle_stream_event", AsyncMock())
     monkeypatch.setattr(so, "_control_poll_loop", AsyncMock())
     monkeypatch.setattr(so.asyncio, "sleep", AsyncMock())
     monkeypatch.setattr(_sp, "run", lambda *a, **k: MagicMock(returncode=0, stderr=""))
@@ -294,7 +298,8 @@ def test_orchestrate_registers_run_complete_server(monkeypatch, tmp_path):
     )
 
 
-def test_retry_after_malformed_run_complete(monkeypatch):
+@pytest.mark.asyncio
+async def test_retry_after_malformed_run_complete(monkeypatch):
     """A malformed RunComplete followed by a valid one latches on the valid call."""
     from agent.station_orchestrator import _StreamState, handle_stream_event
     from claude_agent_sdk.types import AssistantMessage, ToolUseBlock
@@ -305,7 +310,7 @@ def test_retry_after_malformed_run_complete(monkeypatch):
     bad = ToolUseBlock(id="tu-bad", name="RunComplete", input={"verdicts": []})
     am1 = AssistantMessage(content=[bad], usage={}, model="x", parent_tool_use_id=None)
     setattr(am1, "session_id", "sess-1")
-    handle_stream_event(am1, config={}, run_id="r", log_file=None, state=state)
+    await handle_stream_event(am1, config={}, run_id="r", log_file=None, state=state)
     assert state.run_complete_payload is None
 
     good = ToolUseBlock(
@@ -314,6 +319,6 @@ def test_retry_after_malformed_run_complete(monkeypatch):
     )
     am2 = AssistantMessage(content=[good], usage={}, model="x", parent_tool_use_id=None)
     setattr(am2, "session_id", "sess-1")
-    handle_stream_event(am2, config={}, run_id="r", log_file=None, state=state)
+    await handle_stream_event(am2, config={}, run_id="r", log_file=None, state=state)
     assert state.run_complete_payload is not None
     assert state.run_complete_payload["summary"] == "retry worked"

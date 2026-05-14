@@ -32,7 +32,8 @@ def _make_result_msg(session_id: str, num_turns: int = 31, subtype: str = "error
     return m
 
 
-def test_emits_orchestrator_complete_for_main_session():
+@pytest.mark.asyncio
+async def test_emits_orchestrator_complete_for_main_session():
     """When a ResultMessage's session_id matches the captured main
     session AND its result text signals work completion,
     orchestrator_complete must fire. (Both gates apply since the
@@ -46,13 +47,14 @@ def test_emits_orchestrator_complete_for_main_session():
     )
 
     with patch("agent.station_orchestrator.post_webhook") as mock_post:
-        handle_stream_event(msg, config={}, run_id="r-1", state=state)
+        await handle_stream_event(msg, config={}, run_id="r-1", state=state)
 
     events = [c.args[1] for c in mock_post.call_args_list]
     assert "orchestrator_complete" in events, f"main-session result must emit, got: {events}"
 
 
-def test_skips_orchestrator_complete_for_teammate_session():
+@pytest.mark.asyncio
+async def test_skips_orchestrator_complete_for_teammate_session():
     """A ResultMessage from a teammate sub-session (different session_id)
     must NOT trigger orchestrator_complete. This is THE bug from
     run-20260512T124731Z."""
@@ -61,14 +63,15 @@ def test_skips_orchestrator_complete_for_teammate_session():
     msg = _make_result_msg("qa-teammate-session-xyz", num_turns=31, subtype="error_max_turns")
 
     with patch("agent.station_orchestrator.post_webhook") as mock_post:
-        handle_stream_event(msg, config={}, run_id="r-1", state=state)
+        await handle_stream_event(msg, config={}, run_id="r-1", state=state)
 
     events = [c.args[1] for c in mock_post.call_args_list]
     assert "orchestrator_complete" not in events, \
         f"teammate sub-session result must NOT emit, got: {events}"
 
 
-def test_skips_when_main_session_id_unknown():
+@pytest.mark.asyncio
+async def test_skips_when_main_session_id_unknown():
     """Defensive: if we never captured the main session_id (e.g. SDK
     behavior changed and no init SystemMessage arrived), skip the emit
     rather than fire on every ResultMessage. The orchestrator's
@@ -78,14 +81,15 @@ def test_skips_when_main_session_id_unknown():
     msg = _make_result_msg("some-session", num_turns=5)
 
     with patch("agent.station_orchestrator.post_webhook") as mock_post:
-        handle_stream_event(msg, config={}, run_id="r-1", state=state)
+        await handle_stream_event(msg, config={}, run_id="r-1", state=state)
 
     events = [c.args[1] for c in mock_post.call_args_list]
     assert "orchestrator_complete" not in events, \
         f"missing main_session_id must skip emit, got: {events}"
 
 
-def test_skips_when_message_lacks_session_id():
+@pytest.mark.asyncio
+async def test_skips_when_message_lacks_session_id():
     """Some SDK message variants may not carry session_id. Skip emit
     rather than fire on every untraceable ResultMessage."""
     from agent.station_orchestrator import handle_stream_event, _StreamState
@@ -94,7 +98,7 @@ def test_skips_when_message_lacks_session_id():
     msg.session_id = None  # explicitly null out
 
     with patch("agent.station_orchestrator.post_webhook") as mock_post:
-        handle_stream_event(msg, config={}, run_id="r-1", state=state)
+        await handle_stream_event(msg, config={}, run_id="r-1", state=state)
 
     events = [c.args[1] for c in mock_post.call_args_list]
     assert "orchestrator_complete" not in events
