@@ -154,3 +154,52 @@ def test_client_opens_and_closes_once_per_project(monkeypatch, tmp_path):
     assert client.entered == 1 and client.exited == 1, (
         f"Client lifecycle should open and close once; entered={client.entered}, exited={client.exited}"
     )
+
+
+def test_followup_uses_same_client_no_resume(monkeypatch, tmp_path):
+    """Iteration 2+ calls client.query() on the *same* client; no resume token is set."""
+    from agent import station_orchestrator as so
+
+    _FakeClient.instances.clear()
+    config = {
+        "projects": [{"repo": "owner/repo", "enabled": True}],
+        "limits": {"max_concurrent_employees": 1},
+        "models": {},
+        "logging": {"log_dir": str(tmp_path)},
+    }
+
+    # Iteration 1: ResultMessage with no work-complete text → loop re-enters.
+    # Iteration 2: ResultMessage with work-complete text → loop exits.
+    def _msg(session_id, result_text):
+        m = MagicMock(spec=so.ResultMessage)
+        m.session_id = session_id
+        m.result = result_text
+        m.is_error = False
+        m.duration_ms = 100
+        m.num_turns = 1
+        return m
+
+    iter1 = [_msg("sess-1", "still working")]
+    iter2 = [_msg("sess-1", "Final summary. All workers have completed.")]
+
+    def _client_factory(options=None):
+        c = _FakeClient(options=options)
+        c._scripted_messages = [iter1, iter2]
+        return c
+
+    _patch_orchestrate_setup(monkeypatch, so, tmp_path, _client_factory)
+
+    asyncio.run(so.orchestrate(config, "20260514T120000Z", str(tmp_path)))
+
+    assert len(_FakeClient.instances) == 1, "Same client must be reused across follow-up turns"
+    client = _FakeClient.instances[0]
+    assert len(client.queries) == 2, (
+        f"Expected one query per iteration (initial + 1 follow-up); got {len(client.queries)}"
+    )
+    # The options passed to the constructor must not set resume / continue_conversation.
+    assert getattr(client.options, "resume", None) is None, (
+        "options.resume should never be set under ClaudeSDKClient — one client persists the session"
+    )
+    assert getattr(client.options, "continue_conversation", False) is False, (
+        "options.continue_conversation should never be set under ClaudeSDKClient"
+    )
