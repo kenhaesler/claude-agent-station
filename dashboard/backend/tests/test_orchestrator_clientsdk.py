@@ -324,3 +324,37 @@ def test_hook_failure_counter_zero_after_six_iterations(monkeypatch, tmp_path):
     assert delta == 0, (
         f"Hook callback failures must remain zero across iterations; delta={delta}"
     )
+
+
+def test_orchestrator_module_does_not_import_query():
+    """Per #384, the SDK's one-shot query() is no longer imported."""
+    import inspect
+    from agent import station_orchestrator
+    src = inspect.getsource(station_orchestrator)
+    # The migration replaces `from claude_agent_sdk import query, ClaudeAgentOptions`
+    # with `from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions`.
+    assert "from claude_agent_sdk import query" not in src, (
+        "station_orchestrator must not import the one-shot query() under #384"
+    )
+    assert "ClaudeSDKClient" in src, (
+        "station_orchestrator must import ClaudeSDKClient under #384"
+    )
+
+
+def test_orchestrate_loop_uses_async_with_clientsdkclient():
+    """Source-level assertion that the orchestrate body opens the client via async with."""
+    import inspect
+    from agent.station_orchestrator import orchestrate
+    src = inspect.getsource(orchestrate)
+    assert "async with ClaudeSDKClient" in src, (
+        "orchestrate must enter ClaudeSDKClient via async with (issue #384)"
+    )
+    assert "client.receive_response()" in src, (
+        "orchestrate must consume replies via client.receive_response() (issue #384)"
+    )
+    assert "client.query(" in src, (
+        "orchestrate must send prompts via client.query(...) (issue #384)"
+    )
+    assert "_user_prompt_stream" not in src, (
+        "orchestrate must no longer reference _user_prompt_stream"
+    )
