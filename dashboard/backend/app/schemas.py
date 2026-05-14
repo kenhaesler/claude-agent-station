@@ -985,3 +985,29 @@ class VisionProposalsRead(BaseModel):
     """Response for GET /api/projects/{id}/vision/proposals."""
     open: int
     accepted_recent: int
+
+
+# --- Run timeline (issue #387) -----------------------------------------------
+
+class RunTimelineEvent(BaseModel):
+    """One row in the merged timeline.
+
+    ``kind`` is the discriminator; ``data`` carries the source-specific
+    payload verbatim. ``source`` + ``source_id`` are present for deep-link
+    navigation to the per-source detail view.
+    """
+
+    t: datetime
+    kind: str  # "lifecycle" | "tool" | "teammate" | "verdict" | "conflict"
+    event: str
+    source: str  # "runs" | "agent_events" | "audit_log" | "coordinator_tasks" | "conflict_resolutions"
+    source_id: str
+    agent: str | None = None
+    data: dict | None = None
+
+
+class RunTimelinePage(BaseModel):
+    run_id: str
+    events: list[RunTimelineEvent]
+    next_cursor: str | None = None
+    has_more: bool = False

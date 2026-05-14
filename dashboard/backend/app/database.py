@@ -132,6 +132,12 @@ async def _migrate_add_columns(conn) -> None:
         "CREATE INDEX IF NOT EXISTS ix_conflict_resolutions_branch_started "
         "ON conflict_resolutions(branch, started_at)",
         "CREATE INDEX IF NOT EXISTS ix_runs_last_event_at ON runs(last_event_at)",
+        # Issue #387: the timeline endpoint scans audit_log by run_id then
+        # orders by started_at. The single-column run_id index forces a
+        # full child-scan + sort on every request; a composite turns that
+        # into a single index range scan.
+        "CREATE INDEX IF NOT EXISTS ix_audit_log_run_id_started "
+        "ON audit_log(run_id, started_at)",
     ]
     for sql in index_migrations:
         try:

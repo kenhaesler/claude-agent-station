@@ -376,3 +376,22 @@ The venv at `<project-root>/venv/` (Python 3.12) is shared across both paths. Sc
 - systemd dashboard service: `<project-root>/venv/bin/uvicorn`
 
 This resolution is consistent because the hardlink ensures both paths resolve to the same physical venv.
+
+## Run Timeline API
+
+`GET /api/runs/{run_id}/timeline` returns a chronologically merged event
+stream for a single run, drawn from five sources:
+
+| Source table | Kind | Notes |
+|---|---|---|
+| `runs` (+ `agent_events` with `event_type LIKE 'lifecycle.%'`) | `lifecycle` | `run_start` / `run_complete` synthesised from `started_at` / `finished_at`. |
+| `audit_log` | `tool` | One event per row, `event` = `{action_kind}.{status}`. `data.stdout_tail` / `stderr_tail` trimmed to 1 KB. |
+| `coordinator_tasks` | `teammate` | `teammate.spawned` at `claimed_at`, `teammate.completed` at terminal `finished_at`. |
+| `agent_events` (`event_type IN verdict_execute, manager_review, manager_review_complete`) | `verdict` | Manager-decision events. |
+| `conflict_resolutions` (matched by run's branch) | `conflict` | `conflict.started` + `conflict.{outcome}`. |
+
+Pagination is cursor-based on `(t, source, source_id)`. Filter via `?kinds=`
+(comma-separated subset). Full payloads remain available via
+`/api/audit?run_id=…&id=…` for `tool` events whose tails are truncated.
+
+Implementation: `dashboard/backend/app/services/run_timeline.py`.

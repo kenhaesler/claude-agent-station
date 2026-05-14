@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Index, Integer, String, Text
 
 from app.database import Base
 
@@ -272,6 +272,13 @@ class AuditEntry(Base):
     stderr_tail = Column(Text, nullable=True)
     started_at = Column(DateTime, nullable=False, index=True)
     finished_at = Column(DateTime, nullable=True)
+
+    # Issue #387: the timeline endpoint scans by run_id and orders by
+    # started_at. A composite index turns a child-scan + sort into a
+    # single range scan.
+    __table_args__ = (
+        Index("ix_audit_log_run_id_started", "run_id", "started_at"),
+    )
 
 
 class AgentEvent(Base):
