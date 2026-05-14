@@ -92,3 +92,11 @@ def test_jsontype_uses_json_on_sqlite():
     )
     # On SQLite, JSON is used (no JSONB variant). The impl is a JSON subclass.
     assert isinstance(sq_impl, JSON), f"expected JSON, got {sq_impl.__class__.__name__}"
+
+
+def test_decode_event_data_handles_text_and_dict():
+    from app.services.json_compat import decode_event_data
+    assert decode_event_data('{"a": 1}') == {"a": 1}
+    assert decode_event_data({"a": 1}) == {"a": 1}
+    assert decode_event_data(None) is None
+    assert decode_event_data("not-json") is None
