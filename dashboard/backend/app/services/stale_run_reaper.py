@@ -2,9 +2,11 @@ from __future__ import annotations
 
 """Detect and reap runs stuck in 'running' after the agent process dies.
 
-Postgres path: a ``_heartbeat_subscriber`` task resets per-run watchdog timers
-via the ``heartbeat`` LISTEN/NOTIFY channel so the tick loop can be stretched
-to 60 s without losing detection speed.  SQLite path: tick at 15 s, no
+Postgres path: a ``_heartbeat_subscriber`` task listens on the ``heartbeat``
+LISTEN/NOTIFY channel and rebroadcasts each event onto the in-process SSE
+event bus, so dashboard clients see liveness in real time without waiting
+for the next reaper tick.  The periodic tick is relaxed to 60 s (it's now
+the safety net, not the primary signal).  SQLite path: tick at 15 s, no
 subscriber (``listen`` exhausts immediately).
 
 When the agent is killed (hard stop, OOM, etc.) the run_complete webhook

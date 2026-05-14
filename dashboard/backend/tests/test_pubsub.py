@@ -1,7 +1,8 @@
 """LISTEN/NOTIFY tests (#393).
 
-Postgres tests are marked ``postgres_only``; on SQLite we assert the
-contract is a clean no-op.
+Postgres tests request the ``postgres_url`` fixture, which auto-skips
+when Docker is not available on the host. The SQLite tests verify the
+no-op contract (``notify`` returns silently, ``listen`` exhausts).
 """
 from __future__ import annotations
 
