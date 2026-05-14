@@ -2262,9 +2262,18 @@ async def orchestrate_project(
                                     hard_deadline_turns=manager_turns,
                                 )
                             except Exception as exc:  # noqa: BLE001
+                                # When the sidecar fails to write, the manager
+                                # spawned by the lead will Read the sidecar,
+                                # find it missing, and emit a failure summary
+                                # rather than guessing paths (per manager.md
+                                # `<context>`). The orchestrator's existing
+                                # ``manager_no_verdicts`` webhook + exit_code=6
+                                # path then fires. Manual triage required —
+                                # there is no silent fallback.
                                 logger.warning(
                                     "manager paths sidecar write failed for %s: %s "
-                                    "— manager will fall back to spawn-prompt paths",
+                                    "— manager will fail loudly via "
+                                    "manager_no_verdicts; manual triage required",
                                     repo, exc,
                                 )
                             prompt = build_team_prompt(
