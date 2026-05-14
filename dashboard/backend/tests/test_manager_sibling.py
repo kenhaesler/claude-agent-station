@@ -211,3 +211,31 @@ def test_run_manager_sh_no_longer_defines_run_manager_review():
         # The import and call must be gone once this PR is complete.
         # (They will be removed in the project_loop.py cleanup step.)
         pass  # acceptance checked via test_project_loop_no_longer_calls_subprocess_manager below
+
+
+def test_webhook_router_no_longer_handles_manager_heartbeat():
+    import inspect
+    from app.routers import webhook
+    src = inspect.getsource(webhook)
+    assert "manager_heartbeat" not in src, (
+        "manager_heartbeat event must be removed (PR #376 revert via #390)"
+    )
+
+
+def test_stale_run_reaper_has_no_manager_carveout():
+    import inspect
+    try:
+        from app.services import stale_run_reaper
+    except ImportError:
+        # Service may live elsewhere — fall back to a grep.
+        import subprocess
+        result = subprocess.run(
+            ["grep", "-rn", "manager_heartbeat\\|manager_review_window",
+             "dashboard/backend/app/"],
+            cwd=REPO, capture_output=True, text=True,
+        )
+        assert result.stdout.strip() == "", f"orphan refs: {result.stdout}"
+        return
+    src = inspect.getsource(stale_run_reaper)
+    assert "manager_heartbeat" not in src
+    assert "manager_review_window" not in src.lower()
