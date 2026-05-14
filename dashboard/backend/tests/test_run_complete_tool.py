@@ -78,3 +78,20 @@ def test_build_run_complete_server_returns_mcp_config():
     # McpSdkServerConfig dict shape (per claude_agent_sdk __init__).
     assert server_config["type"] == "sdk"
     assert server_config["name"] == "run_complete"
+
+
+def test_streamstate_has_run_complete_payload_field():
+    """_StreamState gains run_complete_payload (defaults to None)."""
+    from agent.station_orchestrator import _StreamState
+    state = _StreamState()
+    assert hasattr(state, "run_complete_payload"), (
+        "_StreamState must expose run_complete_payload (issue #385)"
+    )
+    assert state.run_complete_payload is None
+
+
+def test_streamstate_can_latch_payload():
+    from agent.station_orchestrator import _StreamState
+    state = _StreamState()
+    state.run_complete_payload = {"status": "success", "verdicts": [], "summary": "done"}
+    assert state.run_complete_payload["status"] == "success"

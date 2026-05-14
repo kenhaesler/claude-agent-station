@@ -76,6 +76,11 @@ class _StreamState:
     # teammate sub-session results don't trigger a premature
     # orchestrator_complete webhook. See #371.
     main_session_id: str | None = None
+    # #385: Latched when the lead calls the RunComplete SDK tool. None until
+    # the tool fires; once set, handle_stream_event suppresses the legacy
+    # ResultMessage-driven orchestrator_complete emission, and the inner
+    # orchestrate loop breaks at the next iteration boundary.
+    run_complete_payload: dict | None = None
 
 
 
