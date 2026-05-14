@@ -26,3 +26,25 @@ def test_timeline_page_default_empty():
     page = RunTimelinePage(run_id="run-x", events=[], next_cursor=None, has_more=False)
     assert page.events == []
     assert page.has_more is False
+
+
+from app.services.run_timeline import TimelineCursor
+
+
+def test_cursor_roundtrip():
+    c = TimelineCursor(
+        t=datetime(2026, 5, 13, 15, 14, 8, tzinfo=timezone.utc),
+        source="audit_log",
+        source_id="12345",
+    )
+    encoded = c.encode()
+    assert isinstance(encoded, str)
+    decoded = TimelineCursor.decode(encoded)
+    assert decoded.t == c.t
+    assert decoded.source == c.source
+    assert decoded.source_id == c.source_id
+
+
+def test_cursor_decode_rejects_garbage():
+    with pytest.raises(ValueError):
+        TimelineCursor.decode("not-base64!!!")
