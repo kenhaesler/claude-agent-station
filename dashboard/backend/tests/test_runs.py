@@ -637,3 +637,34 @@ async def test_active_employees_skips_synthesis_when_parent_terminal(client):
     employees = resp.json()
     assert all(e["run_id"] != run_id for e in employees), \
         f"phantom employee returned for terminal run: {employees}"
+
+
+@pytest.mark.asyncio
+async def test_list_runs_accepts_approve_integration_verdict_filter(client, setup_db):
+    """The runs router must accept ``?verdict=APPROVE_INTEGRATION`` (issue #388).
+
+    Run.verdict is Text — no migration needed — so the filter is purely a
+    SQL equality check. Seed one matching and one non-matching row and
+    assert the response contains only the matching one.
+    """
+    async with async_session() as db:
+        db.add(Run(
+            run_id="run-388-ai",
+            status="finished",
+            verdict="APPROVE_INTEGRATION",
+            started_at=datetime.now(timezone.utc),
+        ))
+        db.add(Run(
+            run_id="run-388-other",
+            status="finished",
+            verdict="APPROVE",
+            started_at=datetime.now(timezone.utc),
+        ))
+        await db.commit()
+
+    response = await client.get("/api/runs?verdict=APPROVE_INTEGRATION")
+    assert response.status_code == 200
+    data = response.json()
+    run_ids = [r["run_id"] for r in data["runs"]]
+    assert "run-388-ai" in run_ids
+    assert "run-388-other" not in run_ids

@@ -326,6 +326,8 @@
               <span class="status run"><span class="run-tick"></span><span class="lab">Run</span></span>
             {:else if run.verdict === 'APPROVE'}
               <span class="status planok">Approved</span>
+            {:else if run.verdict === 'APPROVE_INTEGRATION'}
+              <span class="status integ">Auto-merge to dev</span>
             {:else if run.verdict === 'REJECT'}
               <span class="status planx">Rejected</span>
             {:else if run.verdict === 'PR'}
@@ -463,7 +465,7 @@
       <div class="qstat">
         <span class="k">Verdict</span>
         {#if run.verdict}
-          <span class="v {run.verdict === 'APPROVE' ? 'go' : run.verdict === 'REJECT' ? 'abort' : 'caution'}" style="font-size:14px">{run.verdict}</span>
+          <span class="v {run.verdict === 'APPROVE' ? 'go' : run.verdict === 'APPROVE_INTEGRATION' ? 'integ' : run.verdict === 'REJECT' ? 'abort' : 'caution'}" style="font-size:14px">{run.verdict}</span>
           <span class="sub">final</span>
         {:else}
           <span class="v nu">—</span><span class="sub">in progress</span>
@@ -1116,6 +1118,13 @@
   }
   .rd :global(.qstat .v.abort) {
     color: var(--abort);
+  }
+  .rd :global(.qstat .v.integ) {
+    background: rgba(20, 184, 166, 0.15);
+    color: rgb(20, 184, 166);
+    border: 1px solid rgba(20, 184, 166, 0.3);
+    padding: 2px 6px;
+    border-radius: 2px;
   }
   .rd :global(.qstat .v.nu) {
     color: var(--ash);
