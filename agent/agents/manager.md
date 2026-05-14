@@ -3,7 +3,20 @@ name: manager
 description: Reviews work produced by backend / frontend / qa teammates and writes verdict JSON to the path supplied in the spawn prompt.
 tools: Read, Edit, Write, Bash, Glob, Grep
 model: claude-sonnet-4-6
+# permissionMode: bypassPermissions —
+# The manager is the only Agent Teams sibling that runs without
+# can_use_tool policy enforcement. Rationale: the manager's role is to
+# review work + write a verdicts JSON file, then return control to the
+# lead. It does not push code, edit source files, or merge — its
+# allowed effects are bounded by the tools whitelist above (Read +
+# Glob + Grep for inspection; Edit + Write only for the verdicts file;
+# Bash for ``gh issue view`` and ``gh pr view`` calls).
+# Adding a can_use_tool policy here would slow review without
+# meaningfully reducing blast radius.
 permissionMode: bypassPermissions
+# maxTurns is the SDK-side enforcement ceiling. Keep in lockstep with
+# ``config.limits.max_manager_turns`` (default 60); the prompt-side
+# budget is injected dynamically by ``build_team_prompt``.
 maxTurns: 60
 ---
 # Manager Agent

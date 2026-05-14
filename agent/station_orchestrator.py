@@ -719,6 +719,7 @@ def build_team_prompt(
     approved_plan_paths: list[str] | None = None,
     review_package_path: str | None = None,
     verdicts_file_path: str | None = None,
+    manager_max_turns: int = 60,
 ) -> str:
     """Build the lead agent prompt that creates and manages the team.
 
@@ -733,7 +734,15 @@ def build_team_prompt(
     the lead can spawn the ``manager`` sibling with the exact paths it
     needs to read + write. Both default to ``None``; when set, a
     "Manager review" section is appended to the prompt (#390).
+
+    ``manager_max_turns`` is the hard turn budget passed to the manager
+    in the spawn prompt. The default (60) matches the ``maxTurns: 60``
+    frontmatter in ``agent/agents/manager.md``; the soft drafting
+    deadline is half of this value. Pass the same number from config
+    (``config.limits.max_manager_turns``) at the call site so the
+    prompt and the SDK constraint stay in lockstep.
     """
+    manager_soft_deadline = max(1, manager_max_turns // 2)
     issue_entries = []
     for issue in issues:
         labels_str = ", ".join(l.get("name", "") for l in issue.get("labels", []))
@@ -864,7 +873,7 @@ the 20-minute timeout elapses with whichever reports exist), you MUST:
 
    Write your verdicts to: {verdicts_file_path}
 
-   Your hard turn budget for this review is 60. Treat turn 30 as your soft
+   Your hard turn budget for this review is {manager_max_turns}. Treat turn {manager_soft_deadline} as your soft
    deadline to start drafting the verdicts file.
 
    Read the review package file first, then evaluate each project's work
@@ -1767,10 +1776,9 @@ def _ensure_review_package(
             lines.append(rpt.read_text(encoding="utf-8"))
             lines.append("```")
             lines.append("")
-        # Diff summary
+        # Diff summary (best-effort; never fail the review-package write)
         try:
-            import subprocess as _subprocess
-            diff = _subprocess.run(
+            diff = subprocess.run(
                 ["git", "-C", str(wt), "diff", "--stat", "HEAD"],
                 capture_output=True, text=True, timeout=30,
             )
@@ -1779,7 +1787,7 @@ def _ensure_review_package(
                 lines.append("```")
                 lines.append(diff.stdout)
                 lines.append("```")
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
     out.write_text("\n".join(lines), encoding="utf-8")
@@ -1799,8 +1807,7 @@ def _read_verdicts_file(path: Path) -> dict | None:
         text = path.read_text(encoding="utf-8")
         if not text.strip():
             return None
-        import json as _json
-        return _json.loads(text)
+        return json.loads(text)
     except (ValueError, OSError) as exc:
         logger.warning("verdicts file %s unparseable: %s", path, exc)
         return None
@@ -2200,6 +2207,13 @@ async def orchestrate_project(
                                 approved_plan_paths=approved_plan_paths,
                                 review_package_path=_review_pkg_path,
                                 verdicts_file_path=_verdicts_path,
+                                # Single source of truth for the manager turn
+                                # budget: the same number we configure the SDK
+                                # with (manager_turns above) is what the prompt
+                                # tells the manager about. Frontmatter
+                                # ``maxTurns: 60`` in agent/agents/manager.md
+                                # is the SDK's enforcement ceiling.
+                                manager_max_turns=manager_turns,
                             )
 
                         await client.query(prompt)
@@ -2270,6 +2284,37 @@ async def orchestrate_project(
                         # Brief pause before the next follow-up turn. The control
                         # task keeps running during this sleep.
                         await asyncio.sleep(15)
+
+            # #390: post-session review-package safety net.
+            #
+            # Ideally the lead composes the package mid-session (right
+            # before spawning the manager) and the manager reads it
+            # in-session. Today the lead is asked to Bash/Read/Write the
+            # composition itself via the prompt's "Manager review"
+            # section, which is fragile — if the lead misparses the path
+            # or skips composition, the manager has nothing to read.
+            #
+            # Belt-and-braces: after the session ends, the orchestrator
+            # writes the package itself using ``_ensure_review_package``.
+            # If the manager already ran and wrote verdicts, this is a
+            # no-op (file exists, helper short-circuits). If the manager
+            # did NOT run, the human-triage path now has a complete
+            # package on disk for re-running manager review separately.
+            # See follow-up issue for the deeper architectural fix
+            # (mid-session intercept or CLI-driven composition).
+            try:
+                _wt_paths = [Path(p) for p in (worktree_paths or {}).values()]
+                _ensure_review_package(
+                    run_id=run_id,
+                    log_dir=Path(log_dir),
+                    workspaces=_wt_paths,
+                    mode=project_mode,
+                )
+            except Exception as exc:  # noqa: BLE001 — best-effort post-session write
+                logger.warning(
+                    "post-session review-package write failed for %s: %s",
+                    repo, exc,
+                )
 
             if not work_complete and not control_flags["stop"]:
                 logger.warning(

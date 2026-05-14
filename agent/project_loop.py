@@ -204,12 +204,34 @@ def iterate_projects(
         verdicts_path = Path(log_dir) / f"run-{run_id}-verdicts.json"
         verdicts_payload = _read_verdicts_file(verdicts_path)
         if verdicts_payload is None:
-            logger.warning(
+            # Missing verdicts is a real failure: the run did work but
+            # we have no way to action it. Make this visible — log loudly,
+            # emit a webhook so the dashboard can surface it, and bump
+            # the per-project exit_code so the run is not falsely
+            # marked clean. Operators triaging "why was my issue not
+            # touched?" need a visible signal here.
+            logger.error(
                 "manager sibling produced no verdicts file at %s — "
-                "the in-session manager either crashed or hit max-turns. "
-                "Skipping verdict execution.",
+                "the in-session manager either crashed, hit max-turns, "
+                "or the lead never spawned it. All teammate work for "
+                "this project is unactioned.",
                 verdicts_path,
             )
+            try:
+                from agent.webhook_emitter import emit as _emit
+                _emit("manager_no_verdicts", {
+                    "run_id": f"run-{run_id}",
+                    "project": project.get("name", ""),
+                    "verdicts_path": str(verdicts_path),
+                })
+            except Exception:  # noqa: BLE001 — best-effort signal
+                logger.warning("manager_no_verdicts webhook emit failed")
+            exit_code = max(exit_code, 6)
+            results.append({
+                "project": project.get("name", ""),
+                "decision": "ERROR",
+                "error": f"manager produced no verdicts file at {verdicts_path}",
+            })
         raw_verdicts = (verdicts_payload or {}).get("verdicts", [])
 
         from agent.verdict_execution import Verdict as _Verdict
