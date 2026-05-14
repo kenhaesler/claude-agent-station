@@ -358,3 +358,115 @@ def test_orchestrate_loop_uses_async_with_clientsdkclient():
     assert "_user_prompt_stream" not in src, (
         "orchestrate must no longer reference _user_prompt_stream"
     )
+
+
+def test_inner_loop_exits_on_run_complete(monkeypatch, tmp_path):
+    """The inner async-for exits when run_complete_payload latches."""
+    from agent import station_orchestrator as so
+    from unittest.mock import MagicMock
+
+    _FakeClient.instances.clear() if hasattr(_FakeClient, "instances") else None
+
+    init = MagicMock(spec=so.SystemMessage)
+    init.subtype = "init"; init.session_id = "sess-1"
+
+    # An AssistantMessage carrying a RunComplete ToolUseBlock.
+    from claude_agent_sdk.types import ToolUseBlock, AssistantMessage
+    tu = ToolUseBlock(
+        id="tu-1", name="RunComplete",
+        input={"status": "success", "verdicts": [], "summary": "done"},
+    )
+    am = AssistantMessage(content=[tu], usage={}, model="claude-opus-4-7", parent_tool_use_id=None)
+    setattr(am, "session_id", "sess-1")
+
+    def _client_factory(options=None):
+        c = _FakeClient(options=options)
+        # iter 1: init + tool-use. The loop should exit after the tool call;
+        # if it tried to follow up, our script has no iter 2.
+        c._scripted_messages = [[init, am]]
+        return c
+
+    monkeypatch.setattr(so, "ClaudeSDKClient", _client_factory)
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr(so, "_ensure_workspace", lambda *a, **k: str(tmp_path))
+    monkeypatch.setattr(so, "post_webhook", lambda *a, **k: None)
+    monkeypatch.setattr(so, "fetch_eligible_issues", lambda *a, **k: [{"number": 1, "title": "test", "body": ""}])
+    monkeypatch.setattr(so, "claim_pending_queue_items", AsyncMock(return_value=[]))
+    monkeypatch.setattr(so, "load_vision", lambda *a, **k: None)
+    monkeypatch.setattr(so, "_combined_rank_issues", lambda issues, **k: issues)
+    monkeypatch.setattr(so, "_control_poll_loop", AsyncMock())
+    monkeypatch.setattr(so.asyncio, "sleep", _zero_sleep)
+    import subprocess as _sp
+    monkeypatch.setattr(_sp, "run", lambda *a, **k: MagicMock(returncode=0, stderr=""))
+
+    config = {
+        "projects": [{"repo": "owner/repo", "enabled": True}],
+        "limits": {"max_concurrent_employees": 1},
+        "models": {},
+        "logging": {"log_dir": str(tmp_path)},
+    }
+
+    asyncio.run(so.orchestrate(config, "20260514T120000Z", str(tmp_path)))
+
+    client = _FakeClient.instances[0]
+    # If the loop re-entered, queries would be > 1. RunComplete should exit after 1.
+    assert len(client.queries) == 1, (
+        f"Inner loop should exit after RunComplete tool call; got {len(client.queries)} queries"
+    )
+
+
+def test_fallback_when_tool_not_called(monkeypatch, tmp_path, caplog):
+    """If the lead never calls RunComplete, _is_work_complete is the fallback.
+
+    For one release window after #385, prose-matched completion still
+    terminates the run — with a warning so the operator can spot leads
+    that haven't migrated to the tool contract.
+    """
+    from agent import station_orchestrator as so
+    from unittest.mock import MagicMock, AsyncMock
+
+    _FakeClient.instances.clear() if hasattr(_FakeClient, "instances") else None
+
+    rm = MagicMock(spec=so.ResultMessage)
+    rm.session_id = "sess-1"
+    rm.result = "Final summary. All workers have completed."
+    rm.is_error = False; rm.duration_ms = 100; rm.num_turns = 1
+
+    def _client_factory(options=None):
+        c = _FakeClient(options=options)
+        c._scripted_messages = [[rm]]
+        return c
+
+    monkeypatch.setattr(so, "ClaudeSDKClient", _client_factory)
+    monkeypatch.setattr(so, "_ensure_workspace", lambda *a, **k: str(tmp_path))
+    monkeypatch.setattr(so, "post_webhook", lambda *a, **k: None)
+    monkeypatch.setattr(so, "fetch_eligible_issues", lambda *a, **k: [{"number": 1, "title": "test", "body": ""}])
+    monkeypatch.setattr(so, "claim_pending_queue_items", AsyncMock(return_value=[]))
+    monkeypatch.setattr(so, "load_vision", lambda *a, **k: None)
+    monkeypatch.setattr(so, "_combined_rank_issues", lambda issues, **k: issues)
+    monkeypatch.setattr(so, "_control_poll_loop", AsyncMock())
+    monkeypatch.setattr(so.asyncio, "sleep", _zero_sleep)
+    import subprocess as _sp
+    monkeypatch.setattr(_sp, "run", lambda *a, **k: MagicMock(returncode=0, stderr=""))
+
+    import logging
+    caplog.set_level(logging.WARNING)
+
+    config = {
+        "projects": [{"repo": "owner/repo", "enabled": True}],
+        "limits": {"max_concurrent_employees": 1},
+        "models": {},
+        "logging": {"log_dir": str(tmp_path)},
+    }
+
+    asyncio.run(so.orchestrate(config, "20260514T120000Z", str(tmp_path)))
+
+    # Run completed — the loop exited via the fallback heuristic.
+    # The fallback path must log a warning so operators can see "lead did not
+    # call RunComplete" runs.
+    fallback_logged = any(
+        "RunComplete" in rec.message and "fallback" in rec.message.lower()
+        for rec in caplog.records
+    )
+    assert fallback_logged, "Fallback path must log a warning about missing RunComplete tool call"

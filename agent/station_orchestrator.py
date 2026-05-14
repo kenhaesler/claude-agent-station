@@ -56,8 +56,13 @@ from agent.run_control import (
     drain_pending_controls,
     set_run_paused,
 )
+from agent.tools.run_complete import (
+    RunCompleteInput,
+    build_run_complete_server,
+)
 from agent.vision_analyst import _ensure_workspace
 from agent.webhook_emitter import emit
+from pydantic import ValidationError as _PydanticValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +81,16 @@ class _StreamState:
     # teammate sub-session results don't trigger a premature
     # orchestrator_complete webhook. See #371.
     main_session_id: str | None = None
+    # #385: Latched when the lead calls the RunComplete SDK tool. None until
+    # the tool fires; once set, handle_stream_event suppresses the legacy
+    # ResultMessage-driven orchestrator_complete emission, and the inner
+    # orchestrate loop breaks at the next iteration boundary.
+    run_complete_payload: dict | None = None
+    # #385 fallback path: True after the first time the prose-matching
+    # _is_work_complete heuristic fires on this run. Keeps the
+    # "lead did not call RunComplete" WARNING log fire-once-per-run so
+    # operators get the signal without log spam on long runs.
+    fallback_warning_logged: bool = False
 
 
 
@@ -670,6 +685,28 @@ as a real deliverable — depth matters.{revision_block}
     return ""
 
 
+# #385: Contract paragraph injected into every team/followup prompt so the
+# lead always knows how to terminate the run authoritatively.
+_RUN_COMPLETE_CONTRACT = """
+## Ending the run
+
+When all teammates are done — or you cannot proceed further — call the
+`RunComplete` tool with a structured summary. This is the ONLY way to end
+the run cleanly. Do not announce "the work is done" in prose; the
+orchestrator does not read your prose for completion.
+
+Status values:
+- "success": all in-flight issues have a verdict.
+- "partial": some issues progressed, some did not (record the rest in
+  `verdicts` with `decision: "SKIP"` and a reason).
+- "blocked": you cannot proceed without operator input.
+
+Each `verdicts` entry must include `project`, `decision`
+(APPROVE | APPROVE_INTEGRATION | PR | REJECT | SKIP), and may include
+`issue_number`, `reasoning`, `branch`, and `base_branch`.
+"""
+
+
 def build_team_prompt(
     repo: str,
     issues: list[dict],
@@ -948,7 +985,7 @@ but those tool calls should be Bash sleeps and report-file polls, not new Task s
 - Base branch: `{base_branch}` (teammates must branch FROM this)
 - GH_TOKEN is available for GitHub CLI operations
 {vision_section}
-{mode_block}"""
+{mode_block}""" + _RUN_COMPLETE_CONTRACT
 
 
 def build_followup_prompt(
@@ -979,7 +1016,7 @@ def build_followup_prompt(
         "4. Provide the final JSON summary (issues_completed, issues_failed, "
         "total_turns, conflicts_detected) only when ALL workers are done or timed out.\n\n"
         "Do NOT shut down the team or end your turn until all work is accounted for."
-    )
+    ) + _RUN_COMPLETE_CONTRACT
 
 
 # ── Dashboard Webhook ──────────────────────────────────────────
@@ -1297,6 +1334,38 @@ def handle_stream_event(
                     if state:
                         state.tool_calls += 1
                     logger.info("Lead agent tool call: %s", block.name)
+                    if block.name == "RunComplete":
+                        # #385: We re-validate on the stream side even though
+                        # the SDK-side tool handler already validated. The
+                        # tool handler runs in the SDK subprocess (whose
+                        # pydantic version we don't pin), and its rejection
+                        # only surfaces to the lead as a tool_result error.
+                        # The orchestrator must independently confirm shape
+                        # before latching anything that downstream consumers
+                        # (the webhook payload) depend on. Cheap by design;
+                        # bounded by pydantic's parsing speed for a small dict.
+                        try:
+                            parsed = RunCompleteInput.model_validate(block.input or {})
+                        except _PydanticValidationError as exc:
+                            # Schema-invalid input — the tool handler's tool_result
+                            # already tells the lead to retry. Do NOT latch.
+                            logger.warning("RunComplete malformed: %s", exc)
+                        else:
+                            if state is not None and state.run_complete_payload is None:
+                                state.run_complete_payload = parsed.model_dump()
+                                # #385: this is the authoritative
+                                # orchestrator_complete emission. The fallback
+                                # branch in the ResultMessage path is gated
+                                # below on state.run_complete_payload being None.
+                                post_webhook(config, "orchestrator_complete", {
+                                    "run_id": f"run-{run_id}",
+                                    "is_error": False,
+                                    "status": parsed.status,
+                                    "verdicts": [v.model_dump() for v in parsed.verdicts],
+                                    "summary": parsed.summary,
+                                    "duration_ms": 0,
+                                    "num_turns": state.turns,
+                                })
                     if pending_narration:
                         post_webhook(config, "narration", {
                             "run_id": f"run-{run_id}",
@@ -1468,6 +1537,15 @@ def handle_stream_event(
                 "tokens_total": state.tokens_in + state.tokens_out,
                 "turns": state.turns,
             })
+        # #385: if the lead already called the RunComplete tool, the
+        # authoritative orchestrator_complete fired from the ToolUseBlock
+        # branch. Skip the legacy emission to keep the contract single-firing.
+        if state is not None and state.run_complete_payload is not None:
+            logger.info(
+                "Skipping legacy ResultMessage orchestrator_complete — "
+                "RunComplete tool already latched the payload."
+            )
+            return
         post_webhook(config, "orchestrator_complete", {
             "run_id": f"run-{run_id}",
             "is_error": getattr(message, "is_error", False),
@@ -1908,6 +1986,8 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
             with open(stream_log_path, "a") as log_file:
                 # Build options once — ClaudeSDKClient owns the session for
                 # the lifetime of `async with`, so resume tokens are unnecessary.
+                _run_complete_server = build_run_complete_server()
+
                 options = ClaudeAgentOptions(
                     cwd=workspace,
                     env={
@@ -1915,6 +1995,7 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
                         "GITHUB_REPO": repo,
                     },
                     mcp_servers={
+                        "run_complete": _run_complete_server,
                         "playwright": {
                             "type": "stdio",
                             "command": "npx",
@@ -1925,7 +2006,7 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
                             "url": "https://api.ref.tools/mcp",
                         },
                     },
-                    allowed_tools=["Read", "Bash", "Glob", "Grep", "Edit", "Write", "Agent", "mcp__playwright__*", "mcp__ref__*"],
+                    allowed_tools=["Read", "Bash", "Glob", "Grep", "Edit", "Write", "Agent", "mcp__playwright__*", "mcp__ref__*", "mcp__run_complete__RunComplete"],
                     max_turns=manager_turns,
                     model=manager_model,
                     agents=agents_dict,
@@ -2005,14 +2086,35 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
                                 await client.interrupt()
                                 break
 
-                            # Completion gate — still text-heuristic; #385 replaces it
-                            # with the structured RunComplete tool. The natural exit
-                            # of receive_response() handles the SDK-side teardown.
+                            # #385 primary completion gate: the lead called
+                            # the RunComplete tool. handle_stream_event
+                            # latched state.run_complete_payload; we exit
+                            # the iterator naturally.
+                            if stream_state.run_complete_payload is not None:
+                                work_complete = True
+                                logger.info(
+                                    "RunComplete tool received; breaking SDK stream"
+                                )
+                                break
+
+                            # Fallback (one release window) — _is_work_complete
+                            # prose match. Warning is fire-once-per-run on
+                            # ``stream_state.fallback_warning_logged`` so
+                            # long runs with multiple matches don't spam
+                            # the log; operators still see the signal once
+                            # per run, which is what triage needs.
                             if isinstance(message, ResultMessage):
                                 result_text = getattr(message, "result", "")
                                 if _is_work_complete(result_text):
+                                    if not stream_state.fallback_warning_logged:
+                                        logger.warning(
+                                            "RunComplete fallback engaged: lead did "
+                                            "not call the tool; relying on prose "
+                                            "match. Run: run-%s",
+                                            run_id,
+                                        )
+                                        stream_state.fallback_warning_logged = True
                                     work_complete = True
-                                    logger.info("Work-complete signal received")
                                     break
 
                         if control_flags["stop"]:
