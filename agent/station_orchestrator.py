@@ -1684,41 +1684,27 @@ def _synthesize_employee_report(
 
 # ── Main Orchestration ─────────────────────────────────────────
 
-async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
-    """Run the Agent Teams orchestration for all configured projects."""
-    projects = config.get("projects", [])
+
+async def orchestrate_project(
+    project: dict, config: dict, run_id: str, workspaces_dir: str,
+) -> tuple[int, "_StreamState | None"]:
+    """Run the Agent Teams session for a single project.
+
+    Returns ``(exit_code, stream_state)``. ``stream_state`` is ``None`` if
+    the project short-circuited before the orchestrator session began
+    (no eligible issues, workspace error, etc.). Callers use the returned
+    state for telemetry aggregation — see :class:`RunDriver._finalize_telemetry`.
+
+    Extracted from orchestrate() in #383 so iterate_projects (Python-only)
+    can drive per-project work directly without delegating the outer loop
+    to bash. The tuple return supersedes the prior ``_LAST_STREAM_STATE``
+    module-global hand-off so concurrent or repeated calls cannot trample
+    each other's telemetry.
+    """
     max_per_project = get_limit(config, "max_employees_per_project", 3)
     manager_model = get_model(config, "manager", "claude-sonnet-4-6")
     manager_turns = get_limit(config, "max_manager_turns", 30)
-
-    # Issue #268: When no projects are configured (or every project is
-    # disabled), the per-project loop below silently no-ops. The bash
-    # launcher's EXIT trap eventually fires ``run_complete``, but in
-    # historical runs we've seen the placeholder Run row stranded with
-    # ``status='unknown'`` because the importer ingested its stream file
-    # before the launcher's terminal webhook landed. Emit an explicit
-    # ``finished`` webhook here so the dashboard always sees a terminal
-    # transition originating from the orchestrator itself.
-    #
-    # ``mode`` is intentionally omitted: the per-run mode comes from the
-    # specific project being processed (issue #266), and there is no
-    # project context here. ``handle_finished`` in the dashboard tolerates
-    # a missing/null mode (preserves whatever was already on the row).
-    enabled_projects = [p for p in projects if p.get("enabled", True)]
-    skipped = [p.get("repo", "<unnamed>") for p in projects if not p.get("enabled", True)]
-    for repo in skipped:
-        logger.info("Skipping disabled project: %s", repo)
-    if not enabled_projects:
-        logger.info(
-            "No enabled projects configured; emitting run_complete for run-%s",
-            run_id,
-        )
-        post_webhook(config, "finished", {
-            "run_id": f"run-{run_id}",
-            "status": "completed",
-            "skip_reason": "no-projects-configured",
-        })
-        return 0
+    max_reentries = 6  # Up to 6 re-entries if lead exits prematurely
 
     # Load issue-worker agent definition for SDK discovery
     agent_dir = Path(__file__).parent / "agents"
@@ -1740,14 +1726,8 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
             logger.warning("Failed to load agent definition %s: %s", worker_file, e)
 
     exit_code = 0
-    max_reentries = 6  # Up to 6 re-entries if lead exits prematurely
 
-    # Iterate the pre-filtered list so disabled projects are never picked
-    # up (issue #268 follow-up): the original ``projects`` list still
-    # contained the disabled entries, so a config with a mix of enabled +
-    # disabled projects was at risk of regressing if a future edit dropped
-    # the per-iteration ``enabled`` guard.
-    for project in enabled_projects:
+    if True:  # single-project body (formerly the `for project in enabled_projects:` loop body) noqa
         repo = project["repo"]
         repo_name = repo.split("/")[-1] if "/" in repo else repo
         workspace = os.path.join(workspaces_dir, repo_name)
@@ -1836,7 +1816,10 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
                 workspace=workspace,
                 run_id=run_id,
             )
-            continue
+            # No issues: clean exit. ``stream_state`` is uninitialised here
+            # because the orchestrator session never started — return None so
+            # telemetry aggregation in the caller can skip this project.
+            return exit_code, None
 
         # Hook 1: vision-aware prioritisation
         vision = load_vision(workspace)
@@ -2235,6 +2218,41 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
                         repo, exc,
                     )
 
+    return exit_code, stream_state
+
+
+async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
+    """Outer driver: iterate over enabled projects, run each one in sequence.
+
+    Delegates per-project work to orchestrate_project() (#383 extraction).
+    """
+    projects = config.get("projects", [])
+    enabled_projects = [p for p in projects if p.get("enabled", True)]
+    skipped = [p.get("repo", "<unnamed>") for p in projects if not p.get("enabled", True)]
+    for repo in skipped:
+        logger.info("Skipping disabled project: %s", repo)
+    if not enabled_projects:
+        logger.info(
+            "No enabled projects configured; emitting run_complete for run-%s",
+            run_id,
+        )
+        post_webhook(config, "finished", {
+            "run_id": f"run-{run_id}",
+            "status": "completed",
+            "skip_reason": "no-projects-configured",
+        })
+        return 0
+
+    exit_code = 0
+    for project in enabled_projects:
+        # orchestrate_project now returns (exit_code, stream_state); the
+        # legacy `orchestrate()` driver only cares about the exit code,
+        # discards the state.
+        proj_rc, _state = await orchestrate_project(
+            project, config, run_id, workspaces_dir,
+        )
+        if proj_rc != 0:
+            exit_code = proj_rc
     return exit_code
 
 
@@ -2331,24 +2349,17 @@ class RunDriver:
         # caller passed the raw timestamp without the prefix.
         return self.run_id if self.run_id.startswith("run-") else f"run-{self.run_id}"
 
-    def _read_bash_telemetry(self) -> None:
-        path = Path(self._log_dir) / f"run-{self._clean_id}-telemetry.json"
-        try:
-            data = json.loads(path.read_text())
-        except FileNotFoundError:
-            return
-        except (OSError, json.JSONDecodeError) as exc:
-            logger.warning("RunDriver: telemetry dump unreadable at %s (%s) — "
-                           "tokens/turns will be zero", path, exc)
-            return
-        for key in ("tokens_input", "tokens_output", "tokens_total", "turns"):
-            value = data.get(key)
-            if value is None:
-                continue
-            try:
-                setattr(self.telemetry, key, int(value))
-            except (TypeError, ValueError):
-                pass
+    def _finalize_telemetry(self, stream_state) -> None:
+        """Copy in-process counters from the orchestrator's stream state.
+
+        Replaces the bash telemetry JSON hand-off after #383. iterate_projects
+        is responsible for passing its accumulated _StreamState here in its
+        return path; if it doesn't, counters remain at zero.
+        """
+        self.telemetry.tokens_input = int(getattr(stream_state, "tokens_in", 0) or 0)
+        self.telemetry.tokens_output = int(getattr(stream_state, "tokens_out", 0) or 0)
+        self.telemetry.tokens_total = self.telemetry.tokens_input + self.telemetry.tokens_output
+        self.telemetry.turns = int(getattr(stream_state, "turns", 0) or 0)
 
     def _install_signal_handlers(self) -> tuple:
         """Map SIGTERM → KeyboardInterrupt so reaper/launcher /stop calls
@@ -2420,10 +2431,11 @@ class RunDriver:
         status = "completed"
         exit_code = 0
         error: str | None = None
+        last_state = None
 
         try:
             from agent.project_loop import iterate_projects
-            exit_code = iterate_projects(
+            exit_code, last_state = iterate_projects(
                 self.run_id, self.config_path, self.workspaces_dir,
             )
             if exit_code == 130:
@@ -2440,7 +2452,12 @@ class RunDriver:
             exit_code = 1
             error = f"{type(e).__name__}: {e}"
         finally:
-            self._read_bash_telemetry()
+            # Telemetry is threaded through iterate_projects's tuple return
+            # (last_state). _finalize_telemetry tolerates None — the
+            # iterate_projects exception paths leave last_state at its
+            # initialiser.
+            if last_state is not None:
+                self._finalize_telemetry(last_state)
             self._emit_run_complete(status=status, exit_code=exit_code, error=error)
 
         return exit_code

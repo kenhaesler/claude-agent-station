@@ -2,8 +2,9 @@
 
 The dashboard cannot reach systemd from inside its own container, so when
 running under compose it POSTs to this small FastAPI service to start a run.
-The launcher spawns ``run-manager.sh`` as a detached subprocess and returns
-immediately — same fire-and-forget shape as ``systemctl start``.
+The launcher spawns ``python -m agent.station_orchestrator --driver`` as a
+detached subprocess and returns immediately — same fire-and-forget shape as
+``systemctl start``.
 
 On bare-metal systemd deployments this process is unused; ``trigger_run``
 falls back to systemctl when ``STATION_DEPLOY_MODE`` is ``systemd`` (the
@@ -31,17 +32,9 @@ from pydantic import BaseModel
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
-RUN_MANAGER = Path(os.environ.get("STATION_RUN_MANAGER", "/app/agent/scripts/run-manager.sh"))
 LOG_DIR = Path(os.environ.get("STATION_LOG_DIR", "/var/log/claude-agent"))
 WORKDIR = os.environ.get("STATION_WORKDIR", "/app")
-# #361: launcher spawns python -m agent.station_orchestrator --driver by
-# default. Set STATION_LAUNCHER_USE_BASH=1 to fall back to the legacy bash
-# entry point — panic-revert escape hatch, intended to be removed after one
-# release cycle has confirmed the Python driver path is stable.
-USE_BASH_LAUNCHER = os.environ.get("STATION_LAUNCHER_USE_BASH", "") == "1"
-# Config + workspaces paths the Python driver needs as CLI args. The bash
-# read these from env directly (STATION_CONFIG, STATION_WORKSPACES); the
-# launcher now forwards them explicitly so the driver argparse is happy.
+# Config + workspaces paths the Python driver needs as CLI args.
 STATION_CONFIG = os.environ.get(
     "STATION_CONFIG", "/home/claude-agent/.claude/autonomous/manager-config.json"
 )
@@ -294,13 +287,9 @@ class RunHint(BaseModel):
 def _spawn_run_manager(hint_run_id: str | None = None) -> dict:
     """Fork the orchestrator detached and return immediately.
 
-    Default entry point is ``python3 -m agent.station_orchestrator --driver``
-    (#361). The legacy ``run-manager.sh`` path is retained behind
-    ``STATION_LAUNCHER_USE_BASH=1`` as a panic-revert escape hatch for one
-    release cycle.
+    Spawns ``python -m agent.station_orchestrator --driver`` (#361/#383).
 
-    ``hint_run_id`` is propagated as ``STATION_RUN_ID_OVERRIDE`` (bash path)
-    or as ``--run-id`` (Python path) so whichever entry point adopts the
+    ``hint_run_id`` is propagated as ``--run-id`` so the driver adopts the
     pre-allocated run_id from the dashboard instead of minting its own.
     """
     global _current, _last_webhook_at
@@ -309,12 +298,6 @@ def _spawn_run_manager(hint_run_id: str | None = None) -> dict:
         raise HTTPException(
             status_code=409,
             detail=f"A run is already in progress (pid={_current.pid})",
-        )
-
-    if USE_BASH_LAUNCHER and not RUN_MANAGER.is_file():
-        raise HTTPException(
-            status_code=500,
-            detail=f"run-manager.sh not found at {RUN_MANAGER}",
         )
 
     # Fetch GH_TOKEN from the dashboard. Best-effort — never fail the run
@@ -338,20 +321,15 @@ def _spawn_run_manager(hint_run_id: str | None = None) -> dict:
     # longer.
     env.setdefault("CLAUDE_CODE_STREAM_CLOSE_TIMEOUT", "1800000")
 
-    # Propagate the pre-allocated run_id hint so run-manager.sh adopts it
-    # via STATION_RUN_ID_OVERRIDE, converging on the placeholder row the
-    # dashboard already inserted.
+    # Propagate the pre-allocated run_id hint, converging on the placeholder
+    # row the dashboard already inserted.
     if hint_run_id:
         env["STATION_RUN_ID_OVERRIDE"] = hint_run_id
 
     LOG_DIR.mkdir(parents=True, exist_ok=True)
-    # Per-run log file: matches the path run-manager.sh advertises in its
-    # run_start webhook (LOG_DIR/run-<RUN_ID>.log). Previously we wrote
-    # the subprocess's stdout/stderr to a shared launcher.out and the
-    # advertised per-run path was a phantom — the dashboard's "Run Log"
-    # tab surfaced {"error": "File not found: …"}. Falls back to
-    # launcher.out when no run_id hint is available (legacy systemd
-    # callers).
+    # Per-run log file: matches the path the driver advertises in its
+    # run_start webhook (LOG_DIR/run-<RUN_ID>.log). Falls back to
+    # launcher.out when no run_id hint is available (legacy systemd callers).
     if hint_run_id:
         run_id_clean = hint_run_id.removeprefix("run-")
         log_path = LOG_DIR / f"run-{run_id_clean}.log"
@@ -359,31 +337,22 @@ def _spawn_run_manager(hint_run_id: str | None = None) -> dict:
         log_path = LOG_DIR / "launcher.out"
     log_fh = log_path.open("ab")
 
-    # #361: production path is the Python driver. The legacy bash entry
-    # point is retained behind STATION_LAUNCHER_USE_BASH=1 for one release
-    # as a panic-revert escape hatch.
-    if USE_BASH_LAUNCHER:
-        cmd = ["bash", str(RUN_MANAGER)]
-        entry_kind = "run-manager.sh (legacy bash)"
-    else:
-        # The driver argparse requires --run-id; if no hint was supplied we
-        # mint one here so it lines up with the (legacy) bash fallback,
-        # which also generates a timestamp run_id when STATION_RUN_ID_OVERRIDE
-        # is empty.
-        driver_run_id = hint_run_id or "run-" + datetime.now(timezone.utc).strftime(
-            "%Y%m%dT%H%M%SZ"
-        )
-        cmd = [
-            sys.executable, "-m", "agent.station_orchestrator",
-            "--driver",
-            "--run-id", driver_run_id,
-            "--config", STATION_CONFIG,
-            "--workspaces-dir", STATION_WORKSPACES,
-        ]
-        entry_kind = "agent.station_orchestrator --driver"
-        # Make the launcher's base URL discoverable so the embedded webhook
-        # emitter can ping /webhook-tick from the driver process.
-        env.setdefault("STATION_AGENT_LAUNCHER_URL", "http://localhost:8421")
+    # The driver argparse requires --run-id; if no hint was supplied we
+    # mint one here.
+    driver_run_id = hint_run_id or "run-" + datetime.now(timezone.utc).strftime(
+        "%Y%m%dT%H%M%SZ"
+    )
+    cmd = [
+        sys.executable, "-m", "agent.station_orchestrator",
+        "--driver",
+        "--run-id", driver_run_id,
+        "--config", STATION_CONFIG,
+        "--workspaces-dir", STATION_WORKSPACES,
+    ]
+    entry_kind = "station_orchestrator --driver (python)"
+    # Make the launcher's base URL discoverable so the embedded webhook
+    # emitter can ping /webhook-tick from the driver process.
+    env.setdefault("STATION_AGENT_LAUNCHER_URL", "http://localhost:8421")
 
     _current = subprocess.Popen(
         cmd,
@@ -409,12 +378,11 @@ def trigger(
     body: RunHint | None = None,
     x_launcher_token: str | None = Header(default=None),
 ) -> dict:
-    """Spawn run-manager.sh detached. Returns once the process is forked.
+    """Spawn the Python orchestrator driver detached. Returns once the process is forked.
 
     Accepts an optional JSON body ``{"hint_run_id": "run-..."}`` which is
-    propagated to run-manager.sh as ``STATION_RUN_ID_OVERRIDE`` so the
-    script adopts the pre-allocated run_id from the dashboard's placeholder
-    row instead of generating its own timestamp-based id.
+    propagated as ``--run-id`` so the driver adopts the pre-allocated run_id
+    from the dashboard's placeholder row instead of generating its own id.
 
     Before spawning, fetch a fresh GitHub App installation token from the
     dashboard and export it as GH_TOKEN in the subprocess env. Lets the

@@ -22,7 +22,7 @@ must break the inner async-for loop so the session exits.
 from __future__ import annotations
 
 import inspect
-from agent.station_orchestrator import orchestrate
+from agent.station_orchestrator import orchestrate_project
 
 
 def test_inner_stream_loop_breaks_on_work_complete():
@@ -31,17 +31,17 @@ def test_inner_stream_loop_breaks_on_work_complete():
     assignment. Without it, the orchestrator hangs after the lead
     is done.
     """
-    src = inspect.getsource(orchestrate)
+    src = inspect.getsource(orchestrate_project)
     # Locate the work-complete check and confirm a break follows
     # before the next outer-loop control flow.
     idx = src.find("work_complete = True")
-    assert idx != -1, "work_complete = True assignment missing from orchestrate()"
+    assert idx != -1, "work_complete = True assignment missing from orchestrate_project()"
     # Take the 200 chars following the assignment — the break must
     # appear there, NOT later (where it would only break the outer loop).
     tail = src[idx:idx + 400]
     assert "break" in tail, (
         f"`break` statement missing after `work_complete = True`. "
-        f"Without it, the inner async-for in orchestrate() never exits "
+        f"Without it, the inner async-for in orchestrate_project() never exits "
         f"once stdin stays open (post #381) and the orchestrator process "
         f"hangs until the zombie reaper SIGTERMs the bash child. "
         f"See run-20260512T213225Z. Snippet:\n{tail}"
@@ -54,11 +54,11 @@ def test_outer_loop_still_breaks_on_work_complete():
     flow control from before #381 and should be preserved as a
     belt-and-suspenders.
     """
-    src = inspect.getsource(orchestrate)
+    src = inspect.getsource(orchestrate_project)
     # Find the outer-loop work_complete check
     outer_check = "if work_complete:"
     assert outer_check in src, (
-        "outer-loop `if work_complete:` block missing from orchestrate()"
+        "outer-loop `if work_complete:` block missing from orchestrate_project()"
     )
     # The lines after that check must include `break`
     idx = src.find(outer_check)

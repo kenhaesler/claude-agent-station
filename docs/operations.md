@@ -9,7 +9,7 @@ Five systemd units run the system:
 | Unit | Purpose |
 |------|---------|
 | `claude-station-dashboard.service` | FastAPI dashboard backend (port 8420) |
-| `claude-agent.service` | One-shot agent run — executes `run-manager.sh` |
+| `claude-agent.service` | One-shot agent run — executes `python -m agent.station_orchestrator --driver` |
 | `claude-agent.timer` | Fires `claude-agent.service` every hour (`:00`) |
 | `claude-agent-validate.service` | One-shot validate-and-promote run via `promote.sh` |
 | `claude-agent-validate.timer` | Fires `claude-agent-validate.service` daily at 06:00 |

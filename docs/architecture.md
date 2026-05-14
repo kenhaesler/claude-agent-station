@@ -68,7 +68,6 @@ claude-agent-station/
 │   │   ├── vision_create.md        # Vision creation prompt
 │   │   └── vision_refine.md        # Vision refinement prompt
 │   ├── scripts/
-│   │   ├── run-manager.sh          # Entry point + manager review phase
 │   │   ├── circuit-breaker.sh      # Failure tracking (3-strike rule)
 │   │   ├── detect_plan_usage.py    # Claude plan usage detection
 │   │   ├── integration-branch.sh   # Integration branch management
@@ -125,7 +124,7 @@ claude-agent-station/
 │   │   │   │   ├── runs.py         # Run history, diffs, triggers
 │   │   │   │   ├── system.py       # systemd + auth status
 │   │   │   │   ├── vision.py       # Vision chat sessions
-│   │   │   │   └── webhook.py      # Run event ingest from run-manager.sh
+│   │   │   │   └── webhook.py      # Run event ingest from station_orchestrator
 │   │   │   └── services/           # Business logic
 │   │   │       ├── adapters/       # Notifier adapters (Slack, Discord, …)
 │   │   │       ├── adaptive_scheduler.py   # Dynamic scheduling
@@ -317,7 +316,7 @@ review-criteria branching.
 
 The `plan_only` mode adds a manual checkpoint between plan-writing and
 implementation. The gate is implemented by `agent/plan_review_gate.py`
-and invoked by `agent/scripts/run-manager.sh` after the manager review
+and invoked by `agent/iterate_projects` after the manager review
 phase. Run-status transitions are driven by webhook events handled in
 `app/services/run_lifecycle.py`.
 
@@ -325,13 +324,13 @@ phase. Run-status transitions are driven by webhook events handled in
 plan_only employee writes plan
    │  (Run.status = running)
    ▼
-run-manager.sh emits plan_review_start
+iterate_projects emits plan_review_start
    │  (Run.status = plan_reviewing)
    ▼
 manager reviews plan → run-<id>-verdicts.json
    │
    ▼
-run-manager.sh: python -m agent.plan_review_gate
+iterate_projects: python -m agent.plan_review_gate
    │  emits awaiting_plan_review
    │  (Run.status = awaiting_plan_review)
    │
@@ -371,8 +370,7 @@ These are hardlinked, so changes in either path are immediately visible at the o
 
 The venv at `<project-root>/venv/` (Python 3.12) is shared across both paths. Scripts reference it via relative paths:
 
-- `run-manager.sh`: `$agent_dir/../venv/bin/python3`
-- `station_orchestrator.py`: invoked via the same venv python
+- `station_orchestrator.py`: invoked via the same venv python (`$agent_dir/../venv/bin/python3`)
 - systemd dashboard service: `<project-root>/venv/bin/uvicorn`
 
 This resolution is consistent because the hardlink ensures both paths resolve to the same physical venv.

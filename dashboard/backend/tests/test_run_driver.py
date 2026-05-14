@@ -10,7 +10,7 @@ def test_run_driver_emits_run_start_then_run_complete_on_success():
     via webhook_emitter, replacing the bash EXIT-trap construct."""
     from agent.station_orchestrator import RunDriver
     with patch("agent.station_orchestrator.emit") as mock_emit, \
-         patch("agent.project_loop.iterate_projects", return_value=0):
+         patch("agent.project_loop.iterate_projects", return_value=(0, None)):
         driver = RunDriver(run_id="run-driver-1",
                            config_path="/tmp/cfg.json",
                            workspaces_dir="/tmp/ws")
@@ -47,7 +47,7 @@ def test_run_driver_emits_run_complete_even_on_exception():
 def test_run_driver_emits_run_complete_with_completed_status_on_success():
     from agent.station_orchestrator import RunDriver
     with patch("agent.station_orchestrator.emit") as mock_emit, \
-         patch("agent.project_loop.iterate_projects", return_value=0):
+         patch("agent.project_loop.iterate_projects", return_value=(0, None)):
         driver = RunDriver(run_id="run-driver-3",
                            config_path="/tmp/cfg.json",
                            workspaces_dir="/tmp/ws")

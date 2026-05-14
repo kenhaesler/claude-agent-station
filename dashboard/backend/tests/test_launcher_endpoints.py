@@ -121,62 +121,6 @@ def test_stop_auth_check_precedes_state_check(monkeypatch):
     assert _FakePopen.terminated is False  # we did NOT reach terminate()
 
 
-def test_run_passes_gh_token_via_env_when_dashboard_provides_one(monkeypatch, tmp_path):
-    """The launcher fetches a fresh installation token from the dashboard
-    before spawning the entry point and exports it as GH_TOKEN.
-
-    Exercises the bash panic-revert path (#361 retains
-    STATION_LAUNCHER_USE_BASH=1 for one release as an escape hatch). A
-    parallel test below exercises the new Python driver default.
-    """
-    monkeypatch.setenv("STATION_LAUNCHER_TOKEN", "")
-    monkeypatch.setenv("STATION_LAUNCHER_USE_BASH", "1")
-    # Provide a fake script that just records its env to a file
-    sentinel = tmp_path / "env.out"
-    fake_script = tmp_path / "fake-run-manager.sh"
-    fake_script.write_text(f"""#!/bin/bash
-env | grep '^GH_TOKEN=' > {sentinel}
-""")
-    fake_script.chmod(0o755)
-    monkeypatch.setenv("STATION_RUN_MANAGER", str(fake_script))
-    monkeypatch.setenv("STATION_DASHBOARD_BASE_URL", "http://test")
-    monkeypatch.setenv("STATION_LOG_DIR", str(tmp_path / "logs"))
-    monkeypatch.setenv("STATION_WORKDIR", str(tmp_path))
-
-    # Mock the dashboard's /api/github/app/token to return a fixed token
-    import respx
-    import importlib
-
-    import agent.launcher as launcher_mod
-    importlib.reload(launcher_mod)
-
-    from fastapi.testclient import TestClient
-    client = TestClient(launcher_mod.app)
-
-    with respx.mock() as mock:
-        mock.get("http://test/api/github/app/token").respond(
-            200, json={"token": "ghs_test_inject"},
-        )
-        resp = client.post("/run")
-
-    assert resp.status_code == 200
-
-    # Block until the spawned subprocess actually exits — the launcher keeps
-    # the Popen handle on the module global. Polling on `sentinel.exists()`
-    # is racy because bash's `>` redirection creates an empty file the
-    # instant the pipeline starts, well before `env | grep` writes content.
-    import subprocess
-    spawned = launcher_mod._current
-    assert spawned is not None, "launcher did not record a subprocess"
-    try:
-        spawned.wait(timeout=5)
-    except subprocess.TimeoutExpired as exc:
-        spawned.kill()
-        raise AssertionError(f"spawned script did not exit within 5s: {exc}")
-
-    assert sentinel.exists(), "spawned script never ran"
-    assert "GH_TOKEN=ghs_test_inject" in sentinel.read_text()
-
 
 def test_run_default_spawns_python_driver_with_required_args(monkeypatch, tmp_path):
     """#361: by default the launcher spawns ``python3 -m agent.station_orchestrator
@@ -228,42 +172,3 @@ def test_run_default_spawns_python_driver_with_required_args(monkeypatch, tmp_pa
     assert "STATION_AGENT_LAUNCHER_URL" in recorded["env"]
 
 
-def test_run_with_panic_revert_flag_still_spawns_bash(monkeypatch, tmp_path):
-    """STATION_LAUNCHER_USE_BASH=1 keeps the legacy bash path alive for
-    one release as a panic-revert escape hatch.
-    """
-    monkeypatch.setenv("STATION_LAUNCHER_TOKEN", "")
-    monkeypatch.setenv("STATION_LAUNCHER_USE_BASH", "1")
-    fake_script = tmp_path / "fake.sh"
-    fake_script.write_text("#!/bin/bash\nexit 0\n")
-    fake_script.chmod(0o755)
-    monkeypatch.setenv("STATION_RUN_MANAGER", str(fake_script))
-    monkeypatch.setenv("STATION_DASHBOARD_BASE_URL", "http://test")
-    monkeypatch.setenv("STATION_LOG_DIR", str(tmp_path / "logs"))
-    monkeypatch.setenv("STATION_WORKDIR", str(tmp_path))
-
-    import importlib
-
-    import agent.launcher as launcher_mod
-    importlib.reload(launcher_mod)
-
-    recorded: dict = {}
-
-    class _FakeProc:
-        pid = 8888
-        def poll(self):
-            return None
-
-    def _record_popen(cmd, **kwargs):
-        recorded["cmd"] = cmd
-        return _FakeProc()
-
-    monkeypatch.setattr(launcher_mod.subprocess, "Popen", _record_popen)
-
-    from fastapi.testclient import TestClient
-    client = TestClient(launcher_mod.app)
-    resp = client.post("/run")
-
-    assert resp.status_code == 200
-    assert recorded["cmd"][0] == "bash"
-    assert str(fake_script) in recorded["cmd"]

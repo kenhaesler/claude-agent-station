@@ -342,21 +342,26 @@ def test_orchestrator_module_does_not_import_query():
 
 
 def test_orchestrate_loop_uses_async_with_clientsdkclient():
-    """Source-level assertion that the orchestrate body opens the client via async with."""
+    """Source-level assertion that the per-project orchestration opens the client via async with.
+
+    After #383, the SDK client is opened in orchestrate_project (extracted
+    from orchestrate's loop body). orchestrate() now delegates to
+    orchestrate_project() so the assertions move there.
+    """
     import inspect
-    from agent.station_orchestrator import orchestrate
-    src = inspect.getsource(orchestrate)
+    from agent.station_orchestrator import orchestrate_project
+    src = inspect.getsource(orchestrate_project)
     assert "async with ClaudeSDKClient" in src, (
-        "orchestrate must enter ClaudeSDKClient via async with (issue #384)"
+        "orchestrate_project must enter ClaudeSDKClient via async with (issue #384)"
     )
     assert "client.receive_response()" in src, (
-        "orchestrate must consume replies via client.receive_response() (issue #384)"
+        "orchestrate_project must consume replies via client.receive_response() (issue #384)"
     )
     assert "client.query(" in src, (
-        "orchestrate must send prompts via client.query(...) (issue #384)"
+        "orchestrate_project must send prompts via client.query(...) (issue #384)"
     )
     assert "_user_prompt_stream" not in src, (
-        "orchestrate must no longer reference _user_prompt_stream"
+        "orchestrate_project must no longer reference _user_prompt_stream"
     )
 
 

@@ -12,7 +12,7 @@ Three roles, each running a different model:
 | Teammates | `claude-opus-4-7` | Three role specialists per run; each works in its own git worktree on the tasks routed to its specialty — reads code, plans, implements, tests, commits locally |
 | Manager | `claude-sonnet-4-6` | Reviews all teammate work post-completion and issues a verdict |
 
-The lead and teammates run inside a single Claude Agent SDK Agent Teams session driven by `agent/station_orchestrator.py`. The manager is a separate review pass invoked by `agent/scripts/run-manager.sh` after teammates finish.
+The lead and teammates run inside a single Claude Agent SDK Agent Teams session driven by `agent/station_orchestrator.py`. The manager is a separate review pass invoked by `agent/manager_review.py` (via `iterate_projects`) after teammates finish.
 
 ## Verdicts
 
@@ -44,7 +44,7 @@ This sequencing prevents two teammates from racing into incompatible changes.
 
 ## Plan-usage throttling
 
-Claude usage is bounded by the active plan tier. The system tracks weekly token consumption in the `plan_usage_history` table and exposes a throttle decision via the dashboard API. When weekly usage (or any single model's usage) crosses the configured threshold, `run-manager.sh` short-circuits before launching a new run rather than starting work it cannot finish. Independent of throttling, every Claude invocation passes a `--fallback-model` to the SDK so primary-model errors don't kill the run: Opus 4.7 falls back to Sonnet 4.6, and Sonnet 4.6 falls back to Haiku 4.5. The dashboard surfaces current usage and the active throttle state on the Command Center page.
+Claude usage is bounded by the active plan tier. The system tracks weekly token consumption in the `plan_usage_history` table and exposes a throttle decision via the dashboard API. When weekly usage (or any single model's usage) crosses the configured threshold, `agent/preflight.py` short-circuits before launching a new run rather than starting work it cannot finish. Independent of throttling, every Claude invocation passes a `--fallback-model` to the SDK so primary-model errors don't kill the run: Opus 4.7 falls back to Sonnet 4.6, and Sonnet 4.6 falls back to Haiku 4.5. The dashboard surfaces current usage and the active throttle state on the Command Center page.
 
 ## Audit log
 
