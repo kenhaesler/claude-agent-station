@@ -1,7 +1,22 @@
 #!/usr/bin/env bats
-# Tests for the APPROVE_INTEGRATION case arm in run-manager.sh (issue #388).
-# Stubs `gh`, `git`, `webhook_event`, and integration helpers so the case
-# block runs in isolation.
+# Contract test (source-grep, not executable) for the APPROVE_INTEGRATION
+# case arm in run-manager.sh (issue #388).
+#
+# This test verifies the STRUCTURE of the case arm by reading the source —
+# it does NOT execute the arm. Running the arm in isolation would require
+# sourcing run-manager.sh's globals + reproducing its dispatch loop, which
+# is out of scope for a smoke test. The `setup()` stubs below are scaffold
+# for a future execution-mode test; today they are unused.
+#
+# What this catches:
+#   - The case arm is present at all
+#   - The arm contains git push, gh pr create (non-draft), gh pr merge
+#     --auto --squash, webhook_event "verdict_execute"
+#
+# What this does NOT catch:
+#   - Variable substitution / quoting bugs in the arm body
+#   - Order of operations
+#   - Behaviour under failure paths (no execution)
 
 setup() {
     export TMPDIR_RUN="$(mktemp -d)"

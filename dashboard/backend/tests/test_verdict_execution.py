@@ -400,7 +400,7 @@ def test_execute_approve_integration_degrades_when_dev_branch_missing(tmp_path, 
     )
 
     with patch("agent.verdict_execution.execute_approve") as approve_mock, \
-         caplog.at_level("WARNING"):
+         caplog.at_level("WARNING", logger="agent.verdict_execution"):
         approve_mock.return_value = ExecutionResult(
             verdict="APPROVE",
             project=verdict.project,

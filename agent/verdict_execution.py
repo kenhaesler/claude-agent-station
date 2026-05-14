@@ -321,6 +321,10 @@ def execute_approve_integration(
             "degrading to APPROVE",
             verdict.project,
         )
+        # Intentionally re-passes only the kwargs execute_approve accepts.
+        # If the dispatcher gains new kwargs in the future, they are not
+        # forwarded here — degradation drops them on purpose so we don't
+        # surface APPROVE_INTEGRATION-specific options through APPROVE.
         return execute_approve(
             verdict, workspace=workspace, run_id=run_id, env=env,
         )
