@@ -261,22 +261,26 @@ def test_canonical_manager_prompt_reflects_sibling_context():
     assert "sibling" in text.lower() or "agent teams" in text.lower()
 
 
-def test_handle_stream_event_accumulates_manager_tokens_via_assistantmessage():
+@pytest.mark.asyncio
+async def test_handle_stream_event_accumulates_manager_tokens_via_assistantmessage():
     """The manager's AssistantMessage.usage must flow through the same
     state.tokens_in / state.tokens_out the lead and teammates already use.
+
+    ``handle_stream_event`` became ``async`` in #389 (inline audit
+    moved sqlite3 writes off the event loop via asyncio.to_thread).
+    This test was added in #390 before #389's async conversion landed
+    on the same branch — after both merged, the synchronous call here
+    was a RuntimeWarning + a tokens_in=0 assertion failure. Awaiting
+    the coroutine restores the contract.
     """
     from agent import station_orchestrator as so
     from claude_agent_sdk.types import AssistantMessage
 
     msg = AssistantMessage(content=[], model="claude-sonnet-4-6")
-    try:
-        msg.usage = {"input_tokens": 100, "output_tokens": 50}
-    except AttributeError:
-        msg.usage = {"input_tokens": 100, "output_tokens": 50}
+    msg.usage = {"input_tokens": 100, "output_tokens": 50}
 
     state = so._StreamState()
-    # handle_stream_event is synchronous (not async)
-    so.handle_stream_event(msg, {"webhook_url": ""}, "test", state=state)
+    await so.handle_stream_event(msg, {"webhook_url": ""}, "test", state=state)
     assert state.tokens_in == 100
     assert state.tokens_out == 50
 
