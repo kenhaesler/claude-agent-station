@@ -153,3 +153,31 @@ def test_orchestrator_builds_review_package_before_manager_spawn(tmp_path, monke
     assert out_path.is_file()
     assert "issue 1" in out_path.read_text(encoding="utf-8") \
         or "issue_number" in out_path.read_text(encoding="utf-8")
+
+
+def test_read_verdicts_file_returns_parsed_payload(tmp_path):
+    """The orchestrator must read and parse the manager's verdict file."""
+    from agent.station_orchestrator import _read_verdicts_file
+
+    p = tmp_path / "run-test-verdicts.json"
+    p.write_text(
+        '{"run_id":"run-test","verdicts":[{"project":"o/r","verdict":"APPROVE","branch":"b","issue_number":1}]}',
+        encoding="utf-8",
+    )
+    payload = _read_verdicts_file(p)
+    assert payload["verdicts"][0]["verdict"] == "APPROVE"
+
+
+def test_read_verdicts_file_returns_none_when_missing(tmp_path):
+    """Missing verdict file → return None so the caller can degrade."""
+    from agent.station_orchestrator import _read_verdicts_file
+    p = tmp_path / "missing.json"
+    assert _read_verdicts_file(p) is None
+
+
+def test_read_verdicts_file_returns_none_on_malformed_json(tmp_path):
+    """Malformed JSON → return None and log a warning."""
+    from agent.station_orchestrator import _read_verdicts_file
+    p = tmp_path / "bad.json"
+    p.write_text("not json", encoding="utf-8")
+    assert _read_verdicts_file(p) is None
