@@ -112,10 +112,16 @@ def test_lead_prompt_instructs_lead_to_spawn_manager(tmp_path):
     # Must reference the manager sibling explicitly.
     assert "manager" in prompt.lower()
     assert "spawn" in prompt.lower()
-    # Must include the verdicts file path the manager writes to.
-    assert "verdicts.json" in prompt
-    # Must include the review package path the manager reads from.
-    assert "review.md" in prompt or "review" in prompt.lower()
+    # #411: paths are no longer interpolated into the spawn prompt
+    # narrative — the manager Reads them from
+    # .claude-manager-paths.json. The prompt must mention the sidecar
+    # so the lead understands the mechanism. The literal verdicts /
+    # review-package paths are still present in the prompt's surrounding
+    # context (the orchestrator computes them), but the spawn-prompt
+    # block the lead passes to the manager does NOT embed them.
+    assert ".claude-manager-paths.json" in prompt
+    # Review package is still referenced in the orchestrator's framing.
+    assert "review package" in prompt.lower()
     # Must come AFTER the teammate-completion check (textually).
     spawn_idx = prompt.lower().find("spawn the `manager`")
     if spawn_idx < 0:
@@ -301,3 +307,112 @@ async def test_full_run_emits_no_manager_heartbeat_webhook(monkeypatch, tmp_path
     assert "manager_heartbeat" not in lifecycle_src, (
         "run_lifecycle must not special-case manager_heartbeat (#390)"
     )
+
+
+# --- #411: structured sidecar replaces markdown-prompt path injection ----
+
+
+def test_write_manager_paths_sidecar_writes_complete_payload(tmp_path):
+    """The sidecar carries paths + both deadlines so the manager has
+    everything it needs without parsing markdown.
+    """
+    import json
+    from agent.station_orchestrator import _write_manager_paths_sidecar, MANAGER_PATHS_SIDECAR
+
+    sidecar = _write_manager_paths_sidecar(
+        workspace=str(tmp_path),
+        review_package_path="/var/log/claude-agent/run-X-review.md",
+        verdicts_file_path="/var/log/claude-agent/run-X-verdicts.json",
+        hard_deadline_turns=60,
+    )
+
+    assert sidecar.name == MANAGER_PATHS_SIDECAR
+    payload = json.loads(sidecar.read_text())
+    assert payload["review_package"] == "/var/log/claude-agent/run-X-review.md"
+    assert payload["verdicts_file"] == "/var/log/claude-agent/run-X-verdicts.json"
+    assert payload["hard_deadline_turns"] == 60
+    # Soft deadline auto-derived as half of hard, with floor of 1.
+    assert payload["soft_deadline_turns"] == 30
+
+
+def test_write_manager_paths_sidecar_lands_in_workspace(tmp_path):
+    """Sidecar must land at ``{workspace}/.claude-manager-paths.json`` —
+    that's the path the manager's CWD will resolve when it Reads.
+    """
+    from agent.station_orchestrator import _write_manager_paths_sidecar, MANAGER_PATHS_SIDECAR
+
+    sidecar = _write_manager_paths_sidecar(
+        workspace=str(tmp_path),
+        review_package_path="/a",
+        verdicts_file_path="/b",
+        hard_deadline_turns=10,
+    )
+    expected = tmp_path / MANAGER_PATHS_SIDECAR
+    assert sidecar == expected
+    assert expected.is_file()
+
+
+def test_write_manager_paths_sidecar_clamps_soft_deadline_floor(tmp_path):
+    """``hard_deadline_turns=1`` must not produce ``soft=0``."""
+    import json
+    from agent.station_orchestrator import _write_manager_paths_sidecar
+
+    sidecar = _write_manager_paths_sidecar(
+        workspace=str(tmp_path),
+        review_package_path="/a",
+        verdicts_file_path="/b",
+        hard_deadline_turns=1,
+    )
+    payload = json.loads(sidecar.read_text())
+    assert payload["soft_deadline_turns"] >= 1
+
+
+def test_lead_prompt_does_not_interpolate_verdicts_path_into_spawn_block():
+    """#411: the lead's spawn-prompt block must no longer embed the literal
+    verdicts file path into the manager's prose; it points at the sidecar
+    instead. Pin this so a future revert can't silently re-introduce the
+    fragility.
+    """
+    from agent.station_orchestrator import build_team_prompt
+
+    verdicts_path = "/var/log/claude-agent/run-XYZ-verdicts.json"
+    prompt = build_team_prompt(
+        repo="owner/repo",
+        issues=[{"number": 1, "title": "t", "body": ""}],
+        config={"projects": []},
+        run_id="run-XYZ",
+        workspace="/tmp/ws",
+        worktree_paths={},
+        review_package_path="/var/log/claude-agent/run-XYZ-review.md",
+        verdicts_file_path=verdicts_path,
+        manager_max_turns=60,
+    )
+
+    # The spawn-prompt block the lead is asked to pass verbatim must not
+    # contain the literal verdicts path. The sidecar mechanism is the
+    # contract.
+    block_start = prompt.find("Pass this spawn prompt verbatim:")
+    assert block_start != -1, "manager spawn block missing"
+    spawn_block = prompt[block_start:prompt.find("2.", block_start)]
+    assert verdicts_path not in spawn_block, (
+        "spawn prompt must NOT embed the verdicts path — manager reads it "
+        "from .claude-manager-paths.json sidecar (#411)"
+    )
+    # And the section must mention the sidecar so the lead understands
+    # the mechanism.
+    assert ".claude-manager-paths.json" in prompt, (
+        "lead prompt must reference the sidecar by name (#411)"
+    )
+
+
+def test_manager_md_instructs_sibling_to_read_sidecar():
+    """manager.md must tell the sibling to Read .claude-manager-paths.json
+    on its first turn.
+    """
+    from pathlib import Path
+    repo = Path(__file__).resolve().parents[3]
+    text = (repo / "agent" / "agents" / "manager.md").read_text()
+    assert ".claude-manager-paths.json" in text, (
+        "manager.md must reference the sidecar (#411)"
+    )
+    assert "Read" in text, "manager.md must instruct sibling to Read the sidecar (#411)"

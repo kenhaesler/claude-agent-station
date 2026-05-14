@@ -854,6 +854,12 @@ most context.
 
     # Build the manager-spawn section (#390): inject only when the caller
     # provides both paths (unit tests / plan-only runs may omit them).
+    # #411 update: paths are no longer interpolated into the spawn prompt
+    # narrative. The orchestrator writes ``.claude-manager-paths.json``
+    # to the workspace before the session starts; the manager reads it
+    # on its own first turn (per its agent definition). This eliminates
+    # the markdown-parse failure mode that could send the manager to
+    # the wrong write path.
     manager_section = ""
     if review_package_path and verdicts_file_path:
         manager_section = f"""
@@ -862,34 +868,38 @@ most context.
 After every teammate has emitted `.claude-employee-report-<index>.json` (or
 the 20-minute timeout elapses with whichever reports exist), you MUST:
 
-1. Assemble the review package at `{review_package_path}` — concatenate every
-   teammate report and the diff summary. This is the manager's input.
-2. Spawn a `manager` sibling agent via the Agent tool. The manager is a
+1. Spawn a `manager` sibling agent via the Agent tool. The manager is a
    separate Agent Teams sibling — same SDK session, separate role/prompt/model.
-   Pass it the following spawn prompt verbatim, substituting the paths:
+   The orchestrator has already written `.claude-manager-paths.json` to
+   the workspace; the manager reads it on its first turn to discover where
+   to read the review package and where to write its verdicts. **You do not
+   need to interpolate paths into the spawn prompt.**
+
+   Pass this spawn prompt verbatim:
 
    ```
-   Review the employee work package at: {review_package_path}
-
-   Write your verdicts to: {verdicts_file_path}
-
-   Your hard turn budget for this review is {manager_max_turns}. Treat turn {manager_soft_deadline} as your soft
-   deadline to start drafting the verdicts file.
-
-   Read the review package file first, then evaluate each project's work
-   against the criteria in your system prompt. Be strict on completeness —
-   never approve partial implementations.
+   Read .claude-manager-paths.json from the current workspace to find
+   the review package and verdicts file paths plus your turn budget.
+   Then evaluate each project's work against your system-prompt criteria
+   and write the verdicts JSON to the path the sidecar names. Be strict
+   on completeness — never approve partial implementations.
    ```
 
+2. The orchestrator (Python) composes the review package contents and
+   writes the sidecar before your turn began. If the sidecar is missing
+   or the manager reports a parse error, surface it in your final summary
+   and end the turn — do not guess paths.
 3. **Do NOT attempt to review the work yourself.** You are the orchestrator;
    the manager is the quality gate. Spawn the manager and wait for it to
-   finish — when its turn ends, the verdicts file at `{verdicts_file_path}`
-   must exist and contain valid JSON.
+   finish — when its turn ends, the verdicts file must exist and contain
+   valid JSON at the path the orchestrator named.
 4. Only after the manager has written the verdicts file should you provide
    the final JSON summary and end your turn.
 
 Spawn the manager exactly once per run. Do not spawn additional manager
 siblings — the orchestrator only reads one verdicts file.
+
+Hard turn budget for the manager: {manager_max_turns}. Soft deadline: turn {manager_soft_deadline}.
 """
 
     vision_section = ""
@@ -1794,6 +1804,45 @@ def _ensure_review_package(
     return out
 
 
+MANAGER_PATHS_SIDECAR = ".claude-manager-paths.json"
+
+
+def _write_manager_paths_sidecar(
+    *,
+    workspace: str,
+    review_package_path: str,
+    verdicts_file_path: str,
+    hard_deadline_turns: int,
+) -> Path:
+    """Write the manager-sibling's path/budget sidecar to ``workspace``.
+
+    The orchestrator owns the path strings (it created them); the
+    manager sibling reads this sidecar on its first turn (per
+    ``agent/agents/manager.md``) to discover where to read the review
+    package and where to write the verdicts file. This replaces the
+    earlier mechanism where the lead's prompt interpolated the same
+    paths into a markdown narrative that the manager had to parse —
+    issue #411 follow-up to #390. A structured JSON file eliminates the
+    markdown-parse failure mode.
+
+    Returns the sidecar path. The sidecar is workspace-scoped because
+    the manager's CWD inside the SDK session is the workspace.
+    """
+    sidecar = Path(workspace) / MANAGER_PATHS_SIDECAR
+    payload = {
+        "review_package": review_package_path,
+        "verdicts_file": verdicts_file_path,
+        "hard_deadline_turns": int(hard_deadline_turns),
+        "soft_deadline_turns": max(1, int(hard_deadline_turns) // 2),
+    }
+    sidecar.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    logger.info(
+        "manager paths sidecar written: %s -> review=%s, verdicts=%s",
+        sidecar, review_package_path, verdicts_file_path,
+    )
+    return sidecar
+
+
 def _read_verdicts_file(path: Path) -> dict | None:
     """Read and parse the manager-produced verdicts JSON.
 
@@ -2201,6 +2250,23 @@ async def orchestrate_project(
                             _verdicts_path = os.path.join(
                                 log_dir, f"run-{run_id}-verdicts.json"
                             )
+                            # #411: write the structured paths sidecar to the
+                            # workspace BEFORE the lead's first turn so the
+                            # manager sibling can Read it on its own first
+                            # turn instead of parsing markdown narrative.
+                            try:
+                                _write_manager_paths_sidecar(
+                                    workspace=workspace,
+                                    review_package_path=_review_pkg_path,
+                                    verdicts_file_path=_verdicts_path,
+                                    hard_deadline_turns=manager_turns,
+                                )
+                            except Exception as exc:  # noqa: BLE001
+                                logger.warning(
+                                    "manager paths sidecar write failed for %s: %s "
+                                    "— manager will fall back to spawn-prompt paths",
+                                    repo, exc,
+                                )
                             prompt = build_team_prompt(
                                 repo, issues, config, run_id, workspace, worktree_paths,
                                 vision=vision, project_mode=project_mode,
