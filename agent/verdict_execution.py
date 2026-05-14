@@ -45,7 +45,13 @@ from agent.gh_client import gh_run
 
 logger = logging.getLogger(__name__)
 
-VerdictKind = Literal["APPROVE", "PR", "REJECT", "SKIP"]
+VerdictKind = Literal[
+    "APPROVE",              # Direct merge to base (today's APPROVE)
+    "APPROVE_INTEGRATION",  # Non-draft PR against integration branch + --auto --squash
+    "PR",                   # Draft PR for human review
+    "REJECT",
+    "SKIP",
+]
 
 
 @dataclass
@@ -293,8 +299,106 @@ def execute_skip(
     return result
 
 
+def execute_approve_integration(
+    verdict: Verdict,
+    *,
+    workspace: Path,
+    run_id: str | None = None,
+    env: dict[str, str] | None = None,
+    dev_branch: str | None = None,
+) -> ExecutionResult:
+    """Push the branch, open a non-draft PR against the integration/dev
+    branch, then arm GitHub auto-merge (``gh pr merge --auto --squash``).
+
+    If ``dev_branch`` is None or empty, the executor degrades to
+    :func:`execute_approve` with a warning — the manager should not have
+    emitted this verdict against a project without integration enabled,
+    but we accept rather than fail the run.
+    """
+    if not dev_branch:
+        logger.warning(
+            "APPROVE_INTEGRATION emitted without dev_branch for %s — "
+            "degrading to APPROVE",
+            verdict.project,
+        )
+        # Intentionally re-passes only the kwargs execute_approve accepts.
+        # If the dispatcher gains new kwargs in the future, they are not
+        # forwarded here — degradation drops them on purpose so we don't
+        # surface APPROVE_INTEGRATION-specific options through APPROVE.
+        return execute_approve(
+            verdict, workspace=workspace, run_id=run_id, env=env,
+        )
+
+    result = ExecutionResult(
+        verdict="APPROVE_INTEGRATION",
+        project=verdict.project,
+        issue_number=verdict.issue_number,
+        success=False,
+    )
+
+    # 1. git push -u origin <branch>
+    push = subprocess.run(
+        ["git", "push", "-u", "origin", verdict.branch],
+        cwd=str(workspace), capture_output=True, text=True, env=env,
+    )
+    if push.returncode != 0:
+        result.error = f"git push failed: {push.stderr.strip()[:200]}"
+        return result
+    result.with_action("git push")
+
+    # 2. gh pr create — NO --draft; base = integration/dev branch.
+    pr = gh_run(
+        [
+            "pr", "create",
+            "--repo", verdict.project,
+            "--head", verdict.branch,
+            "--base", dev_branch,
+            "--title", _pr_title(verdict),
+            "--body", _build_pr_body(verdict, run_id=run_id),
+        ],
+        env=env,
+    )
+    if not pr.ok:
+        result.error = f"gh pr create failed: {pr.stderr.strip()[:200]}"
+        return result
+    result.pr_url = pr.stdout.strip()
+    result.with_action(f"gh pr create (non-draft) → {result.pr_url}")
+
+    # 3. gh pr merge --auto --squash <pr_url>. Best-effort: a failure to
+    # arm auto-merge (e.g. branch protection misconfigured) does not
+    # invalidate the PR itself.
+    merge = gh_run(
+        [
+            "pr", "merge", "--auto", "--squash", result.pr_url,
+        ],
+        env=env,
+    )
+    if merge.ok:
+        result.with_action("gh pr merge --auto --squash")
+    else:
+        logger.warning(
+            "verdict_execution: auto-merge arm failed for %s: %s",
+            result.pr_url, merge.stderr.strip()[:200],
+        )
+        result.with_action(f"gh pr merge --auto failed: {merge.stderr.strip()[:80]}")
+
+    # 4. Issue comment (best-effort).
+    if verdict.issue_number is not None:
+        _post_issue_comment(
+            verdict,
+            body_prefix=(
+                f"## Manager verdict: APPROVE_INTEGRATION — "
+                f"auto-merge armed against `{dev_branch}`. CI gates merge."
+            ),
+            run_id=run_id, env=env, into=result,
+        )
+    result.success = True
+    return result
+
+
 _EXECUTORS = {
     "APPROVE": execute_approve,
+    "APPROVE_INTEGRATION": execute_approve_integration,
     "PR": execute_pr,
     "REJECT": execute_reject,
     "SKIP": execute_skip,

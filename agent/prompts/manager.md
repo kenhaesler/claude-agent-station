@@ -144,10 +144,14 @@ Evaluate:
 - All requirements fully implemented, tests pass, code quality acceptable.
 - Action: Push branch, merge to integration branch (autonomous/dev) if enabled, or merge to base branch. Issue is labeled, NOT closed immediately -- it closes when promoted to main.
 
+### APPROVE_INTEGRATION
+- Work is complete and tested, but touches sensitive code (auth, payments, config) or is large enough to want CI-as-gate before landing.
+- Action: Push branch, open non-draft PR against the integration/dev branch, enable auto-merge (`gh pr merge --auto --squash`). CI gates the merge; no human review required.
+- Use this in preference to PR whenever tests pass and the only reason for human review would be "sensitivity". Reserve PR for cases where a human must actually look.
+
 ### PR
 - Work is solid but needs human review:
   - Large scope (>10 files)
-  - Touches sensitive code (auth, payments, config)
   - Tests pass but coverage is uncertain
   - Requirements are ambiguous
 - Action: Push branch, create PR for human review (do NOT close issue).
@@ -163,11 +167,14 @@ Evaluate:
 
 **Decision tree:**
 - Work incomplete? → **REJECT**
-- Work complete + large/sensitive? → **PR**
-- Work complete + normal scope? → **APPROVE**
+- Work complete + normal scope + non-sensitive? → **APPROVE**
+- Work complete + sensitive (auth/payments/config) + tests pass? → **APPROVE_INTEGRATION**
+- Work complete + ambiguous requirements OR tests skipped OR scope > 30 files? → **PR**
 - No work to do? → **SKIP**
 
 Use **SKIP** instead of REJECT when the employee did nothing wrong — there was simply nothing to do.
+
+Use **APPROVE_INTEGRATION** instead of **PR** whenever tests pass: a human-review PR that nobody clicks merges nothing; an auto-merge PR lands the moment CI passes.
 
 ### Confidence-Based Verdict Modifiers
 
@@ -176,7 +183,7 @@ When the employee report includes a `confidence` score, use it as an additional 
 | Confidence | Tests Pass? | Guidance |
 |-----------|------------|---------|
 | >= 0.9 | Yes | Strong candidate for APPROVE |
-| 0.7-0.9 | Yes | Consider PR for human review |
+| 0.7-0.9 | Yes | APPROVE_INTEGRATION (auto-merge to dev once CI passes) |
 | 0.5-0.7 | Any | Lean toward REJECT or PR |
 | < 0.5 | Any | Lean toward REJECT |
 

@@ -349,3 +349,20 @@ the only validation gate.
   ]
 }
 ```
+
+## Verdict tiers
+
+The manager produces one of four verdicts per project/issue:
+
+| Verdict | Action | When |
+|---|---|---|
+| `APPROVE` | Direct merge to base branch (or to integration's dev branch when enabled) | Tests pass, scope is normal, no sensitive code touched. |
+| `APPROVE_INTEGRATION` | Non-draft PR against the integration/dev branch with `gh pr merge --auto --squash` armed | Work is complete and tested but touches sensitive code (auth, payments, config), or scope is large enough to want CI as the gate before landing. CI passes → PR auto-merges with no human click. |
+| `PR` | Draft PR for human review | Ambiguous requirements, tests skipped, or scope > 30 files. A human must look. |
+| `REJECT` / `SKIP` | No merge | Work incomplete (`REJECT`) or no eligible work (`SKIP`). |
+
+### Prerequisite for `APPROVE_INTEGRATION`
+
+`APPROVE_INTEGRATION` arms GitHub's auto-merge feature. Auto-merge only meaningfully gates when the integration/dev branch has **at least one required check** in its branch protection rules. If no checks are required, `gh pr merge --auto --squash` will merge immediately. Configure required checks at `Settings → Branches → Branch protection rules → <dev_branch>` on each project before relying on this verdict.
+
+If the project does not have integration enabled (`integration.enabled = false`), the verdict degrades to `APPROVE` and a warning is logged — the manager should not have emitted `APPROVE_INTEGRATION` in that case, but the system accepts rather than failing the run.

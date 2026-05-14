@@ -1,10 +1,13 @@
-"""Tests for agent.verdict_execution (#363).
+"""Tests for agent.verdict_execution (#363, #388).
 
 These tests pin the per-decision argv shape so reviewers can diff
 against the bash invocations in agent/scripts/run-manager.sh
 (~lines 2200–2500). Drift here means the Python module would push
 code, label issues, or comment in subtly different ways from the
 bash it replaces.
+
+Issue #388 adds APPROVE_INTEGRATION verdict: non-draft PR against
+integration branch with auto-merge armed, CI gates the merge.
 """
 
 from __future__ import annotations
@@ -272,3 +275,235 @@ def test_verdict_from_dict_handles_string_and_null_issue_number():
             "branch": "feat/foo",
         })
         assert v.issue_number is None, f"sentinel {sentinel!r} should map to None"
+
+
+# ── APPROVE_INTEGRATION (issue #388) ───────────────────────────────────
+
+
+def test_verdict_from_dict_accepts_approve_integration():
+    """Manager output with verdict='APPROVE_INTEGRATION' must round-trip."""
+    from agent.verdict_execution import Verdict
+
+    payload = {
+        "project": "owner/repo",
+        "issue_number": 42,
+        "verdict": "APPROVE_INTEGRATION",
+        "branch": "autonomous/issue-42",
+        "base_branch": "main",
+        "reasoning": "Auth refactor with passing tests",
+    }
+    parsed = Verdict.from_dict(payload)
+    assert parsed.verdict == "APPROVE_INTEGRATION"
+    assert parsed.project == "owner/repo"
+    assert parsed.issue_number == 42
+    assert parsed.branch == "autonomous/issue-42"
+
+
+def _stub_gh_ok(stdout: str = "https://github.com/owner/repo/pull/99") -> MagicMock:
+    """Build a stand-in for ``gh_run`` returning a success result."""
+    fake = MagicMock()
+    fake.ok = True
+    fake.stdout = stdout
+    fake.stderr = ""
+    return fake
+
+
+def test_execute_approve_integration_happy_path(tmp_path: Path):
+    """Push, non-draft PR against dev branch, auto-merge armed, comment posted."""
+    from agent.verdict_execution import execute_approve_integration, Verdict
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    verdict = Verdict(
+        project="owner/repo",
+        issue_number=42,
+        verdict="APPROVE_INTEGRATION",
+        branch="autonomous/issue-42",
+        base_branch="main",
+        reasoning="Auth change; tests pass; CI gates merge.",
+    )
+
+    pr_url = "https://github.com/owner/repo/pull/99"
+    call_log: list[tuple] = []
+
+    def gh_run_spy(args, env=None):  # noqa: ARG001
+        call_log.append(("gh", tuple(args)))
+        if args[:2] == ["pr", "create"]:
+            return _stub_gh_ok(pr_url)
+        if args[:3] == ["pr", "merge", "--auto"]:
+            return _stub_gh_ok("")
+        if args[:2] == ["issue", "comment"]:
+            return _stub_gh_ok("")
+        return _stub_gh_ok("")
+
+    def subprocess_run_spy(args, **kwargs):  # noqa: ARG001
+        call_log.append(("sub", tuple(args)))
+        result = MagicMock()
+        result.returncode = 0
+        result.stderr = ""
+        result.stdout = ""
+        return result
+
+    with patch("agent.verdict_execution.gh_run", side_effect=gh_run_spy), \
+         patch("agent.verdict_execution.subprocess.run", side_effect=subprocess_run_spy):
+        result = execute_approve_integration(
+            verdict,
+            workspace=workspace,
+            run_id="run-20260514T100000Z",
+            dev_branch="dev",
+        )
+
+    assert result.success is True
+    assert result.pr_url == pr_url
+    assert result.verdict == "APPROVE_INTEGRATION"
+
+    # Order: git push, gh pr create (no --draft), gh pr merge --auto --squash, issue comment.
+    kinds = [c[0] for c in call_log]
+    assert kinds[:4] == ["sub", "gh", "gh", "gh"], call_log
+
+    # 1) git push -u origin <branch>
+    assert call_log[0][1][:5] == ("git", "push", "-u", "origin", "autonomous/issue-42")
+
+    # 2) gh pr create — base = dev, no --draft anywhere
+    create_args = call_log[1][1]
+    assert create_args[:2] == ("pr", "create")
+    assert "--base" in create_args
+    assert create_args[create_args.index("--base") + 1] == "dev"
+    assert "--draft" not in create_args
+    assert "--head" in create_args
+    assert create_args[create_args.index("--head") + 1] == "autonomous/issue-42"
+
+    # 3) gh pr merge --auto --squash <pr_url>
+    merge_args = call_log[2][1]
+    assert merge_args[:4] == ("pr", "merge", "--auto", "--squash")
+    assert pr_url in merge_args
+
+    # 4) issue comment
+    comment_args = call_log[3][1]
+    assert comment_args[:2] == ("issue", "comment")
+    assert "42" in comment_args
+
+
+def test_execute_approve_integration_degrades_when_dev_branch_missing(tmp_path, caplog):
+    """No dev_branch → degrade to execute_approve and emit a warning."""
+    from agent.verdict_execution import execute_approve_integration, Verdict, ExecutionResult
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    verdict = Verdict(
+        project="owner/repo",
+        issue_number=7,
+        verdict="APPROVE_INTEGRATION",
+        branch="autonomous/issue-7",
+        base_branch="main",
+        reasoning="Manager misemitted; integration disabled.",
+    )
+
+    with patch("agent.verdict_execution.execute_approve") as approve_mock, \
+         caplog.at_level("WARNING", logger="agent.verdict_execution"):
+        approve_mock.return_value = ExecutionResult(
+            verdict="APPROVE",
+            project=verdict.project,
+            issue_number=7,
+            success=True,
+            pr_url="https://github.com/owner/repo/pull/12",
+        )
+        result = execute_approve_integration(
+            verdict, workspace=workspace, run_id="r1", dev_branch=None,
+        )
+
+    assert approve_mock.called
+    assert result.success is True
+    assert any("degrading to APPROVE" in rec.message for rec in caplog.records)
+
+
+def test_execute_approve_integration_push_failure_short_circuits(tmp_path):
+    """If ``git push`` fails, no PR is opened and no auto-merge is armed."""
+    from agent.verdict_execution import execute_approve_integration, Verdict
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    verdict = Verdict(
+        project="owner/repo",
+        issue_number=99,
+        verdict="APPROVE_INTEGRATION",
+        branch="autonomous/issue-99",
+        base_branch="main",
+    )
+
+    push_fail = MagicMock()
+    push_fail.returncode = 1
+    push_fail.stderr = "remote rejected"
+    push_fail.stdout = ""
+
+    gh_calls: list[tuple] = []
+
+    def gh_run_spy(args, env=None):  # noqa: ARG001
+        gh_calls.append(tuple(args))
+        return _stub_gh_ok("")
+
+    with patch("agent.verdict_execution.subprocess.run", return_value=push_fail), \
+         patch("agent.verdict_execution.gh_run", side_effect=gh_run_spy):
+        result = execute_approve_integration(
+            verdict, workspace=workspace, dev_branch="dev",
+        )
+
+    assert result.success is False
+    assert result.error is not None
+    assert "remote rejected" in result.error
+    assert gh_calls == [], "no gh calls expected after push failure"
+
+
+def test_execute_dispatcher_routes_approve_integration(tmp_path):
+    """The ``execute`` dispatcher must route APPROVE_INTEGRATION correctly."""
+    from agent.verdict_execution import execute, Verdict, ExecutionResult, _EXECUTORS
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    verdict = Verdict(
+        project="owner/repo",
+        issue_number=1,
+        verdict="APPROVE_INTEGRATION",
+        branch="autonomous/issue-1",
+    )
+    mock_fn = MagicMock()
+    mock_fn.return_value = ExecutionResult(
+        verdict="APPROVE_INTEGRATION",
+        project=verdict.project,
+        issue_number=1,
+        success=True,
+    )
+    with patch.dict(_EXECUTORS, {"APPROVE_INTEGRATION": mock_fn}):
+        execute(verdict, workspace=workspace, dev_branch="dev")
+    mock_fn.assert_called_once()
+
+
+def test_execute_dispatcher_forwards_dev_branch_kwarg(tmp_path):
+    """The dispatcher must thread ``dev_branch`` through to the executor.
+
+    Pins the contract so future Python callers (post-#383 bash deletion)
+    know the kwarg name to pass.
+    """
+    from agent.verdict_execution import execute, Verdict, ExecutionResult, _EXECUTORS
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    verdict = Verdict(
+        project="owner/repo",
+        issue_number=1,
+        verdict="APPROVE_INTEGRATION",
+        branch="autonomous/issue-1",
+    )
+    mock_fn = MagicMock()
+    mock_fn.return_value = ExecutionResult(
+        verdict="APPROVE_INTEGRATION",
+        project="owner/repo",
+        issue_number=1,
+        success=True,
+    )
+    with patch.dict(_EXECUTORS, {"APPROVE_INTEGRATION": mock_fn}):
+        execute(verdict, workspace=workspace, dev_branch="dev")
+    _, kwargs = mock_fn.call_args
+    assert kwargs.get("dev_branch") == "dev"
+
+
