@@ -145,3 +145,61 @@ async def _lifecycle_events(
         )
     out.sort(key=lambda e: (e.t, e.source, e.source_id))
     return out
+
+
+_AUDIT_TAIL_TRIM = 1024  # bytes; full payload still reachable via /api/audit
+
+
+def _trim(text: str | None) -> tuple[str | None, bool]:
+    if text is None:
+        return None, False
+    encoded = text.encode("utf-8", errors="replace")
+    if len(encoded) <= _AUDIT_TAIL_TRIM:
+        return text, False
+    return encoded[:_AUDIT_TAIL_TRIM].decode("utf-8", errors="replace"), True
+
+
+async def _audit_events(
+    db: AsyncSession,
+    run_id: str,
+    *,
+    since: datetime | None,
+    until: datetime | None,
+) -> list[RunTimelineEvent]:
+    rows = (
+        await db.execute(
+            select(AuditEntry)
+            .where(AuditEntry.run_id == run_id)
+            .order_by(AuditEntry.started_at)
+        )
+    ).scalars().all()
+    out: list[RunTimelineEvent] = []
+    for row in rows:
+        if not _within(row.started_at, since, until):
+            continue
+        stdout_tail, stdout_trim = _trim(row.stdout_tail)
+        stderr_tail, stderr_trim = _trim(row.stderr_tail)
+        out.append(
+            RunTimelineEvent(
+                t=row.started_at,
+                kind="tool",
+                event=f"{row.action_kind}.{row.status}",
+                source="audit_log",
+                source_id=str(row.id),
+                agent=row.actor,
+                data={
+                    "action_detail": _decode_json(row.action_detail),
+                    "exit_code": row.exit_code,
+                    "stdout_tail": stdout_tail,
+                    "stderr_tail": stderr_tail,
+                    "duration_ms": (
+                        int((row.finished_at - row.started_at).total_seconds() * 1000)
+                        if row.finished_at is not None
+                        else None
+                    ),
+                    "truncated": stdout_trim or stderr_trim,
+                },
+            )
+        )
+    out.sort(key=lambda e: (e.t, e.source, e.source_id))
+    return out
