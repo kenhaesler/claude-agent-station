@@ -43,10 +43,10 @@ class Project(Base):
     # Vision cache (Phase 1 — see docs/superpowers/specs/2026-05-07-project-vision-design.md)
     vision_cached_sha = Column(Text, nullable=True, default=None)
     vision_cached_body = Column(Text, nullable=True, default=None)
-    vision_cached_at = Column(DateTime, nullable=True, default=None)
+    vision_cached_at = Column(DateTime(timezone=True), nullable=True, default=None)
     last_vision_analyzed_sha = Column(Text, nullable=True, default=None)
-    created_at = Column(DateTime, default=_utcnow)
-    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
+    updated_at = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
 
 
 class Run(Base):
@@ -73,8 +73,8 @@ class Run(Base):
     tokens_total = Column(Integer, nullable=True)
     turns = Column(Integer, nullable=True)
     duration_ms = Column(Integer, nullable=True)
-    started_at = Column(DateTime, nullable=True, index=True)
-    finished_at = Column(DateTime, nullable=True)
+    started_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    finished_at = Column(DateTime(timezone=True), nullable=True)
     employee_report = Column(JsonType, nullable=True)  # JSON/JSONB
     verdict_detail = Column(JsonType, nullable=True)  # JSON/JSONB
     log_file = Column(Text, nullable=True)
@@ -93,7 +93,7 @@ class Run(Base):
     vision_bootstrap_proposals = Column(Text, nullable=True)  # JSON list
     # Updated on every webhook event for this run_id. NULL for legacy
     # rows. See issue #348.
-    last_event_at = Column(DateTime, nullable=True, default=None, index=True)
+    last_event_at = Column(DateTime(timezone=True), nullable=True, default=None, index=True)
 
 
 class ConfigEntry(Base):
@@ -101,7 +101,7 @@ class ConfigEntry(Base):
 
     key = Column(Text, primary_key=True)
     value = Column(Text, nullable=True)  # JSON-encoded
-    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
+    updated_at = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
 
 
 class Plan(Base):
@@ -119,8 +119,8 @@ class Plan(Base):
     status = Column(Text, default="draft")  # draft/approved/implementing/completed/rejected
     run_id = Column(Text, nullable=True)  # run that created this plan
     implementation_run_id = Column(Text, nullable=True)  # run that implemented this plan
-    created_at = Column(DateTime, default=_utcnow)
-    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
+    updated_at = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
 
 
 class CoordinatorTask(Base):
@@ -153,14 +153,14 @@ class CoordinatorTask(Base):
     # Agent Teams fields
     teammate_agent_id = Column(Text, nullable=True)  # Agent Teams agent ID
     claimed_by = Column(Text, nullable=True)  # Teammate name that claimed the task
-    claimed_at = Column(DateTime, nullable=True)
+    claimed_at = Column(DateTime(timezone=True), nullable=True)
     # Per-teammate progress (issue #336). Run.tokens_total / Run.turns hold the
     # lead's aggregate; these are the per-task slice the Fleet page reads.
     tokens_total = Column(Integer, nullable=True)
     turns = Column(Integer, nullable=True)
-    created_at = Column(DateTime, default=_utcnow)
-    started_at = Column(DateTime, nullable=True)
-    finished_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    finished_at = Column(DateTime(timezone=True), nullable=True)
 
 
 class CoordinatorMessage(Base):
@@ -173,7 +173,7 @@ class CoordinatorMessage(Base):
     message_type = Column(Text, nullable=False)  # guidance / conflict / progress / error
     content = Column(Text, nullable=False)  # JSON
     employee_index = Column(Integer, nullable=True)
-    created_at = Column(DateTime, default=_utcnow)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
 
 
 class Notification(Base):
@@ -184,7 +184,7 @@ class Notification(Base):
     type = Column(Text, nullable=True)  # approve/reject/pr/error/info
     message = Column(Text, nullable=True)
     read = Column(Boolean, default=False)
-    created_at = Column(DateTime, default=_utcnow)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
 
 
 class QueueItem(Base):
@@ -218,11 +218,11 @@ class QueueItem(Base):
     parent_task_id = Column(Text, nullable=True)  # Link to coordinator_tasks
     confidence = Column(Float, nullable=True)  # Employee's reported confidence score
     handoff_context = Column(Text, nullable=True)  # JSON handoff document
-    created_at = Column(DateTime, default=_utcnow)
-    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
-    assigned_at = Column(DateTime, nullable=True)
-    started_at = Column(DateTime, nullable=True)
-    completed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
+    updated_at = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
+    assigned_at = Column(DateTime(timezone=True), nullable=True)
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
 
 
 class PlanUsageHistory(Base):
@@ -248,7 +248,7 @@ class PlanUsageHistory(Base):
     overuse_active = Column(Integer, default=0)
     overuse_signals_json = Column(Text, nullable=True)
     error = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=_utcnow)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
 
 
 class AuditEntry(Base):
@@ -278,8 +278,8 @@ class AuditEntry(Base):
     exit_code = Column(Integer, nullable=True)
     stdout_tail = Column(Text, nullable=True)
     stderr_tail = Column(Text, nullable=True)
-    started_at = Column(DateTime, nullable=False, index=True)
-    finished_at = Column(DateTime, nullable=True)
+    started_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    finished_at = Column(DateTime(timezone=True), nullable=True)
 
     # Issue #387: the timeline endpoint scans by run_id and orders by
     # started_at. A composite index turns a child-scan + sort into a
@@ -301,7 +301,7 @@ class AgentEvent(Base):
     team_name = Column(Text, nullable=True)  # Agent Teams team name
     event_data = Column(JsonType, nullable=False)  # JSON/JSONB payload
     parent_event_id = Column(Integer, nullable=True)  # Causal chain
-    created_at = Column(DateTime, default=_utcnow)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
 
 
 class ConflictResolution(Base):
@@ -317,8 +317,8 @@ class ConflictResolution(Base):
     branch = Column(Text, nullable=False, index=True)
     repo = Column(Text, nullable=False)
     pr_number = Column(Integer, nullable=True)
-    started_at = Column(DateTime, nullable=False, default=_utcnow, index=True)
-    finished_at = Column(DateTime, nullable=True)
+    started_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow, index=True)
+    finished_at = Column(DateTime(timezone=True), nullable=True)
     # mechanical / lockfile / llm / budget_exhausted
     phase_reached = Column(Text, nullable=False)
     # resolved / tests_failed / manager_rejected / budget_exhausted / error
@@ -361,7 +361,7 @@ class TaskOutcome(Base):
     duration_seconds = Column(Integer, nullable=True)
     analyst_role = Column(Text, nullable=True)  # visionary, architect, etc. (sprint learning loop)
     validation_passed = Column(Boolean, nullable=True)  # did the feature pass validation on dev?
-    created_at = Column(DateTime, default=_utcnow)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
 
 
 class BrainstormSession(Base):
@@ -372,8 +372,8 @@ class BrainstormSession(Base):
     project_id = Column(Integer, ForeignKey("projects.id"), nullable=True)
     title = Column(Text, nullable=True)
     persona = Column(Text, default="architect")  # architect/security/performance/devops
-    created_at = Column(DateTime, default=_utcnow)
-    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
+    updated_at = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
 
 
 class BrainstormMessage(Base):
@@ -384,7 +384,7 @@ class BrainstormMessage(Base):
     session_id = Column(Text, ForeignKey("brainstorm_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
     role = Column(Text, nullable=False)  # 'user' or 'assistant'
     content = Column(Text, nullable=False)
-    created_at = Column(DateTime, default=_utcnow)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
 
 
 class IntegrationFeature(Base):
@@ -404,8 +404,8 @@ class IntegrationFeature(Base):
     run_id = Column(Text, nullable=True)
     promotion_run_id = Column(Text, nullable=True)
     excluded_reason = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=_utcnow)
-    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
+    updated_at = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
 
 
 class PromptVersion(Base):
@@ -420,7 +420,7 @@ class PromptVersion(Base):
     active = Column(Boolean, default=True)
     success_rate = Column(Float, nullable=True)  # Calculated from task_outcomes
     sample_count = Column(Integer, default=0)
-    created_at = Column(DateTime, default=_utcnow)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
 
 
 class PermissionRequest(Base):
@@ -447,8 +447,8 @@ class PermissionRequest(Base):
     status = Column(Text, nullable=False, default="pending", index=True)
     # pending | approved | denied | timed_out
     resolution_note = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=_utcnow)
-    resolved_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
+    resolved_at = Column(DateTime(timezone=True), nullable=True)
 
 
 class RunControl(Base):
@@ -465,8 +465,8 @@ class RunControl(Base):
     action = Column(Text, nullable=False)  # 'pause' | 'resume' | 'stop' | 'message'
     payload = Column(Text, nullable=True)  # JSON — e.g. {"text": "..."}
     requested_by = Column(Text, nullable=True)  # operator id or 'api'
-    requested_at = Column(DateTime, default=_utcnow, index=True)
-    consumed_at = Column(DateTime, nullable=True, index=True)
+    requested_at = Column(DateTime(timezone=True), default=_utcnow, index=True)
+    consumed_at = Column(DateTime(timezone=True), nullable=True, index=True)
 
 
 class StationControl(Base):
@@ -480,7 +480,7 @@ class StationControl(Base):
 
     id = Column(Integer, primary_key=True)  # always 1
     global_pause = Column(Boolean, nullable=False, default=False)
-    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
+    updated_at = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
     updated_by = Column(Text, nullable=True)
 
 
@@ -501,5 +501,5 @@ class VisionChatSession(Base):
     sdk_session_id = Column(Text, nullable=True, default=None)
     messages = Column(Text, nullable=False, default="[]")  # JSON list
     assembled = Column(Text, nullable=True, default=None)  # JSON
-    created_at = Column(DateTime, default=_utcnow)
-    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
+    updated_at = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)

@@ -110,23 +110,35 @@ def test_decode_event_data_handles_text_and_dict():
 async def test_smoke_insert_select(async_session_factory):
     """Parametrized over sqlite/postgres via async_session_factory fixture."""
     from app.models import Run
-    from datetime import datetime
+    from datetime import datetime, timezone
 
-    # TODO(#414): switch to ``datetime.now(timezone.utc)`` once #393 PR-4
-    # migrates the schema to ``DateTime(timezone=True)``. Today the columns
-    # are declared as naive (TIMESTAMP WITHOUT TIME ZONE on Postgres);
-    # Postgres rejects tz-aware writes against them while SQLite is lax. The
-    # naive ``utcnow()`` here is the workaround — it also emits a Python 3.12
-    # DeprecationWarning that goes away once #414 lands.
     async with async_session_factory() as db:
         db.add(Run(run_id="run-smoke", status="running",
-                   started_at=datetime.utcnow()))
+                   started_at=datetime.now(timezone.utc)))
         await db.commit()
 
     from sqlalchemy import select
     async with async_session_factory() as db:
         row = (await db.execute(select(Run).where(Run.run_id == "run-smoke"))).scalar_one()
         assert row.status == "running"
+
+
+def test_all_datetime_columns_are_timezone_aware():
+    """Every DateTime column must use timezone=True (#414)."""
+    import inspect as _inspect
+    from sqlalchemy import DateTime as _DT
+    from app.database import Base
+    import app.models  # noqa: F401
+
+    offenders: list[str] = []
+    for mapper in Base.registry.mappers:
+        for col in mapper.persist_selectable.columns:
+            if isinstance(col.type, _DT) and not col.type.timezone:
+                offenders.append(f"{mapper.class_.__tablename__}.{col.name}")
+    assert offenders == [], (
+        "DateTime columns missing timezone=True — fix with DateTime(timezone=True):\n"
+        + "\n".join(offenders)
+    )
 
 
 def test_no_raw_jsonloads_on_jsonb_columns():
