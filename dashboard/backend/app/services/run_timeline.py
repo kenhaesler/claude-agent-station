@@ -58,7 +58,7 @@ from app.models import (
     CoordinatorTask,
     Run,
 )
-from app.schemas import RunTimelineEvent
+from app.schemas import RunTimelineEvent, RunTimelinePage
 
 
 def _decode_json(value: Any) -> dict | None:
@@ -342,8 +342,6 @@ async def _audit_events(
     out.sort(key=lambda e: (e.t, e.source, e.source_id))
     return out
 
-
-from app.schemas import RunTimelinePage
 
 ALL_KINDS = frozenset({"lifecycle", "tool", "teammate", "verdict", "conflict"})
 _SOURCE_FOR_KIND = {
