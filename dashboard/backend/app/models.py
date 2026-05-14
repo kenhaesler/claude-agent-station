@@ -4,9 +4,17 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Index, Integer, JSON, String, Text
+from sqlalchemy.dialects.postgresql import JSONB
 
 from app.database import Base
+
+# Dialect-aware JSON type: JSONB on Postgres, plain JSON on SQLite (#393).
+# Intentionally a module-level singleton TypeEngine instance — every Column
+# declaration references the same object. Future column-specific options
+# (e.g. JSONB(astext_type=...)) should construct a fresh JSON().with_variant
+# rather than mutate this shared instance.
+JsonType = JSON().with_variant(JSONB(), "postgresql")
 
 
 def _utcnow() -> datetime:
@@ -67,8 +75,8 @@ class Run(Base):
     duration_ms = Column(Integer, nullable=True)
     started_at = Column(DateTime, nullable=True, index=True)
     finished_at = Column(DateTime, nullable=True)
-    employee_report = Column(Text, nullable=True)  # JSON as text
-    verdict_detail = Column(Text, nullable=True)  # JSON as text
+    employee_report = Column(JsonType, nullable=True)  # JSON/JSONB
+    verdict_detail = Column(JsonType, nullable=True)  # JSON/JSONB
     log_file = Column(Text, nullable=True)
     trace_id = Column(Text, nullable=True)
     employee_index = Column(Integer, nullable=True, default=0)
@@ -265,7 +273,7 @@ class AuditEntry(Base):
     run_id = Column(Text, nullable=False, index=True)
     actor = Column(Text, nullable=False)  # "lead", "teammate-{name}", "manager"
     action_kind = Column(Text, nullable=False, index=True)  # "tool.bash", "tool.edit", ...
-    action_detail = Column(Text, nullable=True)  # JSON: command, file path, etc.
+    action_detail = Column(JsonType, nullable=True)  # JSON/JSONB: command, file path, etc.
     status = Column(Text, nullable=False, index=True)  # "started" | "ok" | "error" | "timeout"
     exit_code = Column(Integer, nullable=True)
     stdout_tail = Column(Text, nullable=True)
@@ -291,7 +299,7 @@ class AgentEvent(Base):
     agent_id = Column(Text, nullable=False)  # "employee-0", "manager", "teammate-{name}"
     event_type = Column(Text, nullable=False, index=True)  # "task.claimed", "analysis.complete", etc.
     team_name = Column(Text, nullable=True)  # Agent Teams team name
-    event_data = Column(Text, nullable=False)  # JSON payload
+    event_data = Column(JsonType, nullable=False)  # JSON/JSONB payload
     parent_event_id = Column(Integer, nullable=True)  # Causal chain
     created_at = Column(DateTime, default=_utcnow)
 
