@@ -9,6 +9,18 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     # Database
     db_path: str = "/var/lib/claude-agent-station/station.db"
+    db_url: str | None = None  # preferred; full SQLAlchemy URL incl. driver
+
+    @property
+    def resolved_db_url(self) -> str:
+        """Return the URL the engine should use.
+
+        Order: ``db_url`` env (production), then ``db_path`` (SQLite fallback).
+        Empty string treated as unset.
+        """
+        if self.db_url:
+            return self.db_url
+        return f"sqlite+aiosqlite:///{self.db_path}"
 
     # Agent log directory
     log_dir: str = "/var/log/claude-agent"
