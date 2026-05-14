@@ -31,9 +31,11 @@ def test_iterate_projects_calls_each_phase(tmp_path, monkeypatch):
         return 0, None
 
     monkeypatch.setattr("agent.station_orchestrator.orchestrate_project", _fake_orchestrate)
+    # #390: _read_verdicts_file replaces run_manager_review; mock it to
+    # return None so the loop degrades gracefully (no verdicts to execute).
     monkeypatch.setattr(
-        "agent.manager_review.run_manager_review",
-        lambda *a, **k: (call_log.append("manager_review"), [])[1],
+        "agent.station_orchestrator._read_verdicts_file",
+        lambda *a, **k: (call_log.append("read_verdicts_file"), None)[1],
     )
     monkeypatch.setattr("agent.digest.write_digest", lambda **kw: call_log.append("digest") or "")
 
@@ -47,7 +49,7 @@ def test_iterate_projects_calls_each_phase(tmp_path, monkeypatch):
         "resume",
         "workspace",
         "orchestrate_project",
-        "manager_review",
+        "read_verdicts_file",
         "digest",
     ], f"Unexpected phase order: {call_log}"
 

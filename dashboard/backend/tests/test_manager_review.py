@@ -1,68 +1,35 @@
-"""Tests for agent.manager_review (issue #383 bash port)."""
+"""Tests for agent.manager_review removal (#390).
+
+The `manager_review.py` module (claude -p subprocess) was deleted in #390.
+The manager is now a sibling agent inside the lead's SDK session.
+See agent/agents/manager.md and the _read_verdicts_file helper in
+agent/station_orchestrator.py.
+"""
 from __future__ import annotations
 
-import json
-import subprocess
-import pytest
-from unittest.mock import MagicMock
+from pathlib import Path
 
 
-def test_happy_review_returns_verdicts(tmp_path, monkeypatch):
-    from agent import manager_review
-
-    pkg = tmp_path / "review.md"
-    pkg.write_text("review package contents")
-
-    # The Verdict dataclass uses field 'verdict', not 'decision'.
-    fake_stdout = json.dumps({
-        "verdicts": [
-            {"project": "owner/repo", "issue_number": 1, "verdict": "APPROVE",
-             "branch": "autonomous/issue-1", "base_branch": "main", "reasoning": "ok"},
-        ],
-    })
-    monkeypatch.setattr(
-        manager_review.subprocess, "run",
-        MagicMock(return_value=subprocess.CompletedProcess(args=[], returncode=0, stdout=fake_stdout, stderr="")),
+def test_manager_review_module_is_deleted():
+    """#390: the claude -p subprocess module must be gone."""
+    repo = Path(__file__).resolve().parents[3]
+    assert not (repo / "agent" / "manager_review.py").exists(), (
+        "agent/manager_review.py must be deleted — the manager is now a "
+        "sibling agent inside the lead's SDK session (#390)"
     )
 
-    verdicts = manager_review.run_manager_review(str(pkg), "run-xyz", config={"models": {}})
-    assert len(verdicts) == 1
-    assert verdicts[0].verdict == "APPROVE"
-    assert verdicts[0].issue_number == 1
 
+def test_project_loop_does_not_import_manager_review():
+    """project_loop.py must no longer import run_manager_review."""
+    import inspect
+    from agent import project_loop as pl
 
-def test_malformed_json_raises(tmp_path, monkeypatch):
-    from agent import manager_review
-
-    pkg = tmp_path / "review.md"
-    pkg.write_text("x")
-    monkeypatch.setattr(
-        manager_review.subprocess, "run",
-        MagicMock(return_value=subprocess.CompletedProcess(args=[], returncode=0, stdout="not json", stderr="")),
+    src = inspect.getsource(pl)
+    assert "run_manager_review" not in src, (
+        "project_loop still references run_manager_review; "
+        "the manager is now a sibling agent (#390)"
     )
-
-    with pytest.raises(manager_review.ManagerReviewError, match="JSON"):
-        manager_review.run_manager_review(str(pkg), "run-xyz", config={"models": {}})
-
-
-def test_nonzero_exit_raises(tmp_path, monkeypatch):
-    from agent import manager_review
-
-    pkg = tmp_path / "review.md"
-    pkg.write_text("x")
-    monkeypatch.setattr(
-        manager_review.subprocess, "run",
-        MagicMock(return_value=subprocess.CompletedProcess(args=[], returncode=2, stdout="", stderr="boom")),
+    assert "manager_review" not in src, (
+        "project_loop still imports from manager_review; "
+        "the module was deleted in #390"
     )
-
-    with pytest.raises(manager_review.ManagerReviewError, match="claude -p"):
-        manager_review.run_manager_review(str(pkg), "run-xyz", config={"models": {}})
-
-
-def test_empty_package_raises(tmp_path):
-    from agent import manager_review
-
-    pkg = tmp_path / "review.md"
-    pkg.write_text("")
-    with pytest.raises(manager_review.ManagerReviewError, match="empty"):
-        manager_review.run_manager_review(str(pkg), "run-xyz", config={"models": {}})

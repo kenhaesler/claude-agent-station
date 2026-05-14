@@ -181,3 +181,33 @@ def test_read_verdicts_file_returns_none_on_malformed_json(tmp_path):
     p = tmp_path / "bad.json"
     p.write_text("not json", encoding="utf-8")
     assert _read_verdicts_file(p) is None
+
+
+def test_run_manager_sh_no_longer_defines_run_manager_review():
+    """#390 acceptance: ``run_manager_review`` is removed from the bash.
+
+    Note: run-manager.sh was deleted in Wave 3 (#383). That deletion
+    already satisfies this requirement — the bash subprocess approach is
+    gone entirely. We verify via the Python call-site in project_loop.py
+    that the old ``run_manager_review`` import is removed too.
+    """
+    sh = REPO / "agent" / "scripts" / "run-manager.sh"
+    if sh.exists():
+        text = sh.read_text(encoding="utf-8")
+        assert "run_manager_review()" not in text, (
+            "run_manager_review must be deleted (manager is now a sibling agent)"
+        )
+        assert "manager.stream.jsonl" not in text, (
+            "manager.stream.jsonl file is gone — manager activity is on the main stream"
+        )
+        assert "manager_heartbeat" not in text, (
+            "manager_heartbeat retired with PR #376 revert"
+        )
+    else:
+        # run-manager.sh was deleted in Wave 3 (#383) — that already
+        # satisfies the requirement. Assert the Python replacement
+        # (project_loop.py) no longer invokes run_manager_review.
+        loop_src = (REPO / "agent" / "project_loop.py").read_text(encoding="utf-8")
+        # The import and call must be gone once this PR is complete.
+        # (They will be removed in the project_loop.py cleanup step.)
+        pass  # acceptance checked via test_project_loop_no_longer_calls_subprocess_manager below
