@@ -120,11 +120,16 @@ async def queue_pressure(db: AsyncSession = Depends(get_db)):
     # Use weekly token consumption as the primary backpressure signal
     now = datetime.now(timezone.utc)
     week_start = now - timedelta(days=7)
+    # Pass the datetime directly. ``.isoformat()`` would bind the value as
+    # VARCHAR, which Postgres refuses to compare against ``timestamp with
+    # time zone`` (``operator does not exist: timestamp with time zone >=
+    # character varying``). SQLite silently coerces, so this bug only
+    # surfaced after the #393 Postgres migration.
     weekly_result = await db.execute(
         select(
             func.coalesce(func.sum(Run.tokens_input), 0).label("input_tokens"),
             func.coalesce(func.sum(Run.tokens_output), 0).label("output_tokens"),
-        ).where(Run.started_at >= week_start.isoformat())
+        ).where(Run.started_at >= week_start)
     )
     weekly_row = weekly_result.one()
     weekly_tokens = weekly_row.input_tokens + weekly_row.output_tokens
