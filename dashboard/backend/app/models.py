@@ -99,6 +99,14 @@ class Run(Base):
     # Updated on every webhook event for this run_id. NULL for legacy
     # rows. See issue #348.
     last_event_at = Column(DateTime(timezone=True), nullable=True, default=None, index=True)
+    # Issue-splitter (#391). ``run_kind`` distinguishes ``primary`` from
+    # ``sub-of-<N>`` and ``split-decision`` rows; ``parent_run_id`` links
+    # a sub-run back to the parent run that decomposed the issue;
+    # ``split_decision_json`` archives the splitter's proposal payload
+    # for replay/observability after GitHub history rotates.
+    run_kind = Column(Text, nullable=True)
+    parent_run_id = Column(Text, nullable=True, index=True)
+    split_decision_json = Column(JsonType, nullable=True)
 
 
 class ConfigEntry(Base):
