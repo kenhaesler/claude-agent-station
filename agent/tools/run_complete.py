@@ -35,6 +35,18 @@ class RunCompleteInput(BaseModel):
     status: Literal["success", "partial", "blocked"]
     verdicts: list[_Verdict] = Field(default_factory=list)
     summary: str
+    # Splitter linkage (#391, gated on #385). Parent split-decision runs
+    # list the sub-run IDs they spawned; sub-runs name their parent.
+    # Both default to "empty" so single-issue runs — the common case —
+    # need not populate them.
+    sub_runs: list[str] = Field(
+        default_factory=list,
+        description="Sub-run IDs spawned from this run (parent runs only).",
+    )
+    parent_run: str | None = Field(
+        default=None,
+        description="Parent run ID if this is a sub-run.",
+    )
 
 
 # JSON-schema dict for ClaudeSDKClient registration. Built from the pydantic
