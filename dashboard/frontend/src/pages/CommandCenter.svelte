@@ -565,6 +565,7 @@
             type="button"
             class="board-row"
             class:selected={selectedIdx === i || hovered?.run_id === r.run_id}
+            class:sub={!!r.parent_run_id}
             data-run-id={r.run_id}
             onmouseenter={() => { hovered = r; selectedIdx = i; }}
             onfocus={() => { hovered = r; selectedIdx = i; }}
@@ -845,6 +846,14 @@
   .dispatch-pro :global(.board-row:hover) { background: var(--paper-2); }
   .dispatch-pro :global(.board-row.selected) {
     background: color-mix(in oklab, var(--data) 9%, var(--paper));
+  }
+  /* Splitter sub-runs (#391): indent + dim so the parent/child
+     relationship reads at a glance. Lives at the table-row level
+     because the runs list is a flat array — sub-runs sit next to
+     their parent on the same scroll surface. */
+  .dispatch-pro :global(.board-row.sub) {
+    padding-left: 1.5rem;
+    opacity: 0.85;
   }
   .dispatch-pro :global(.board-row .ix) { color: var(--ash); font-size: 10px; }
   .dispatch-pro :global(.board-row .id) { color: var(--graphite); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

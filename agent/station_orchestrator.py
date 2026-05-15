@@ -157,6 +157,45 @@ def _combined_rank_issues(
     return sorted(scored, key=combined, reverse=True)
 
 
+def _render_vision_for_splitter(vision: dict[str, str] | None) -> str:
+    """Flatten the parsed-vision dict back into Markdown for the splitter.
+
+    ``load_vision`` returns ``{section_key: body}`` (see
+    ``agent/vision.py``); the issue-splitter prompt (#391) expects a
+    human-readable Markdown string. Without this flattener the orchestrator
+    would f-string a Python dict literal into the prompt, leaking
+    ``{'problem': '...', 'horizons': '...'}`` syntax into the model's
+    context. Returns an empty string when no vision exists so the prompt's
+    ``or '(no vision)'`` fallback engages cleanly.
+
+    Sections are emitted in their canonical order (problem → horizons →
+    anti-patterns) so the model sees the same shape an operator reading
+    ``docs/vision.md`` would.
+    """
+    if not vision:
+        return ""
+    # Match the canonical order from ``agent/vision.py:SECTIONS`` so the
+    # splitter sees a stable structure even if the dict iteration order
+    # ever changes upstream.
+    section_order = [
+        ("problem", "Problem"),
+        ("users", "Users"),
+        ("end_state", "End-state"),
+        ("tech_stack", "Tech Stack"),
+        ("runtime_target", "Runtime Target"),
+        ("non_goals", "Non-goals"),
+        ("principles", "Principles"),
+        ("horizons", "Horizons"),
+        ("anti_patterns", "Anti-patterns"),
+    ]
+    parts: list[str] = []
+    for key, label in section_order:
+        body = (vision.get(key) or "").strip()
+        if body:
+            parts.append(f"## {label}\n\n{body}")
+    return "\n\n".join(parts)
+
+
 # ── Configuration ──────────────────────────────────────────────
 
 def load_config(config_file: str) -> dict:
@@ -2084,6 +2123,72 @@ async def orchestrate_project(
                 logger.info(
                     "Picked #%s (vision_score=%.2f): %s",
                     issue["number"], issue.get("vision_score", 0.5), issue.get("vision_reason", ""),
+                )
+
+        # Issue-splitter pre-dispatch hook (#391). Off unless
+        # ``STATION_SPLIT_ENABLED=1`` — the env gate lives inside
+        # ``maybe_run_splitter`` so the cost of the no-op call is
+        # negligible on the cold path. The function returns ``None`` for
+        # issues that should run as-is (heuristic miss, splitter
+        # declined, or SDK failure); a non-``None`` decision decomposes
+        # the parent into sub-issues and removes it from this run's
+        # dispatch list so the parent doesn't get worked on alongside
+        # its own children. Sub-issues land on GitHub with the
+        # ``splitter-proposed`` label and sit pending operator review —
+        # they are not auto-dispatched on the same tick.
+        from agent.coordinator.decide import (
+            execute_split_decision,
+            maybe_run_splitter,
+        )
+
+        # ``load_vision`` returns ``dict[str, str] | None`` (section_key →
+        # body). The splitter prompt expects a str ("## Vision\n\n{vision}"),
+        # so render the dict into Markdown headings before passing it in.
+        # Without this the prompt would receive a Python repr of the dict
+        # instead of human-readable context. See PR #424 review.
+        vision_text = _render_vision_for_splitter(vision) if vision else ""
+
+        # TODO(#391-followup): plumb a real repo_summary (file tree depth-3,
+        # recent commits, README excerpt) into the splitter prompt — the
+        # heuristic gate keeps the SDK call rare, so even a slow ``gh``
+        # round-trip is amortised.
+        for issue in list(issues):  # copy so we can mutate in-place
+            try:
+                decision = await maybe_run_splitter(
+                    issue,
+                    run_id=run_id,
+                    repo_summary="",
+                    vision=vision_text,
+                    cwd=workspace,
+                )
+            except Exception as exc:  # noqa: BLE001 - splitter must never break dispatch
+                logger.warning(
+                    "splitter hook raised for #%s: %s — falling back to single-issue",
+                    issue.get("number"), exc,
+                )
+                continue
+            if decision is None:
+                continue
+            try:
+                await execute_split_decision(
+                    {
+                        "number": issue["number"],
+                        "title": issue.get("title", ""),
+                        "labels": issue.get("labels", []),
+                        "repo": repo,
+                    },
+                    decision,
+                    run_id=run_id,
+                )
+                issues.remove(issue)
+                logger.info(
+                    "Splitter decomposed #%s into %d sub-issues; parent skipped this tick",
+                    issue.get("number"), len(decision.proposals),
+                )
+            except Exception as exc:  # noqa: BLE001 - same: splitter failures stay isolated
+                logger.warning(
+                    "execute_split_decision failed for #%s: %s — keeping parent in dispatch",
+                    issue.get("number"), exc,
                 )
 
         logger.info(

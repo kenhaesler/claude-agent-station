@@ -407,3 +407,22 @@ Both roles join the `agent-net` bridge network so the runner can reach the dashb
 Two concurrent runs on different projects no longer share a process tree, SDK CLI subprocess, memory, or CPU budget — Docker assigns each container its own PID namespace and cgroup. The `launcher_reaper` watchdog enforces a heartbeat-based liveness check and force-stops runners that miss too many `/webhook-tick` updates.
 
 Implementation: `agent/runner_spawn.py` (spawn + name + quotas), `agent/launcher.py` (`/run`, `/stop`, `_runners` map), `agent/launcher_reaper.py` (stale-runner reaper).
+
+## Issue decomposition
+
+The coordinator's `decide.py` runs a pre-dispatch hook `maybe_run_splitter`
+(feature-gated by `STATION_SPLIT_ENABLED=1`) before spawning a specialist
+team. Eligible issues — long bodies, ≥4 acceptance criteria, cross-cutting
+label sets, or the explicit `split-me` label — are routed to an
+issue-splitter SDK session (`agent/issue_splitter/runner.py`). The splitter
+emits a JSON array of 2-5 sub-issue proposals; the harness creates them on
+GitHub with a `splitter-proposed` label and `Parent: #N` back-link.
+
+Sub-runs execute concurrently when per-project containers (#386) are in
+place: one runner container per sub-run, all merging to an
+`integration/issue-<N>` branch. CI on the integration branch is the
+integration test. A single PR to `dev` is opened once all sub-runs land.
+
+Failure isolation: a failed sub-run does not block its siblings; the
+parent stays open with a `splitter-needs-rework` label only if *every*
+sub-run fails.

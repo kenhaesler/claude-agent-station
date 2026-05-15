@@ -450,3 +450,17 @@ The migrator uses `INSERT ... ON CONFLICT DO NOTHING` on every table, so re-runn
 
 - **Polling intervals relax on Postgres** (issue #393 PR-3): `log_importer` poll bumps from 30 s to 300 s (`run_event` LISTEN/NOTIFY carries the recency load); `stale_run_reaper` tick bumps from 15 s to 60 s (`heartbeat` LISTEN/NOTIFY rebroadcasts on the SSE event bus). No operator action — these are dialect-aware automatically.
 - **Concurrent runners** (issue #386 follow-up) require Postgres because SQLite's single-writer lock would serialise their event writes. Migration is the prerequisite for that work.
+
+### Issue splitter (#391)
+
+| Env var | Default | Notes |
+|---|---|---|
+| `STATION_SPLIT_ENABLED` | `0` | Set to `1` to enable the issue-splitter pre-dispatch hook. Off by default during rollout. |
+
+| Label | Purpose |
+|---|---|
+| `splitter-proposed` | Sub-issue created by the splitter; operator must remove the label before autonomous pickup. Mirrors `vision-suggested`. |
+| `split-me` | Operator opt-in: always split this issue, even if heuristics say no. |
+| `do-not-split` | Operator opt-out: never split this issue, even if heuristics say yes. Veto wins over everything. |
+| `split` | Added automatically to a parent after its sub-issues are created so the router doesn't re-consider it. |
+| `splitter-needs-rework` | Added to the parent when all sub-runs fail. |

@@ -113,6 +113,12 @@ class RunOut(BaseModel):
     vision_bootstrap_proposals: list[dict] | None = None
     skip_reason: str | None = None
     last_event_at: datetime | None = None
+    # Issue splitter (#391). ``run_kind`` distinguishes ``primary`` from
+    # ``sub-of-<N>`` and ``split-decision`` runs; ``parent_run_id`` links
+    # sub-runs back to the splitter run that spawned them so the
+    # dashboard can render them indented under their parent.
+    run_kind: str | None = None
+    parent_run_id: str | None = None
 
     @field_validator("vision_bootstrap_proposals", mode="before")
     @classmethod
