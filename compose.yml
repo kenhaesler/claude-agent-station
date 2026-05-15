@@ -217,7 +217,15 @@ networks:
   # this network so they can reach the dashboard at http://dashboard:8420
   # for webhook callbacks. ``default`` is kept so existing inter-service
   # DNS (db, dashboard, agent) keeps working unchanged. See #386.
+  #
+  # ``name: agent-net`` overrides compose's default project-prefixing
+  # (would otherwise create ``claude-agent-station_agent-net``). The
+  # runner spawn code in ``agent/runner_spawn.py`` joins by the bare
+  # name, so the two must match. Discovered when the post-#386 stack
+  # rebuild produced ``failed to set up container networking: network
+  # agent-net not found`` on every triggered run.
   agent-net:
+    name: agent-net
     driver: bridge
   default:
 

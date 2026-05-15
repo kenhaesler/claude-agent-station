@@ -126,7 +126,7 @@ async def get_plan_usage(
             func.coalesce(func.sum(Run.tokens_input), 0).label("input_tokens"),
             func.coalesce(func.sum(Run.tokens_output), 0).label("output_tokens"),
         ).where(
-            Run.started_at >= week_start.isoformat(),
+            Run.started_at >= week_start,
             Run.status.isnot(None),
         )
     )
@@ -141,7 +141,7 @@ async def get_plan_usage(
             func.coalesce(func.sum(Run.tokens_input), 0).label("input_tokens"),
             func.coalesce(func.sum(Run.tokens_output), 0).label("output_tokens"),
         ).where(
-            Run.started_at >= week_start.isoformat(),
+            Run.started_at >= week_start,
             Run.model.isnot(None),
             Run.status.isnot(None),
         ).group_by(Run.model)
@@ -167,7 +167,7 @@ async def get_plan_usage(
         select(
             func.coalesce(func.sum(Run.tokens_input), 0).label("input_tokens"),
             func.coalesce(func.sum(Run.tokens_output), 0).label("output_tokens"),
-        ).where(Run.started_at >= session_cutoff.isoformat())
+        ).where(Run.started_at >= session_cutoff)
     )
     session_row = session_result.one()
     session_tokens = session_row.input_tokens + session_row.output_tokens
@@ -245,7 +245,7 @@ async def record_usage_snapshot(
             func.coalesce(func.sum(Run.tokens_input), 0).label("input_tokens"),
             func.coalesce(func.sum(Run.tokens_output), 0).label("output_tokens"),
         ).where(
-            Run.started_at >= week_start.isoformat(),
+            Run.started_at >= week_start,
             Run.status.isnot(None),
         )
     )
@@ -260,7 +260,7 @@ async def record_usage_snapshot(
             func.coalesce(func.sum(Run.tokens_input), 0).label("input_tokens"),
             func.coalesce(func.sum(Run.tokens_output), 0).label("output_tokens"),
         ).where(
-            Run.started_at >= week_start.isoformat(),
+            Run.started_at >= week_start,
             Run.model.isnot(None),
             Run.status.isnot(None),
         ).group_by(Run.model)
