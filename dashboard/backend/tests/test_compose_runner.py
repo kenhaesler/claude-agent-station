@@ -40,6 +40,26 @@ def test_agent_net_has_explicit_name_to_avoid_project_prefix():
     )
 
 
+def test_station_volumes_have_explicit_name_to_avoid_project_prefix():
+    """Same project-prefix gotcha as ``agent-net``: ``runner_spawn.py``
+    mounts ``station-data`` / ``station-logs`` by bare name, but compose
+    defaults to ``claude-agent-station_station-data``. Without the
+    ``name:`` override the runner gets EMPTY auto-created volumes and
+    aborts in preflight ("manager-config.json: No such file"). See
+    follow-up to #386.
+    """
+    c = _compose()
+    for vol_name in ("station-data", "station-logs"):
+        vol = c["volumes"][vol_name]
+        assert isinstance(vol, dict), (
+            f"{vol_name} must be a mapping with an explicit ``name:`` override"
+        )
+        assert vol.get("name") == vol_name, (
+            f"compose.yml must set ``name: {vol_name}`` so the bare name "
+            f"matches what runner_spawn.py mounts"
+        )
+
+
 def test_agent_runner_mode_env_present():
     c = _compose()
     env = c["services"]["agent"]["environment"]

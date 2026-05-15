@@ -37,6 +37,7 @@ def spawn_runner(
     image: str,
     config_path: str,
     workspaces_dir: str,
+    inherited_mounts: list[dict] | None = None,
 ) -> RunnerHandle:
     """Spawn a detached, auto-removed runner container.
 
@@ -44,12 +45,39 @@ def spawn_runner(
     ``quotas`` is ``{"memory": "2g", "cpus": "1.0"}`` — strings come from the
     Project row's columns; defaults are resolved upstream.
     ``env_passthrough`` carries every STATION_* the orchestrator needs.
+
+    ``inherited_mounts`` carries the operator-level bind mounts the
+    runner needs to inherit from the launcher's container — Claude OAuth
+    creds at ``/root/.claude``, ``gh`` auth at ``/root/.config/gh``, the
+    Postgres password secret at ``/run/secrets/db_password``. The
+    launcher resolves these by inspecting its own container; tests pass
+    ``[]`` (or just omit the kwarg) since the unit tests don't have a
+    real Docker daemon to inspect.
     """
     name = _container_name(hint_run_id)
     env = dict(env_passthrough)
     env["STATION_RUN_ID"] = hint_run_id
     if project_repo is not None:
         env["STATION_PROJECT_REPO"] = project_repo
+
+    # Named volumes that hold workspace + log state shared across all
+    # runs. Both must be explicitly named in compose.yml (``name:`` key)
+    # so compose doesn't project-prefix them, or these mounts will
+    # silently land on freshly-created EMPTY volumes — see compose.yml
+    # for the relevant override.
+    volumes: dict[str, dict] = {
+        "station-data": {"bind": "/var/lib/claude-agent-station", "mode": "rw"},
+        "station-logs": {"bind": "/var/log/claude-agent", "mode": "rw"},
+    }
+    # Layer the inherited bind mounts on top. We intentionally re-bind
+    # whatever destination the launcher had — same host path, same mode
+    # — because the runner needs an identical view of the Claude/gh
+    # credential dirs to authenticate.
+    for mount in inherited_mounts or ():
+        volumes[mount["source"]] = {
+            "bind": mount["destination"],
+            "mode": mount.get("mode", "rw"),
+        }
 
     container = client.containers.run(
         image=image,
@@ -61,16 +89,7 @@ def spawn_runner(
         mem_limit=quotas["memory"],
         nano_cpus=_cpus_to_nano(quotas["cpus"]),
         environment=env,
-        volumes={
-            "station-data": {
-                "bind": "/var/lib/claude-agent-station",
-                "mode": "rw",
-            },
-            "station-logs": {
-                "bind": "/var/log/claude-agent",
-                "mode": "rw",
-            },
-        },
+        volumes=volumes,
         command=[
             "python", "-m", "agent.station_orchestrator",
             "--driver",
