@@ -124,3 +124,85 @@ def test_launcher_ping_swallows_errors(monkeypatch):
             "run_start",
             {"run_id": "run-flaky"},
         )
+
+
+def test_post_webhook_threads_run_id_to_launcher_tick(monkeypatch):
+    """Container-mode runners MUST pass ``run_id`` to /webhook-tick so
+    the launcher updates ``handle.last_webhook_at`` in its ``_runners``
+    map. Without it, the launcher's handler falls through to the
+    legacy global ``_last_webhook_at`` and the container reaper
+    SIGTERMs the runner at the 120s idle mark even while
+    ``post_webhook`` keeps firing. Regression guard for the second
+    half of the #386 reaper bug (the first half — emit() path — was
+    fixed in PR #431). Discovered when live run-20260515T233935Z
+    still died at 134s after PR #431: the first tick had ``?run_id=``
+    but every subsequent ``post_webhook`` ping (the dominant traffic)
+    did not.
+    """
+    from agent import station_orchestrator as so
+
+    monkeypatch.setenv("STATION_AGENT_LAUNCHER_URL", "http://agent:8421")
+
+    captured: list[tuple[str, dict]] = []
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            return False
+        def post(self, url, **kwargs):
+            captured.append((url, kwargs))
+
+    with patch("agent.station_orchestrator.httpx.Client", FakeClient):
+        so.post_webhook(
+            {"dashboard": {"webhook_url": "http://dashboard:8420/api/webhook/run-event"}},
+            "teammate_progress",
+            {"run_id": "run-tick-id", "task_id": "t1"},
+        )
+
+    tick_calls = [(u, kw) for (u, kw) in captured if "/webhook-tick" in u]
+    assert len(tick_calls) == 1, f"expected one tick, saw {captured}"
+    _, kwargs = tick_calls[0]
+    assert kwargs.get("params") == {"run_id": "run-tick-id"}, (
+        f"params={{run_id=...}} must be on the tick POST; got {kwargs}"
+    )
+
+
+def test_post_webhook_omits_run_id_param_when_data_missing(monkeypatch):
+    """If a caller invokes ``post_webhook`` without a ``run_id`` in
+    ``data`` (or with ``data=None``), the launcher tick must send
+    empty params, NOT ``{"run_id": "None"}`` or similar. The
+    launcher's handler interprets the absence of the param as legacy
+    inline-mode and bumps the global timestamp instead.
+    """
+    from agent import station_orchestrator as so
+
+    monkeypatch.setenv("STATION_AGENT_LAUNCHER_URL", "http://agent:8421")
+
+    captured: list[tuple[str, dict]] = []
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            return False
+        def post(self, url, **kwargs):
+            captured.append((url, kwargs))
+
+    with patch("agent.station_orchestrator.httpx.Client", FakeClient):
+        so.post_webhook(
+            {"dashboard": {"webhook_url": "http://dashboard:8420/api/webhook/run-event"}},
+            "narration",
+            None,
+        )
+
+    tick_calls = [(u, kw) for (u, kw) in captured if "/webhook-tick" in u]
+    assert len(tick_calls) == 1
+    _, kwargs = tick_calls[0]
+    assert kwargs.get("params") == {}, (
+        f"empty params expected when run_id is missing; got {kwargs}"
+    )

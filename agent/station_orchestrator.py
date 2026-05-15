@@ -1363,13 +1363,24 @@ def post_webhook(config: dict, event: str, data: dict | None = None) -> None:
     # traffic flows through this Python path; without this ping the
     # launcher reaped active runs after 120s of "bash silence" (see
     # run-20260512T122255Z post-mortem).
-    _ping_launcher_best_effort()
+    _ping_launcher_best_effort(run_id=(data or {}).get("run_id"))
 
 
-def _ping_launcher_best_effort() -> None:
+def _ping_launcher_best_effort(run_id: str | None = None) -> None:
     """Bump the launcher's heartbeat clock so its _zombie_reaper sees
     that the Python orchestrator is making forward progress. Mirrors
     agent.webhook_emitter._ping_launcher. Silent on all errors.
+
+    ``run_id`` MUST be passed in container mode (#386) so the launcher
+    updates the per-run ``handle.last_webhook_at`` in its ``_runners``
+    map. Without it, the launcher's handler falls through to the
+    legacy global ``_last_webhook_at``, the container-aware reaper
+    sees the runner handle's timestamp stuck at spawn time, and
+    SIGTERMs the runner at the 120s mark even while it's emitting
+    successful heartbeats. Sibling of
+    ``agent.webhook_emitter._ping_launcher``; the orchestrator path
+    needs the same fix because most Agent Teams runtime traffic flows
+    through ``post_webhook()`` rather than ``emit()``.
 
     Defaults to ``http://localhost:8421`` because the orchestrator
     runs inside the agent container and the launcher listens there.
@@ -1379,9 +1390,10 @@ def _ping_launcher_best_effort() -> None:
     base = os.environ.get("STATION_AGENT_LAUNCHER_URL") or "http://localhost:8421"
     token = os.environ.get("STATION_LAUNCHER_TOKEN", "")
     headers = {"X-Launcher-Token": token} if token else {}
+    params: dict[str, str] = {"run_id": run_id} if run_id else {}
     try:
         with httpx.Client(timeout=1.0) as client:
-            client.post(f"{base.rstrip('/')}/webhook-tick", headers=headers)
+            client.post(f"{base.rstrip('/')}/webhook-tick", headers=headers, params=params)
     except Exception:
         pass
 
