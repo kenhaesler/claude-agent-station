@@ -287,6 +287,108 @@ async def test_status_returns_same_keys_in_both_modes(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_status_compose_translates_new_runs_shape(monkeypatch):
+    """Per #386 PR-2 the launcher's /status no longer returns
+    ``{running, pid}`` — it returns ``{"runs": [<handle>, ...]}``.
+    ``service_active`` must be derived from the non-emptiness of the list,
+    and ``pid`` is no longer meaningful (containers, not pids) so it falls
+    through to None rather than leaking a fabricated value."""
+    monkeypatch.setenv("STATION_DEPLOY_MODE", "compose")
+    monkeypatch.setenv("STATION_AGENT_LAUNCHER_URL", "http://agent:8421")
+    monkeypatch.delenv("STATION_LAUNCHER_TOKEN", raising=False)
+    from app.services import service_control
+    with respx.mock() as mock:
+        mock.get("http://agent:8421/status").respond(
+            200,
+            json={"runs": [
+                {"run_id": "run-x", "container_name": "cas-runner-x",
+                 "project_repo": "o/r", "started_at": "2026-05-15T00:00:00+00:00",
+                 "last_webhook_at": "2026-05-15T00:00:00+00:00"},
+            ]},
+        )
+        mock.get("http://agent:8421/vision-analyst/status").respond(
+            200, json={"running": False, "pid": None, "exit_code": None},
+        )
+        result = await service_control.get_agent_status()
+    assert result["service_active"] is True
+    assert result["run_active"] is True
+    assert result["vision_analyst_active"] is False
+    # No fabricated pid — containers don't have one in any meaningful sense.
+    assert result["pid"] is None
+
+
+@pytest.mark.asyncio
+async def test_status_compose_new_shape_empty_runs_is_inactive(monkeypatch):
+    """An empty ``runs`` list means no orchestrator is in flight."""
+    monkeypatch.setenv("STATION_DEPLOY_MODE", "compose")
+    monkeypatch.setenv("STATION_AGENT_LAUNCHER_URL", "http://agent:8421")
+    monkeypatch.delenv("STATION_LAUNCHER_TOKEN", raising=False)
+    from app.services import service_control
+    with respx.mock() as mock:
+        mock.get("http://agent:8421/status").respond(200, json={"runs": []})
+        mock.get("http://agent:8421/vision-analyst/status").respond(
+            200, json={"running": False, "pid": None, "exit_code": None},
+        )
+        result = await service_control.get_agent_status()
+    assert result["service_active"] is False
+    assert result["run_active"] is False
+    assert result["pid"] is None
+
+
+@pytest.mark.asyncio
+async def test_zombie_recovery_consumes_new_runs_shape(monkeypatch):
+    """``_try_recover_zombie_subprocess`` polls /status to confirm the
+    launcher is busy. With the new shape, it must read ``runs`` not
+    ``running``. We mock a fresh-heartbeat Run row so recovery declines
+    and the original 409 is propagated — proving the helper reached the
+    decision point (i.e. parsed the new shape correctly) without
+    crashing on missing ``running``."""
+    from datetime import datetime, timezone
+    from unittest.mock import AsyncMock, MagicMock, patch
+    from contextlib import asynccontextmanager
+
+    monkeypatch.setenv("STATION_DEPLOY_MODE", "compose")
+    monkeypatch.setenv("STATION_AGENT_LAUNCHER_URL", "http://agent:8421")
+    from app.services import service_control
+    from app.models import Run
+
+    fresh_run = Run(
+        run_id="run-active-002",
+        status="running",
+        employee_index=0,
+        last_event_at=datetime.now(timezone.utc),
+    )
+    fake_result = MagicMock()
+    fake_result.scalar_one_or_none.return_value = fresh_run
+    fake_db = AsyncMock()
+    fake_db.execute = AsyncMock(return_value=fake_result)
+
+    @asynccontextmanager
+    async def fake_async_session():
+        yield fake_db
+
+    with respx.mock() as mock:
+        mock.post("http://agent:8421/run").respond(
+            409, json={"detail": "already running"},
+        )
+        mock.get("http://agent:8421/status").respond(
+            200,
+            json={"runs": [
+                {"run_id": "run-active-002", "container_name": "cas-runner-active-002",
+                 "project_repo": None, "started_at": "2026-05-15T00:00:00+00:00",
+                 "last_webhook_at": "2026-05-15T00:00:00+00:00"},
+            ]},
+        )
+        with patch("app.database.async_session", fake_async_session):
+            result = await service_control.start_agent_service()
+
+    # The 409 propagated, which means the helper reached the heartbeat
+    # check — i.e. it successfully parsed the new ``runs`` shape.
+    assert result["success"] is False
+    assert result["status_code"] == 409
+
+
+@pytest.mark.asyncio
 async def test_run_action_compose_unsupported_action_returns_501(monkeypatch):
     monkeypatch.setenv("STATION_DEPLOY_MODE", "compose")
     from app.services import service_control
