@@ -35,3 +35,20 @@ def test_prompt_documents_empty_array_as_no_split():
     p = REPO_ROOT / "agent/prompts/issue-splitter.md"
     text = p.read_text()
     assert "[]" in text
+
+
+def test_architecture_doc_has_issue_decomposition_section() -> None:
+    """Architecture doc must explain the splitter's role (#391)."""
+    p = REPO_ROOT / "docs/architecture.md"
+    text = p.read_text()
+    assert "## Issue decomposition" in text
+    assert "issue-splitter" in text
+    assert "STATION_SPLIT_ENABLED" in text
+
+
+def test_configuration_doc_documents_split_envs() -> None:
+    """Configuration doc must list the splitter env var + label semantics (#391)."""
+    p = REPO_ROOT / "docs/configuration.md"
+    text = p.read_text()
+    for token in ("STATION_SPLIT_ENABLED", "splitter-proposed", "split-me", "do-not-split"):
+        assert token in text, token
