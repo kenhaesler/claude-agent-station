@@ -2845,8 +2845,13 @@ class RunDriver:
 
         try:
             from agent.project_loop import iterate_projects
+            # iterate_projects (and everything downstream — orchestrate_project,
+            # post_webhook callers) builds wire-format run ids by prepending
+            # ``run-`` to its input. Pass the BARE id so we don't end up with
+            # ``run-run-<ts>`` query params on /webhook-tick, which 404 at the
+            # launcher and let the reaper kill the run at 120s.
             exit_code, last_state = iterate_projects(
-                self.run_id, self.config_path, self.workspaces_dir,
+                self._clean_id, self.config_path, self.workspaces_dir,
             )
             if exit_code == 130:
                 status = "interrupted"
