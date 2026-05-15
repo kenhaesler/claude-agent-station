@@ -128,53 +128,113 @@ _docker_client = None
 
 
 def _get_docker_client():
+    """Return a process-wide ``docker.from_env()`` client (lazy singleton).
+
+    Scope is the uvicorn worker process. The Dockerfile launches with a
+    single worker (see ``_lifespan`` notes above), so this singleton is
+    safe; if that ever changes, swap to a per-worker factory.
+    """
     global _docker_client
     if _docker_client is None:
         _docker_client = _docker_sdk.from_env()
     return _docker_client
 
 
-def _resolve_quotas(project_repo: str | None) -> dict:
-    """Look up per-project quotas; fall back to settings defaults."""
+# STATION_* env vars that are safe to copy into the runner container. This
+# whitelist intentionally EXCLUDES the dashboard's authentication secrets
+# (STATION_API_KEY, STATION_WEBHOOK_SECRET, STATION_LAUNCHER_TOKEN,
+# STATION_GITHUB_WEBHOOK_SECRET): the runner authenticates back to the
+# dashboard via the launcher token already mounted at the agent layer, and
+# leaking the inbound webhook/API secrets into every runner expands the
+# blast radius for no benefit. Add to this list only when the runner
+# genuinely needs a variable; default-deny is the safe default.
+_RUNNER_ENV_WHITELIST: frozenset[str] = frozenset({
+    "STATION_DB_URL",
+    "STATION_DB_PASSWORD_FILE",
+    "STATION_CONFIG",
+    "STATION_WORKSPACES",
+    "STATION_AGENT_LAUNCHER_URL",
+    "STATION_LOG_DIR",
+    "STATION_DASHBOARD_BASE_URL",
+    "STATION_WEBHOOK_URL",
+    "STATION_DEPLOY_MODE",
+})
+
+
+def _normalize_memory(value: object) -> str | int | None:
+    """Coerce a memory quota into a form the Docker SDK accepts.
+
+    Project.runner_memory_limit is stored as Integer bytes (#386 PR-1),
+    while ``settings.default_runner_memory_limit`` is a unit-suffixed
+    string like ``"2g"``. Docker SDK ``mem_limit`` accepts both an int
+    (bytes) or a str with a unit suffix. Pass each through verbatim.
+    """
+    if value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    return str(value)
+
+
+def _normalize_cpus(value: object) -> str | None:
+    """Coerce a cpu quota into a decimal string (e.g. ``"0.5"``).
+
+    Project.runner_cpu_limit is a Float; the default is a string. The
+    downstream ``_cpus_to_nano`` converter calls ``float(...)`` so either
+    is fine, but normalizing here keeps the contract with spawn_runner
+    string-typed and self-documenting.
+    """
+    if value is None:
+        return None
+    return str(value)
+
+
+async def _resolve_quotas(project_repo: str | None) -> dict:
+    """Look up per-project quotas; fall back to settings defaults.
+
+    Async because it queries the dashboard DB via SQLAlchemy's async
+    session. Called inside the FastAPI event loop — do NOT wrap in
+    ``asyncio.run()`` (that would crash on the running loop).
+    """
     from app.config import settings
     default = {
-        "memory": settings.default_runner_memory_limit,
-        "cpus": settings.default_runner_cpu_limit,
+        "memory": _normalize_memory(settings.default_runner_memory_limit),
+        "cpus": _normalize_cpus(settings.default_runner_cpu_limit),
     }
     if project_repo is None:
         return default
-    import asyncio
     from app.database import async_session
     from app.models import Project
     from sqlalchemy import select
 
-    async def _fetch():
-        async with async_session() as db:
-            return (
-                await db.execute(select(Project).where(Project.repo == project_repo))
-            ).scalar_one_or_none()
-
-    project = asyncio.run(_fetch())
+    async with async_session() as db:
+        project = (
+            await db.execute(select(Project).where(Project.repo == project_repo))
+        ).scalar_one_or_none()
     if project is None:
         return default
     return {
-        "memory": project.runner_memory_limit or default["memory"],
-        "cpus": project.runner_cpu_limit or default["cpus"],
+        "memory": _normalize_memory(project.runner_memory_limit) or default["memory"],
+        "cpus": _normalize_cpus(project.runner_cpu_limit) or default["cpus"],
     }
 
 
 def _env_passthrough() -> dict:
-    """STATION_* env vars to inject into the runner."""
-    passthrough = {}
-    for key, value in os.environ.items():
-        if key.startswith("STATION_") and key not in (
-            "STATION_RUNNER_MODE",       # not relevant inside runner
-        ):
-            passthrough[key] = value
-    return passthrough
+    """STATION_* env vars to inject into the runner.
+
+    Default-deny: only the explicitly whitelisted keys from
+    ``_RUNNER_ENV_WHITELIST`` are forwarded. Dashboard secrets
+    (API key, webhook secrets, launcher token) MUST NOT reach
+    runner subprocesses.
+    """
+    return {
+        key: value
+        for key, value in os.environ.items()
+        if key in _RUNNER_ENV_WHITELIST
+    }
 
 
-def _spawn_runner_container(hint_run_id: str, project_repo: str | None) -> dict:
+async def _spawn_runner_container(hint_run_id: str, project_repo: str | None) -> dict:
     """Spawn one runner container; record handle; return route payload."""
     from app.config import settings
     if hint_run_id in _runners:
@@ -183,11 +243,12 @@ def _spawn_runner_container(hint_run_id: str, project_repo: str | None) -> dict:
             detail=f"run {hint_run_id} already has a running container",
         )
     client = _get_docker_client()
+    quotas = await _resolve_quotas(project_repo)
     handle = spawn_runner(
         client,
         hint_run_id=hint_run_id,
         project_repo=project_repo,
-        quotas=_resolve_quotas(project_repo),
+        quotas=quotas,
         env_passthrough=_env_passthrough(),
         image=settings.runner_image,
         config_path=os.environ.get("STATION_CONFIG", "/var/lib/claude-agent-station/manager-config.json"),
@@ -272,11 +333,22 @@ def status() -> dict:
     }
 
 
+# How long to give a runner container's PID 1 to exit gracefully on SIGTERM
+# before Docker SIGKILLs it. Kept short so /stop returns promptly to the
+# dashboard's polling caller — the orchestrator's signal handlers should
+# wrap up in well under this window. See #386 PR-2 review feedback.
+RUNNER_STOP_TIMEOUT_SECONDS = int(os.environ.get("STATION_RUNNER_STOP_TIMEOUT_S", "5"))
+
+
 @app.post("/stop")
-def stop(run_id: str | None = None, x_launcher_token: str | None = Header(default=None)) -> dict:
+async def stop(run_id: str | None = None, x_launcher_token: str | None = Header(default=None)) -> dict:
     """Stop a running container by run_id (container mode) or the active subprocess (inline mode).
 
     In container mode, pass ``?run_id=<id>`` to identify the container.
+    The container is stopped with a short graceful timeout
+    (``RUNNER_STOP_TIMEOUT_SECONDS``) so this endpoint stays responsive;
+    the Docker call runs in a worker thread so the event loop isn't
+    blocked even if the daemon is slow to respond.
     In inline/legacy mode, omitting run_id stops the active subprocess.
     """
     global _current, _last_webhook_at
@@ -290,9 +362,13 @@ def stop(run_id: str | None = None, x_launcher_token: str | None = Header(defaul
         if handle is None:
             raise HTTPException(status_code=404, detail=f"no runner for {run_id}")
         client = _get_docker_client()
-        try:
+
+        def _stop_container() -> None:
             container = client.containers.get(handle.container_name)
-            container.stop(timeout=30)
+            container.stop(timeout=RUNNER_STOP_TIMEOUT_SECONDS)
+
+        try:
+            await asyncio.to_thread(_stop_container)
         except Exception as exc:
             logger.warning("stop %s: %s", handle.container_name, exc)
         _runners.pop(run_id, None)
@@ -474,7 +550,7 @@ def _spawn_run_manager(hint_run_id: str | None = None) -> dict:
 
 
 @app.post("/run")
-def trigger(
+async def trigger(
     body: RunHint | None = None,
     x_launcher_token: str | None = Header(default=None),
 ) -> dict:
@@ -500,7 +576,7 @@ def trigger(
     if not hint:
         hint = "run-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     project_repo = os.environ.get("STATION_PROJECT_REPO")
-    return _spawn_runner_container(hint_run_id=hint, project_repo=project_repo)
+    return await _spawn_runner_container(hint_run_id=hint, project_repo=project_repo)
 
 
 _current_analyst: subprocess.Popen | None = None

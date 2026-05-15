@@ -81,7 +81,15 @@ class Settings(BaseSettings):
 
     # Runner mode: "container" (Docker SDK) | "inline" (legacy subprocess)
     runner_mode: str = "container"
+    # Image used to spawn ephemeral runner containers. The ":dev" tag is a
+    # development placeholder — production deployments should pin a specific
+    # tag (e.g. a release SHA) via STATION_RUNNER_IMAGE. PR-3 of the #386
+    # rollout wires this into the compose file as the cas-runner service's
+    # image; the dashboard never needs to pull it directly.
     runner_image: str = "claude-agent-station/agent:dev"
+    # Memory/CPU quotas applied to runner containers when a Project row
+    # doesn't pin its own. Memory accepts Docker's unit-suffixed strings
+    # ("2g") or raw byte counts as a string; cpus is fractional ("1.0").
     default_runner_memory_limit: str = "2g"
     default_runner_cpu_limit: str = "1.0"
 

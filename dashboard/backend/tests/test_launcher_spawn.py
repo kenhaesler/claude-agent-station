@@ -101,3 +101,31 @@ def test_post_run_falls_back_to_inline_when_mode_inline(monkeypatch):
         resp = client_app.post("/run", json={"hint_run_id": "run-y"})
     assert resp.status_code == 200
     assert resp.json()["pid"] == 4242
+
+
+def test_env_passthrough_excludes_dashboard_secrets(monkeypatch):
+    """Dashboard auth secrets must never reach runner containers.
+
+    Regression guard for the PR #419 review finding: the original
+    implementation forwarded every ``STATION_*`` variable, which leaked
+    ``STATION_API_KEY`` / ``STATION_WEBHOOK_SECRET`` etc. into runners.
+    """
+    monkeypatch.setenv("STATION_API_KEY", "leak-me")
+    monkeypatch.setenv("STATION_WEBHOOK_SECRET", "leak-me")
+    monkeypatch.setenv("STATION_GITHUB_WEBHOOK_SECRET", "leak-me")
+    monkeypatch.setenv("STATION_LAUNCHER_TOKEN", "leak-me")
+    monkeypatch.setenv("STATION_DB_URL", "postgresql+asyncpg://u:p@db/h")
+    monkeypatch.setenv("STATION_CONFIG", "/tmp/cfg.json")
+
+    import importlib
+    import agent.launcher as launcher_mod
+    importlib.reload(launcher_mod)
+
+    env = launcher_mod._env_passthrough()
+    assert "STATION_API_KEY" not in env
+    assert "STATION_WEBHOOK_SECRET" not in env
+    assert "STATION_GITHUB_WEBHOOK_SECRET" not in env
+    assert "STATION_LAUNCHER_TOKEN" not in env
+    # Whitelisted entries must flow through unchanged.
+    assert env["STATION_DB_URL"].startswith("postgresql+asyncpg://")
+    assert env["STATION_CONFIG"] == "/tmp/cfg.json"
