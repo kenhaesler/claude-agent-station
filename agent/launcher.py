@@ -23,6 +23,12 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+import docker as _docker_sdk
+
+from agent.launcher_reaper import reaper_loop
+from agent.runner_spawn import RunnerHandle  # noqa: F401
+from agent.runner_spawn import spawn_runner  # noqa: F401
+
 import httpx
 from contextlib import asynccontextmanager
 
@@ -88,11 +94,17 @@ async def _lifespan(app: FastAPI):
     """Start/stop the background zombie reaper. Replaces the deprecated
     ``@app.on_event("startup")`` hook (which had a documented bug where
     fire-and-forget tasks could be GC'd; we hold an explicit reference
-    here as well as a belt-and-suspenders measure)."""
+    here as well as a belt-and-suspenders measure).
+
+    In container mode, starts the container-aware reaper_loop (launcher_reaper).
+    In inline mode, also starts the legacy subprocess reaper (_zombie_reaper)
+    to cover any inline runs.
+    """
     global _reaper_task
-    _reaper_task = asyncio.create_task(_zombie_reaper())
+    _reaper_task = asyncio.create_task(reaper_loop())
     logger.info(
-        "Zombie reaper started (interval=%ds, timeout=%ds)",
+        "Container reaper started (from launcher_reaper). Zombie reaper (inline) "
+        "interval=%ds, timeout=%ds",
         ZOMBIE_CHECK_INTERVAL_SECONDS, ZOMBIE_TIMEOUT_SECONDS,
     )
     try:
@@ -109,6 +121,141 @@ async def _lifespan(app: FastAPI):
 
 app = FastAPI(title="claude-agent-station launcher", lifespan=_lifespan)
 _current: subprocess.Popen | None = None
+
+_runners: dict[str, RunnerHandle] = {}
+
+_docker_client = None
+
+
+def _get_docker_client():
+    """Return a process-wide ``docker.from_env()`` client (lazy singleton).
+
+    Scope is the uvicorn worker process. The Dockerfile launches with a
+    single worker (see ``_lifespan`` notes above), so this singleton is
+    safe; if that ever changes, swap to a per-worker factory.
+    """
+    global _docker_client
+    if _docker_client is None:
+        _docker_client = _docker_sdk.from_env()
+    return _docker_client
+
+
+# STATION_* env vars that are safe to copy into the runner container. This
+# whitelist intentionally EXCLUDES the dashboard's authentication secrets
+# (STATION_API_KEY, STATION_WEBHOOK_SECRET, STATION_LAUNCHER_TOKEN,
+# STATION_GITHUB_WEBHOOK_SECRET): the runner authenticates back to the
+# dashboard via the launcher token already mounted at the agent layer, and
+# leaking the inbound webhook/API secrets into every runner expands the
+# blast radius for no benefit. Add to this list only when the runner
+# genuinely needs a variable; default-deny is the safe default.
+_RUNNER_ENV_WHITELIST: frozenset[str] = frozenset({
+    "STATION_DB_URL",
+    "STATION_DB_PASSWORD_FILE",
+    "STATION_CONFIG",
+    "STATION_WORKSPACES",
+    "STATION_AGENT_LAUNCHER_URL",
+    "STATION_LOG_DIR",
+    "STATION_DASHBOARD_BASE_URL",
+    "STATION_WEBHOOK_URL",
+    "STATION_DEPLOY_MODE",
+})
+
+
+def _normalize_memory(value: object) -> str | int | None:
+    """Coerce a memory quota into a form the Docker SDK accepts.
+
+    Project.runner_memory_limit is stored as Integer bytes (#386 PR-1),
+    while ``settings.default_runner_memory_limit`` is a unit-suffixed
+    string like ``"2g"``. Docker SDK ``mem_limit`` accepts both an int
+    (bytes) or a str with a unit suffix. Pass each through verbatim.
+    """
+    if value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    return str(value)
+
+
+def _normalize_cpus(value: object) -> str | None:
+    """Coerce a cpu quota into a decimal string (e.g. ``"0.5"``).
+
+    Project.runner_cpu_limit is a Float; the default is a string. The
+    downstream ``_cpus_to_nano`` converter calls ``float(...)`` so either
+    is fine, but normalizing here keeps the contract with spawn_runner
+    string-typed and self-documenting.
+    """
+    if value is None:
+        return None
+    return str(value)
+
+
+async def _resolve_quotas(project_repo: str | None) -> dict:
+    """Look up per-project quotas; fall back to settings defaults.
+
+    Async because it queries the dashboard DB via SQLAlchemy's async
+    session. Called inside the FastAPI event loop — do NOT wrap in
+    ``asyncio.run()`` (that would crash on the running loop).
+    """
+    from app.config import settings
+    default = {
+        "memory": _normalize_memory(settings.default_runner_memory_limit),
+        "cpus": _normalize_cpus(settings.default_runner_cpu_limit),
+    }
+    if project_repo is None:
+        return default
+    from app.database import async_session
+    from app.models import Project
+    from sqlalchemy import select
+
+    async with async_session() as db:
+        project = (
+            await db.execute(select(Project).where(Project.repo == project_repo))
+        ).scalar_one_or_none()
+    if project is None:
+        return default
+    return {
+        "memory": _normalize_memory(project.runner_memory_limit) or default["memory"],
+        "cpus": _normalize_cpus(project.runner_cpu_limit) or default["cpus"],
+    }
+
+
+def _env_passthrough() -> dict:
+    """STATION_* env vars to inject into the runner.
+
+    Default-deny: only the explicitly whitelisted keys from
+    ``_RUNNER_ENV_WHITELIST`` are forwarded. Dashboard secrets
+    (API key, webhook secrets, launcher token) MUST NOT reach
+    runner subprocesses.
+    """
+    return {
+        key: value
+        for key, value in os.environ.items()
+        if key in _RUNNER_ENV_WHITELIST
+    }
+
+
+async def _spawn_runner_container(hint_run_id: str, project_repo: str | None) -> dict:
+    """Spawn one runner container; record handle; return route payload."""
+    from app.config import settings
+    if hint_run_id in _runners:
+        raise HTTPException(
+            status_code=409,
+            detail=f"run {hint_run_id} already has a running container",
+        )
+    client = _get_docker_client()
+    quotas = await _resolve_quotas(project_repo)
+    handle = spawn_runner(
+        client,
+        hint_run_id=hint_run_id,
+        project_repo=project_repo,
+        quotas=quotas,
+        env_passthrough=_env_passthrough(),
+        image=settings.runner_image,
+        config_path=os.environ.get("STATION_CONFIG", "/var/lib/claude-agent-station/manager-config.json"),
+        workspaces_dir=os.environ.get("STATION_WORKSPACES", "/var/lib/claude-agent-station/workspaces"),
+    )
+    _runners[hint_run_id] = handle
+    return {"status": "triggered", "container": handle.container_name, "run_id": handle.run_id}
 
 # Last time we observed a webhook event for the active subprocess. Used by
 # the zombie-reaper task to decide if a still-alive subprocess has gone
@@ -172,29 +319,62 @@ def health() -> dict:
 
 @app.get("/status")
 def status() -> dict:
-    running = _current is not None and _current.poll() is None
     return {
-        "running": running,
-        "pid": _current.pid if running else None,
-        "exit_code": _current.returncode if (_current and not running) else None,
+        "runs": [
+            {
+                "run_id": h.run_id,
+                "container_name": h.container_name,
+                "project_repo": h.project_repo,
+                "started_at": h.started_at.isoformat(),
+                "last_webhook_at": h.last_webhook_at.isoformat(),
+            }
+            for h in _runners.values()
+        ]
     }
 
 
-@app.post("/stop")
-def stop(x_launcher_token: str | None = Header(default=None)) -> dict:
-    """Send SIGTERM to the running orchestrator subprocess, if any.
+# How long to give a runner container's PID 1 to exit gracefully on SIGTERM
+# before Docker SIGKILLs it. Kept short so /stop returns promptly to the
+# dashboard's polling caller — the orchestrator's signal handlers should
+# wrap up in well under this window. See #386 PR-2 review feedback.
+RUNNER_STOP_TIMEOUT_SECONDS = int(os.environ.get("STATION_RUNNER_STOP_TIMEOUT_S", "5"))
 
-    Returns 409 if no run is in flight. The dashboard's service_control
-    module calls this in compose mode where ``systemctl stop`` is
-    unavailable. The Python RunDriver (#361) maps SIGTERM to a
-    ``KeyboardInterrupt`` so the run finalizes as ``status="interrupted"``
-    rather than being killed mid-emit.
+
+@app.post("/stop")
+async def stop(run_id: str | None = None, x_launcher_token: str | None = Header(default=None)) -> dict:
+    """Stop a running container by run_id (container mode) or the active subprocess (inline mode).
+
+    In container mode, pass ``?run_id=<id>`` to identify the container.
+    The container is stopped with a short graceful timeout
+    (``RUNNER_STOP_TIMEOUT_SECONDS``) so this endpoint stays responsive;
+    the Docker call runs in a worker thread so the event loop isn't
+    blocked even if the daemon is slow to respond.
+    In inline/legacy mode, omitting run_id stops the active subprocess.
     """
     global _current, _last_webhook_at
 
     if LAUNCHER_TOKEN and x_launcher_token != LAUNCHER_TOKEN:
         raise HTTPException(status_code=401, detail="invalid or missing launcher token")
 
+    # Container mode: stop by run_id
+    if run_id is not None:
+        handle = _runners.get(run_id)
+        if handle is None:
+            raise HTTPException(status_code=404, detail=f"no runner for {run_id}")
+        client = _get_docker_client()
+
+        def _stop_container() -> None:
+            container = client.containers.get(handle.container_name)
+            container.stop(timeout=RUNNER_STOP_TIMEOUT_SECONDS)
+
+        try:
+            await asyncio.to_thread(_stop_container)
+        except Exception as exc:
+            logger.warning("stop %s: %s", handle.container_name, exc)
+        _runners.pop(run_id, None)
+        return {"status": "stopped", "run_id": run_id}
+
+    # Inline/legacy mode: stop active subprocess
     if _current is None or _current.poll() is not None:
         raise HTTPException(status_code=409, detail="No run is currently running")
 
@@ -208,18 +388,28 @@ def stop(x_launcher_token: str | None = Header(default=None)) -> dict:
 
 @app.post("/webhook-tick")
 async def webhook_tick(
+    run_id: str | None = None,
     x_launcher_token: str | None = Header(None, alias="X-Launcher-Token"),
 ) -> dict:
-    """Called by agent/webhook_emitter.py on every webhook emit. Bumps
-    the launcher's heartbeat clock so the zombie reaper can tell a
-    productive subprocess from one stuck in a hung Claude CLI call.
+    """Bump the heartbeat clock for the named run (container mode) or the active subprocess (inline).
+
+    Called by agent/webhook_emitter.py on every webhook emit. The zombie
+    reaper uses this timestamp to identify silent/hung runners.
     """
     global _last_webhook_at
     if LAUNCHER_TOKEN and x_launcher_token != LAUNCHER_TOKEN:
         raise HTTPException(status_code=401, detail="invalid or missing launcher token")
+
+    # Container mode: update per-run handle
+    if run_id is not None:
+        handle = _runners.get(run_id)
+        if handle is None:
+            raise HTTPException(status_code=404, detail=f"no runner for {run_id}")
+        handle.last_webhook_at = datetime.now(timezone.utc)
+        return {"status": "ok"}
+
+    # Inline/legacy mode: update global timestamp
     if _current is None or _current.poll() is not None:
-        # No active run — silently ignore so a slow webhook from a
-        # just-finished subprocess doesn't error.
         return {"ok": True, "stale": True}
     _last_webhook_at = datetime.now(timezone.utc)
     return {"ok": True}
@@ -360,28 +550,33 @@ def _spawn_run_manager(hint_run_id: str | None = None) -> dict:
 
 
 @app.post("/run")
-def trigger(
+async def trigger(
     body: RunHint | None = None,
     x_launcher_token: str | None = Header(default=None),
 ) -> dict:
     """Spawn the Python orchestrator driver detached. Returns once the process is forked.
 
+    When STATION_RUNNER_MODE=container (default), spawns a Docker container
+    via the Docker SDK. When STATION_RUNNER_MODE=inline, falls back to the
+    legacy subprocess.Popen path. Keep the inline path for one release window
+    so an operator can recover without rolling back a deployment.
+
     Accepts an optional JSON body ``{"hint_run_id": "run-..."}`` which is
     propagated as ``--run-id`` so the driver adopts the pre-allocated run_id
     from the dashboard's placeholder row instead of generating its own id.
-
-    Before spawning, fetch a fresh GitHub App installation token from the
-    dashboard and export it as GH_TOKEN in the subprocess env. Lets the
-    `gh` CLI (and any tools that read GH_TOKEN) act as the App's
-    installation. If the dashboard isn't reachable or GitHub isn't
-    configured, the run still proceeds — the agent will fall back to
-    whatever auth gh already has (e.g. host bind mount on systemd).
     """
     if LAUNCHER_TOKEN and x_launcher_token != LAUNCHER_TOKEN:
         raise HTTPException(status_code=401, detail="invalid or missing launcher token")
 
     hint = body.hint_run_id if body else None
-    return _spawn_run_manager(hint_run_id=hint)
+    from app.config import settings
+    mode = os.environ.get("STATION_RUNNER_MODE", settings.runner_mode)
+    if mode == "inline":
+        return _spawn_run_manager(hint_run_id=hint)
+    if not hint:
+        hint = "run-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    project_repo = os.environ.get("STATION_PROJECT_REPO")
+    return await _spawn_runner_container(hint_run_id=hint, project_repo=project_repo)
 
 
 _current_analyst: subprocess.Popen | None = None

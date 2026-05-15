@@ -16,6 +16,13 @@ os.environ["STATION_API_KEY"] = ""
 os.environ["STATION_WEBHOOK_SECRET"] = ""
 os.environ["STATION_GITHUB_WEBHOOK_SECRET"] = ""
 
+# Default test runner to the inline (subprocess) launcher path. Individual
+# tests that exercise the Docker SDK route explicitly set
+# STATION_RUNNER_MODE=container via monkeypatch (#386 PR-2). Without this
+# default the launcher would try to talk to a real Docker daemon when a
+# test calls /run.
+os.environ.setdefault("STATION_RUNNER_MODE", "inline")
+
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
