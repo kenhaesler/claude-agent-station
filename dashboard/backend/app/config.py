@@ -79,6 +79,12 @@ class Settings(BaseSettings):
     # Set via STATION_GITHUB_WEBHOOK_SECRET env var.
     github_webhook_secret: str | None = None
 
+    # Runner mode: "container" (Docker SDK) | "inline" (legacy subprocess)
+    runner_mode: str = "container"
+    runner_image: str = "claude-agent-station/agent:dev"
+    default_runner_memory_limit: str = "2g"
+    default_runner_cpu_limit: str = "1.0"
+
     # CORS allowed origins for cross-origin requests (e.g. frontend dev server)
     # Override with STATION_ALLOWED_ORIGINS as a JSON list or comma-separated string
     allowed_origins: list[str] = [

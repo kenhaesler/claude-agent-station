@@ -23,6 +23,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+import docker as _docker_sdk
+
 from agent.runner_spawn import RunnerHandle  # noqa: F401
 from agent.runner_spawn import spawn_runner  # noqa: F401
 
@@ -114,6 +116,78 @@ app = FastAPI(title="claude-agent-station launcher", lifespan=_lifespan)
 _current: subprocess.Popen | None = None
 
 _runners: dict[str, RunnerHandle] = {}
+
+_docker_client = None
+
+
+def _get_docker_client():
+    global _docker_client
+    if _docker_client is None:
+        _docker_client = _docker_sdk.from_env()
+    return _docker_client
+
+
+def _resolve_quotas(project_repo: str | None) -> dict:
+    """Look up per-project quotas; fall back to settings defaults."""
+    from app.config import settings
+    default = {
+        "memory": settings.default_runner_memory_limit,
+        "cpus": settings.default_runner_cpu_limit,
+    }
+    if project_repo is None:
+        return default
+    import asyncio
+    from app.database import async_session
+    from app.models import Project
+    from sqlalchemy import select
+
+    async def _fetch():
+        async with async_session() as db:
+            return (
+                await db.execute(select(Project).where(Project.repo == project_repo))
+            ).scalar_one_or_none()
+
+    project = asyncio.run(_fetch())
+    if project is None:
+        return default
+    return {
+        "memory": project.runner_memory_limit or default["memory"],
+        "cpus": project.runner_cpu_limit or default["cpus"],
+    }
+
+
+def _env_passthrough() -> dict:
+    """STATION_* env vars to inject into the runner."""
+    passthrough = {}
+    for key, value in os.environ.items():
+        if key.startswith("STATION_") and key not in (
+            "STATION_RUNNER_MODE",       # not relevant inside runner
+        ):
+            passthrough[key] = value
+    return passthrough
+
+
+def _spawn_runner_container(hint_run_id: str, project_repo: str | None) -> dict:
+    """Spawn one runner container; record handle; return route payload."""
+    from app.config import settings
+    if hint_run_id in _runners:
+        raise HTTPException(
+            status_code=409,
+            detail=f"run {hint_run_id} already has a running container",
+        )
+    client = _get_docker_client()
+    handle = spawn_runner(
+        client,
+        hint_run_id=hint_run_id,
+        project_repo=project_repo,
+        quotas=_resolve_quotas(project_repo),
+        env_passthrough=_env_passthrough(),
+        image=settings.runner_image,
+        config_path=os.environ.get("STATION_CONFIG", "/var/lib/claude-agent-station/manager-config.json"),
+        workspaces_dir=os.environ.get("STATION_WORKSPACES", "/var/lib/claude-agent-station/workspaces"),
+    )
+    _runners[hint_run_id] = handle
+    return {"status": "triggered", "container": handle.container_name, "run_id": handle.run_id}
 
 # Last time we observed a webhook event for the active subprocess. Used by
 # the zombie-reaper task to decide if a still-alive subprocess has gone
@@ -371,22 +445,27 @@ def trigger(
 ) -> dict:
     """Spawn the Python orchestrator driver detached. Returns once the process is forked.
 
+    When STATION_RUNNER_MODE=container (default), spawns a Docker container
+    via the Docker SDK. When STATION_RUNNER_MODE=inline, falls back to the
+    legacy subprocess.Popen path. Keep the inline path for one release window
+    so an operator can recover without rolling back a deployment.
+
     Accepts an optional JSON body ``{"hint_run_id": "run-..."}`` which is
     propagated as ``--run-id`` so the driver adopts the pre-allocated run_id
     from the dashboard's placeholder row instead of generating its own id.
-
-    Before spawning, fetch a fresh GitHub App installation token from the
-    dashboard and export it as GH_TOKEN in the subprocess env. Lets the
-    `gh` CLI (and any tools that read GH_TOKEN) act as the App's
-    installation. If the dashboard isn't reachable or GitHub isn't
-    configured, the run still proceeds — the agent will fall back to
-    whatever auth gh already has (e.g. host bind mount on systemd).
     """
     if LAUNCHER_TOKEN and x_launcher_token != LAUNCHER_TOKEN:
         raise HTTPException(status_code=401, detail="invalid or missing launcher token")
 
     hint = body.hint_run_id if body else None
-    return _spawn_run_manager(hint_run_id=hint)
+    from app.config import settings
+    mode = os.environ.get("STATION_RUNNER_MODE", settings.runner_mode)
+    if mode == "inline":
+        return _spawn_run_manager(hint_run_id=hint)
+    if not hint:
+        hint = "run-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    project_repo = os.environ.get("STATION_PROJECT_REPO")
+    return _spawn_runner_container(hint_run_id=hint, project_repo=project_repo)
 
 
 _current_analyst: subprocess.Popen | None = None

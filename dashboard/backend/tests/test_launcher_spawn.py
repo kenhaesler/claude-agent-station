@@ -58,3 +58,46 @@ def test_spawn_runner_passes_expected_args(monkeypatch):
     assert handle.run_id == "run-abc"
     assert handle.container_name == "cas-runner-abc"
     assert handle.project_repo == "x/y"
+
+
+from unittest.mock import patch
+
+
+def test_post_run_invokes_spawn_runner_when_mode_container(monkeypatch):
+    monkeypatch.setenv("STATION_RUNNER_MODE", "container")
+    from fastapi.testclient import TestClient
+    from agent import launcher
+
+    with patch("agent.launcher._get_docker_client") as get_client, \
+         patch("agent.launcher.spawn_runner") as spawn:
+        fake_client = MagicMock()
+        get_client.return_value = fake_client
+        from agent.runner_spawn import RunnerHandle
+        from datetime import datetime, timezone
+        spawn.return_value = RunnerHandle(
+            run_id="run-x",
+            container_name="cas-runner-x",
+            started_at=datetime.now(timezone.utc),
+            last_webhook_at=datetime.now(timezone.utc),
+            project_repo="x/y",
+        )
+
+        client_app = TestClient(launcher.app)
+        resp = client_app.post("/run", json={"hint_run_id": "run-x"})
+
+    assert resp.status_code == 200
+    spawn.assert_called_once()
+    assert "cas-runner-x" in resp.json()["container"]
+
+
+def test_post_run_falls_back_to_inline_when_mode_inline(monkeypatch):
+    monkeypatch.setenv("STATION_RUNNER_MODE", "inline")
+    from fastapi.testclient import TestClient
+    from agent import launcher
+
+    with patch("agent.launcher._spawn_run_manager") as legacy:
+        legacy.return_value = {"status": "triggered", "pid": 4242, "log": "/dev/null"}
+        client_app = TestClient(launcher.app)
+        resp = client_app.post("/run", json={"hint_run_id": "run-y"})
+    assert resp.status_code == 200
+    assert resp.json()["pid"] == 4242
