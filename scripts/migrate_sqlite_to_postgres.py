@@ -43,10 +43,28 @@ logger = logging.getLogger("migrate_sqlite_to_postgres")
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
-    p = argparse.ArgumentParser()
+    p = argparse.ArgumentParser(
+        description=(
+            "One-shot SQLite -> Postgres data converter for "
+            "claude-agent-station (#393). Stop the agent + dashboard before "
+            "running."
+        ),
+        epilog=(
+            "Full runbook (backup, alembic, switch-backend, verify, "
+            "rollback) lives in docs/configuration.md under "
+            '"SQLite → Postgres migration playbook".'
+        ),
+    )
     p.add_argument("--sqlite", required=True, help="Path to source SQLite file")
     p.add_argument("--postgres", required=True, help="Target SQLAlchemy URL")
-    p.add_argument("--batch", type=int, default=1000)
+    p.add_argument(
+        "--batch", type=int, default=1000,
+        help=(
+            "Rows per INSERT batch. Each batch commits independently so "
+            "the destination transaction log stays bounded on multi-million-"
+            "row migrations (default: 1000)."
+        ),
+    )
     return p.parse_args(argv)
 
 
@@ -74,7 +92,7 @@ def _transform_row(table: str, row: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-async def _copy_table(src_engine, dst_engine, table) -> tuple[int, int]:
+async def _copy_table(src_engine, dst_engine, table, batch_size: int = 1000) -> tuple[int, int]:
     async with src_engine.connect() as src_conn:
         result = await src_conn.execute(select(table))
         src_rows = result.mappings().all()
@@ -87,11 +105,15 @@ async def _copy_table(src_engine, dst_engine, table) -> tuple[int, int]:
     # are internal constants from Base.metadata.
     insert_stmt = pg_insert(table).on_conflict_do_nothing()
     inserted = 0
-    async with dst_engine.begin() as dst_conn:
-        for i in range(0, len(transformed), 1000):
-            batch = transformed[i : i + 1000]
+    # Commit per batch so the Postgres transaction log stays bounded on
+    # multi-million-row migrations. A single ``async with dst_engine.begin()``
+    # around the whole loop would hold one transaction open for the entire
+    # table copy.
+    for i in range(0, len(transformed), batch_size):
+        batch = transformed[i : i + batch_size]
+        async with dst_engine.begin() as dst_conn:
             await dst_conn.execute(insert_stmt, batch)
-            inserted += len(batch)
+        inserted += len(batch)
     return (len(src_rows), inserted)
 
 
@@ -101,6 +123,12 @@ async def _reset_sequences(dst_engine, tables: list) -> None:
     Uses sa.func.* throughout — no table or column name is interpolated into
     a raw SQL string, so this is injection-safe even in the presence of
     unusual table names.
+
+    Per-table failures are logged but do not abort the migration: a table
+    whose ``id`` PK is not SERIAL (text UUID, etc.) raises here, which is
+    fine. A privilege error is a real problem and would otherwise produce
+    silent ``id`` collisions on the next real INSERT — logging the warning
+    surfaces it.
     """
     async with dst_engine.begin() as conn:
         for table in tables:
@@ -112,9 +140,11 @@ async def _reset_sequences(dst_engine, tables: list) -> None:
                 seq_name = func.pg_get_serial_sequence(table.name, "id")
                 max_id = func.coalesce(func.max(id_col).cast(Integer), 1)
                 await conn.execute(select(func.setval(seq_name, max_id)))
-            except Exception:
-                # Table has no sequence (e.g. PK is UUID or text) — skip silently.
-                pass
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "sequence reset for %s skipped: %s",
+                    table.name, exc,
+                )
 
 
 async def _async_main(args: argparse.Namespace) -> int:
@@ -128,7 +158,9 @@ async def _async_main(args: argparse.Namespace) -> int:
     mismatches: list[str] = []
     summary: list[tuple[str, int, int]] = []
     for table in Base.metadata.sorted_tables:
-        src_count, inserted = await _copy_table(src_engine, dst_engine, table)
+        src_count, inserted = await _copy_table(
+            src_engine, dst_engine, table, batch_size=args.batch,
+        )
         summary.append((table.name, src_count, inserted))
         if src_count != inserted:
             mismatches.append(f"{table.name}: {inserted}/{src_count}")

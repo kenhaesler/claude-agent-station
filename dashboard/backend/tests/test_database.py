@@ -159,3 +159,52 @@ def test_no_raw_jsonloads_on_jsonb_columns():
                 ]
                 offenders.extend(f"{path}: {ln.strip()}" for ln in lines)
     assert offenders == [], "use decode_event_data:\n" + "\n".join(offenders)
+
+
+# --- DB password file substitution (PR #417 review fix) ------------------
+
+
+def test_resolved_db_url_substitutes_db_password_from_file(tmp_path, monkeypatch):
+    """``${DB_PASSWORD}`` in ``STATION_DB_URL`` is replaced from the file
+    pointed at by ``STATION_DB_PASSWORD_FILE``. Keeps the password out of
+    process env on compose deployments where ``secrets:`` mounts the
+    password as a file.
+    """
+    from app.config import Settings
+
+    secret_file = tmp_path / "db_password"
+    secret_file.write_text("s3cr3t\n", encoding="utf-8")  # trailing newline trimmed
+    monkeypatch.setenv("STATION_DB_URL", "postgresql+asyncpg://u:${DB_PASSWORD}@h/d")
+    monkeypatch.setenv("STATION_DB_PASSWORD_FILE", str(secret_file))
+
+    s = Settings()
+    assert s.resolved_db_url == "postgresql+asyncpg://u:s3cr3t@h/d"
+
+
+def test_resolved_db_url_passes_through_when_password_file_missing(tmp_path, monkeypatch):
+    """If ``STATION_DB_PASSWORD_FILE`` points at a missing file, the
+    placeholder is preserved so the engine fails loudly with a clear
+    auth error rather than a silent empty-password connection.
+    """
+    from app.config import Settings
+
+    monkeypatch.setenv("STATION_DB_URL", "postgresql+asyncpg://u:${DB_PASSWORD}@h/d")
+    monkeypatch.setenv("STATION_DB_PASSWORD_FILE", str(tmp_path / "missing"))
+
+    s = Settings()
+    assert "${DB_PASSWORD}" in s.resolved_db_url
+
+
+def test_resolved_db_url_no_substitution_when_placeholder_absent(tmp_path, monkeypatch):
+    """When the URL has no ``${DB_PASSWORD}`` placeholder, the password
+    file is ignored and the URL is returned verbatim.
+    """
+    from app.config import Settings
+
+    secret_file = tmp_path / "db_password"
+    secret_file.write_text("ignored", encoding="utf-8")
+    monkeypatch.setenv("STATION_DB_URL", "postgresql+asyncpg://u:literal@h/d")
+    monkeypatch.setenv("STATION_DB_PASSWORD_FILE", str(secret_file))
+
+    s = Settings()
+    assert s.resolved_db_url == "postgresql+asyncpg://u:literal@h/d"

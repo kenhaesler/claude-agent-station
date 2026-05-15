@@ -392,6 +392,12 @@ Set the SQLAlchemy URL via env var. URLs are read at process start:
 
 `STATION_DB_URL` takes precedence over `STATION_DB_PATH`.
 
+### Keeping the password out of process env
+
+To avoid baking the password into the SQLAlchemy URL (and therefore into `/proc/<pid>/environ` and `docker inspect`), set the literal token `${DB_PASSWORD}` in `STATION_DB_URL` and point `STATION_DB_PASSWORD_FILE` at a file containing the password. The dashboard and agent each read the file at startup and substitute the token before constructing the engine. Compose mounts `./.secrets/db_password` into both containers at `/run/secrets/db_password` via the `secrets:` block — operators only need to put their chosen password in `./.secrets/db_password` (which `.gitignore` excludes) before `docker compose up`.
+
+If `STATION_DB_PASSWORD_FILE` is unset or unreadable, the placeholder is preserved and the engine fails with a clear auth error rather than connecting with an empty password.
+
 ### One-time data migration
 
 1. **Stop the agent and dashboard.** Both must be quiesced — the migrator does a row-count parity check at the end; concurrent writes during the copy would invalidate it.

@@ -74,13 +74,17 @@ def upgrade() -> None:
     if bind.dialect.name != "postgresql":
         return  # SQLite: no-op
 
+    # Alembic's ``op.alter_column`` handles identifier quoting via
+    # SQLAlchemy's dialect-aware ``preparer`` — no raw text() with
+    # f-string interpolation needed. The ``postgresql_using`` kwarg
+    # generates the ``USING <col> AT TIME ZONE 'UTC'`` clause Postgres
+    # requires to coerce existing naive values into UTC-tagged ones.
     for table, column in _COLUMNS:
-        op.execute(
-            sa.text(
-                f"ALTER TABLE {table} "
-                f"ALTER COLUMN {column} TYPE TIMESTAMP WITH TIME ZONE "
-                f"USING {column} AT TIME ZONE 'UTC'"
-            )
+        op.alter_column(
+            table,
+            column,
+            type_=sa.TIMESTAMP(timezone=True),
+            postgresql_using=f"{column} AT TIME ZONE 'UTC'",
         )
 
 
@@ -90,10 +94,9 @@ def downgrade() -> None:
         return
 
     for table, column in _COLUMNS:
-        op.execute(
-            sa.text(
-                f"ALTER TABLE {table} "
-                f"ALTER COLUMN {column} TYPE TIMESTAMP WITHOUT TIME ZONE "
-                f"USING {column} AT TIME ZONE 'UTC'"
-            )
+        op.alter_column(
+            table,
+            column,
+            type_=sa.TIMESTAMP(timezone=False),
+            postgresql_using=f"{column} AT TIME ZONE 'UTC'",
         )
