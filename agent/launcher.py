@@ -25,6 +25,7 @@ from pathlib import Path
 
 import docker as _docker_sdk
 
+from agent.launcher_reaper import reaper_loop
 from agent.runner_spawn import RunnerHandle  # noqa: F401
 from agent.runner_spawn import spawn_runner  # noqa: F401
 
@@ -93,11 +94,17 @@ async def _lifespan(app: FastAPI):
     """Start/stop the background zombie reaper. Replaces the deprecated
     ``@app.on_event("startup")`` hook (which had a documented bug where
     fire-and-forget tasks could be GC'd; we hold an explicit reference
-    here as well as a belt-and-suspenders measure)."""
+    here as well as a belt-and-suspenders measure).
+
+    In container mode, starts the container-aware reaper_loop (launcher_reaper).
+    In inline mode, also starts the legacy subprocess reaper (_zombie_reaper)
+    to cover any inline runs.
+    """
     global _reaper_task
-    _reaper_task = asyncio.create_task(_zombie_reaper())
+    _reaper_task = asyncio.create_task(reaper_loop())
     logger.info(
-        "Zombie reaper started (interval=%ds, timeout=%ds)",
+        "Container reaper started (from launcher_reaper). Zombie reaper (inline) "
+        "interval=%ds, timeout=%ds",
         ZOMBIE_CHECK_INTERVAL_SECONDS, ZOMBIE_TIMEOUT_SECONDS,
     )
     try:
