@@ -21,9 +21,19 @@ def _slug(name: str) -> str:
 
 
 def ensure_workspace(project: dict, workspaces_dir: str) -> str:
-    """Clone or refresh the project workspace. Returns the absolute path."""
-    repo = project["name"]
-    base = project.get("base_branch", "main")
+    """Clone or refresh the project workspace. Returns the absolute path.
+
+    The ``project`` dict is read from ``manager-config.json`` (written by
+    the dashboard's ``services/config_sync.py``) and follows the same
+    field names as the ``Project`` SQLAlchemy model: ``repo`` for
+    ``owner/name`` and ``branch`` for the base branch. The bash→Python
+    port (#383) accidentally carried over the bash variable names
+    ``name`` / ``base_branch``; SQLite-only tests didn't surface the
+    mismatch and the first live triggered run after the post-#386 stack
+    rebuild blew up with ``KeyError: 'name'``.
+    """
+    repo = project["repo"]
+    base = project.get("branch", "main")
     ws_root = Path(workspaces_dir)
     ws_root.mkdir(parents=True, exist_ok=True)
     workspace = ws_root / _slug(repo)
