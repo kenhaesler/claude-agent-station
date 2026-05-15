@@ -16,7 +16,10 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-LONG_BODY_TOKENS = 1200
+# Whitespace-token threshold (call them words; one whitespace token ≈ 0.75
+# LLM tokens, so 1200 words ≈ 900-1000 LLM tokens — well past the point
+# where a single specialist run starts dropping context mid-implementation).
+LONG_BODY_WORDS = 1200
 ACCEPTANCE_COUNT_THRESHOLD = 4
 CROSS_CUTTING_TRIPLES: tuple[frozenset[str], ...] = (
     frozenset({"backend", "frontend", "db-migration"}),
@@ -40,10 +43,10 @@ def _acceptance_count(body: str) -> int:
     return len(_BULLET_RE.findall(body or ""))
 
 
-def _body_token_estimate(body: str) -> int:
-    # Whitespace-split word count is a deliberate over-estimate vs. real
-    # tokenisation; pulling in tiktoken for one threshold isn't worth the
-    # extra dependency on the splitter's hot path.
+def _body_word_count(body: str) -> int:
+    # Whitespace-split count is a deliberate proxy for "context size";
+    # pulling in tiktoken for one threshold isn't worth the extra
+    # dependency on the splitter's hot path.
     return len((body or "").split())
 
 
@@ -57,7 +60,7 @@ def maybe_split(issue: dict) -> HeuristicResult:
     reasons: list[str] = []
     body = issue.get("body") or ""
 
-    if _body_token_estimate(body) > LONG_BODY_TOKENS:
+    if _body_word_count(body) > LONG_BODY_WORDS:
         reasons.append("body_length")
 
     if _acceptance_count(body) >= ACCEPTANCE_COUNT_THRESHOLD:

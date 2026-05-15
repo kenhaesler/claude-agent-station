@@ -17,7 +17,15 @@ commands, and inspect the codebase to understand scope. You must not
 edit, write, or create files outside the explicit output file path you
 are given in the spawn prompt.
 
+Note for reviewers: the `Bash` tool is granted for inspection commands
+(`git log`, `rg`, `find`). This is honor-system read-only enforcement,
+not tool-permission enforcement — `Bash` could theoretically write
+files. The integration test in PR-4 verifies that splitter runs leave
+the working tree clean.
+
 Follow the format in `agent/prompts/issue-splitter.md` exactly. Your
 output is parsed by a strict JSON validator; any deviation causes the
 run to fall back to single-issue mode and the parent issue stays
-untouched.
+untouched. The parser tolerates a ` ```json ` markdown fence around
+the JSON (defensive — the prompt asks for no fence), so don't add one
+on purpose.

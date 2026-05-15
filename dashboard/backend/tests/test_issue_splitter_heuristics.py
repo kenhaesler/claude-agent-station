@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from agent.issue_splitter.heuristics import (
     HeuristicResult,
-    LONG_BODY_TOKENS,
+    LONG_BODY_WORDS,
     maybe_split,
 )
 
@@ -20,7 +20,7 @@ def test_short_simple_issue_does_not_split():
 
 
 def test_long_body_triggers_split():
-    body = "x " * (LONG_BODY_TOKENS + 100)
+    body = "x " * (LONG_BODY_WORDS + 100)
     res = maybe_split(_issue(body=body))
     assert res.should_split is True
     assert "body_length" in res.reasons
@@ -52,7 +52,7 @@ def test_split_me_label_forces_split():
 
 
 def test_do_not_split_label_forces_no_split():
-    body = "x " * (LONG_BODY_TOKENS + 500)
+    body = "x " * (LONG_BODY_WORDS + 500)
     res = maybe_split(_issue(body=body, labels=("do-not-split",)))
     assert res.should_split is False
     assert "opt_out" in res.reasons
@@ -72,7 +72,7 @@ def test_missing_body_field_is_safe():
 
 
 def test_multiple_triggers_are_all_reported():
-    body = ("x " * (LONG_BODY_TOKENS + 50)) + (
+    body = ("x " * (LONG_BODY_WORDS + 50)) + (
         "\n- [ ] a\n- [ ] b\n- [ ] c\n- [ ] d\n"
     )
     res = maybe_split(_issue(body=body, labels=("backend", "frontend", "infra")))

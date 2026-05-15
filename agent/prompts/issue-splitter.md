@@ -7,7 +7,7 @@ You will receive:
 - The **parent issue body** (Markdown), including its title, labels, and acceptance criteria.
 - A **repo summary** (file tree depth-3, recent commits, README excerpt).
 - The current **project vision** (if present in `docs/vision.md`).
-- A **budget hint**: target each sub-run to complete in **4-10 minutes** of agent wall-clock.
+- A **budget hint**: target each sub-run to complete in **10-15 minutes** of agent wall-clock (see the hard upper bound under Constraints).
 
 ## Task
 

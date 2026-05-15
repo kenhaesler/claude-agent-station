@@ -77,19 +77,37 @@ def parse_splitter_output(raw: str) -> SplitDecision:
             f"need at least {MIN_PROPOSALS} proposals or an empty array, got {len(data)}"
         )
 
-    warnings: list[str] = []
-    items = data
-    if len(items) > MAX_PROPOSALS:
-        warnings.append(f"truncated {len(items)} proposals to {MAX_PROPOSALS}")
-        items = items[:MAX_PROPOSALS]
+    # Refuse rather than truncate: silently dropping proposals would
+    # invalidate the splitter's depends_on index math (an index pointing
+    # at a discarded item would become a separate "out of range" error)
+    # and discards work the operator might want to see. The prompt's
+    # 2-5 contract is the source of truth — anything outside that is
+    # the model violating the contract, not something for us to paper
+    # over. Reviewers: see PR #421 finding "truncation silently drops".
+    if len(data) > MAX_PROPOSALS:
+        raise SplitterError(
+            f"at most {MAX_PROPOSALS} proposals allowed, got {len(data)}"
+        )
 
+    warnings: list[str] = []
     proposals: list[SubIssueProposal] = []
-    for i, item in enumerate(items):
+    for i, item in enumerate(data):
         if not isinstance(item, dict):
             raise SplitterError(f"item {i} is not an object")
         missing = [f for f in REQUIRED_FIELDS if f not in item]
         if missing:
             raise SplitterError(f"item {i} missing fields: {missing}")
+        # ``labels`` and ``acceptance`` MUST be JSON arrays — strings are
+        # iterable in Python, so a bare ``"labels": "backend"`` would
+        # otherwise produce per-character labels like ('b','a','c',...)
+        # and PR-2's GitHub label-creation step would land seven garbage
+        # labels on the issue. Reject explicitly. See PR #421 review.
+        for field_name in ("labels", "acceptance"):
+            value = item.get(field_name)
+            if value is not None and not isinstance(value, list):
+                raise SplitterError(
+                    f"item {i} {field_name} must be a json array, got {type(value).__name__}"
+                )
         proposals.append(
             SubIssueProposal(
                 title=str(item["title"]),

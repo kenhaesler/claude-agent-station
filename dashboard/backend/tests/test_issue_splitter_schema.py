@@ -39,14 +39,44 @@ def test_parse_rejects_single_item():
         parse_splitter_output(raw)
 
 
-def test_parse_truncates_to_five():
+def test_parse_rejects_more_than_five():
+    """Refuse rather than truncate: silently dropping items would break
+    depends_on index math and lose work. The prompt's 2-5 cap is the
+    contract — violations are the splitter's bug, not ours to paper over.
+    """
     items = [
         {"title": f"item {i}", "body": "b", "labels": [], "acceptance": ["a"], "depends_on": None}
         for i in range(7)
     ]
-    decision = parse_splitter_output(json.dumps(items))
-    assert len(decision.proposals) == 5
-    assert decision.warnings  # truncation warning recorded
+    with pytest.raises(SplitterError, match="at most 5"):
+        parse_splitter_output(json.dumps(items))
+
+
+def test_parse_rejects_string_where_labels_list_expected():
+    """A bare string for ``labels`` (Sonnet's known quirk for single-label
+    issues) would otherwise be iterated character-by-character and produce
+    garbage labels like ('b','a','c','k','e','n','d'). Refuse explicitly.
+    Regression guard for PR #421 review finding."""
+    raw = json.dumps([
+        {"title": "a", "body": "b", "labels": "backend",
+         "acceptance": ["x"], "depends_on": None},
+        {"title": "c", "body": "d", "labels": ["backend"],
+         "acceptance": ["y"], "depends_on": None},
+    ])
+    with pytest.raises(SplitterError, match="labels"):
+        parse_splitter_output(raw)
+
+
+def test_parse_rejects_string_where_acceptance_list_expected():
+    """Same defence for ``acceptance``."""
+    raw = json.dumps([
+        {"title": "a", "body": "b", "labels": [],
+         "acceptance": "must work", "depends_on": None},
+        {"title": "c", "body": "d", "labels": [],
+         "acceptance": ["x"], "depends_on": None},
+    ])
+    with pytest.raises(SplitterError, match="acceptance"):
+        parse_splitter_output(raw)
 
 
 def test_parse_rejects_malformed_json():
