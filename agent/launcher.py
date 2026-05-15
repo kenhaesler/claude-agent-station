@@ -251,29 +251,47 @@ def health() -> dict:
 
 @app.get("/status")
 def status() -> dict:
-    running = _current is not None and _current.poll() is None
     return {
-        "running": running,
-        "pid": _current.pid if running else None,
-        "exit_code": _current.returncode if (_current and not running) else None,
+        "runs": [
+            {
+                "run_id": h.run_id,
+                "container_name": h.container_name,
+                "project_repo": h.project_repo,
+                "started_at": h.started_at.isoformat(),
+                "last_webhook_at": h.last_webhook_at.isoformat(),
+            }
+            for h in _runners.values()
+        ]
     }
 
 
 @app.post("/stop")
-def stop(x_launcher_token: str | None = Header(default=None)) -> dict:
-    """Send SIGTERM to the running orchestrator subprocess, if any.
+def stop(run_id: str | None = None, x_launcher_token: str | None = Header(default=None)) -> dict:
+    """Stop a running container by run_id (container mode) or the active subprocess (inline mode).
 
-    Returns 409 if no run is in flight. The dashboard's service_control
-    module calls this in compose mode where ``systemctl stop`` is
-    unavailable. The Python RunDriver (#361) maps SIGTERM to a
-    ``KeyboardInterrupt`` so the run finalizes as ``status="interrupted"``
-    rather than being killed mid-emit.
+    In container mode, pass ``?run_id=<id>`` to identify the container.
+    In inline/legacy mode, omitting run_id stops the active subprocess.
     """
     global _current, _last_webhook_at
 
     if LAUNCHER_TOKEN and x_launcher_token != LAUNCHER_TOKEN:
         raise HTTPException(status_code=401, detail="invalid or missing launcher token")
 
+    # Container mode: stop by run_id
+    if run_id is not None:
+        handle = _runners.get(run_id)
+        if handle is None:
+            raise HTTPException(status_code=404, detail=f"no runner for {run_id}")
+        client = _get_docker_client()
+        try:
+            container = client.containers.get(handle.container_name)
+            container.stop(timeout=30)
+        except Exception as exc:
+            logger.warning("stop %s: %s", handle.container_name, exc)
+        _runners.pop(run_id, None)
+        return {"status": "stopped", "run_id": run_id}
+
+    # Inline/legacy mode: stop active subprocess
     if _current is None or _current.poll() is not None:
         raise HTTPException(status_code=409, detail="No run is currently running")
 
@@ -287,18 +305,28 @@ def stop(x_launcher_token: str | None = Header(default=None)) -> dict:
 
 @app.post("/webhook-tick")
 async def webhook_tick(
+    run_id: str | None = None,
     x_launcher_token: str | None = Header(None, alias="X-Launcher-Token"),
 ) -> dict:
-    """Called by agent/webhook_emitter.py on every webhook emit. Bumps
-    the launcher's heartbeat clock so the zombie reaper can tell a
-    productive subprocess from one stuck in a hung Claude CLI call.
+    """Bump the heartbeat clock for the named run (container mode) or the active subprocess (inline).
+
+    Called by agent/webhook_emitter.py on every webhook emit. The zombie
+    reaper uses this timestamp to identify silent/hung runners.
     """
     global _last_webhook_at
     if LAUNCHER_TOKEN and x_launcher_token != LAUNCHER_TOKEN:
         raise HTTPException(status_code=401, detail="invalid or missing launcher token")
+
+    # Container mode: update per-run handle
+    if run_id is not None:
+        handle = _runners.get(run_id)
+        if handle is None:
+            raise HTTPException(status_code=404, detail=f"no runner for {run_id}")
+        handle.last_webhook_at = datetime.now(timezone.utc)
+        return {"status": "ok"}
+
+    # Inline/legacy mode: update global timestamp
     if _current is None or _current.poll() is not None:
-        # No active run — silently ignore so a slow webhook from a
-        # just-finished subprocess doesn't error.
         return {"ok": True, "stale": True}
     _last_webhook_at = datetime.now(timezone.utc)
     return {"ok": True}
