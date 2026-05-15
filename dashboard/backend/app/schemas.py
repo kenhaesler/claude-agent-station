@@ -6,7 +6,7 @@ import json
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # --- Projects ---
 
@@ -37,9 +37,20 @@ class ProjectUpdate(BaseModel):
     # ADR-0001
     autonomy_level: str | None = None
     max_budget_usd: float | None = None
-    # Per-project Docker resource quotas (#386). NULL = use compose-level defaults.
-    runner_memory_limit: int | None = None  # bytes
-    runner_cpu_limit: float | None = None   # fractional CPUs
+    # Per-project Docker resource quotas (#386). NULL = use compose-level
+    # defaults. Bounded so a typo can't accidentally allocate a TB of RAM
+    # or a 999-core CPU quota — Docker would reject either at spawn time
+    # with a cryptic error; failing at the API layer with a 422 is much
+    # clearer triage.
+    # Upper bounds: 1 TiB memory (1099511627776), 256 cores.
+    runner_memory_limit: int | None = Field(
+        default=None, gt=0, le=1_099_511_627_776,
+        description="Docker --memory in bytes. NULL = compose default.",
+    )
+    runner_cpu_limit: float | None = Field(
+        default=None, gt=0, le=256,
+        description="Docker --cpus as fractional CPUs. NULL = compose default.",
+    )
 
 
 class ProjectOut(BaseModel):

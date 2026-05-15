@@ -15,7 +15,15 @@ from app.main import app
 
 @pytest_asyncio.fixture(scope="module")
 async def _quota_engine(tmp_path_factory):
-    """Isolated SQLite engine for runner-quota column tests."""
+    """Isolated SQLite engine for runner-quota column tests.
+
+    Module-scoped: the schema-level tests below share a DB so each test
+    can rely on the alembic-migrated schema being present. Tests use
+    unique ``repo`` values so they don't trip the UNIQUE constraint
+    even though the rows persist within the module. The API tests below
+    use a separate ``_setup_db``-managed engine via ``client``; the two
+    engines target different DBs.
+    """
     import subprocess
     import sys
     from pathlib import Path
@@ -135,3 +143,79 @@ async def test_project_out_includes_quota_fields(mock_sync, client):
     assert "runner_cpu_limit" in body
     assert body["runner_memory_limit"] is None
     assert body["runner_cpu_limit"] is None
+
+
+# ---- Validation (PR review feedback) ----
+
+
+@pytest.mark.asyncio
+@patch("app.routers.projects.sync_db_to_config", new_callable=AsyncMock)
+async def test_quota_validation_rejects_negative_memory(mock_sync, client):
+    """Negative runner_memory_limit → 422, not a runtime Docker spawn error."""
+    resp = await client.post("/api/projects", json={"repo": "v/neg-mem", "branch": "main"})
+    project_id = resp.json()["id"]
+
+    resp = await client.patch(
+        f"/api/projects/{project_id}",
+        json={"runner_memory_limit": -1},
+    )
+    assert resp.status_code == 422, resp.text
+
+
+@pytest.mark.asyncio
+@patch("app.routers.projects.sync_db_to_config", new_callable=AsyncMock)
+async def test_quota_validation_rejects_zero_cpu(mock_sync, client):
+    """Zero runner_cpu_limit → 422. A zero CPU quota would starve the container."""
+    resp = await client.post("/api/projects", json={"repo": "v/zero-cpu", "branch": "main"})
+    project_id = resp.json()["id"]
+
+    resp = await client.patch(
+        f"/api/projects/{project_id}",
+        json={"runner_cpu_limit": 0},
+    )
+    assert resp.status_code == 422, resp.text
+
+
+@pytest.mark.asyncio
+@patch("app.routers.projects.sync_db_to_config", new_callable=AsyncMock)
+async def test_quota_validation_rejects_oversized_memory(mock_sync, client):
+    """runner_memory_limit > 1 TiB → 422. Prevents typos like 5_368_709_120_000 (5 TB)."""
+    resp = await client.post("/api/projects", json={"repo": "v/huge", "branch": "main"})
+    project_id = resp.json()["id"]
+
+    resp = await client.patch(
+        f"/api/projects/{project_id}",
+        json={"runner_memory_limit": 5_368_709_120_000},
+    )
+    assert resp.status_code == 422, resp.text
+
+
+@pytest.mark.asyncio
+@patch("app.routers.projects.sync_db_to_config", new_callable=AsyncMock)
+async def test_quota_validation_rejects_oversized_cpu(mock_sync, client):
+    """runner_cpu_limit > 256 → 422. No reasonable runner host has more than that."""
+    resp = await client.post("/api/projects", json={"repo": "v/cpu-huge", "branch": "main"})
+    project_id = resp.json()["id"]
+
+    resp = await client.patch(
+        f"/api/projects/{project_id}",
+        json={"runner_cpu_limit": 999},
+    )
+    assert resp.status_code == 422, resp.text
+
+
+@pytest.mark.asyncio
+@patch("app.routers.projects.sync_db_to_config", new_callable=AsyncMock)
+async def test_quota_validation_accepts_realistic_bounds(mock_sync, client):
+    """Realistic values (512 MiB + 0.5 cores) round-trip cleanly."""
+    resp = await client.post("/api/projects", json={"repo": "v/ok", "branch": "main"})
+    project_id = resp.json()["id"]
+
+    resp = await client.patch(
+        f"/api/projects/{project_id}",
+        json={"runner_memory_limit": 536870912, "runner_cpu_limit": 0.5},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["runner_memory_limit"] == 536870912
+    assert body["runner_cpu_limit"] == 0.5

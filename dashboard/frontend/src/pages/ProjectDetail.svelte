@@ -457,8 +457,13 @@
                     placeholder="— (compose default)"
                     value={project.runner_memory_limit ?? ''}
                     onchange={(e) => {
-                      const raw = (e.currentTarget as HTMLInputElement).value;
-                      const v = raw === '' ? null : Number(raw);
+                      // Empty / whitespace / non-numeric all collapse to
+                      // null so the backend stores NULL (= compose default)
+                      // rather than NaN (which would JSON-serialise as
+                      // null but bypass the API's validators).
+                      const raw = (e.currentTarget as HTMLInputElement).value.trim();
+                      const parsed = raw === '' ? null : Number(raw);
+                      const v = (parsed === null || Number.isNaN(parsed)) ? null : parsed;
                       project!.runner_memory_limit = v;
                       save('runner_memory_limit', v);
                     }} />
@@ -473,8 +478,9 @@
                     placeholder="— (compose default)"
                     value={project.runner_cpu_limit ?? ''}
                     onchange={(e) => {
-                      const raw = (e.currentTarget as HTMLInputElement).value;
-                      const v = raw === '' ? null : Number(raw);
+                      const raw = (e.currentTarget as HTMLInputElement).value.trim();
+                      const parsed = raw === '' ? null : Number(raw);
+                      const v = (parsed === null || Number.isNaN(parsed)) ? null : parsed;
                       project!.runner_cpu_limit = v;
                       save('runner_cpu_limit', v);
                     }} />
