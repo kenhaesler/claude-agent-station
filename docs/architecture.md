@@ -394,3 +394,16 @@ Pagination is cursor-based on `(t, source, source_id)`. Filter via `?kinds=`
 `/api/audit?run_id=…&id=…` for `tool` events whose tails are truncated.
 
 Implementation: `dashboard/backend/app/services/run_timeline.py`.
+
+## Per-run containers (#386)
+
+The Agent Teams runtime now uses two container roles instead of one:
+
+- **cas-launcher** — long-lived FastAPI service in the `agent` compose container. Exposes `/run`, `/status`, `/stop`, `/webhook-tick`, `/vision-analyst`. Mounts the Docker socket and owns the `_runners: dict[str, RunnerHandle]` map keyed by `run_id`. Idempotent — a duplicate `/run` for the same `hint_run_id` returns 409 instead of forking a second container.
+- **cas-runner-`<run-id>`** — ephemeral container, one per active run, spawned by the launcher via the Docker socket. Same image as the launcher (`claude-agent-station/agent:dev`). Entry point: `python -m agent.station_orchestrator --driver --run-id …`. Started with `--init` for proper PID 1 signal handling and `--rm` for auto-cleanup on exit; resource budgets come from the Project's `runner_memory_limit` / `runner_cpu_limit` columns (`mem_limit` + `nano_cpus` on `containers.run`).
+
+Both roles join the `agent-net` bridge network so the runner can reach the dashboard at `http://dashboard:8420` for webhook callbacks. Workspace state remains durable: every runner mounts the shared `station-data` named volume, so consecutive runs on the same project continue to see the same `workspaces/<repo>/` tree.
+
+Two concurrent runs on different projects no longer share a process tree, SDK CLI subprocess, memory, or CPU budget — Docker assigns each container its own PID namespace and cgroup. The `launcher_reaper` watchdog enforces a heartbeat-based liveness check and force-stops runners that miss too many `/webhook-tick` updates.
+
+Implementation: `agent/runner_spawn.py` (spawn + name + quotas), `agent/launcher.py` (`/run`, `/stop`, `_runners` map), `agent/launcher_reaper.py` (stale-runner reaper).

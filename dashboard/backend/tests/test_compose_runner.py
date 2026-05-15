@@ -32,3 +32,16 @@ def test_dashboard_on_agent_net():
     c = _compose()
     nets = c["services"]["dashboard"].get("networks") or []
     assert "agent-net" in nets
+
+
+def test_operations_doc_has_runner_section():
+    doc = (Path(__file__).resolve().parents[3] / "docs/operations.md").read_text()
+    assert "## Inspecting a live runner" in doc
+    assert "STATION_RUNNER_MODE" in doc
+    assert "docker exec" in doc
+
+
+def test_architecture_doc_mentions_per_run_container():
+    doc = (Path(__file__).resolve().parents[3] / "docs/architecture.md").read_text()
+    assert "cas-runner" in doc
+    assert "cas-launcher" in doc or "per-run container" in doc
