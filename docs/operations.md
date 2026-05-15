@@ -169,3 +169,15 @@ STATION_RUNNER_MODE=inline docker compose up -d agent
 ```
 
 This restores the pre-#386 single-container behaviour (one orchestrator subprocess inside the agent container, no per-run isolation). Remove the override once container mode is proven stable to re-engage per-run containers as the default.
+
+### Security implications of mounting `/var/run/docker.sock`
+
+The `agent` service mounts `/var/run/docker.sock` so the launcher can spawn `cas-runner-<run-id>` containers. The Docker socket grants **root-equivalent access to the host** — any process that reaches it can `docker run --privileged --pid=host --network=host …` and escape the agent container.
+
+This means the agent container's blast radius now includes the host. Concretely:
+
+- Any code-execution vulnerability in the launcher or orchestrator (including a malicious repo's CI / setup script that ends up running inside a runner) can take over the host, not just the agent container.
+- For shared infrastructure or multi-tenant deployments, gate the socket through a Docker-in-Docker proxy (e.g. `tecnativa/docker-socket-proxy`) restricting the launcher to `containers.run` / `containers.get` / `containers.stop` and nothing else.
+- Single-tenant developer machines and dedicated VMs are the intended deployment target; the existing trust model (the operator already trusts the agent with `gh` auth and Claude credentials) makes the additional socket exposure proportional.
+
+Run on dedicated hardware or a disposable VM if the threat model includes hostile repository contents.
