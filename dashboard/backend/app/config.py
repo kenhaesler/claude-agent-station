@@ -10,16 +10,38 @@ class Settings(BaseSettings):
     # Database
     db_path: str = "/var/lib/claude-agent-station/station.db"
     db_url: str | None = None  # preferred; full SQLAlchemy URL incl. driver
+    # Path to a file containing the DB password (compose ``secrets:`` mount).
+    # When set, the literal token ``${DB_PASSWORD}`` in ``db_url`` is replaced
+    # with the file's contents at startup. Keeps the password out of process
+    # env (visible via ``/proc/<pid>/environ`` or ``docker inspect``).
+    db_password_file: str | None = None
 
     @property
     def resolved_db_url(self) -> str:
         """Return the URL the engine should use.
 
-        Order: ``db_url`` env (production), then ``db_path`` (SQLite fallback).
-        Empty string treated as unset.
+        Order:
+        1. ``db_url`` env (production). If ``${DB_PASSWORD}`` appears in the
+           URL and ``db_password_file`` points at a readable file, the token
+           is substituted with the file's contents (trimmed).
+        2. ``db_path`` (SQLite fallback).
+
+        Empty ``db_url`` treated as unset.
         """
         if self.db_url:
-            return self.db_url
+            url = self.db_url
+            if "${DB_PASSWORD}" in url and self.db_password_file:
+                try:
+                    with open(self.db_password_file, "r", encoding="utf-8") as f:
+                        password = f.read().strip()
+                    url = url.replace("${DB_PASSWORD}", password)
+                except OSError:
+                    # Fall through with the placeholder intact; the engine
+                    # will fail loudly with a clear "auth failed" message
+                    # rather than the silent-empty-password failure mode
+                    # the original ``${DB_PASSWORD}`` shell-interp had.
+                    pass
+            return url
         return f"sqlite+aiosqlite:///{self.db_path}"
 
     # Agent log directory

@@ -378,3 +378,75 @@ The manager produces one of four verdicts per project/issue:
 `APPROVE_INTEGRATION` arms GitHub's auto-merge feature. Auto-merge only meaningfully gates when the integration/dev branch has **at least one required check** in its branch protection rules. If no checks are required, `gh pr merge --auto --squash` will merge immediately. Configure required checks at `Settings → Branches → Branch protection rules → <dev_branch>` on each project before relying on this verdict.
 
 If the project does not have integration enabled (`integration.enabled = false`), the verdict degrades to `APPROVE` and a warning is logged — the manager should not have emitted `APPROVE_INTEGRATION` in that case, but the system accepts rather than failing the run.
+
+## SQLite → Postgres migration playbook
+
+The persistence layer supports both SQLite (single-writer, file-based) and Postgres (multi-writer, recommended once concurrent runs land in #386). Migration is a one-time data copy.
+
+### Backend selection
+
+Set the SQLAlchemy URL via env var. URLs are read at process start:
+
+- **SQLite (default)**: `STATION_DB_PATH=/var/lib/claude-agent-station/station.db` — synthesized as `sqlite+aiosqlite:///<path>`.
+- **Postgres**: `STATION_DB_URL=postgresql+asyncpg://station:<password>@db:5432/station` — explicit driver + creds. The `db` service in `compose.yml` provides this on the compose deployment path.
+
+`STATION_DB_URL` takes precedence over `STATION_DB_PATH`.
+
+### Keeping the password out of process env
+
+To avoid baking the password into the SQLAlchemy URL (and therefore into `/proc/<pid>/environ` and `docker inspect`), set the literal token `${DB_PASSWORD}` in `STATION_DB_URL` and point `STATION_DB_PASSWORD_FILE` at a file containing the password. The dashboard and agent each read the file at startup and substitute the token before constructing the engine. Compose mounts `./.secrets/db_password` into both containers at `/run/secrets/db_password` via the `secrets:` block — operators only need to put their chosen password in `./.secrets/db_password` (which `.gitignore` excludes) before `docker compose up`.
+
+If `STATION_DB_PASSWORD_FILE` is unset or unreadable, the placeholder is preserved and the engine fails with a clear auth error rather than connecting with an empty password.
+
+### One-time data migration
+
+1. **Stop the agent and dashboard.** Both must be quiesced — the migrator does a row-count parity check at the end; concurrent writes during the copy would invalidate it.
+   ```bash
+   systemctl stop claude-agent claude-dashboard   # systemd
+   docker compose stop agent dashboard            # compose
+   ```
+2. **Backup the SQLite file.**
+   ```bash
+   cp /var/lib/claude-agent-station/station.db station.db.pre-pg-$(date +%Y%m%dT%H%M%S).bak
+   ```
+3. **Start the Postgres service** and apply the schema:
+   ```bash
+   docker compose up -d db                              # compose path
+   cd dashboard/backend
+   STATION_DB_URL=postgresql+asyncpg://station:<pw>@localhost:5432/station \
+       python -m alembic upgrade head
+   ```
+4. **Run the migrator** from the repo root:
+   ```bash
+   python -m scripts.migrate_sqlite_to_postgres \
+       --sqlite /var/lib/claude-agent-station/station.db \
+       --postgres "postgresql+asyncpg://station:<pw>@localhost:5432/station"
+   ```
+   The script copies rows table-by-table in dependency order, JSON-decodes the four JSONB columns (`agent_events.event_data`, `audit_log.action_detail`, `runs.employee_report`, `runs.verdict_detail`) on the way in, advances SERIAL sequences to `max(id)`, and prints a row-count parity table. Exit code is non-zero on any mismatch.
+5. **Switch the backend** for the agent + dashboard services:
+   ```bash
+   # systemd
+   echo 'STATION_DB_URL=postgresql+asyncpg://station:<pw>@db:5432/station' \
+       >> /etc/claude-agent-station/env
+   systemctl restart claude-agent claude-dashboard
+
+   # compose: edit compose.yml to set STATION_DB_URL on agent + dashboard
+   docker compose up -d
+   ```
+6. **Verify**: open Mission Control; the historical runs list should show identical counts. Trigger a small test run and confirm `last_event_at` updates in real time (LISTEN/NOTIFY path).
+
+### Rollback
+
+The original SQLite file is untouched. If Postgres misbehaves:
+1. `unset STATION_DB_URL` (or remove from systemd env / compose).
+2. Restart agent + dashboard.
+3. SQLite resumes as the canonical store — any rows written to Postgres after the cutover are lost; re-export from Postgres back to SQLite is not currently scripted.
+
+### Idempotency
+
+The migrator uses `INSERT ... ON CONFLICT DO NOTHING` on every table, so re-running against a partially-populated Postgres is safe — already-migrated rows are skipped, new rows fill in. The row-count parity check at the end still requires source == destination, so a partial copy will fail loudly.
+
+### Operational implications
+
+- **Polling intervals relax on Postgres** (issue #393 PR-3): `log_importer` poll bumps from 30 s to 300 s (`run_event` LISTEN/NOTIFY carries the recency load); `stale_run_reaper` tick bumps from 15 s to 60 s (`heartbeat` LISTEN/NOTIFY rebroadcasts on the SSE event bus). No operator action — these are dialect-aware automatically.
+- **Concurrent runners** (issue #386 follow-up) require Postgres because SQLite's single-writer lock would serialise their event writes. Migration is the prerequisite for that work.

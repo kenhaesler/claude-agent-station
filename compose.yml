@@ -10,18 +10,49 @@
 # State lives in named volumes so it survives `compose down`.
 
 services:
+  db:
+    image: postgres:16-alpine
+    container_name: cas-db
+    environment:
+      POSTGRES_USER: station
+      POSTGRES_DB: station
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    secrets:
+      - db_password
+    volumes:
+      - station-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "station"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
   dashboard:
     build:
       context: .
       dockerfile: Dockerfile.dashboard
     image: claude-agent-station/dashboard:dev
     container_name: cas-dashboard
+    depends_on:
+      db:
+        condition: service_healthy
     ports:
       - "8420:8420"
+    secrets:
+      - db_password
     environment:
       STATION_HOST: "0.0.0.0"
       STATION_PORT: "8420"
       STATION_DB_PATH: /var/lib/claude-agent-station/station.db
+      # ``${DB_PASSWORD}`` here is a Python-side placeholder, NOT a compose
+      # shell-env interpolation (compose only substitutes env vars; the
+      # ``$$`` escape preserves the literal ``$`` for app/config.py to
+      # see). ``STATION_DB_PASSWORD_FILE`` points at the file-mounted
+      # secret; ``resolved_db_url`` reads it at startup and replaces the
+      # placeholder. Keeps the password out of process env.
+      STATION_DB_URL: "postgresql+asyncpg://station:$${DB_PASSWORD}@db:5432/station"
+      STATION_DB_PASSWORD_FILE: /run/secrets/db_password
       STATION_LOG_DIR: /var/log/claude-agent
       STATION_WORKSPACES: /var/lib/claude-agent-station/workspaces
       # Manager config JSON — source of truth for projects/permissions.
@@ -94,8 +125,17 @@ services:
     depends_on:
       dashboard:
         condition: service_healthy
+      db:
+        condition: service_healthy
+    secrets:
+      - db_password
     environment:
       STATION_DB_PATH: /var/lib/claude-agent-station/station.db
+      # See dashboard service's STATION_DB_URL note: ``$${DB_PASSWORD}`` is a
+      # Python-side placeholder substituted from the file-mounted secret
+      # at startup, not a compose shell-env interpolation.
+      STATION_DB_URL: "postgresql+asyncpg://station:$${DB_PASSWORD}@db:5432/station"
+      STATION_DB_PASSWORD_FILE: /run/secrets/db_password
       STATION_LOG_DIR: /var/log/claude-agent
       STATION_WORKSPACES: /var/lib/claude-agent-station/workspaces
       # Same shared config the dashboard writes to, so the orchestrator
@@ -155,3 +195,8 @@ services:
 volumes:
   station-data:
   station-logs:
+  station-pgdata:
+
+secrets:
+  db_password:
+    file: ./.secrets/db_password

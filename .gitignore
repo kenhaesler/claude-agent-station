@@ -55,3 +55,4 @@ credentials.json
 api-key
 *.pem
 *.key
+.secrets/
