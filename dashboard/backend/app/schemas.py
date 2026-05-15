@@ -37,6 +37,9 @@ class ProjectUpdate(BaseModel):
     # ADR-0001
     autonomy_level: str | None = None
     max_budget_usd: float | None = None
+    # Per-project Docker resource quotas (#386). NULL = use compose-level defaults.
+    runner_memory_limit: int | None = None  # bytes
+    runner_cpu_limit: float | None = None   # fractional CPUs
 
 
 class ProjectOut(BaseModel):
@@ -53,6 +56,9 @@ class ProjectOut(BaseModel):
     # ADR-0001
     autonomy_level: str = "assisted"
     max_budget_usd: float | None = None
+    # Per-project Docker resource quotas (#386). NULL = use compose-level defaults.
+    runner_memory_limit: int | None = None  # bytes
+    runner_cpu_limit: float | None = None   # fractional CPUs
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
