@@ -40,6 +40,11 @@ class Project(Base):
     # ADR-0001: autonomy level (manual/assisted/auto); default budget ceiling
     autonomy_level = Column(Text, default="assisted")
     max_budget_usd = Column(Float, nullable=True, default=None)
+    # Per-project Docker resource quotas (#386). NULL = use compose-level defaults.
+    # runner_memory_limit: bytes (e.g. 536870912 = 512 MiB). Passed as --memory.
+    # runner_cpu_limit: fractional CPUs (e.g. 0.5). Passed as --cpus.
+    runner_memory_limit = Column(Integer, nullable=True, default=None)
+    runner_cpu_limit = Column(Float, nullable=True, default=None)
     # Vision cache (Phase 1 — see docs/superpowers/specs/2026-05-07-project-vision-design.md)
     vision_cached_sha = Column(Text, nullable=True, default=None)
     vision_cached_body = Column(Text, nullable=True, default=None)

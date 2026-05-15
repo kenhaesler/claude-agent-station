@@ -42,6 +42,10 @@ export interface Project {
   security_review_enabled: boolean;
   autonomy_level: AutonomyLevel;
   max_budget_usd: number | null;
+  /** Per-project Docker --memory value in bytes. NULL = use compose-level default. */
+  runner_memory_limit: number | null;
+  /** Per-project Docker --cpus value as fractional CPUs. NULL = use compose-level default. */
+  runner_cpu_limit: number | null;
   created_at: string;
   updated_at: string;
 }

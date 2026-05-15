@@ -57,12 +57,18 @@ async def create_project(data: ProjectCreate, db: AsyncSession = Depends(get_db)
     return project
 
 
-@router.put("/{project_id}", response_model=ProjectOut)
-async def update_project(
-    project_id: int,
-    data: ProjectUpdate,
-    db: AsyncSession = Depends(get_db),
-):
+async def _apply_project_update(
+    project_id: int, data: ProjectUpdate, db: AsyncSession,
+) -> Project:
+    """Shared body for PUT and PATCH.
+
+    Both verbs accept partial updates via ``exclude_unset=True`` —
+    PUT-as-replace is not a meaningful contract here because the
+    ``ProjectUpdate`` schema's fields are all ``Optional``. The two
+    routes share this body verbatim; keeping them as separate
+    decorators preserves the externally-advertised PATCH verb without
+    duplicating the implementation.
+    """
     result = await db.execute(select(Project).where(Project.id == project_id))
     project = result.scalar_one_or_none()
     if not project:
@@ -81,6 +87,25 @@ async def update_project(
         raise
     await db.refresh(project)
     return project
+
+
+@router.put("/{project_id}", response_model=ProjectOut)
+async def update_project(
+    project_id: int,
+    data: ProjectUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    return await _apply_project_update(project_id, data, db)
+
+
+@router.patch("/{project_id}", response_model=ProjectOut)
+async def patch_project(
+    project_id: int,
+    data: ProjectUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    """Partial update — identical semantics to PUT but explicit PATCH verb."""
+    return await _apply_project_update(project_id, data, db)
 
 
 @router.delete("/{project_id}", status_code=204)
