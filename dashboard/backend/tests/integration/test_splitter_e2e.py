@@ -6,11 +6,14 @@ Exercises the full pre-dispatch hook against the real
 (GitHub + Claude Agent SDK) are mocked; everything in between is the
 production code path PRs 1-3 shipped.
 
-Parametrised on the standard ``async_session_factory`` fixture so the
-flow is verified against both SQLite and Postgres. If the fixture's
-event-loop binding causes trouble, the test falls back to
-``app.database`` directly — but the plan instructs us to try the
-parametrised fixture first.
+Uses the ``app.database.engine`` + ``Base.metadata.create_all`` pattern
+that ``test_runs_tree.py`` and ``test_run_kind_parent.py`` adopted to
+avoid the session-scoped ``async_session_factory`` event-loop binding
+issue: when multiple tests target ``async_session_factory[postgres]``
+in the same suite run, the second one inherits asyncpg connections
+attached to the first test's loop and asyncpg refuses them. The in-
+process engine path is per-function via ``setup_db`` so each test
+starts with a clean schema bound to the active loop.
 """
 from __future__ import annotations
 
@@ -19,11 +22,25 @@ from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import pytest_asyncio
+from sqlalchemy import select
+
+from app.database import Base, async_session, engine
+from app.models import Run
+
+
+@pytest_asyncio.fixture
+async def setup_db():
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    yield
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
 
 
 @pytest.mark.asyncio
 async def test_synthetic_split_flow_creates_sub_issues(
-    async_session_factory, monkeypatch
+    setup_db, monkeypatch
 ) -> None:
     """Parent issue with 4 acceptance criteria fans out into 2 sub-issues.
 
@@ -38,7 +55,6 @@ async def test_synthetic_split_flow_creates_sub_issues(
     """
     monkeypatch.setenv("STATION_SPLIT_ENABLED", "1")
     from agent.coordinator import decide
-    from app.models import Run
 
     parent = {
         "number": 27,
@@ -75,7 +91,7 @@ async def test_synthetic_split_flow_creates_sub_issues(
     gh.label_exists.return_value = True
     gh.create_issue.side_effect = [{"number": 101}, {"number": 102}]
 
-    async with async_session_factory() as db:
+    async with async_session() as db:
         db.add(
             Run(
                 run_id="rsd-int-1",
@@ -85,33 +101,6 @@ async def test_synthetic_split_flow_creates_sub_issues(
         )
         await db.commit()
 
-    # The production ``_persist_split_decision`` opens its own session
-    # against ``app.database.async_session`` — bound to the static test
-    # DB from conftest, not the parametrised ``async_session_factory``
-    # under test. Bridge the two so the persist path writes into the
-    # fixture's session factory; otherwise the SQLite/Postgres
-    # parametrisation degenerates and the post-condition check below
-    # would race against a phantom schema.
-    from sqlalchemy import update
-    from agent.coordinator import decide as decide_mod
-    from app.models import Run as _Run
-
-    async def _persist_via_fixture(
-        run_id: str, parent_number: int, sub_numbers, warnings
-    ) -> None:
-        async with async_session_factory() as db:
-            await db.execute(
-                update(_Run).where(_Run.run_id == run_id).values(
-                    run_kind="split-decision",
-                    split_decision_json={
-                        "parent_number": parent_number,
-                        "sub_numbers": list(sub_numbers),
-                        "warnings": list(warnings),
-                    },
-                )
-            )
-            await db.commit()
-
     with patch(
         "agent.issue_splitter.runner._invoke_splitter_sdk",
         new=AsyncMock(return_value=splitter_raw),
@@ -119,9 +108,7 @@ async def test_synthetic_split_flow_creates_sub_issues(
         "agent.coordinator.decide._gh_client", return_value=gh
     ), patch(
         "agent.coordinator.decide._ensure_integration_branch"
-    ) as iib, patch.object(
-        decide_mod, "_persist_split_decision", new=_persist_via_fixture
-    ):
+    ) as iib:
         decision = await decide.maybe_run_splitter(
             parent,
             run_id="rsd-int-1",
@@ -137,12 +124,11 @@ async def test_synthetic_split_flow_creates_sub_issues(
     gh.create_issue_comment.assert_called_once()
     iib.assert_called_once()
 
-    # Verify the split decision was persisted.
-    from sqlalchemy import select
-
-    async with async_session_factory() as db:
+    # Verify the split decision was persisted on the existing run row.
+    async with async_session() as db:
         row = (
             await db.execute(select(Run).where(Run.run_id == "rsd-int-1"))
         ).scalar_one()
         assert row.run_kind == "split-decision"
         assert row.split_decision_json["sub_numbers"] == [101, 102]
+        assert row.split_decision_json["parent_number"] == 27
