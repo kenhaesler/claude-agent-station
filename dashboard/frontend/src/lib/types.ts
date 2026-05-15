@@ -95,6 +95,11 @@ export interface Run {
   vision_bootstrap_count?: number | null;
   vision_bootstrap_proposals?: { number: number; title: string; url: string }[] | null;
   last_event_at: string | null;
+  // Issue splitter (#391). ``run_kind`` is one of: ``primary`` |
+  // ``split-decision`` | ``sub-of-<N>``; ``parent_run_id`` links a
+  // sub-run back to its splitter parent.
+  run_kind?: string | null;
+  parent_run_id?: string | null;
 }
 
 export interface RunList {

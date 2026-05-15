@@ -35,6 +35,19 @@
   let ctx = $state<RunFullContext | null>(null);
   let diff = $state<DiffResult | null>(null);
   let allMessages = $state<CoordinatorMessage[]>([]);
+  // Splitter fan-out (#391). Populated for ``split-decision`` parent
+  // runs by ``loadTree`` below; ``null`` for primary + sub runs so the
+  // panel hides itself.
+  let tree = $state<{
+    run_id: string;
+    run_kind: string | null;
+    sub_runs: {
+      run_id: string;
+      run_kind: string | null;
+      verdict: string | null;
+      status: string | null;
+    }[];
+  } | null>(null);
   let loading = $state(true);
   let activeTab = $state<
     'overview' | 'dag' | 'team' | 'conversation' | 'diff' | 'logs' | 'intelligence' | 'timeline'
@@ -66,9 +79,33 @@
     }
   }
 
+  async function loadTree() {
+    // Only parent split-decision runs have a meaningful tree; everything
+    // else gets ``null`` so the panel hides. Fetch failures are silent
+    // — the tree endpoint is observability, not control flow.
+    const r = ctx?.run;
+    if (!r || r.run_kind !== 'split-decision') {
+      tree = null;
+      return;
+    }
+    try {
+      const resp = await fetch(`/api/runs/${r.run_id}/tree`);
+      if (resp.ok) tree = await resp.json();
+    } catch {
+      // swallow — panel just stays hidden
+    }
+  }
+
   $effect(() => {
     runId;
     loadRun();
+  });
+
+  $effect(() => {
+    // Re-runs whenever ctx changes — including the first time it
+    // becomes non-null after loadRun resolves.
+    ctx;
+    loadTree();
   });
 
   let run = $derived(ctx?.run);
@@ -517,6 +554,25 @@
               <div class="mono-line"><code>docker exec -it {cname} bash</code></div>
               <div class="mono-line"><code>docker logs -f {cname}</code></div>
             </div>
+          {/if}
+
+          {#if tree && tree.sub_runs.length > 0}
+            <section class="card-block fanout" data-testid="fanout-panel" style="margin-bottom: 16px">
+              <h3>Fan-out</h3>
+              <p style="margin-bottom: 8px; font-size: 12px; color: var(--ash)">
+                This run decomposed into {tree.sub_runs.length} sub-run{tree.sub_runs.length === 1 ? '' : 's'} (#391).
+              </p>
+              <ul style="list-style: none; padding: 0; margin: 0">
+                {#each tree.sub_runs as sub}
+                  <li class="mono-line">
+                    <a href={`/runs/${sub.run_id}`} style="color: var(--data)">{sub.run_id}</a>
+                    &nbsp;<span class="dim">{sub.run_kind ?? '—'}</span>
+                    &nbsp;<span>verdict: {sub.verdict ?? '—'}</span>
+                    &nbsp;<span>status: {sub.status ?? '—'}</span>
+                  </li>
+                {/each}
+              </ul>
+            </section>
           {/if}
 
           {#if (run.mode as string) === 'vision-bootstrap'}
