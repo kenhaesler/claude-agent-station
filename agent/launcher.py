@@ -354,6 +354,17 @@ async def _spawn_runner_container(hint_run_id: str, project_repo: str | None) ->
     client = _get_docker_client()
     quotas = await _resolve_quotas(project_repo)
     env = _env_passthrough()
+    # Override the launcher URL for the runner's view. Inside the
+    # launcher's own process ``http://localhost:8421`` reaches the
+    # FastAPI app via loopback, but inside a spawned runner container
+    # ``localhost`` is the runner itself — webhook-tick POSTs would
+    # silently fail with connection-refused, the zombie reaper would
+    # see no heartbeats, and the runner would be SIGTERM'd after
+    # ZOMBIE_TIMEOUT_SECONDS. ``http://agent:8421`` resolves to the
+    # launcher's container via compose's DNS on ``agent-net``.
+    env["STATION_AGENT_LAUNCHER_URL"] = os.environ.get(
+        "STATION_RUNNER_LAUNCHER_URL", "http://agent:8421",
+    )
     # Fetch a fresh GitHub App installation token for the runner — the
     # legacy ``_spawn_run_manager`` (inline mode) does the same and the
     # original PR #386 port forgot to carry it over. Without

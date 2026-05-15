@@ -247,6 +247,42 @@ def test_spawn_runner_container_injects_gh_token(monkeypatch):
     assert env["GH_TOKEN"] == "ghs_app_token"
 
 
+def test_spawn_runner_container_overrides_launcher_url(monkeypatch):
+    """The launcher's own ``STATION_AGENT_LAUNCHER_URL`` is
+    ``http://localhost:8421`` (loopback inside its own container).
+    Spawned runners MUST get ``http://agent:8421`` instead — inside
+    the runner ``localhost`` is the runner itself, and webhook-tick
+    POSTs would silently fail with connection-refused.
+    """
+    monkeypatch.setenv("STATION_RUNNER_MODE", "container")
+    monkeypatch.setenv("STATION_LAUNCHER_TOKEN", "")
+    monkeypatch.setenv("STATION_AGENT_LAUNCHER_URL", "http://localhost:8421")
+    import importlib
+    from fastapi.testclient import TestClient
+    from agent.runner_spawn import RunnerHandle
+    from datetime import datetime, timezone
+    import agent.launcher as launcher
+    importlib.reload(launcher)
+
+    with patch("agent.launcher._fetch_gh_token", return_value=None), \
+         patch("agent.launcher._get_docker_client") as get_client, \
+         patch("agent.launcher._get_inherited_mounts", return_value=[]), \
+         patch("agent.launcher.spawn_runner") as spawn:
+        spawn.return_value = RunnerHandle(
+            run_id="run-url", container_name="cas-runner-url",
+            started_at=datetime.now(timezone.utc),
+            last_webhook_at=datetime.now(timezone.utc),
+            project_repo=None,
+        )
+        get_client.return_value = MagicMock()
+        TestClient(launcher.app).post("/run", json={"hint_run_id": "run-url"})
+
+    env = spawn.call_args.kwargs["env_passthrough"]
+    assert env["STATION_AGENT_LAUNCHER_URL"] == "http://agent:8421", (
+        "launcher URL must be overridden — runners can't reach themselves on localhost:8421"
+    )
+
+
 def test_spawn_runner_container_tolerates_missing_gh_token(monkeypatch):
     """When the dashboard's GitHub App isn't installed (or unreachable),
     ``_fetch_gh_token`` returns ``None``. The runner spawn must still

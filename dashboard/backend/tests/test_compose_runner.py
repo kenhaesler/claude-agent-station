@@ -40,6 +40,19 @@ def test_agent_net_has_explicit_name_to_avoid_project_prefix():
     )
 
 
+def test_db_service_is_on_agent_net():
+    """Runner containers join only ``agent-net``; if ``db`` is not also
+    on that network, every runner aborts the first time it dials
+    Postgres with ``socket.gaierror: Name or service not known``.
+    See #386 follow-up.
+    """
+    c = _compose()
+    nets = c["services"]["db"].get("networks") or []
+    assert "agent-net" in nets, (
+        "db service must join agent-net so runner containers can reach it"
+    )
+
+
 def test_station_volumes_have_explicit_name_to_avoid_project_prefix():
     """Same project-prefix gotcha as ``agent-net``: ``runner_spawn.py``
     mounts ``station-data`` / ``station-logs`` by bare name, but compose
