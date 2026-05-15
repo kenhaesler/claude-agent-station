@@ -21,6 +21,14 @@ services:
       - db_password
     volumes:
       - station-pgdata:/var/lib/postgresql/data
+    # Join the agent-net bridge alongside the default network so runner
+    # containers (which join only ``agent-net``) can resolve ``db`` to
+    # open Postgres connections. Without this membership the runner
+    # aborts with ``socket.gaierror: Name or service not known`` the
+    # first time SQLAlchemy tries to dial the DB. See #386 follow-up.
+    networks:
+      - default
+      - agent-net
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "station"]
       interval: 5s
