@@ -211,6 +211,75 @@ def test_env_passthrough_whitelist_runner_needs(monkeypatch):
     assert "HOME" not in env
 
 
+def test_spawn_runner_container_injects_gh_token(monkeypatch):
+    """The runner needs ``GH_TOKEN`` so ``git clone`` can use the
+    GitHub App installation token via the embedded-URL credential path
+    (see ``workspace_setup._clone_url``). The legacy inline path
+    (``_spawn_run_manager``) already fetches the token; PR #386's
+    runner port forgot to carry it over and the first live triggered
+    run aborted at clone time.
+    """
+    monkeypatch.setenv("STATION_RUNNER_MODE", "container")
+    monkeypatch.setenv("STATION_LAUNCHER_TOKEN", "")
+    import importlib
+    from fastapi.testclient import TestClient
+    from agent.runner_spawn import RunnerHandle
+    from datetime import datetime, timezone
+    import agent.launcher as launcher
+    importlib.reload(launcher)  # pick up the empty LAUNCHER_TOKEN
+
+    with patch("agent.launcher._fetch_gh_token", return_value="ghs_app_token") as fetch, \
+         patch("agent.launcher._get_docker_client") as get_client, \
+         patch("agent.launcher._get_inherited_mounts", return_value=[]), \
+         patch("agent.launcher.spawn_runner") as spawn:
+        spawn.return_value = RunnerHandle(
+            run_id="run-tok", container_name="cas-runner-tok",
+            started_at=datetime.now(timezone.utc),
+            last_webhook_at=datetime.now(timezone.utc),
+            project_repo=None,
+        )
+        get_client.return_value = MagicMock()
+        resp = TestClient(launcher.app).post("/run", json={"hint_run_id": "run-tok"})
+
+    assert resp.status_code == 200
+    fetch.assert_called_once()
+    env = spawn.call_args.kwargs["env_passthrough"]
+    assert env["GH_TOKEN"] == "ghs_app_token"
+
+
+def test_spawn_runner_container_tolerates_missing_gh_token(monkeypatch):
+    """When the dashboard's GitHub App isn't installed (or unreachable),
+    ``_fetch_gh_token`` returns ``None``. The runner spawn must still
+    proceed — git clone will fail with a clear stdin-auth error rather
+    than this code path raising.
+    """
+    monkeypatch.setenv("STATION_RUNNER_MODE", "container")
+    monkeypatch.setenv("STATION_LAUNCHER_TOKEN", "")
+    import importlib
+    from fastapi.testclient import TestClient
+    from agent.runner_spawn import RunnerHandle
+    from datetime import datetime, timezone
+    import agent.launcher as launcher
+    importlib.reload(launcher)
+
+    with patch("agent.launcher._fetch_gh_token", return_value=None), \
+         patch("agent.launcher._get_docker_client") as get_client, \
+         patch("agent.launcher._get_inherited_mounts", return_value=[]), \
+         patch("agent.launcher.spawn_runner") as spawn:
+        spawn.return_value = RunnerHandle(
+            run_id="run-no-tok", container_name="cas-runner-no-tok",
+            started_at=datetime.now(timezone.utc),
+            last_webhook_at=datetime.now(timezone.utc),
+            project_repo=None,
+        )
+        get_client.return_value = MagicMock()
+        resp = TestClient(launcher.app).post("/run", json={"hint_run_id": "run-no-tok"})
+
+    assert resp.status_code == 200
+    env = spawn.call_args.kwargs["env_passthrough"]
+    assert "GH_TOKEN" not in env
+
+
 def test_get_inherited_mounts_returns_empty_outside_docker(monkeypatch):
     """Without ``/etc/hostname`` resolving to a real container, the
     helper degrades to an empty list rather than raising. Unit tests
