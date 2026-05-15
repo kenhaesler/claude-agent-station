@@ -1028,3 +1028,25 @@ class RunTimelinePage(BaseModel):
     events: list[RunTimelineEvent]
     next_cursor: str | None = None
     has_more: bool = False
+
+
+class RunTreeSubRun(BaseModel):
+    """One sub-run in the splitter tree view (#391)."""
+
+    run_id: str
+    run_kind: str | None = None
+    verdict: str | None = None
+    status: str | None = None
+
+
+class RunTree(BaseModel):
+    """Splitter tree shape: a parent run plus the sub-runs it spawned (#391).
+
+    The dashboard's tree view (PR-4) renders this directly. Sub-runs
+    are returned flat — the splitter currently produces a single layer
+    of children, and nesting beyond that is intentionally out of scope.
+    """
+
+    run_id: str
+    run_kind: str | None
+    sub_runs: list[RunTreeSubRun]

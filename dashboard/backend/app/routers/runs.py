@@ -40,6 +40,8 @@ from app.schemas import (
     RunMessage,
     RunOut,
     RunTimelinePage,
+    RunTree,
+    RunTreeSubRun,
     TeamSummary,
     TeammateStatus,
     TelemetryActive,
@@ -584,6 +586,43 @@ async def get_run_timeline(
         until=until,
         limit=limit,
         cursor=decoded_cursor,
+    )
+
+
+@router.get("/{run_id}/tree", response_model=RunTree)
+async def get_run_tree(run_id: str, db: AsyncSession = Depends(get_db)) -> RunTree:
+    """Return the parent run plus its sub-runs (issue-splitter, #391).
+
+    404 if the parent ``run_id`` doesn't exist; otherwise the response
+    always includes the ``sub_runs`` list (empty for non-split runs).
+    Scans ``Run.parent_run_id`` (indexed via the 0004 migration), so the
+    query is a single B-tree lookup regardless of run-table size.
+    """
+    parent = (await db.execute(select(Run).where(Run.run_id == run_id))).scalar_one_or_none()
+    if parent is None:
+        raise HTTPException(status_code=404, detail=f"run {run_id} not found")
+    # Order sub-runs by start time for deterministic dashboard rendering;
+    # without this, Postgres returns rows in arbitrary order and the
+    # frontend would flicker as the result set is re-fetched.
+    subs = (
+        await db.execute(
+            select(Run)
+            .where(Run.parent_run_id == run_id)
+            .order_by(Run.started_at.asc())
+        )
+    ).scalars().all()
+    return RunTree(
+        run_id=parent.run_id,
+        run_kind=parent.run_kind,
+        sub_runs=[
+            RunTreeSubRun(
+                run_id=s.run_id,
+                run_kind=s.run_kind,
+                verdict=s.verdict,
+                status=s.status,
+            )
+            for s in subs
+        ],
     )
 
 
