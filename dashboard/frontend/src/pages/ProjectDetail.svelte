@@ -450,6 +450,37 @@
                 </span>
               </div>
               <div class="key-row">
+                <span class="key-label">Runner memory · bytes</span>
+                <span class="val">
+                  <input
+                    type="number"
+                    placeholder="— (compose default)"
+                    value={project.runner_memory_limit ?? ''}
+                    onchange={(e) => {
+                      const raw = (e.currentTarget as HTMLInputElement).value;
+                      const v = raw === '' ? null : Number(raw);
+                      project!.runner_memory_limit = v;
+                      save('runner_memory_limit', v);
+                    }} />
+                </span>
+              </div>
+              <div class="key-row">
+                <span class="key-label">Runner CPU · cores</span>
+                <span class="val">
+                  <input
+                    type="number"
+                    step="0.1"
+                    placeholder="— (compose default)"
+                    value={project.runner_cpu_limit ?? ''}
+                    onchange={(e) => {
+                      const raw = (e.currentTarget as HTMLInputElement).value;
+                      const v = raw === '' ? null : Number(raw);
+                      project!.runner_cpu_limit = v;
+                      save('runner_cpu_limit', v);
+                    }} />
+                </span>
+              </div>
+              <div class="key-row">
                 <span class="key-label">Security review</span>
                 <span class="val">
                   <label class="toggle">
