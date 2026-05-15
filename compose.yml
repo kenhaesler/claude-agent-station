@@ -230,8 +230,18 @@ networks:
   default:
 
 volumes:
+  # ``name:`` overrides compose's default project-prefixing
+  # (``claude-agent-station_station-data``). ``agent/runner_spawn.py``
+  # mounts these volumes by their bare name when it spawns runner
+  # containers; without the override Docker silently creates EMPTY
+  # volumes named ``station-data`` / ``station-logs`` and the runner
+  # sees a blank ``/var/lib/claude-agent-station/`` with no
+  # ``manager-config.json`` — orchestrator aborts in preflight.
+  # Same fix pattern as the ``agent-net`` network above. See #386.
   station-data:
+    name: station-data
   station-logs:
+    name: station-logs
   station-pgdata:
 
 secrets:

@@ -140,14 +140,24 @@ def _get_docker_client():
     return _docker_client
 
 
-# STATION_* env vars that are safe to copy into the runner container. This
-# whitelist intentionally EXCLUDES the dashboard's authentication secrets
-# (STATION_API_KEY, STATION_WEBHOOK_SECRET, STATION_LAUNCHER_TOKEN,
-# STATION_GITHUB_WEBHOOK_SECRET): the runner authenticates back to the
-# dashboard via the launcher token already mounted at the agent layer, and
-# leaking the inbound webhook/API secrets into every runner expands the
-# blast radius for no benefit. Add to this list only when the runner
-# genuinely needs a variable; default-deny is the safe default.
+# STATION_* env vars copied into the runner container.
+#
+# Earlier iterations of this whitelist (PR #419 review) excluded the
+# webhook/API secrets to "prevent leaking secrets into runners". That
+# reasoning was wrong: the runner IS the orchestrator process — it has
+# to authenticate back to the dashboard, and its trust level is identical
+# to the launcher's. Excluding the secrets just produced 401 on every
+# webhook the runner emitted and the orchestrator aborted before doing
+# anything useful. See post-#386 PR-3 end-to-end repro.
+#
+# What we still NEVER copy:
+#   - ``STATION_LAUNCHER_TOKEN`` — that token authenticates the
+#     dashboard → launcher hop; the runner has no reason to call its own
+#     launcher endpoint, so propagating it would expand the blast
+#     radius of a runner compromise without enabling any feature.
+#   - Anything outside the ``STATION_*`` namespace, with the documented
+#     exception of ``IS_SANDBOX`` (Claude CLI requires it under root —
+#     see compose.yml's agent service for the rationale).
 _RUNNER_ENV_WHITELIST: frozenset[str] = frozenset({
     "STATION_DB_URL",
     "STATION_DB_PASSWORD_FILE",
@@ -158,6 +168,14 @@ _RUNNER_ENV_WHITELIST: frozenset[str] = frozenset({
     "STATION_DASHBOARD_BASE_URL",
     "STATION_WEBHOOK_URL",
     "STATION_DEPLOY_MODE",
+    # Runner → dashboard auth — without these the orchestrator's webhooks
+    # and /api/* calls 401 and the run aborts in preflight.
+    "STATION_WEBHOOK_SECRET",
+    "STATION_API_KEY",
+    "STATION_GITHUB_WEBHOOK_SECRET",
+    # Not STATION_-prefixed but required: Claude CLI refuses
+    # ``--dangerously-skip-permissions`` under root unless this is set.
+    "IS_SANDBOX",
 })
 
 
@@ -220,18 +238,109 @@ async def _resolve_quotas(project_repo: str | None) -> dict:
 
 
 def _env_passthrough() -> dict:
-    """STATION_* env vars to inject into the runner.
+    """Build the env dict for the spawned runner.
 
-    Default-deny: only the explicitly whitelisted keys from
-    ``_RUNNER_ENV_WHITELIST`` are forwarded. Dashboard secrets
-    (API key, webhook secrets, launcher token) MUST NOT reach
-    runner subprocesses.
+    Default-deny across the ``STATION_*`` namespace via
+    :data:`_RUNNER_ENV_WHITELIST`. See that constant's docstring for the
+    threat-model reasoning and the list of keys we deliberately exclude.
     """
     return {
         key: value
         for key, value in os.environ.items()
         if key in _RUNNER_ENV_WHITELIST
     }
+
+
+# Destinations on the launcher's container that runners MUST also see.
+# These hold credentials (Claude OAuth, gh auth) and the db_password
+# secret — operator-level state shared across all runs on the host.
+# Without them the runner can't authenticate the Claude CLI, can't run
+# ``gh`` commands, and can't open a DB connection. The launcher inspects
+# its own container at startup, finds these destinations, and propagates
+# the underlying host source paths into each spawned runner.
+_INHERITED_MOUNT_DESTINATIONS: frozenset[str] = frozenset({
+    "/root/.claude",
+    "/root/.config/gh",
+    "/run/secrets/db_password",
+})
+
+_inherited_mounts: list[dict] | None = None
+
+
+def _read_own_container_id() -> str | None:
+    """Best-effort: return the launcher's own container ID.
+
+    ``/etc/hostname`` is the canonical short ID inside a Docker container.
+    Falls back to ``None`` outside Docker (unit tests, bare-metal systemd
+    deploys) — callers degrade gracefully when no inherited mounts are
+    available.
+    """
+    try:
+        with open("/etc/hostname", encoding="utf-8") as fh:
+            return fh.read().strip() or None
+    except OSError:
+        return None
+
+
+def _get_inherited_mounts() -> list[dict]:
+    """Inspect the launcher's own container and return the mounts each
+    runner inherits.
+
+    Cached in module state so we hit the Docker socket once per uvicorn
+    worker, not once per ``/run`` call. Returns ``[]`` outside Docker
+    (no container ID, no daemon) so unit tests don't have to mock this
+    out — the orchestrator just won't see those mounts.
+
+    The returned dicts match the Docker SDK's ``volumes={}`` kwarg shape
+    so :func:`agent.runner_spawn.spawn_runner` can merge them with the
+    named-volume mounts it already provides.
+    """
+    global _inherited_mounts
+    if _inherited_mounts is not None:
+        return _inherited_mounts
+
+    cid = _read_own_container_id()
+    if cid is None:
+        _inherited_mounts = []
+        return _inherited_mounts
+
+    try:
+        own = _get_docker_client().containers.get(cid)
+    except Exception as exc:
+        # Most commonly: cid doesn't match a container the daemon
+        # acknowledges (cgroup-only container, mismatched namespaces).
+        logger.warning("launcher: could not inspect own container %s: %s", cid, exc)
+        _inherited_mounts = []
+        return _inherited_mounts
+
+    mounts: list[dict] = []
+    for mount in own.attrs.get("Mounts", []):
+        if mount.get("Destination") not in _INHERITED_MOUNT_DESTINATIONS:
+            continue
+        # Docker SDK accepts ``volumes={host_or_volname: {"bind": dst, "mode": "..."}}``;
+        # source for a bind mount is the host path, for a named volume
+        # it's the volume name. We treat both the same — the daemon
+        # resolves to the same backing storage either way.
+        mode = "ro" if not mount.get("RW", True) else "rw"
+        mounts.append({
+            "source": mount["Source"],
+            "destination": mount["Destination"],
+            "mode": mode,
+        })
+
+    _inherited_mounts = mounts
+    if mounts:
+        logger.info(
+            "launcher: spawned runners will inherit %d mount(s): %s",
+            len(mounts), [m["destination"] for m in mounts],
+        )
+    else:
+        logger.warning(
+            "launcher: no inherited mounts found on container %s — runners "
+            "will lack Claude/gh credentials and may fail at first CLI call",
+            cid,
+        )
+    return mounts
 
 
 async def _spawn_runner_container(hint_run_id: str, project_repo: str | None) -> dict:
@@ -253,6 +362,7 @@ async def _spawn_runner_container(hint_run_id: str, project_repo: str | None) ->
         image=settings.runner_image,
         config_path=os.environ.get("STATION_CONFIG", "/var/lib/claude-agent-station/manager-config.json"),
         workspaces_dir=os.environ.get("STATION_WORKSPACES", "/var/lib/claude-agent-station/workspaces"),
+        inherited_mounts=_get_inherited_mounts(),
     )
     _runners[hint_run_id] = handle
     return {"status": "triggered", "container": handle.container_name, "run_id": handle.run_id}
