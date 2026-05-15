@@ -2086,6 +2086,60 @@ async def orchestrate_project(
                     issue["number"], issue.get("vision_score", 0.5), issue.get("vision_reason", ""),
                 )
 
+        # Issue-splitter pre-dispatch hook (#391). Off unless
+        # ``STATION_SPLIT_ENABLED=1`` — the env gate lives inside
+        # ``maybe_run_splitter`` so the cost of the import + the no-op
+        # call is negligible on the cold path. The function returns
+        # ``None`` for issues that should run as-is (heuristic miss,
+        # splitter declined, or SDK failure); a non-``None`` decision
+        # decomposes the parent into sub-issues and removes it from
+        # this run's dispatch list so the parent doesn't get worked on
+        # alongside its own children. Sub-issues land on GitHub with
+        # the ``splitter-proposed`` label and sit pending operator
+        # review — they are not auto-dispatched on the same tick.
+        from agent.coordinator.decide import (
+            execute_split_decision,
+            maybe_run_splitter,
+        )
+        for issue in list(issues):  # copy so we can mutate in-place
+            try:
+                decision = await maybe_run_splitter(
+                    issue,
+                    run_id=run_id,
+                    repo_summary="",
+                    vision=vision or "",
+                    cwd=workspace,
+                )
+            except Exception as exc:  # noqa: BLE001 - splitter must never break dispatch
+                logger.warning(
+                    "splitter hook raised for #%s: %s — falling back to single-issue",
+                    issue.get("number"), exc,
+                )
+                continue
+            if decision is None:
+                continue
+            try:
+                await execute_split_decision(
+                    {
+                        "number": issue["number"],
+                        "title": issue.get("title", ""),
+                        "labels": issue.get("labels", []),
+                        "repo": repo,
+                    },
+                    decision,
+                    run_id=run_id,
+                )
+                issues.remove(issue)
+                logger.info(
+                    "Splitter decomposed #%s into %d sub-issues; parent skipped this tick",
+                    issue.get("number"), len(decision.proposals),
+                )
+            except Exception as exc:  # noqa: BLE001 - same: splitter failures stay isolated
+                logger.warning(
+                    "execute_split_decision failed for #%s: %s — keeping parent in dispatch",
+                    issue.get("number"), exc,
+                )
+
         logger.info(
             "Found %d eligible issues for %s: %s",
             len(issues), repo, [f"#{i['number']}" for i in issues],
