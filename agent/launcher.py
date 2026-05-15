@@ -150,14 +150,18 @@ def _get_docker_client():
 # webhook the runner emitted and the orchestrator aborted before doing
 # anything useful. See post-#386 PR-3 end-to-end repro.
 #
-# What we still NEVER copy:
-#   - ``STATION_LAUNCHER_TOKEN`` — that token authenticates the
-#     dashboard → launcher hop; the runner has no reason to call its own
-#     launcher endpoint, so propagating it would expand the blast
-#     radius of a runner compromise without enabling any feature.
-#   - Anything outside the ``STATION_*`` namespace, with the documented
-#     exception of ``IS_SANDBOX`` (Claude CLI requires it under root —
-#     see compose.yml's agent service for the rationale).
+# The "exclude STATION_LAUNCHER_TOKEN" reasoning was wrong too: the
+# runner POSTs to ``/webhook-tick`` on the launcher every few seconds
+# to update ``handle.last_webhook_at``, and that endpoint requires
+# ``X-Launcher-Token``. Without the token in the runner's env every
+# tick 401s, the heartbeat stays stuck at spawn time, and the
+# container-aware reaper SIGTERMs the active runner at the 120s idle
+# mark. First live run that progressed past clone (post-#429) was
+# killed exactly this way after 127s of useful work.
+#
+# Anything outside the ``STATION_*`` namespace stays excluded, with
+# the documented exception of ``IS_SANDBOX`` (Claude CLI requires it
+# under root — see compose.yml's agent service for the rationale).
 _RUNNER_ENV_WHITELIST: frozenset[str] = frozenset({
     "STATION_DB_URL",
     "STATION_DB_PASSWORD_FILE",
@@ -173,6 +177,9 @@ _RUNNER_ENV_WHITELIST: frozenset[str] = frozenset({
     "STATION_WEBHOOK_SECRET",
     "STATION_API_KEY",
     "STATION_GITHUB_WEBHOOK_SECRET",
+    # Runner → launcher auth for /webhook-tick heartbeat. Without this
+    # the reaper kills working runs at the 120s idle mark.
+    "STATION_LAUNCHER_TOKEN",
     # Not STATION_-prefixed but required: Claude CLI refuses
     # ``--dangerously-skip-permissions`` under root unless this is set.
     "IS_SANDBOX",

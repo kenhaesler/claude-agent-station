@@ -171,13 +171,15 @@ def test_post_run_falls_back_to_inline_when_mode_inline(monkeypatch):
 
 def test_env_passthrough_whitelist_runner_needs(monkeypatch):
     """The runner is the orchestrator process — it MUST receive the
-    auth secrets it uses to call back to the dashboard. The earlier
-    too-strict whitelist (PR #419 review) blocked the webhook secret
-    and the runner 401'd on every event, aborting in preflight.
+    auth secrets it uses to call back to the dashboard AND the
+    launcher token for its own heartbeat POSTs. The earlier
+    too-strict whitelist (PR #419/#426 reviews) blocked some of these
+    and runs were either 401'd at preflight or SIGTERMed by the
+    reaper at the 120s idle mark.
 
     What we still refuse to copy:
-    - ``STATION_LAUNCHER_TOKEN`` (dashboard → launcher hop only)
-    - Everything outside the whitelist
+    - Everything outside the whitelist (including unrelated env vars
+      like PATH/HOME that happen to be in the launcher's environ).
     """
     monkeypatch.setenv("STATION_API_KEY", "secret-api")
     monkeypatch.setenv("STATION_WEBHOOK_SECRET", "secret-webhook")
@@ -198,14 +200,15 @@ def test_env_passthrough_whitelist_runner_needs(monkeypatch):
     assert env["STATION_API_KEY"] == "secret-api"
     assert env["STATION_WEBHOOK_SECRET"] == "secret-webhook"
     assert env["STATION_GITHUB_WEBHOOK_SECRET"] == "secret-gh-wh"
+    # Required for runner → launcher /webhook-tick heartbeat (without
+    # it the reaper kills the runner at the 120s idle mark even when
+    # it's doing useful work).
+    assert env["STATION_LAUNCHER_TOKEN"] == "secret-launcher-token"
     # Required for Claude CLI under root.
     assert env["IS_SANDBOX"] == "1"
     # Whitelisted entries must flow through unchanged.
     assert env["STATION_DB_URL"].startswith("postgresql+asyncpg://")
     assert env["STATION_CONFIG"] == "/tmp/cfg.json"
-    # Launcher token still excluded — runner has no reason to call the
-    # launcher's own endpoints.
-    assert "STATION_LAUNCHER_TOKEN" not in env
     # Random non-whitelisted env vars don't leak.
     assert "PATH" not in env
     assert "HOME" not in env
