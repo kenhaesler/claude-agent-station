@@ -601,8 +601,15 @@ async def get_run_tree(run_id: str, db: AsyncSession = Depends(get_db)) -> RunTr
     parent = (await db.execute(select(Run).where(Run.run_id == run_id))).scalar_one_or_none()
     if parent is None:
         raise HTTPException(status_code=404, detail=f"run {run_id} not found")
+    # Order sub-runs by start time for deterministic dashboard rendering;
+    # without this, Postgres returns rows in arbitrary order and the
+    # frontend would flicker as the result set is re-fetched.
     subs = (
-        await db.execute(select(Run).where(Run.parent_run_id == run_id))
+        await db.execute(
+            select(Run)
+            .where(Run.parent_run_id == run_id)
+            .order_by(Run.started_at.asc())
+        )
     ).scalars().all()
     return RunTree(
         run_id=parent.run_id,

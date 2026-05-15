@@ -47,6 +47,30 @@ async def test_execute_split_decision_creates_sub_issues_and_backlinks():
 
 
 @pytest.mark.asyncio
+async def test_execute_split_decision_refuses_empty_proposals():
+    """``maybe_run_splitter`` collapses empty-array decisions to ``None``,
+    but a defensive guard at the execution layer makes the contract
+    explicit: an empty SplitDecision is a programming error, not a
+    valid input. Without this guard a caller bypassing
+    ``maybe_run_splitter`` could label the parent ``split`` and create
+    an empty integration branch on a non-split issue. Regression guard
+    for PR #423 review.
+    """
+    decision = SplitDecision(proposals=(), warnings=())
+    parent = {"number": 27, "title": "x", "labels": [],
+              "repo": "kenhaesler/claude-agent-station"}
+    gh = MagicMock()
+    with patch("agent.coordinator.decide._gh_client", return_value=gh), \
+         patch("agent.coordinator.decide._ensure_integration_branch"):
+        with pytest.raises(ValueError, match="empty proposals"):
+            await execute_split_decision(parent, decision, run_id="rsd-empty")
+    # No GitHub calls — refusal happens before the side effects.
+    gh.create_issue.assert_not_called()
+    gh.create_issue_comment.assert_not_called()
+    gh.add_labels.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_execute_split_decision_tolerates_db_failure():
     """The DB persistence write is best-effort — a failure (e.g. legacy
     run row missing, brief unavailability) must NOT prevent the GitHub

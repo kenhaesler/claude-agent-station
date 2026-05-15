@@ -28,6 +28,8 @@ from __future__ import annotations
 import logging
 from typing import Sequence
 
+from urllib.parse import quote
+
 from agent.gh_client import GhError, gh_json, gh_run
 
 logger = logging.getLogger(__name__)
@@ -53,11 +55,17 @@ class GhAdapter:
         the label exists, a 404 means it doesn't. Any other error is
         propagated as :class:`GhError` (the caller decides whether to
         treat it as fatal or fall through).
+
+        The label name is URL-encoded so labels containing ``/``, ``?``,
+        or other reserved characters route correctly. Current callers
+        only pass ``splitter-proposed``, but defending the helper at the
+        boundary is cheaper than discovering a future label name breaks
+        the path.
         """
         try:
             gh_json([
                 "api",
-                f"repos/{owner}/{repo}/labels/{name}",
+                f"repos/{owner}/{repo}/labels/{quote(name, safe='')}",
             ])
             return True
         except GhError as exc:
@@ -148,17 +156,18 @@ class GhAdapter:
     ) -> None:
         """Attach one or more labels to an existing issue.
 
-        ``gh issue edit`` takes ``--add-label`` once per label; we pass
-        them comma-joined which the CLI accepts as a single
-        comma-separated value. (Tested behaviour as of ``gh`` >= 2.40.)
+        Emits one ``--add-label`` flag per label rather than a
+        comma-joined value: the comma form is undocumented and has been
+        version-dependent across ``gh`` releases, while the repeated-flag
+        form is the documented contract and works on every supported
+        version.
         """
         if not labels:
             return
-        result = gh_run([
-            "issue", "edit", str(issue_number),
-            "--repo", f"{owner}/{repo}",
-            "--add-label", ",".join(labels),
-        ])
+        argv = ["issue", "edit", str(issue_number), "--repo", f"{owner}/{repo}"]
+        for label in labels:
+            argv += ["--add-label", label]
+        result = gh_run(argv)
         if not result.ok:
             raise GhError(result.cmd, result.returncode, result.stderr)
 

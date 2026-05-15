@@ -63,6 +63,7 @@ async def maybe_run_splitter(
     run_id: str,
     repo_summary: str,
     vision: str,
+    cwd: str | None = None,
 ) -> SplitDecision | None:
     """Pre-dispatch hook. Returns a :class:`SplitDecision` when the issue
     should be split, ``None`` otherwise (caller falls through to the
@@ -75,6 +76,18 @@ async def maybe_run_splitter(
     ``SplitterError`` from the SDK runner is caught and logged at WARNING:
     a failed split should not block the normal pickup path. The
     single-issue flow remains a safe fallback.
+
+    A successful splitter call that returns an empty-proposals decision
+    ("don't split; run as-is") is collapsed to ``None`` here, so callers
+    have a single signal to branch on: ``None`` → run the parent
+    single-issue, non-``None`` → hand off to :func:`execute_split_decision`.
+    Without this collapse, callers would have to also check
+    ``decision.proposals`` and ``execute_split_decision`` would happily
+    label the parent ``split`` despite no actual decomposition.
+
+    ``cwd`` is forwarded to :func:`run_splitter`; pass the project's
+    checkout root so the splitter's read-only tool set inspects the
+    right tree (not the launcher's ``/app`` in container mode).
     """
     if os.environ.get("STATION_SPLIT_ENABLED") != "1":
         return None
@@ -82,11 +95,12 @@ async def maybe_run_splitter(
     if not heuristic.should_split:
         return None
     try:
-        return await run_splitter(
+        decision = await run_splitter(
             issue=issue,
             run_id=run_id,
             repo_summary=repo_summary,
             vision=vision,
+            cwd=cwd,
         )
     except SplitterError as exc:
         logger.warning(
@@ -95,6 +109,12 @@ async def maybe_run_splitter(
             exc,
         )
         return None
+    if not decision.proposals:
+        # Splitter looked at the issue and said "no, run as-is" (empty
+        # array). Surface that as a fall-through rather than a decision
+        # the caller has to special-case.
+        return None
+    return decision
 
 
 async def execute_split_decision(
@@ -123,7 +143,19 @@ async def execute_split_decision(
        earlier failures a chance to surface without leaving dangling
        branches.
     5. Persist the split decision on the run row for observability.
+
+    Refuses to execute on an empty-proposals decision: ``maybe_run_splitter``
+    is the load-bearing gate (it collapses "splitter said no" to ``None``),
+    but a future caller bypassing that path could pass an empty decision
+    directly. Without this guard the function would label the parent
+    ``split`` and create an empty integration branch — visible damage on
+    a parent issue that the splitter explicitly declined to decompose.
     """
+    if not decision.proposals:
+        raise ValueError(
+            "execute_split_decision called with empty proposals — use "
+            "maybe_run_splitter's None return as the 'do not split' signal"
+        )
     gh = _gh_client()
     created = create_sub_issues(parent, decision.proposals, gh)
     sub_numbers = [c["number"] for c in created]
@@ -157,7 +189,14 @@ async def _persist_split_decision(
     Top-level helper (rather than inline) so callers can patch it in
     tests that aren't running against a live DB. Failures are logged at
     WARNING and swallowed: this is observability, not control flow.
+
+    Catches only the failure shapes a DB outage actually produces
+    (``SQLAlchemyError`` and ``OSError``) rather than a blanket
+    ``Exception`` — programming errors (``NameError``/``AttributeError``)
+    should crash loudly so they get fixed, not get silently logged.
     """
+    from sqlalchemy.exc import SQLAlchemyError
+
     try:
         from app.database import async_session
         from app.models import Run
@@ -174,7 +213,7 @@ async def _persist_split_decision(
                 )
             )
             await db.commit()
-    except Exception as exc:  # pragma: no cover - best-effort
+    except (SQLAlchemyError, OSError) as exc:
         logger.warning(
             "failed to persist split decision for run=%s parent=#%d: %s",
             run_id, parent_number, exc,
