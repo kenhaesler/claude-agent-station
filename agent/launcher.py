@@ -20,9 +20,11 @@ import os
 import shutil
 import subprocess
 import sys
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+
+from agent.runner_spawn import RunnerHandle  # noqa: F401
+from agent.runner_spawn import spawn_runner  # noqa: F401
 
 import httpx
 from contextlib import asynccontextmanager
@@ -110,18 +112,6 @@ async def _lifespan(app: FastAPI):
 
 app = FastAPI(title="claude-agent-station launcher", lifespan=_lifespan)
 _current: subprocess.Popen | None = None
-
-
-@dataclass
-class RunnerHandle:
-    """One per concurrent run; replaces the global `_current` (#386)."""
-
-    run_id: str
-    container_name: str
-    started_at: datetime
-    last_webhook_at: datetime
-    project_repo: str | None
-
 
 _runners: dict[str, RunnerHandle] = {}
 
