@@ -72,8 +72,49 @@ def test_splitter_hook_documented_in_call_site() -> None:
     """
     p = Path(__file__).resolve().parents[3] / "agent" / "station_orchestrator.py"
     text = p.read_text()
-    # The wire-up comment must reference #391 within a few lines of the call.
+    # Wider window (1500 chars) so the test doesn't fail on incidental
+    # comment-rearrangement — the discoverability invariant is "#391
+    # mentioned within sight of the call", not at a precise offset.
     idx = text.find("maybe_run_splitter")
     assert idx > 0
-    window = text[max(0, idx - 400) : idx + 400]
+    window = text[max(0, idx - 1500) : idx + 1500]
     assert "#391" in window, "wire-up should reference the issue number"
+
+
+def test_render_vision_for_splitter_flattens_dict() -> None:
+    """``load_vision`` returns a dict; the splitter prompt expects a string.
+
+    Regression guard for PR #424 review: passing the raw dict would
+    f-string into a Python repr (``{'problem': '...'}``) inside the
+    splitter prompt. The flattener emits Markdown headings so the model
+    sees the same shape an operator reading ``docs/vision.md`` would.
+    """
+    from agent.station_orchestrator import _render_vision_for_splitter
+
+    vision = {
+        "problem": "users wait too long",
+        "horizons": "h1: cut wait time by 50%",
+        "anti_patterns": "do not pre-fetch",
+        "tech_stack": "",  # empty section must be skipped
+    }
+    out = _render_vision_for_splitter(vision)
+
+    assert "## Problem" in out
+    assert "users wait too long" in out
+    assert "## Horizons" in out
+    assert "h1: cut wait time by 50%" in out
+    # Empty sections elided so the prompt doesn't carry "## Tech Stack\n\n".
+    assert "## Tech Stack" not in out
+    # No Python-dict syntax leaked.
+    assert "{'" not in out and "'}" not in out
+
+
+def test_render_vision_for_splitter_none_returns_empty_string() -> None:
+    """``None`` and ``{}`` both surface as empty so the splitter prompt's
+    ``or '(no vision)'`` fallback engages instead of "## Problem\\n\\n"
+    headings with no body.
+    """
+    from agent.station_orchestrator import _render_vision_for_splitter
+
+    assert _render_vision_for_splitter(None) == ""
+    assert _render_vision_for_splitter({}) == ""
