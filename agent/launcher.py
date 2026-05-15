@@ -353,12 +353,25 @@ async def _spawn_runner_container(hint_run_id: str, project_repo: str | None) ->
         )
     client = _get_docker_client()
     quotas = await _resolve_quotas(project_repo)
+    env = _env_passthrough()
+    # Fetch a fresh GitHub App installation token for the runner — the
+    # legacy ``_spawn_run_manager`` (inline mode) does the same and the
+    # original PR #386 port forgot to carry it over. Without
+    # ``GH_TOKEN`` the runner's first ``git clone`` aborts with
+    # ``could not read Username for 'https://github.com'`` because the
+    # bare HTTPS URL has no credential helper inside the container.
+    # Best-effort: a missing token (dashboard unreachable, App not
+    # installed) lets the run proceed and fail at clone time with a
+    # clearer error than a silent webhook 401 loop.
+    gh_token = _fetch_gh_token()
+    if gh_token:
+        env["GH_TOKEN"] = gh_token
     handle = spawn_runner(
         client,
         hint_run_id=hint_run_id,
         project_repo=project_repo,
         quotas=quotas,
-        env_passthrough=_env_passthrough(),
+        env_passthrough=env,
         image=settings.runner_image,
         config_path=os.environ.get("STATION_CONFIG", "/var/lib/claude-agent-station/manager-config.json"),
         workspaces_dir=os.environ.get("STATION_WORKSPACES", "/var/lib/claude-agent-station/workspaces"),
