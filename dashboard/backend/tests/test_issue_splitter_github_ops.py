@@ -92,6 +92,35 @@ def test_add_backlink_comment_writes_summary():
         gh=gh,
     )
     gh.create_issue_comment.assert_called_once()
-    args, kwargs = gh.create_issue_comment.call_args
-    body = kwargs.get("body") or args[3] if len(args) > 3 else kwargs.get("body")
+    body = gh.create_issue_comment.call_args.kwargs.get("body", "")
     assert "#101" in body and "#102" in body and "#103" in body
+
+
+def test_create_sub_issues_rejects_forward_reference():
+    """Schema validates depends_on bounds + self-ref but allows forward
+    references (proposal 0 depending on proposal 2). create_sub_issues
+    creates issues sequentially and populates the sibling-number map as
+    it goes, so a forward reference would KeyError mid-loop. Refuse
+    explicitly with a clear message. Regression guard for PR #422.
+    """
+    from agent.issue_splitter.schema import SplitterError
+
+    gh = MagicMock()
+    gh.label_exists.return_value = True
+    # Bypass parser; construct proposals directly so we can plant a
+    # forward reference the parser doesn't currently reject.
+    proposals = [
+        SubIssueProposal(
+            title="first", body="b", labels=(), acceptance=("x",),
+            depends_on=1,  # forward ref!
+        ),
+        SubIssueProposal(
+            title="second", body="b", labels=(), acceptance=("x",),
+            depends_on=None,
+        ),
+    ]
+    parent = {"number": 27, "labels": [], "repo": "x/y"}
+    with pytest.raises(SplitterError, match="forward reference"):
+        create_sub_issues(parent, proposals, gh)
+    # Nothing should have been created.
+    gh.create_issue.assert_not_called()

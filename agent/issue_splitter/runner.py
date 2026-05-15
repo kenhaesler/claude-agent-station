@@ -52,12 +52,49 @@ def _ensure_stream_close_timeout() -> None:
     os.environ.setdefault("CLAUDE_CODE_STREAM_CLOSE_TIMEOUT", _STREAM_CLOSE_TIMEOUT_MS)
 
 
+def _extract_assistant_text(content) -> str | None:
+    """Pull the text-block payload out of an SDK assistant message.
+
+    ``message.content`` is a list of content blocks (see
+    ``agent/station_orchestrator.py`` for the canonical walking pattern);
+    each text block exposes its payload on ``.text`` (or ``["text"]``
+    when the SDK hands back a dict instead of a dataclass). Conflict-
+    resolver gets away with ``str(content)`` because it only uses the
+    captured text as a debugging breadcrumb for retry-failure messages;
+    we MUST extract the real text because the splitter's output is
+    parsed as JSON. Reviewer note (PR #422): catching this without an
+    integration test is hard — the unit tests mock _invoke_splitter_sdk
+    wholesale — so this helper has its own coverage at the seam.
+    """
+    if content is None:
+        return None
+    blocks = content if isinstance(content, list) else [content]
+    parts: list[str] = []
+    for block in blocks:
+        block_type = (
+            getattr(block, "type", None)
+            or (block.get("type") if isinstance(block, dict) else None)
+        )
+        if block_type != "text":
+            continue
+        text = (
+            getattr(block, "text", None)
+            or (block.get("text") if isinstance(block, dict) else None)
+        )
+        if text:
+            parts.append(text)
+    if not parts:
+        return None
+    return "\n".join(parts)
+
+
 async def _invoke_splitter_sdk(
     *,
     issue: dict,
     run_id: str,
     repo_summary: str,
     vision: str,
+    cwd: str | None = None,
 ) -> str:
     """Spawn the SDK session and capture the splitter's JSON output.
 
@@ -65,6 +102,12 @@ async def _invoke_splitter_sdk(
     text. Schema validation happens in :func:`run_splitter`. Patched
     wholesale in unit tests; the real SDK is exercised by PR-4's
     integration test.
+
+    ``cwd`` is the project repo the splitter inspects with its
+    read-only tool set; without it the SDK runs against the launcher's
+    cwd (``/app`` in container mode), where ``git log`` / ``rg`` find
+    nothing useful. PR-3's controller threads the workspace path
+    through here.
 
     ``run_id`` is currently unused inside the function — it threads
     through the call signature so the eventual audit-hook plumbing
@@ -84,6 +127,7 @@ async def _invoke_splitter_sdk(
     )
 
     options = ClaudeAgentOptions(
+        cwd=cwd,
         system_prompt=role_md,
         model=SPLITTER_MODEL,
         max_turns=SPLITTER_MAX_TURNS,
@@ -91,18 +135,17 @@ async def _invoke_splitter_sdk(
         allowed_tools=SPLITTER_ALLOWED_TOOLS,
     )
 
-    # Mirror the conflict-resolver's accumulation pattern: walk every
-    # message, keep the latest assistant text, and treat the result
-    # message as the terminator. The splitter prompt instructs the model
-    # to emit *only* the JSON array as its final response, so the last
-    # captured text is what we parse.
+    # Walk every message, keep the latest assistant text, and treat the
+    # result message as the terminator. The splitter prompt instructs
+    # the model to emit *only* the JSON array as its final response, so
+    # the last captured text is what we parse.
     last_text: str | None = None
     async for message in query(prompt=user_message, options=options):
         mtype = getattr(message, "type", None)
         if mtype == "assistant":
-            content = getattr(message, "content", None)
-            if content:
-                last_text = str(content)
+            text = _extract_assistant_text(getattr(message, "content", None))
+            if text:
+                last_text = text
         elif mtype == "result":
             # ``result`` ends the stream; nothing more to capture.
             break
@@ -115,6 +158,7 @@ async def run_splitter(
     run_id: str,
     repo_summary: str,
     vision: str,
+    cwd: str | None = None,
 ) -> SplitDecision:
     """Return the parsed :class:`SplitDecision` for the given parent issue.
 
@@ -123,11 +167,16 @@ async def run_splitter(
     "don't split; run as-is" signal. Malformed output raises
     :class:`SplitterError` (propagated from
     :func:`parse_splitter_output`).
+
+    ``cwd`` is forwarded to :func:`_invoke_splitter_sdk`; pass the
+    project's checkout root so the splitter's read-only tool set
+    (``git log``, ``rg``, ``find``) inspects the right tree.
     """
     raw = await _invoke_splitter_sdk(
         issue=issue,
         run_id=run_id,
         repo_summary=repo_summary,
         vision=vision,
+        cwd=cwd,
     )
     return parse_splitter_output(raw)

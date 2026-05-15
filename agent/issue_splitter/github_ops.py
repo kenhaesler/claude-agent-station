@@ -119,7 +119,33 @@ def create_sub_issues(
     means a parent's ``backend`` label carries forward without forcing
     the splitter prompt to re-emit it, and proposal-specific labels like
     ``frontend`` for a UI-only slice still attach.
+
+    Partial-failure note: this function creates issues sequentially and
+    does NOT attempt to roll back if a later ``gh.create_issue`` raises.
+    On retry, the controller (PR-3) is responsible for either resuming
+    from the surviving issues or accepting duplicates — splitter-proposed
+    issues require human review before pickup, so duplicates are visible
+    rather than destructive.
+
+    Raises :class:`SplitterError` if any proposal references a sibling
+    that hasn't been created yet — the splitter is expected to order
+    proposals so dependencies precede dependants, and forward references
+    would otherwise KeyError mid-loop.
     """
+    # Schema only validates ``0 <= depends_on < len`` and ``!= own_index``;
+    # it does NOT enforce backward-only references, so a malicious or
+    # confused splitter could emit ``proposals[0].depends_on = 2`` and
+    # KeyError us mid-loop. Catch that here with a clear message rather
+    # than the schema (the schema layer is a pure parser; ordering is a
+    # consumer concern). Reviewer note (PR #422 finding).
+    for i, prop in enumerate(proposals):
+        if prop.depends_on is not None and prop.depends_on >= i:
+            from agent.issue_splitter.schema import SplitterError
+            raise SplitterError(
+                f"item {i} depends_on={prop.depends_on} is a forward reference; "
+                "proposals must list dependencies before dependants"
+            )
+
     owner, repo = parent["repo"].split("/", 1)
     ensure_splitter_label(owner, repo, gh)
 
