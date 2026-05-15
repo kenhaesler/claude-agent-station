@@ -139,15 +139,18 @@ class TestPromptRouterSync:
         """
         from app.routers.prompts import PROMPT_ROLES
 
-        # Document the known gap: 7 files on disk, only 5 in router
+        # Document the known gap: harness-style prompts live next to the
+        # orchestrator role prompts but aren't surfaced through the router.
         # Excludes: REPORT-SCHEMAS (shared schema doc), conflict_resolver
         # (system prompt for the agent.conflict_resolver harness, not an
         # orchestrator role agent — see
-        # docs/superpowers/specs/2026-05-10-conflict-resolution-design.md).
+        # docs/superpowers/specs/2026-05-10-conflict-resolution-design.md),
+        # issue-splitter (system prompt for the agent.issue_splitter harness
+        # — see docs/superpowers/specs/2026-05-14-issue-391-decompose-long-runs.md).
         # TODO(v1.1): replace this denylist with a frontmatter convention
         # (e.g. `role: harness`) or a directory split — review finding #8.
         # Each new harness-style prompt currently requires a manual addition.
-        _NON_ROLE_PROMPTS = {"REPORT-SCHEMAS", "conflict_resolver"}
+        _NON_ROLE_PROMPTS = {"REPORT-SCHEMAS", "conflict_resolver", "issue-splitter"}
         actual_files_count = len([
             p for p in _PROMPTS_DIR.glob("*.md")
             if p.stem not in _NON_ROLE_PROMPTS
