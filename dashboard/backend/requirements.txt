@@ -18,3 +18,4 @@ alembic>=1.13
 # PyYAML — for test_compose_db_service.py shape assertions. Not a runtime
 # dep; the dashboard/agent never read compose.yml at runtime.
 PyYAML>=6.0
+docker>=7,<8
