@@ -19,6 +19,16 @@ def _dashboard_call(mock_post):
     raise AssertionError(f"no dashboard webhook call seen; saw: {[c.args for c in mock_post.call_args_list]}")
 
 
+def _launcher_call(mock_post):
+    """Pick out the launcher /webhook-tick call. Counterpart of
+    :func:`_dashboard_call`."""
+    for call in mock_post.call_args_list:
+        url = call.args[0] if call.args else ""
+        if "/webhook-tick" in url:
+            return call
+    raise AssertionError(f"no launcher tick call seen; saw: {[c.args for c in mock_post.call_args_list]}")
+
+
 def test_emit_run_start_posts_to_webhook():
     from agent.webhook_emitter import emit
     with patch("agent.webhook_emitter.httpx.post") as mock_post:
@@ -173,3 +183,39 @@ def test_old_pythonpath_fails_from_arbitrary_cwd():
         "Expected import to fail with pre-fix PYTHONPATH but it succeeded; "
         "the test environment may have agent/ on sys.path via other means."
     )
+
+
+def test_launcher_tick_includes_run_id_query_param():
+    """Container-mode runners MUST pass ``run_id`` to /webhook-tick so
+    the launcher updates the per-run ``handle.last_webhook_at`` in its
+    ``_runners`` map. Without the param the launcher falls through to
+    the legacy global timestamp and the container reaper SIGTERMs the
+    runner at the 120s idle mark. Regression guard for the
+    post-#386/#430 reaper-killing-active-runs bug.
+    """
+    from agent.webhook_emitter import emit
+
+    with patch("agent.webhook_emitter.httpx.post") as mock_post:
+        mock_post.return_value = MagicMock(status_code=200, text="ok")
+        emit("run_start", run_id="run-tick-1", payload={})
+
+    tick = _launcher_call(mock_post)
+    assert tick.kwargs.get("params") == {"run_id": "run-tick-1"}, (
+        "params={run_id=...} must be on the tick POST so the launcher's "
+        "per-run handle gets updated"
+    )
+
+
+def test_launcher_tick_omits_run_id_param_when_not_supplied():
+    """``_ping_launcher`` called without a ``run_id`` (e.g. from a
+    bare-systemd inline runner) must send an empty params dict, not
+    ``{"run_id": "None"}`` or similar — the launcher's handler
+    interprets the absence of the param as legacy inline-mode and
+    bumps the global timestamp instead.
+    """
+    from agent.webhook_emitter import _ping_launcher
+
+    with patch("agent.webhook_emitter.httpx.post") as mock_post:
+        _ping_launcher()
+
+    assert mock_post.call_args.kwargs.get("params") == {}

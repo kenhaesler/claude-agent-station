@@ -41,24 +41,37 @@ BACKOFF_BASE = 0.5  # 0.5s, 1s, 2s
 LAUNCHER_URL_ENV = "STATION_AGENT_LAUNCHER_URL"
 
 
-def _ping_launcher(timeout: float = 1.0) -> None:
-    """Best-effort heartbeat to the launcher's /webhook-tick. Silently
-    swallows all errors — the launcher may not be reachable (the bash
-    might be running outside compose mode) and that's fine.
+def _ping_launcher(run_id: str | None = None, timeout: float = 1.0) -> None:
+    """Best-effort heartbeat to the launcher's /webhook-tick.
 
+    ``run_id`` MUST be passed in container mode (#386) so the launcher
+    updates the per-run ``handle.last_webhook_at`` in its ``_runners``
+    map. Without it, the launcher's handler falls through to the
+    legacy global ``_last_webhook_at``, the container-aware reaper
+    sees the runner handle's timestamp stuck at spawn time, and
+    SIGTERMs the runner at the 120s mark even while it's doing useful
+    work. Discovered after PRs #426/#429/#430 got the spawn working:
+    each subsequent live run died at exactly 133s with
+    ``reaper: cas-runner-... idle 133s, stopping``.
+
+    Silently swallows all errors — the launcher may not be reachable
+    (e.g. orchestrator running outside compose mode) and that's fine.
     Defaults to ``http://localhost:8421`` because the emitter runs
-    inside the agent container alongside the launcher. The env var is
-    only the override (e.g. for tests).
+    inside the same container as the launcher in inline mode; the env
+    var ``STATION_AGENT_LAUNCHER_URL`` is the container-mode override
+    that points at ``http://agent:8421``.
     """
     base = os.environ.get(LAUNCHER_URL_ENV) or "http://localhost:8421"
     token = os.environ.get("STATION_LAUNCHER_TOKEN", "")
     headers: dict[str, str] = {}
     if token:
         headers["X-Launcher-Token"] = token
+    params: dict[str, str] = {"run_id": run_id} if run_id else {}
     try:
         httpx.post(
             f"{base.rstrip('/')}/webhook-tick",
             headers=headers,
+            params=params,
             timeout=timeout,
         )
     except Exception:
@@ -99,13 +112,13 @@ def emit(event: str, *, run_id: str, payload: dict[str, Any] | None = None) -> N
         try:
             resp = httpx.post(_url(), json=body, headers=_headers(), timeout=10.0)
             if 200 <= resp.status_code < 300:
-                _ping_launcher()
+                _ping_launcher(run_id=run_id)
                 return
             last_err = f"HTTP {resp.status_code}: {resp.text[:200]}"
             if 400 <= resp.status_code < 500:
                 logger.error("webhook_emitter: non-retryable %s for %s",
                              last_err, event)
-                _ping_launcher()
+                _ping_launcher(run_id=run_id)
                 return
         except httpx.HTTPError as exc:
             last_err = f"transport error: {exc}"
@@ -113,7 +126,7 @@ def emit(event: str, *, run_id: str, payload: dict[str, Any] | None = None) -> N
             time.sleep(BACKOFF_BASE * (2 ** attempt))
     logger.error("webhook_emitter: gave up after %d attempts (%s) for %s",
                  RETRIES, last_err, event)
-    _ping_launcher()
+    _ping_launcher(run_id=run_id)
 
 
 def _cli() -> int:
