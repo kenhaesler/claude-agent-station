@@ -176,7 +176,7 @@ def iterate_projects(
         except WorkspaceError as exc:
             logger.error("workspace: %s", exc)
             exit_code = 3
-            results.append({"project": project["name"], "decision": "ERROR", "error": str(exc)})
+            results.append({"project": project["repo"], "decision": "ERROR", "error": str(exc)})
             continue
 
         try:
@@ -193,9 +193,9 @@ def iterate_projects(
             # record. NEVER absorb these into a "project failed" bucket.
             raise
         except Exception as exc:  # noqa: BLE001
-            logger.exception("orchestrate_project failed for %s", project["name"])
+            logger.exception("orchestrate_project failed for %s", project["repo"])
             exit_code = 4
-            results.append({"project": project["name"], "decision": "ERROR", "error": str(exc)})
+            results.append({"project": project["repo"], "decision": "ERROR", "error": str(exc)})
             continue
 
         # #390: the manager is now a sibling agent inside the lead's SDK
@@ -221,14 +221,14 @@ def iterate_projects(
                 from agent.webhook_emitter import emit as _emit
                 _emit("manager_no_verdicts", {
                     "run_id": f"run-{run_id}",
-                    "project": project.get("name", ""),
+                    "project": project.get("repo", ""),
                     "verdicts_path": str(verdicts_path),
                 })
             except Exception:  # noqa: BLE001 — best-effort signal
                 logger.warning("manager_no_verdicts webhook emit failed")
             exit_code = max(exit_code, 6)
             results.append({
-                "project": project.get("name", ""),
+                "project": project.get("repo", ""),
                 "decision": "ERROR",
                 "error": f"manager produced no verdicts file at {verdicts_path}",
             })

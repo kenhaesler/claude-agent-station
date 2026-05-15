@@ -16,7 +16,7 @@ def test_fresh_clone(tmp_path, monkeypatch):
     monkeypatch.setattr("agent.workspace_setup.subprocess.run", MagicMock(side_effect=_git_ok))
     monkeypatch.setattr("agent.workspace_setup.Path.exists", lambda self: False)
 
-    project = {"name": "owner/repo", "base_branch": "main"}
+    project = {"repo": "owner/repo", "branch": "main"}
     path = ensure_workspace(project, str(tmp_path))
 
     # Should have called git clone at least once.
@@ -31,7 +31,7 @@ def test_refresh_existing(tmp_path, monkeypatch):
     (tmp_path / "owner__repo").mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr("agent.workspace_setup.subprocess.run", MagicMock(side_effect=_git_ok))
 
-    project = {"name": "owner/repo", "base_branch": "main"}
+    project = {"repo": "owner/repo", "branch": "main"}
     ensure_workspace(project, str(tmp_path))
 
     calls = subprocess.run.call_args_list  # type: ignore[attr-defined]
@@ -46,7 +46,7 @@ def test_worktree_prune_runs(tmp_path, monkeypatch):
     (tmp_path / "owner__repo").mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr("agent.workspace_setup.subprocess.run", MagicMock(side_effect=_git_ok))
 
-    ensure_workspace({"name": "owner/repo"}, str(tmp_path))
+    ensure_workspace({"repo": "owner/repo"}, str(tmp_path))
 
     calls = subprocess.run.call_args_list  # type: ignore[attr-defined]
     assert any("worktree" in str(c) and "prune" in str(c) for c in calls), (
@@ -64,4 +64,42 @@ def test_bad_remote_raises(tmp_path, monkeypatch):
     monkeypatch.setattr("agent.workspace_setup.subprocess.run", MagicMock(side_effect=_fail))
 
     with pytest.raises(WorkspaceError, match="clone"):
-        ensure_workspace({"name": "owner/bad"}, str(tmp_path))
+        ensure_workspace({"repo": "owner/bad"}, str(tmp_path))
+
+
+def test_rejects_legacy_name_field_loudly(tmp_path, monkeypatch):
+    """The bash port (#383) originally read ``project["name"]`` and
+    ``project.get("base_branch")``, but ``manager-config.json`` (written
+    by the dashboard's config_sync) uses ``repo`` / ``branch``. The
+    first live triggered run after the post-#386 stack rebuild aborted
+    with ``KeyError: 'name'``. Pin the contract on the canonical names.
+    """
+    from agent.workspace_setup import ensure_workspace
+
+    monkeypatch.setattr("agent.workspace_setup.subprocess.run", MagicMock(side_effect=_git_ok))
+    monkeypatch.setattr("agent.workspace_setup.Path.exists", lambda self: False)
+
+    # Legacy field name MUST NOT silently work — without ``repo`` we
+    # expect KeyError, not a silent fall-through that produces an
+    # empty repo path.
+    with pytest.raises(KeyError, match="repo"):
+        ensure_workspace({"name": "owner/legacy"}, str(tmp_path))
+
+
+def test_branch_field_is_canonical(tmp_path, monkeypatch):
+    """``branch`` is the field the dashboard writes (matches the
+    SQLAlchemy ``Project.branch`` column). ``base_branch`` was the
+    bash variable name; ignoring it silently let runs check out
+    ``main`` instead of the project's configured branch.
+    """
+    from agent.workspace_setup import ensure_workspace
+
+    (tmp_path / "owner__rep").mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr("agent.workspace_setup.subprocess.run", MagicMock(side_effect=_git_ok))
+
+    ensure_workspace({"repo": "owner/rep", "branch": "develop"}, str(tmp_path))
+    calls = subprocess.run.call_args_list  # type: ignore[attr-defined]
+    cmd_strs = [str(c) for c in calls]
+    assert any("checkout" in s and "develop" in s for s in cmd_strs), (
+        "ensure_workspace must read ``branch``, not the legacy ``base_branch``"
+    )
