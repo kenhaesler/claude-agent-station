@@ -11,6 +11,9 @@ pythonpath = ["."]
 filterwarnings = [
     "ignore::pytest.PytestUnknownMarkWarning",
 ]
+markers = [
+    "requires_docker: skip if docker daemon not reachable (#386 integration tests)",
+]
 
 [tool.ruff]
 target-version = "py311"
