@@ -20,6 +20,7 @@ import os
 import shutil
 import subprocess
 import sys
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -109,6 +110,20 @@ async def _lifespan(app: FastAPI):
 
 app = FastAPI(title="claude-agent-station launcher", lifespan=_lifespan)
 _current: subprocess.Popen | None = None
+
+
+@dataclass
+class RunnerHandle:
+    """One per concurrent run; replaces the global `_current` (#386)."""
+
+    run_id: str
+    container_name: str
+    started_at: datetime
+    last_webhook_at: datetime
+    project_repo: str | None
+
+
+_runners: dict[str, RunnerHandle] = {}
 
 # Last time we observed a webhook event for the active subprocess. Used by
 # the zombie-reaper task to decide if a still-alive subprocess has gone
