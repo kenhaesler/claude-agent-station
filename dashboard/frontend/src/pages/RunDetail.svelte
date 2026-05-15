@@ -507,6 +507,18 @@
       <!-- OVERVIEW -->
       {#if activeTab === 'overview'}
         <section class="tab-pane">
+          {#if run.status === 'running'}
+            {@const cname = `cas-runner-${run.run_id.replace(/^run-/, '')}`}
+            <div class="card-block runner-access" data-testid="runner-access" style="margin-bottom: 16px">
+              <h3>Inspect runner</h3>
+              <p style="margin-bottom: 8px; font-size: 12px; color: var(--ash)">
+                This run is executing inside an ephemeral container. Drop a shell or tail its logs from the host:
+              </p>
+              <div class="mono-line"><code>docker exec -it {cname} bash</code></div>
+              <div class="mono-line"><code>docker logs -f {cname}</code></div>
+            </div>
+          {/if}
+
           {#if (run.mode as string) === 'vision-bootstrap'}
             <div class="card-block" style="margin-bottom: 16px" data-testid="vision-bootstrap-summary">
               <h3>Vision bootstrap</h3>

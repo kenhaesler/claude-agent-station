@@ -104,6 +104,24 @@ async def _launcher_call(method: str, path: str,
     }
 
 
+def _launcher_runs_active(status_resp: dict) -> bool:
+    """Return True if the launcher reports any in-flight run.
+
+    Bridges two /status response shapes:
+    - new (per-run-container, #386): ``{"runs": [<handle>, ...]}`` —
+      active iff the list is non-empty.
+    - legacy (single-subprocess inline mode): ``{"running": bool, ...}``.
+
+    Callers that previously read ``status_resp.get("running")`` directly
+    must route through this helper so they're not broken by the launcher
+    no longer setting that key in container mode.
+    """
+    runs = status_resp.get("runs")
+    if isinstance(runs, list):
+        return len(runs) > 0
+    return bool(status_resp.get("running"))
+
+
 async def _try_recover_zombie_subprocess(hint_run_id: str | None) -> dict:
     """Called when a /run trigger gets 409. Checks if the launcher's
     active subprocess is a zombie (alive but no recent webhook), and if
@@ -122,8 +140,9 @@ async def _try_recover_zombie_subprocess(hint_run_id: str | None) -> dict:
         return {"success": False, "error": "launcher /status unreachable",
                 "status_code": 502}
 
-    # Need a running pid to consider this a zombie scenario
-    if not status_resp.get("running"):
+    # Need an in-flight run to consider this a zombie scenario.
+    # Handles both the new ``runs`` shape and the legacy ``running`` flag.
+    if not _launcher_runs_active(status_resp):
         # Launcher already idle by the time we got here — race condition.
         # Retry the trigger.
         logger.info("recovery: launcher already idle, retrying trigger")
@@ -175,11 +194,12 @@ async def _try_recover_zombie_subprocess(hint_run_id: str | None) -> dict:
         logger.error("recovery: /stop failed: %s", stop_resp.get("error"))
         return stop_resp
 
-    # Wait briefly for the launcher to clear _current
+    # Wait briefly for the launcher to clear _current (inline) / _runners
+    # (container). Same active-check helper handles both shapes.
     for _ in range(10):
         await _asyncio.sleep(0.5)
         s = await _launcher_call("GET", "/status")
-        if not s.get("running"):
+        if not _launcher_runs_active(s):
             break
 
     # Retry the trigger
@@ -238,11 +258,16 @@ async def get_agent_status() -> dict:
     if _mode() == "compose":
         run_status = await _launcher_call("GET", "/status")
         analyst_status = await _launcher_call("GET", "/vision-analyst/status")
-        run_running = bool(run_status.get("running"))
+        # ``run_status`` follows the new ``{"runs": [...]}`` shape in
+        # container mode (#386) and the legacy ``{"running": bool}`` shape
+        # in inline mode. ``_launcher_runs_active`` normalises both.
+        run_running = _launcher_runs_active(run_status)
         analyst_running = bool(analyst_status.get("running"))
-        # ``pid`` semantically reports a single in-flight process; prefer
-        # the orchestrator's pid when both are running because the
-        # orchestrator is the more visible workload.
+        # ``pid`` is meaningless for the orchestrator in container mode
+        # (each run is its own container, not a host pid). Fall through to
+        # the analyst's pid (still spawned as a subprocess in inline /
+        # transient mode) when only the analyst is running, otherwise
+        # report None so callers don't render a stale or fabricated value.
         pid = run_status.get("pid") or analyst_status.get("pid")
         # Surface the first non-success error so the dashboard can
         # surface auth/network problems regardless of which endpoint

@@ -51,5 +51,8 @@ RUN mkdir -p /var/lib/claude-agent-station /var/log/claude-agent /var/lib/claude
 # a run without docker-socket access. On bare metal you'd skip this and
 # rely on the existing systemd unit instead.
 EXPOSE 8421
+# When STATION_RUNNER_MODE=container the launcher spawns ephemeral
+# cas-runner-<run-id> containers via the Docker socket. Each runner
+# uses --init for proper PID 1 signal handling. (#386)
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["uvicorn", "agent.launcher:app", "--host", "0.0.0.0", "--port", "8421"]

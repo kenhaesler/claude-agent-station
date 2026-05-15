@@ -139,3 +139,45 @@ sudo -u claude-agent find /home/claude-agent/workspaces/ -mindepth 1 -maxdepth 1
 ```
 
 Keep `-maxdepth 1` — descending into a repo would risk matching old subdirectories inside a live clone.
+
+## Inspecting a live runner
+
+Each run executes inside an ephemeral container named `cas-runner-<run-id>` (the `run-` prefix is stripped — e.g. run `run-20260515T120000Z` lives in container `cas-runner-20260515T120000Z`). The dashboard's run-detail page surfaces the exact snippets for the currently-active run; from a shell:
+
+```bash
+# Tail logs in real time
+docker logs -f cas-runner-<run-id>
+
+# Drop a shell inside the runner. Workspace state is under
+# /var/lib/claude-agent-station/workspaces on the shared station-data volume.
+docker exec -it cas-runner-<run-id> bash
+```
+
+`docker ps --filter "name=cas-runner-"` lists every active runner — useful when multiple projects are running concurrently.
+
+### Resource quotas per project
+
+Set `runner_memory_limit` (Docker memory-limit syntax, e.g. `"2g"`, `"512m"`) and `runner_cpu_limit` (decimal cores, e.g. `"1.0"`) on a Project via the dashboard's project-edit form or `PATCH /api/projects/{id}`. Defaults come from `STATION_DEFAULT_RUNNER_MEMORY_LIMIT` / `STATION_DEFAULT_RUNNER_CPU_LIMIT` (currently `2g` / `1.0`). The launcher resolves the per-project value first and falls back to the env default; out-of-range or malformed values fall through to the default so a bad project row never blocks a run.
+
+### Rollback to inline mode
+
+For one release after #386 ships, the legacy single-subprocess launcher path remains available behind a flag for emergency rollback:
+
+```bash
+docker compose stop agent
+STATION_RUNNER_MODE=inline docker compose up -d agent
+```
+
+This restores the pre-#386 single-container behaviour (one orchestrator subprocess inside the agent container, no per-run isolation). Remove the override once container mode is proven stable to re-engage per-run containers as the default.
+
+### Security implications of mounting `/var/run/docker.sock`
+
+The `agent` service mounts `/var/run/docker.sock` so the launcher can spawn `cas-runner-<run-id>` containers. The Docker socket grants **root-equivalent access to the host** — any process that reaches it can `docker run --privileged --pid=host --network=host …` and escape the agent container.
+
+This means the agent container's blast radius now includes the host. Concretely:
+
+- Any code-execution vulnerability in the launcher or orchestrator (including a malicious repo's CI / setup script that ends up running inside a runner) can take over the host, not just the agent container.
+- For shared infrastructure or multi-tenant deployments, gate the socket through a Docker-in-Docker proxy (e.g. `tecnativa/docker-socket-proxy`) restricting the launcher to `containers.run` / `containers.get` / `containers.stop` and nothing else.
+- Single-tenant developer machines and dedicated VMs are the intended deployment target; the existing trust model (the operator already trusts the agent with `gh` auth and Claude credentials) makes the additional socket exposure proportional.
+
+Run on dedicated hardware or a disposable VM if the threat model includes hostile repository contents.

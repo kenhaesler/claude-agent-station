@@ -101,6 +101,9 @@ services:
       # same file the agent's CLI reads via the host mount below, so the
       # dashboard login actually authenticates the agent.
       STATION_CREDENTIALS_PATH: /root/.claude/.credentials.json
+    networks:
+      - default
+      - agent-net
     volumes:
       - station-data:/var/lib/claude-agent-station
       - station-logs:/var/log/claude-agent
@@ -177,6 +180,17 @@ services:
       # documents the choice and unblocks those calls; tighten by running
       # the container as a non-root user instead, when feasible.
       IS_SANDBOX: "1"
+      # Selects the launcher's spawn strategy:
+      # - ``container`` (default): launcher spawns a fresh
+      #   ``cas-runner-<run-id>`` container per run via the Docker socket
+      #   mounted below. Provides resource isolation and clean teardown.
+      # - ``inline``: legacy in-container subprocess (run-manager.sh under
+      #   the launcher's process). Retained for one release as a rollback
+      #   knob; remove once container mode is proven stable. See #386.
+      STATION_RUNNER_MODE: container
+    networks:
+      - default
+      - agent-net
     volumes:
       - station-data:/var/lib/claude-agent-station
       - station-logs:/var/log/claude-agent
@@ -190,7 +204,22 @@ services:
       # an isolated dir and bind that instead.
       - ${HOME}/.claude:/root/.claude:z
       - ${HOME}/.config/gh:/root/.config/gh:ro,z
+      # Docker socket — required for STATION_RUNNER_MODE=container so the
+      # launcher can spawn ephemeral cas-runner-<run-id> containers. The
+      # socket grants root-equivalent host access; tighten by gating on a
+      # Docker-in-Docker proxy if running on shared infra. See #386.
+      - /var/run/docker.sock:/var/run/docker.sock
     restart: unless-stopped
+
+networks:
+  # Dedicated bridge for dashboard ↔ agent ↔ runner-container traffic. The
+  # ephemeral cas-runner-<run-id> containers spawned by the launcher join
+  # this network so they can reach the dashboard at http://dashboard:8420
+  # for webhook callbacks. ``default`` is kept so existing inter-service
+  # DNS (db, dashboard, agent) keeps working unchanged. See #386.
+  agent-net:
+    driver: bridge
+  default:
 
 volumes:
   station-data:
