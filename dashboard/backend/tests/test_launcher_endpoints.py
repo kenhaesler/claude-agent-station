@@ -57,7 +57,8 @@ def test_status_does_not_require_token(monkeypatch):
 
     resp = client.get("/status")
     assert resp.status_code == 200
-    assert resp.json() == {"running": False, "pid": None, "exit_code": None}
+    # After #386 PR-2, /status returns a runs list keyed by run_id.
+    assert "runs" in resp.json()
 
 
 def test_stop_terminates_in_flight_run_and_returns_pid(monkeypatch):
@@ -126,6 +127,9 @@ def test_run_default_spawns_python_driver_with_required_args(monkeypatch, tmp_pa
     """#361: by default the launcher spawns ``python3 -m agent.station_orchestrator
     --driver`` with --run-id / --config / --workspaces-dir set. We replace
     Popen with a recorder so the test doesn't actually fork python.
+
+    Uses STATION_RUNNER_MODE=inline to exercise the legacy subprocess path;
+    the Docker container path is covered by test_launcher_spawn.py (#386).
     """
     monkeypatch.setenv("STATION_LAUNCHER_TOKEN", "")
     monkeypatch.delenv("STATION_LAUNCHER_USE_BASH", raising=False)
@@ -134,6 +138,8 @@ def test_run_default_spawns_python_driver_with_required_args(monkeypatch, tmp_pa
     monkeypatch.setenv("STATION_WORKDIR", str(tmp_path))
     monkeypatch.setenv("STATION_CONFIG", str(tmp_path / "cfg.json"))
     monkeypatch.setenv("STATION_WORKSPACES", str(tmp_path / "ws"))
+    # Force inline mode so this test hits the subprocess path, not Docker.
+    monkeypatch.setenv("STATION_RUNNER_MODE", "inline")
 
     import importlib
 
