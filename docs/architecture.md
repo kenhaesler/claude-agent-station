@@ -327,7 +327,7 @@ teammate's work for the run.
 |---|---|---|
 | `review_package` | absolute path string | `<log_dir>/run-<id>-review.md` (orchestrator-owned) |
 | `verdicts_file` | absolute path string | `<log_dir>/run-<id>-verdicts.json` (orchestrator-owned) |
-| `hard_deadline_turns` | int | `config.limits.max_manager_turns` (default 60) |
+| `hard_deadline_turns` | int | `config.limits.max_manager_turns` (default 30; SDK frontmatter ceiling is 60) |
 | `soft_deadline_turns` | int | `max(1, hard_deadline_turns // 2)` |
 
 The sidecar is workspace-scoped because the manager sibling's CWD inside
