@@ -208,7 +208,12 @@ def iterate_projects(
                     },
                 )
             except Exception:  # noqa: BLE001 — best-effort signal
-                logger.warning("plan_review_start webhook emit failed")
+                # Use logger.exception (with traceback) rather than
+                # logger.warning so any future signature drift surfaces
+                # loudly in logs instead of vanishing into a one-liner.
+                # See PR #445 / issue #444 for the manager_no_verdicts
+                # variant of this bug.
+                logger.exception("plan_review_start webhook emit failed")
 
         try:
             proj_rc, proj_state = asyncio.run(
@@ -266,6 +271,15 @@ def iterate_projects(
                 "decision": "ERROR",
                 "error": f"manager produced no verdicts file at {verdicts_path}",
             })
+            # Bail out of this project entirely. There are no verdicts to
+            # iterate, no plan-review fan-out to attempt, and no digest to
+            # write meaningfully. Falling through to the rest of the loop
+            # body is harmless today (raw_verdicts becomes []), but the
+            # intent here is "this project failed, move on" — make that
+            # explicit so a future downstream phase that assumes
+            # verdicts_payload is non-None cannot trip over a half-failed
+            # iteration. See PR #445 / issue #444 follow-up.
+            continue
         raw_verdicts = (verdicts_payload or {}).get("verdicts", [])
 
         # #442: plan_only projects fan out into APPROVE_PLAN /
