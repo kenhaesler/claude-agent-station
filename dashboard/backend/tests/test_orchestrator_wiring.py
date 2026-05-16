@@ -1606,3 +1606,133 @@ def test_launcher_does_not_set_stream_close_timeout_in_run_env():
         "(issue #392). Move the setter into the module that owns the "
         "surviving query() call."
     )
+
+
+@pytest.mark.asyncio
+async def test_control_poll_loop_emits_periodic_heartbeats(tmp_path, monkeypatch):
+    """The control poll loop MUST emit a ``heartbeat`` webhook on its
+    own cadence so the dashboard's stale-run reaper sees liveness
+    during long quiet windows. Without this, the reaper marks any
+    ``running`` row ``interrupted`` after 120s of webhook silence —
+    a window an Agent Teams Sonnet manager-review turn easily exceeds.
+
+    Regression guard for run-20260516T005654Z: the run flipped to
+    ``interrupted`` at t=605s while the container was healthy and
+    still emitting launcher ticks. The dashboard reaper had a
+    different signal (``last_event_at``) that no one was feeding.
+    """
+    import asyncio
+    import sqlite3
+
+    from agent import station_orchestrator
+
+    # Minimal sqlite for the control drain.
+    db = tmp_path / "hb.db"
+    conn = sqlite3.connect(str(db))
+    conn.execute(
+        """
+        CREATE TABLE run_controls (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          run_id TEXT, action TEXT, payload TEXT, requested_by TEXT,
+          requested_at TEXT, consumed_at TEXT
+        )
+        """
+    )
+    conn.commit()
+    monkeypatch.setenv("STATION_DB_PATH", str(db))
+
+    # Spy on post_webhook so we can count heartbeats.
+    captured: list[tuple[str, dict]] = []
+
+    def _spy(config, event, data=None):
+        captured.append((event, data or {}))
+
+    monkeypatch.setattr(station_orchestrator, "post_webhook", _spy)
+    # Shrink the heartbeat interval so the test runs in fractions of a
+    # second. The default is 30s; we want ~3 heartbeats in 0.4s.
+    monkeypatch.setattr(station_orchestrator, "HEARTBEAT_INTERVAL_SECONDS", 0.1)
+
+    flags = {"stop": False}
+    task = asyncio.create_task(
+        station_orchestrator._control_poll_loop(
+            "run-hb-test", {}, [], flags, interval=0.02,
+        )
+    )
+
+    try:
+        await asyncio.sleep(0.4)
+    finally:
+        flags["stop"] = True
+        try:
+            await asyncio.wait_for(task, timeout=1.0)
+        except asyncio.TimeoutError:
+            task.cancel()
+
+    heartbeats = [d for (ev, d) in captured if ev == "heartbeat"]
+    assert len(heartbeats) >= 3, (
+        f"expected ≥3 heartbeats in 0.4s with interval=0.1s; "
+        f"got {len(heartbeats)}: {captured}"
+    )
+    for d in heartbeats:
+        assert d.get("run_id") == "run-hb-test", (
+            f"heartbeat payload must carry the full_run_id; got {d}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_control_poll_loop_heartbeat_is_best_effort(tmp_path, monkeypatch):
+    """A failing post_webhook (dashboard down, network error) MUST NOT
+    crash the control poll loop. Heartbeats are diagnostic, not
+    load-bearing — losing one is acceptable; killing the loop is not.
+    """
+    import asyncio
+    import sqlite3
+
+    from agent import station_orchestrator
+
+    db = tmp_path / "hb-fail.db"
+    conn = sqlite3.connect(str(db))
+    conn.execute(
+        """
+        CREATE TABLE run_controls (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          run_id TEXT, action TEXT, payload TEXT, requested_by TEXT,
+          requested_at TEXT, consumed_at TEXT
+        )
+        """
+    )
+    conn.commit()
+    monkeypatch.setenv("STATION_DB_PATH", str(db))
+
+    call_count = {"n": 0}
+
+    def _boom(config, event, data=None):
+        call_count["n"] += 1
+        raise RuntimeError("simulated dashboard outage")
+
+    monkeypatch.setattr(station_orchestrator, "post_webhook", _boom)
+    monkeypatch.setattr(station_orchestrator, "HEARTBEAT_INTERVAL_SECONDS", 0.05)
+
+    flags = {"stop": False}
+    task = asyncio.create_task(
+        station_orchestrator._control_poll_loop(
+            "run-hb-fail", {}, [], flags, interval=0.02,
+        )
+    )
+
+    try:
+        await asyncio.sleep(0.25)
+        # Loop must still be running despite repeated post_webhook crashes.
+        assert not task.done(), (
+            f"control poll loop crashed on heartbeat failure; "
+            f"exception: {task.exception() if task.done() else None}"
+        )
+        assert call_count["n"] >= 2, (
+            f"heartbeat must be attempted repeatedly; got {call_count['n']}"
+        )
+    finally:
+        flags["stop"] = True
+        try:
+            await asyncio.wait_for(task, timeout=1.0)
+        except asyncio.TimeoutError:
+            task.cancel()
