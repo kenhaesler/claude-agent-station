@@ -15,7 +15,7 @@ model: claude-sonnet-4-6
 # meaningfully reducing blast radius.
 permissionMode: bypassPermissions
 # maxTurns is the SDK-side enforcement ceiling. Keep in lockstep with
-# ``config.limits.max_manager_turns`` (default 60); the prompt-side
+# ``config.limits.max_manager_turns`` (default 30); the prompt-side
 # budget is injected dynamically by ``build_team_prompt``.
 maxTurns: 60
 ---
