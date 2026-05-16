@@ -170,9 +170,14 @@ def iterate_projects(
     last_state = None
     log_dir = _os.environ.get("STATION_LOG_DIR", "/var/log/claude-agent")
 
+    # APPROVE_INTEGRATION / APPROVE / PR executors require ``workspace`` and
+    # ``dev_branch`` kwargs (kw-only, no default for workspace). ``dev_branch``
+    # is global to the run; capture it once.
+    dev_branch = config.get("integration", {}).get("dev_branch", "autonomous/dev")
+
     for project in enabled:
         try:
-            ensure_workspace(project, workspaces_dir)
+            workspace_path = ensure_workspace(project, workspaces_dir)
         except WorkspaceError as exc:
             logger.error("workspace: %s", exc)
             exit_code = 3
@@ -238,11 +243,40 @@ def iterate_projects(
         verdicts = [_Verdict.from_dict(v) for v in raw_verdicts]
 
         for verdict in verdicts:
-            execute_verdict(verdict, run_id=run_id)
+            # APPROVE_INTEGRATION / APPROVE / PR executors require
+            # ``workspace`` (kw-only, no default) and use ``dev_branch``
+            # for non-degraded behavior. Missing kwargs raise TypeError
+            # that propagates out and gets caught at the RunDriver level,
+            # silently failing every integration even when the manager
+            # approved. (Discovered after live run-20260515T235612Z:
+            # verdict file written with 5x APPROVE_INTEGRATION, no PRs
+            # opened, run marked failed.) Catch per-verdict so one bad
+            # executor invocation doesn't cancel the whole queue.
+            try:
+                execute_verdict(
+                    verdict,
+                    workspace=Path(workspace_path),
+                    run_id=run_id,
+                    env=_os.environ.copy(),
+                    dev_branch=dev_branch,
+                )
+            except Exception as exc:  # noqa: BLE001 — must not crash loop
+                logger.exception(
+                    "verdict_execution: %s#%s failed (%s)",
+                    verdict.project, verdict.issue_number, verdict.verdict,
+                )
+                exit_code = max(exit_code, 7)
+                results.append({
+                    "project": verdict.project,
+                    "issue_number": verdict.issue_number,
+                    "decision": "ERROR",
+                    "error": f"execute_verdict: {type(exc).__name__}: {exc}",
+                })
+                continue
             results.append({
                 "project": verdict.project,
                 "issue_number": verdict.issue_number,
-                "decision": verdict.decision,
+                "decision": verdict.verdict,
                 "branch": getattr(verdict, "branch", ""),
                 "reasoning": getattr(verdict, "reasoning", ""),
             })
