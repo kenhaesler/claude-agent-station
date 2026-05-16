@@ -313,6 +313,36 @@ review-criteria branching.
 - **`triage`** — issue classification and labeling without implementation (legacy).
 - **`review`** — security or code review mode for pull requests (legacy).
 
+#### Manager paths sidecar (`.claude-manager-paths.json`, #411)
+
+The orchestrator writes a structured JSON sidecar to the per-project
+workspace root **before** the lead's first turn. The manager sibling
+`Read`s this file on its first turn to discover its review-package and
+verdicts-file paths instead of parsing them out of the lead's spawn-prompt
+markdown — eliminating the path-drift failure mode that previously could
+send the manager's verdicts write to a wrong path and silently lose every
+teammate's work for the run.
+
+| Field | Type | Source |
+|---|---|---|
+| `review_package` | absolute path string | `<log_dir>/run-<id>-review.md` (orchestrator-owned) |
+| `verdicts_file` | absolute path string | `<log_dir>/run-<id>-verdicts.json` (orchestrator-owned) |
+| `hard_deadline_turns` | int | `config.limits.max_manager_turns` (default 30; SDK frontmatter ceiling is 60) |
+| `soft_deadline_turns` | int | `max(1, hard_deadline_turns // 2)` |
+
+The sidecar is workspace-scoped because the manager sibling's CWD inside
+the SDK session is the workspace. The lead's spawn-prompt instructs the
+manager to `Read .claude-manager-paths.json` first and does **not**
+interpolate the paths into the prose; `agent/agents/manager.md` `<context>`
+mirrors the contract on the manager side. If the sidecar is missing or
+unparseable the manager refuses to guess paths — the orchestrator's
+`manager_no_verdicts` webhook + `exit_code=6` path then fires and surfaces
+the failure for triage.
+
+See `_write_manager_paths_sidecar` in `agent/station_orchestrator.py` and
+the `# --- #411` test block in
+`dashboard/backend/tests/test_manager_sibling.py`.
+
 ### Plan-review gate
 
 The `plan_only` mode adds a manual checkpoint between plan-writing and
