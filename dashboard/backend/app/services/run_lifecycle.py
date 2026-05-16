@@ -322,15 +322,26 @@ async def handle_plan_review_done(
 
 
 async def handle_progress_update(run: Run, event: WebhookRunEvent) -> None:
-    """Update token/turn counts without changing run status."""
+    """Update token/turn counts without changing run status.
+
+    Telemetry is **monotonic**: we only ever ratchet these counters upward.
+    Two distinct emitters write ``progress_update`` against the same ``runs``
+    row — the orchestrator's outer cumulative counters and per-teammate
+    ``teammate_progress`` events scoped to a single task_id. The teammate
+    stream can legitimately carry 0 at the start of a fresh teammate cycle,
+    which would otherwise clobber the cumulative value and produce the
+    0↔N oscillation described in issue #434. Taking ``max(existing, incoming)``
+    mirrors what ``coordinator_service`` already does for ``CoordinatorTask``
+    and ensures the dashboard never regresses while a run is alive.
+    """
     if event.tokens_input is not None:
-        run.tokens_input = event.tokens_input
+        run.tokens_input = max(run.tokens_input or 0, event.tokens_input)
     if event.tokens_output is not None:
-        run.tokens_output = event.tokens_output
+        run.tokens_output = max(run.tokens_output or 0, event.tokens_output)
     if event.tokens_total is not None:
-        run.tokens_total = event.tokens_total
+        run.tokens_total = max(run.tokens_total or 0, event.tokens_total)
     if event.turns is not None:
-        run.turns = event.turns
+        run.turns = max(run.turns or 0, event.turns)
 
 
 async def handle_teammate_completed(run: Run, event: WebhookRunEvent) -> None:
