@@ -96,11 +96,35 @@ async def _heartbeat_subscriber() -> None:
             logger.warning("heartbeat rebroadcast failed for %s", run_id)
 
 
+_ORCHESTRATOR_PGREP_PATTERN = (
+    # Anchored to start of cmdline: any python interpreter (with optional path
+    # prefix and version suffix), followed by either:
+    #   - `-m agent.station_orchestrator ...`  (the launcher / systemd path)
+    #   - any path ending in `station_orchestrator.py` as an argument
+    #
+    # An UNANCHORED `station_orchestrator` substring (the original pattern)
+    # falsely matched any host process whose argv happened to contain the
+    # word: shell sessions with the file in cwd, `gh pr create --body "...
+    # station_orchestrator.py..."`, other Claude Code agents, `grep -rn
+    # station_orchestrator`, etc. That suppressed legitimate reaps in
+    # production and made tests flaky (issue #407).
+    r"^(\S*/)?python[0-9.]*[[:space:]].*([[:space:]]|/)station_orchestrator\.py"
+    r"|^(\S*/)?python[0-9.]*[[:space:]]+-m[[:space:]]+agent\.station_orchestrator"
+)
+
+
 def _is_orchestrator_process_alive() -> bool:
-    """Check if a station_orchestrator process is running (manual/test runs)."""
+    """Check if a station_orchestrator process is running (manual/test runs).
+
+    Uses an anchored pgrep pattern that matches only ``python … -m
+    agent.station_orchestrator …`` or ``python … …/station_orchestrator.py
+    …`` invocations — see :data:`_ORCHESTRATOR_PGREP_PATTERN`. The previous
+    unanchored ``station_orchestrator`` substring matched unrelated host
+    processes (issue #407).
+    """
     try:
         result = subprocess.run(
-            ["pgrep", "-f", "station_orchestrator"],
+            ["pgrep", "-f", _ORCHESTRATOR_PGREP_PATTERN],
             capture_output=True, timeout=3,
         )
         return result.returncode == 0
