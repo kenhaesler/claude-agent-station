@@ -250,13 +250,16 @@ def iterate_projects(
             )
             try:
                 from agent.webhook_emitter import emit as _emit
-                _emit("manager_no_verdicts", {
-                    "run_id": f"run-{run_id}",
-                    "project": project.get("repo", ""),
-                    "verdicts_path": str(verdicts_path),
-                })
+                _emit(
+                    "manager_no_verdicts",
+                    run_id=f"run-{run_id}",
+                    payload={
+                        "project": project.get("repo", ""),
+                        "verdicts_path": str(verdicts_path),
+                    },
+                )
             except Exception:  # noqa: BLE001 — best-effort signal
-                logger.warning("manager_no_verdicts webhook emit failed")
+                logger.exception("manager_no_verdicts webhook emit failed")
             exit_code = max(exit_code, 6)
             results.append({
                 "project": project.get("repo", ""),

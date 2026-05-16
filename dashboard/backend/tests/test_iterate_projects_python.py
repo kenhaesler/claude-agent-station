@@ -205,6 +205,88 @@ def test_iterate_projects_passes_workspace_and_dev_branch_to_executor(
     assert kwargs.get("run_id") == "run-tested"
 
 
+def test_iterate_projects_emits_manager_no_verdicts_with_kwargs(
+    tmp_path, monkeypatch,
+):
+    """Issue #444: when the manager produces no verdicts file, project_loop
+    emits a ``manager_no_verdicts`` webhook so the dashboard can surface it.
+
+    The emitter signature is::
+
+        emit(event: str, *, run_id: str, payload: dict | None = None)
+
+    where ``run_id`` and ``payload`` are keyword-only. Pre-fix the call
+    passed the payload as a positional second arg → TypeError, swallowed
+    by a bare ``except Exception: logger.warning(...)``, so the webhook
+    was never actually sent and the dashboard never learned about the
+    failure. This test pins the call signature.
+    """
+    from agent import project_loop as pl
+
+    cfg = tmp_path / "manager-config.json"
+    cfg.write_text(json.dumps({
+        "projects": [{"repo": "owner/repo", "enabled": True, "branch": "main"}],
+        "limits": {"max_concurrent_employees": 1},
+    }))
+
+    monkeypatch.setattr("agent.preflight.run_preflight", lambda *a, **k: None)
+    monkeypatch.setattr("agent.queue_recovery.purge_and_recover", lambda *a, **k: None)
+    monkeypatch.setattr("agent.queue_recovery.resume_paused", lambda: None)
+    monkeypatch.setattr(
+        "agent.workspace_setup.ensure_workspace", lambda p, w: str(tmp_path / "ws"),
+    )
+
+    async def _fake_orchestrate(*a, **k):
+        return 0, None
+
+    monkeypatch.setattr("agent.station_orchestrator.orchestrate_project", _fake_orchestrate)
+    # Missing verdicts file → manager_no_verdicts branch fires.
+    monkeypatch.setattr(
+        "agent.station_orchestrator._read_verdicts_file", lambda *a, **k: None,
+    )
+    monkeypatch.setattr("agent.digest.write_digest", lambda **kw: "")
+
+    captured: dict = {}
+
+    def _fake_emit(event, *args, **kwargs):
+        # Record both args + kwargs so we can detect any positional-arg
+        # regression. A correct call has no positional args beyond ``event``.
+        captured["event"] = event
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+
+    monkeypatch.setattr("agent.webhook_emitter.emit", _fake_emit)
+
+    rc, _ = pl.iterate_projects("test-run", str(cfg), str(tmp_path))
+
+    assert rc == 6, "missing verdicts file must bump exit_code to 6"
+    assert captured, (
+        "manager_no_verdicts webhook was never emitted — the lazy "
+        "import inside project_loop may have been refactored, or the "
+        "branch is not firing"
+    )
+    assert captured["event"] == "manager_no_verdicts"
+    assert captured["args"] == (), (
+        "payload must be passed as a kwarg, not positional. "
+        f"Got positional args: {captured['args']!r}"
+    )
+    assert captured["kwargs"].get("run_id") == "run-test-run", (
+        f"run_id must be passed as kwarg and prefixed with 'run-'; "
+        f"got {captured['kwargs'].get('run_id')!r}"
+    )
+    payload = captured["kwargs"].get("payload")
+    assert payload is not None, "payload kwarg missing"
+    assert payload.get("project") == "owner/repo"
+    assert "verdicts_path" in payload
+    assert payload["verdicts_path"].endswith("run-test-run-verdicts.json")
+    # run_id must NOT be duplicated inside the payload — the wire body
+    # builder in webhook_emitter.emit adds it at the top level.
+    assert "run_id" not in payload, (
+        "run_id should not be duplicated inside payload; "
+        "webhook_emitter.emit already places it at the top level"
+    )
+
+
 def test_iterate_projects_swallows_executor_exceptions_per_verdict(
     tmp_path, monkeypatch,
 ):
