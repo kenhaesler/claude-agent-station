@@ -127,8 +127,15 @@ def execute_approve(
     workspace: Path,
     run_id: str | None = None,
     env: dict[str, str] | None = None,
+    dev_branch: str | None = None,  # noqa: ARG001 — kept for dispatcher symmetry
 ) -> ExecutionResult:
     """Push the branch, open a PR, comment on the issue.
+
+    ``dev_branch`` is accepted but ignored — the dispatcher passes the
+    same kwargs to every executor, and only ``execute_approve_integration``
+    consumes it. Without the parameter here, the dispatcher's blind
+    ``**kwargs`` passthrough raises TypeError and every APPROVE silently
+    failed before this fix.
 
     Does NOT auto-merge, does NOT close the issue — those decisions live
     in the bash path that consumes this module (deferred follow-up).
@@ -183,6 +190,7 @@ def execute_pr(
     run_id: str | None = None,
     env: dict[str, str] | None = None,
     draft: bool = True,
+    dev_branch: str | None = None,  # noqa: ARG001 — dispatcher symmetry; see execute_approve
 ) -> ExecutionResult:
     """Open a draft PR (or marked-ready) for manual review. Same path as
     APPROVE but with ``--draft`` and a different issue comment.
@@ -236,6 +244,7 @@ def execute_reject(
     workspace: Path | None = None,  # noqa: ARG001 — unused, kept for caller symmetry
     run_id: str | None = None,
     env: dict[str, str] | None = None,
+    dev_branch: str | None = None,  # noqa: ARG001 — dispatcher symmetry; see execute_approve
 ) -> ExecutionResult:
     """Comment on the issue and apply the reject label. No branch
     operations — the feature branch stays local for the operator to
@@ -278,6 +287,7 @@ def execute_skip(
     workspace: Path | None = None,  # noqa: ARG001 — kept for symmetry
     run_id: str | None = None,
     env: dict[str, str] | None = None,
+    dev_branch: str | None = None,  # noqa: ARG001 — dispatcher symmetry; see execute_approve
 ) -> ExecutionResult:
     """SKIP is observably similar to REJECT but with a kinder message
     (the manager chose not to act this cycle, not that the work was bad).
