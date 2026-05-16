@@ -1276,6 +1276,20 @@ def _apply_controls(
             logger.warning("Mission Control: unknown action %r (id=%d)", action, row.id)
 
 
+# Interval between heartbeat webhook events. The dashboard's stale-run
+# reaper marks a ``running`` row ``interrupted`` if ``last_event_at`` is
+# older than 120s (services/stale_run_reaper.py). Agent Teams runs
+# legitimately go quiet for 2+ minutes during deep manager-review turns
+# on Sonnet 4.6; without an out-of-band heartbeat, those quiet windows
+# trip the reaper and the run is incorrectly marked interrupted even
+# though the container is healthy and emitting launcher ticks. Sending
+# a ``heartbeat`` webhook every ``HEARTBEAT_INTERVAL_SECONDS`` from the
+# control poll loop bumps ``last_event_at`` on the dashboard side so
+# the reaper only fires when the orchestrator is actually dead. Chosen
+# value gives us ~4 heartbeats per reaper window for fault tolerance.
+HEARTBEAT_INTERVAL_SECONDS = 30
+
+
 async def _control_poll_loop(
     full_run_id: str,
     config: dict,
@@ -1289,6 +1303,16 @@ async def _control_poll_loop(
     stream loop so operator interventions are picked up even when no SDK
     messages are flowing (long tool calls, idle waits, API stalls).
 
+    Also doubles as the heartbeat source: every
+    :data:`HEARTBEAT_INTERVAL_SECONDS` seconds the loop emits a
+    ``heartbeat`` webhook event so the dashboard's stale-run reaper
+    sees liveness during long quiet windows (long Sonnet manager-review
+    turns, in-flight tool calls, API stalls). Without this, the
+    dashboard reaper SIGTERM-equivalents the run by marking it
+    interrupted at the 120s ``last_event_at`` threshold even though
+    the container is fine. Sibling of the launcher's per-runner tick
+    heartbeat (#386) — same idea, different watchdog.
+
     Cancellation is the only way this coroutine exits — the caller cancels
     it in a ``finally:`` block when the run ends. We swallow CancelledError
     so the cleanup path doesn't log a traceback.
@@ -1299,14 +1323,30 @@ async def _control_poll_loop(
     more latency than it saves. If drain latency ever becomes a problem,
     switch to ``asyncio.to_thread``.
     """
-    logger.info("Mission Control: control poll task started for %s (interval=%.1fs)",
-                full_run_id, interval)
+    logger.info("Mission Control: control poll task started for %s (interval=%.1fs, heartbeat=%ds)",
+                full_run_id, interval, HEARTBEAT_INTERVAL_SECONDS)
+    last_heartbeat = 0.0
     try:
         while True:
             try:
                 _apply_controls(full_run_id, config, pending_messages, flags)
             except Exception as exc:  # pragma: no cover — never crash the poll loop
                 logger.warning("Mission Control: control poll tick failed: %s", exc)
+
+            # Heartbeat: best-effort, never raises, never blocks the
+            # control poll. Uses the event-loop clock (monotonic via
+            # ``asyncio.get_event_loop().time()``) so we don't drift if
+            # the system wall clock jumps.
+            now = asyncio.get_event_loop().time()
+            if now - last_heartbeat >= HEARTBEAT_INTERVAL_SECONDS:
+                try:
+                    await asyncio.to_thread(
+                        post_webhook, config, "heartbeat", {"run_id": full_run_id},
+                    )
+                except Exception as exc:  # pragma: no cover — best-effort
+                    logger.debug("heartbeat post failed (non-fatal): %s", exc)
+                last_heartbeat = now
+
             # Exit fast once stop is latched so the stream loop doesn't have
             # to wait a full tick for the task to notice.
             if flags.get("stop"):

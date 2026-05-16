@@ -96,7 +96,18 @@ async def receive_run_event(
 
     # ---- Dispatch to appropriate handler ----
 
-    if event_name == "verdict":
+    # ``heartbeat`` is a liveness-only event from the orchestrator's
+    # control poll loop (agent/station_orchestrator.py). Its sole
+    # purpose is to bump ``last_event_at`` above so the dashboard's
+    # stale-run reaper doesn't mark a healthy run as ``interrupted``
+    # during legitimate long-Sonnet-turn quiet windows. No state
+    # transition; explicit branch so future devs don't accidentally
+    # route it through ``handle_unknown`` (which mutates ``run.status``
+    # if the event happens to carry one).
+    if event_name == "heartbeat":
+        pass
+
+    elif event_name == "verdict":
         run, _ = await run_lifecycle.handle_verdict(db, event, project_id, run)
 
     elif event_name in _RUN_HANDLERS:
@@ -305,5 +316,6 @@ def _normalize_event_name(event_name: str) -> str:
         "team_cleanup": "team_cleanup",
         "progress_update": "progress_update",
         "vision_misalignment": "vision_misalignment",
+        "heartbeat": "heartbeat",
     }
     return mapping.get(event_name, event_name)
