@@ -205,6 +205,232 @@ def test_iterate_projects_passes_workspace_and_dev_branch_to_executor(
     assert kwargs.get("run_id") == "run-tested"
 
 
+def test_iterate_projects_emits_manager_no_verdicts_with_kwargs(
+    tmp_path, monkeypatch,
+):
+    """Issue #444: when the manager produces no verdicts file, project_loop
+    emits a ``manager_no_verdicts`` webhook so the dashboard can surface it.
+
+    The emitter signature is::
+
+        emit(event: str, *, run_id: str, payload: dict | None = None)
+
+    where ``run_id`` and ``payload`` are keyword-only. Pre-fix the call
+    passed the payload as a positional second arg → TypeError, swallowed
+    by a bare ``except Exception: logger.warning(...)``, so the webhook
+    was never actually sent and the dashboard never learned about the
+    failure. This test pins the call signature.
+    """
+    from agent import project_loop as pl
+
+    cfg = tmp_path / "manager-config.json"
+    cfg.write_text(json.dumps({
+        "projects": [{"repo": "owner/repo", "enabled": True, "branch": "main"}],
+        "limits": {"max_concurrent_employees": 1},
+    }))
+
+    monkeypatch.setattr("agent.preflight.run_preflight", lambda *a, **k: None)
+    monkeypatch.setattr("agent.queue_recovery.purge_and_recover", lambda *a, **k: None)
+    monkeypatch.setattr("agent.queue_recovery.resume_paused", lambda: None)
+    monkeypatch.setattr(
+        "agent.workspace_setup.ensure_workspace", lambda p, w: str(tmp_path / "ws"),
+    )
+
+    async def _fake_orchestrate(*a, **k):
+        return 0, None
+
+    monkeypatch.setattr("agent.station_orchestrator.orchestrate_project", _fake_orchestrate)
+    # Missing verdicts file → manager_no_verdicts branch fires.
+    monkeypatch.setattr(
+        "agent.station_orchestrator._read_verdicts_file", lambda *a, **k: None,
+    )
+    monkeypatch.setattr("agent.digest.write_digest", lambda **kw: "")
+
+    captured: dict = {}
+
+    def _fake_emit(event, *args, **kwargs):
+        # Record both args + kwargs so we can detect any positional-arg
+        # regression. A correct call has no positional args beyond ``event``.
+        captured["event"] = event
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+
+    monkeypatch.setattr("agent.webhook_emitter.emit", _fake_emit)
+
+    rc, _ = pl.iterate_projects("test-run", str(cfg), str(tmp_path))
+
+    assert rc == 6, "missing verdicts file must bump exit_code to 6"
+    assert captured, (
+        "manager_no_verdicts webhook was never emitted — the lazy "
+        "import inside project_loop may have been refactored, or the "
+        "branch is not firing"
+    )
+    assert captured["event"] == "manager_no_verdicts"
+    assert captured["args"] == (), (
+        "payload must be passed as a kwarg, not positional. "
+        f"Got positional args: {captured['args']!r}"
+    )
+    assert captured["kwargs"].get("run_id") == "run-test-run", (
+        f"run_id must be passed as kwarg and prefixed with 'run-'; "
+        f"got {captured['kwargs'].get('run_id')!r}"
+    )
+    payload = captured["kwargs"].get("payload")
+    assert payload is not None, "payload kwarg missing"
+    assert payload.get("project") == "owner/repo"
+    assert "verdicts_path" in payload
+    assert payload["verdicts_path"].endswith("run-test-run-verdicts.json")
+    # run_id must NOT be duplicated inside the payload — the wire body
+    # builder in webhook_emitter.emit adds it at the top level.
+    assert "run_id" not in payload, (
+        "run_id should not be duplicated inside payload; "
+        "webhook_emitter.emit already places it at the top level"
+    )
+
+
+def test_iterate_projects_skips_downstream_phases_when_no_verdicts(
+    tmp_path, monkeypatch,
+):
+    """Issue #444 follow-up: when the manager produces no verdicts file,
+    project_loop must bail out of the per-project loop body with an
+    explicit ``continue`` — not fall through to plan_review_gate /
+    verdict_execution with an empty list.
+
+    Pre-fix the failure path fell through, which was harmless today
+    (raw_verdicts became []) but masked the failure intent. A future
+    downstream phase that assumed ``verdicts_payload`` was non-None
+    would trip on the half-failed iteration. This test pins the
+    "fail this project, move on" contract by driving a ``plan_only``
+    project with no verdicts file and asserting that
+    ``apply_plan_review_gate`` is never invoked.
+    """
+    from agent import project_loop as pl
+
+    cfg = tmp_path / "manager-config.json"
+    cfg.write_text(json.dumps({
+        "projects": [{
+            "repo": "owner/repo",
+            "enabled": True,
+            "branch": "main",
+            "mode": "plan_only",
+        }],
+    }))
+
+    monkeypatch.setattr("agent.preflight.run_preflight", lambda *a, **k: None)
+    monkeypatch.setattr("agent.queue_recovery.purge_and_recover", lambda *a, **k: None)
+    monkeypatch.setattr("agent.queue_recovery.resume_paused", lambda: None)
+    monkeypatch.setattr(
+        "agent.workspace_setup.ensure_workspace", lambda p, w: str(tmp_path / "ws"),
+    )
+
+    async def _fake_orchestrate(*a, **k):
+        return 0, None
+
+    monkeypatch.setattr("agent.station_orchestrator.orchestrate_project", _fake_orchestrate)
+    # No verdicts file → no-verdicts branch must fire.
+    monkeypatch.setattr(
+        "agent.station_orchestrator._read_verdicts_file", lambda *a, **k: None,
+    )
+    monkeypatch.setattr("agent.digest.write_digest", lambda **kw: "")
+    monkeypatch.setattr("agent.webhook_emitter.emit", lambda *a, **k: None)
+
+    gate_calls: list[dict] = []
+
+    def _spy_gate(**kwargs):
+        gate_calls.append(kwargs)
+
+    monkeypatch.setattr("agent.plan_review_gate.apply_plan_review_gate", _spy_gate)
+
+    exec_calls: list = []
+
+    def _spy_execute(verdict, **kwargs):
+        exec_calls.append(verdict)
+        from agent.verdict_execution import ExecutionResult
+        return ExecutionResult(verdict=verdict.verdict, project=verdict.project,
+                               issue_number=verdict.issue_number, success=True)
+
+    monkeypatch.setattr("agent.verdict_execution.execute", _spy_execute)
+
+    rc, _ = pl.iterate_projects("run-skip", str(cfg), str(tmp_path))
+
+    assert rc == 6, "missing verdicts file must bump exit_code to 6"
+    assert gate_calls == [], (
+        "plan_review_gate must NOT run when the manager produced no "
+        f"verdicts file; got {len(gate_calls)} call(s): {gate_calls!r}"
+    )
+    assert exec_calls == [], (
+        "verdict_execution must NOT run when there are no verdicts; "
+        f"got {len(exec_calls)} call(s)"
+    )
+
+
+def test_iterate_projects_emits_plan_review_start_with_kwargs(
+    tmp_path, monkeypatch,
+):
+    """Issue #444 audit: the ``plan_review_start`` emit site in
+    iterate_projects shares the same call shape as ``manager_no_verdicts``
+    and could regress in the same way. Pin its signature too.
+
+    Note: the call site uses ``logger.exception`` (post-#444) — so a
+    signature regression here would at least leave a traceback, but the
+    webhook would still not fire. This test enforces the wire contract.
+    """
+    from agent import project_loop as pl
+
+    cfg = tmp_path / "manager-config.json"
+    cfg.write_text(json.dumps({
+        "projects": [{
+            "repo": "owner/repo",
+            "enabled": True,
+            "branch": "main",
+            "mode": "plan_only",
+        }],
+    }))
+
+    monkeypatch.setattr("agent.preflight.run_preflight", lambda *a, **k: None)
+    monkeypatch.setattr("agent.queue_recovery.purge_and_recover", lambda *a, **k: None)
+    monkeypatch.setattr("agent.queue_recovery.resume_paused", lambda: None)
+    monkeypatch.setattr(
+        "agent.workspace_setup.ensure_workspace", lambda p, w: str(tmp_path / "ws"),
+    )
+
+    async def _fake_orchestrate(*a, **k):
+        return 0, None
+
+    monkeypatch.setattr("agent.station_orchestrator.orchestrate_project", _fake_orchestrate)
+    monkeypatch.setattr(
+        "agent.station_orchestrator._read_verdicts_file",
+        lambda *a, **k: {"verdicts": []},
+    )
+    monkeypatch.setattr("agent.digest.write_digest", lambda **kw: "")
+    monkeypatch.setattr(
+        "agent.plan_review_gate.apply_plan_review_gate", lambda **kw: None,
+    )
+
+    captured: list[dict] = []
+
+    def _fake_emit(event, *args, **kwargs):
+        captured.append({"event": event, "args": args, "kwargs": kwargs})
+
+    monkeypatch.setattr("agent.webhook_emitter.emit", _fake_emit)
+
+    pl.iterate_projects("plan-run", str(cfg), str(tmp_path))
+
+    plan_starts = [c for c in captured if c["event"] == "plan_review_start"]
+    assert plan_starts, (
+        f"plan_review_start was never emitted; observed events: "
+        f"{[c['event'] for c in captured]!r}"
+    )
+    call = plan_starts[0]
+    assert call["args"] == (), (
+        f"plan_review_start payload must be a kwarg, not positional; "
+        f"got positional args: {call['args']!r}"
+    )
+    assert call["kwargs"].get("run_id") == "run-plan-run"
+    payload = call["kwargs"].get("payload")
+    assert payload is not None and payload.get("project") == "owner/repo"
+    assert payload.get("mode") == "plan_only"
+
+
 def test_iterate_projects_swallows_executor_exceptions_per_verdict(
     tmp_path, monkeypatch,
 ):
