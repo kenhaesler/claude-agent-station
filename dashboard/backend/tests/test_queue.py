@@ -89,8 +89,16 @@ class TestStaleRunReaperQueueRecovery:
         _make_queue_item(db, state="completed", run_id="run-DEAD", assigned_to=1)
         await db.commit()
 
+        # Patch ``_is_orchestrator_process_alive`` to False — the production
+        # implementation calls ``pgrep -f station_orchestrator`` which matches
+        # ANY host process whose cmdline contains that substring (other
+        # Claude Code agents, IDEs, build scripts, etc.). Without this patch
+        # the test is flaky: when pgrep finds a stray match the reaper short-
+        # circuits and returns 0. See issue #407.
         with patch("app.services.stale_run_reaper.get_agent_status",
                     new_callable=AsyncMock, return_value={"service_active": False}), \
+             patch("app.services.stale_run_reaper._is_orchestrator_process_alive",
+                    return_value=False), \
              patch("app.services.stale_run_reaper.event_bus_publish",
                     new_callable=AsyncMock), \
              patch("app.services.stale_run_reaper.send_notification",

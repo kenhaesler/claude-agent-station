@@ -48,7 +48,14 @@ async def test_reaper_does_nothing_when_agent_active(stale_run):
 @pytest.mark.asyncio
 async def test_reaper_marks_runs_interrupted_when_agent_inactive(stale_run):
     mock_status = AsyncMock(return_value={"service_active": False})
-    with patch("app.services.stale_run_reaper.get_agent_status", mock_status):
+    # Patch ``_is_orchestrator_process_alive`` to False — the production
+    # implementation calls ``pgrep -f station_orchestrator`` which matches
+    # ANY host process whose cmdline contains that substring (other Claude
+    # Code agents, IDEs, build scripts, etc.). Without this patch the test
+    # is flaky on dev workstations. See issue #407.
+    with patch("app.services.stale_run_reaper.get_agent_status", mock_status), \
+         patch("app.services.stale_run_reaper._is_orchestrator_process_alive",
+               return_value=False):
         async with async_session() as s:
             n = await reap_stale_runs(s)
             await s.commit()
@@ -98,7 +105,11 @@ async def test_reaper_marks_old_unknown_runs_interrupted(old_unknown_run):
     """Issue #268 acceptance criterion: the reaper must catch ``unknown``
     rows older than the threshold whose orchestrator process is dead."""
     mock_status = AsyncMock(return_value={"service_active": False})
-    with patch("app.services.stale_run_reaper.get_agent_status", mock_status):
+    # Patch ``_is_orchestrator_process_alive`` to False (see issue #407 —
+    # pgrep -f station_orchestrator can match unrelated host processes).
+    with patch("app.services.stale_run_reaper.get_agent_status", mock_status), \
+         patch("app.services.stale_run_reaper._is_orchestrator_process_alive",
+               return_value=False):
         async with async_session() as s:
             n = await reap_stale_runs(s)
             await s.commit()
