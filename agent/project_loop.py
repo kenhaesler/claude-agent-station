@@ -184,6 +184,32 @@ def iterate_projects(
             results.append({"project": project["repo"], "decision": "ERROR", "error": str(exc)})
             continue
 
+        # Resolved project mode (defaults to "full" to match the bash picker).
+        # Captured once here so both the pre-orchestration plan_review_start
+        # emit and the post-verdicts gate call see the same value.
+        project_mode = str(project.get("mode") or "full").strip().lower()
+
+        # #442: plan_only projects flip the dashboard banner to
+        # ``plan_reviewing`` for the manager-review window. The legacy
+        # bash driver emitted this via ``webhook_event plan_review_start``
+        # immediately before invoking the manager review step; the Python
+        # port (PR #405) dropped it. We re-emit here, right before
+        # orchestrate_project (which now hosts the manager as an in-session
+        # sibling agent), so the UI state transition is restored.
+        if project_mode == "plan_only":
+            try:
+                from agent.webhook_emitter import emit as _emit_plan_start
+                _emit_plan_start(
+                    "plan_review_start",
+                    run_id=f"run-{run_id}",
+                    payload={
+                        "project": project.get("repo", ""),
+                        "mode": "plan_only",
+                    },
+                )
+            except Exception:  # noqa: BLE001 — best-effort signal
+                logger.warning("plan_review_start webhook emit failed")
+
         try:
             proj_rc, proj_state = asyncio.run(
                 orchestrate_project(project, config, run_id, workspaces_dir)
@@ -238,6 +264,31 @@ def iterate_projects(
                 "error": f"manager produced no verdicts file at {verdicts_path}",
             })
         raw_verdicts = (verdicts_payload or {}).get("verdicts", [])
+
+        # #442: plan_only projects fan out into APPROVE_PLAN /
+        # REVISE_PLAN / REJECT_PLAN follow-up actions that the manager-sibling
+        # writes alongside (or instead of) the regular ``verdicts`` array.
+        # The gate parses the same verdicts file, enqueues follow-up full
+        # runs, writes revision feedback, and flips the dashboard run
+        # status. The legacy bash driver shelled out to
+        # ``python -m agent.plan_review_gate``; here we call the function
+        # in-process. The CLI entry-point at ``agent.plan_review_gate.main``
+        # is preserved for ad-hoc / triage invocations.
+        if project_mode == "plan_only":
+            try:
+                from agent import plan_review_gate as _prg
+                _prg.apply_plan_review_gate(
+                    project_mode=project_mode,
+                    verdicts_path=verdicts_path,
+                    project_repo=project.get("repo", ""),
+                    run_id=f"run-{run_id}",
+                    workspace=workspace_path,
+                )
+            except Exception:  # noqa: BLE001 — gate is best-effort
+                logger.exception(
+                    "apply_plan_review_gate failed for %s",
+                    project.get("repo", ""),
+                )
 
         from agent.verdict_execution import Verdict as _Verdict
         verdicts = [_Verdict.from_dict(v) for v in raw_verdicts]

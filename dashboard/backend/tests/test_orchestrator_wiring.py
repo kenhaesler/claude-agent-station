@@ -917,20 +917,6 @@ def test_review_package_emits_mode_header(tmp_path, mode, expected_header):
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "iterate_projects no longer emits plan_review_start — see #442. "
-        "Contract from issue #406: a plan_only project must emit "
-        "plan_review_start during the manager-review window. The bash "
-        "run-manager.sh did this via webhook_event before "
-        "run_manager_review; the Python port in agent/project_loop.py "
-        "(PR #405) dropped the emission. Wiring is tracked in #442; "
-        "agent/plan_review_gate.py docstring lines 506-511 still "
-        "reference the dropped emission. Re-pinning here as "
-        "xfail(strict=True) so it flips to pass once #442 lands."
-    ),
-)
 def test_iterate_projects_emits_plan_review_start_for_plan_only(
     tmp_path, monkeypatch,
 ):
@@ -992,21 +978,6 @@ def test_iterate_projects_emits_plan_review_start_for_plan_only(
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "iterate_projects no longer invokes apply_plan_review_gate — "
-        "see #442. Contract from issue #406: iterate_projects must call "
-        "agent.plan_review_gate.apply_plan_review_gate for every "
-        "plan_only project after the manager's verdicts file is read. "
-        "The bash run-manager.sh ran `python -m agent.plan_review_gate` "
-        "between execute_verdicts and the next project; the Python port "
-        "in agent/project_loop.py (PR #405) dropped the invocation. "
-        "Without this wiring the APPROVE_PLAN / REVISE_PLAN / "
-        "REJECT_PLAN follow-up paths are dead code. Re-pinning here as "
-        "xfail(strict=True) so it flips to pass once #442 lands."
-    ),
-)
 def test_iterate_projects_invokes_plan_review_gate_for_plan_only(
     tmp_path, monkeypatch,
 ):

@@ -13,10 +13,11 @@ inserts a manual gate between plan-writing and implementation:
 This module owns the post-run gate logic: parsing the manager's plan
 verdict, enqueuing follow-up work, and emitting the corresponding run
 state transitions. The actual re-spawn loop for REVISE_PLAN is currently
-implemented as a documented helper that the run-manager shell driver
-calls between iterations — wiring it into the live SDK session is
-deliberately out-of-scope for the initial cut (see TODO in
-``apply_plan_verdict``).
+implemented as a documented helper invoked between project iterations by
+:func:`agent.project_loop.iterate_projects` (issue #442 in-process
+wiring); the CLI :func:`main` is preserved for ad-hoc / triage runs.
+Live re-spawn into the SDK session is deliberately out-of-scope for the
+initial cut (see TODO in ``apply_plan_verdict``).
 
 States added to the run / queue lifecycle (additive — both columns are
 TEXT in SQLite, so old code accepts the new strings without a
@@ -110,8 +111,9 @@ class GateAction:
                                  ``plan_approved``.
     - ``"revise"``             — re-spawn the same teammate with the manager
                                  feedback + prior plan path. The orchestrator
-                                 / run-manager shim drives the loop, bounded
-                                 by ``get_plan_revision_max()``.
+                                 (``agent.project_loop.iterate_projects``)
+                                 drives the loop, bounded by
+                                 ``get_plan_revision_max()``.
     - ``"reject"``             — close the planning thread, no follow-up.
                                  ``next_run_state`` is ``plan_rejected``.
     - ``"halt_revisions_exhausted"`` — REVISE_PLAN was returned but the
@@ -191,9 +193,10 @@ def apply_plan_verdict(
 ) -> GateAction:
     """Resolve a single plan verdict into the next gate action.
 
-    The caller (orchestrator post-run hook OR run-manager shim) is
-    responsible for actually performing the side-effects implied by the
-    returned ``GateAction``:
+    The caller (orchestrator post-run hook in
+    :func:`agent.project_loop.iterate_projects`, or the CLI in
+    :func:`main` for ad-hoc invocations) is responsible for actually
+    performing the side-effects implied by the returned ``GateAction``:
 
     - ``enqueue_full_run``  → POST a new ``QueueItem`` with mode="full",
                               context={"approved_plan_path": ...}, and
@@ -210,8 +213,9 @@ def apply_plan_verdict(
 
     TODO(#266 follow-up): wire ``revise`` into the live SDK session. The
     current iteration implements the verdict mapping + tests; the actual
-    re-spawn-with-feedback loop is driven by the run-manager shell driver
-    between iterations.
+    re-spawn-with-feedback loop is driven by
+    :func:`agent.project_loop.iterate_projects` between iterations
+    (post-#442 in-process wiring).
     """
     if verdict.verdict == "APPROVE_PLAN":
         return GateAction(
@@ -296,12 +300,13 @@ def build_followup_queue_item(action: GateAction) -> dict:
 #   run's status to ``awaiting_plan_review``, ``plan_approved``, or
 #   ``plan_rejected`` (handlers added in run_lifecycle.py).
 # - :func:`apply_plan_review_gate` is the orchestrator-side entry point:
-#   parse → decide → execute. Called by :func:`main` (CLI) which is in
-#   turn invoked from :file:`agent/scripts/run-manager.sh` after the
-#   manager review phase, gated on ``project.mode == "plan_only"``.
+#   parse → decide → execute. Called in-process by
+#   :func:`agent.project_loop.iterate_projects` after the manager-sibling
+#   has written its verdicts (gated on ``project.mode == "plan_only"``),
+#   and also exposed via the :func:`main` CLI for ad-hoc / triage runs.
 #
 # Network failures are logged and converted to non-zero exits so the
-# shell driver can surface them, but they never raise — the gate is a
+# caller can surface them, but they never raise — the gate is a
 # side-effect layer, not a fail-stop in the main flow.
 
 
@@ -310,9 +315,10 @@ def _resolve_dashboard_url(api_url: str | None = None) -> str:
 
     Precedence: explicit arg → ``STATION_DASHBOARD_URL`` env →
     ``STATION_WEBHOOK_URL`` env (stripped of the ``/api/webhook/...``
-    suffix) → ``http://127.0.0.1:8420``. Matches ``run-manager.sh``
-    queue_api/webhook_event resolution so a single deployment env var
-    works for both layers.
+    suffix) → ``http://127.0.0.1:8420``. Matches the orchestrator's
+    queue_api / webhook resolution so a single deployment env var works
+    for both layers (previously aligned with the bash run-manager.sh
+    helpers; now with :mod:`agent.webhook_emitter`).
     """
     if api_url:
         return api_url.rstrip("/")
@@ -457,8 +463,9 @@ def write_revision_feedback(
 class GateOutcome:
     """Aggregated result of running the gate over one verdict.
 
-    Returned to the CLI / shell driver so it can log per-verdict outcomes
-    and decide whether the gate as a whole succeeded.
+    Returned to the in-process caller (or the CLI driver) so it can log
+    per-verdict outcomes and decide whether the gate as a whole
+    succeeded.
     """
     action_kind: str
     verdict_kind: str
@@ -506,9 +513,11 @@ def apply_plan_review_gate(
     # Mark the run as awaiting plan review BEFORE applying any verdicts so
     # operators see the gate engage even if the verdicts file is malformed
     # or the manager produced nothing. The ``plan_reviewing`` window is
-    # the manager-review phase itself (handled by run-manager.sh emitting
-    # plan_review_start for plan_only projects); ``awaiting_plan_review``
-    # is the post-review window where the gate is applying verdicts.
+    # the manager-review phase itself (handled by
+    # :func:`agent.project_loop.iterate_projects` emitting
+    # ``plan_review_start`` for plan_only projects before orchestration);
+    # ``awaiting_plan_review`` is the post-review window where the gate is
+    # applying verdicts.
     post_run_event(
         "awaiting_plan_review",
         run_id,
@@ -661,11 +670,14 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="python -m agent.plan_review_gate",
         description=(
-            "Plan-review gate driver. Invoked by run-manager.sh after the "
-            "manager review phase for plan_only projects. Reads the manager's "
-            "plan-verdicts JSON, decides per-verdict, and executes the "
-            "follow-up actions (enqueue full run, write revision feedback, "
-            "or close the planning thread)."
+            "Plan-review gate driver. The live orchestrator calls "
+            "apply_plan_review_gate() in-process from "
+            "agent.project_loop.iterate_projects after the manager-sibling "
+            "writes its verdicts; this CLI is retained for ad-hoc / triage "
+            "invocations against an existing verdicts JSON. Reads the "
+            "manager's plan-verdicts JSON, decides per-verdict, and "
+            "executes the follow-up actions (enqueue full run, write "
+            "revision feedback, or close the planning thread)."
         ),
     )
     p.add_argument("--project-mode", required=True,
@@ -704,7 +716,7 @@ def main(argv: list[str] | None = None) -> int:
         api_url=args.api_url,
     )
 
-    # Summary JSON to stdout for the shell driver to capture.
+    # Summary JSON to stdout for the (ad-hoc) caller to capture.
     summary = {
         "outcomes": [
             {
