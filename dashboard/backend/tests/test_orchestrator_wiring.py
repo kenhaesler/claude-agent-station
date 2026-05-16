@@ -852,7 +852,235 @@ def test_get_plan_revision_max_invalid_falls_back(monkeypatch):
 
 
 # --- Manager review package: MODE: header (issue #266) ---------------------
+#
+# These three tests re-pin the contracts that were dropped along with
+# ``run-manager.sh`` in PR #405 (issue #383). The bash-era tests asserted
+# that the shell driver emitted the right ``MODE:`` headers, the
+# ``plan_review_start`` webhook, and invoked ``python -m
+# agent.plan_review_gate``. Those tests used ``read_text()`` on the now-
+# deleted script. The behaviours still apply to the Python composition
+# (issue #406): every project mode must surface in the manager's review
+# package, ``plan_only`` projects must emit ``plan_review_start`` during
+# the manager-review window, and ``apply_plan_review_gate`` must run for
+# every ``plan_only`` project after verdicts are produced.
 
+
+@pytest.mark.parametrize(
+    "mode,expected_header",
+    [
+        ("full", "MODE: FULL"),
+        ("analyze", "MODE: ANALYZE"),
+        ("plan", "MODE: PLAN"),
+        ("plan_only", "MODE: PLAN_ONLY"),
+    ],
+)
+def test_review_package_emits_mode_header(tmp_path, mode, expected_header):
+    """The manager review package must carry a ``MODE: <MODE>`` line so the
+    manager-sibling agent can detect the project's resolved mode while
+    composing its verdict. The bash era enforced this via ``echo "MODE: ..."``
+    inside ``run-manager.sh``; the Python composition lives in
+    :func:`agent.station_orchestrator._ensure_review_package`. We inspect
+    the assembled package string directly rather than booting the SDK.
+    Replaces ``test_run_manager_emits_mode_headers`` (deleted in PR #405).
+    """
+    from agent.station_orchestrator import _ensure_review_package
+
+    # Synthesise a minimal workspace with one employee report so the
+    # helper has real content to splice. The MODE: line is emitted up
+    # front and is independent of report contents.
+    workspaces = tmp_path / "workspaces"
+    repo = workspaces / "repo"
+    repo.mkdir(parents=True)
+    (repo / ".claude-employee-report-0.json").write_text(
+        '{"issue_number":1,"verdict_request":"APPROVE","summary":"x"}',
+        encoding="utf-8",
+    )
+    log_dir = tmp_path / "log"
+    log_dir.mkdir()
+
+    out = _ensure_review_package(
+        run_id=f"mode-{mode}",
+        log_dir=log_dir,
+        workspaces=[repo],
+        mode=mode,
+    )
+    text = out.read_text(encoding="utf-8")
+    assert expected_header in text, (
+        f"review package for mode={mode!r} missing {expected_header!r}; "
+        f"got:\n{text}"
+    )
+    # And the header must appear on its own line (manager.md parses it
+    # by line, not by substring) — guard against future "MODE: FULL extra"
+    # drift.
+    assert any(line.strip() == expected_header for line in text.splitlines()), (
+        f"{expected_header} must appear as a standalone line"
+    )
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "Contract from issue #406: iterate_projects must emit "
+        "plan_review_start for plan_only projects during the manager-"
+        "review window. The bash run-manager.sh emitted this via "
+        "webhook_event before run_manager_review; the Python port in "
+        "agent/project_loop.py (PR #405) does NOT yet emit it. Wiring "
+        "this requires adding a call to agent.webhook_emitter.emit "
+        "before orchestrate_project for plan_only projects — see "
+        "agent/plan_review_gate.py docstring lines 506-511 which still "
+        "reference the dropped emission. Re-pinning the contract here "
+        "as xfail(strict=True) so it flips to pass once a follow-up PR "
+        "adds the emission."
+    ),
+)
+def test_iterate_projects_emits_plan_review_start_for_plan_only(
+    tmp_path, monkeypatch,
+):
+    """Pinning #406 contract: a ``plan_only`` project drives a
+    ``plan_review_start`` webhook emission so the dashboard banner flips
+    to ``plan_reviewing`` during the manager-review window. We mock the
+    webhook emitter and assert the event appears in the captured calls.
+    Replaces ``test_run_manager_emits_plan_review_start_for_plan_only_projects``
+    (deleted in PR #405).
+    """
+    import json
+    from agent import project_loop as pl
+
+    cfg = tmp_path / "manager-config.json"
+    cfg.write_text(json.dumps({
+        "projects": [{
+            "repo": "owner/repo",
+            "enabled": True,
+            "branch": "main",
+            "mode": "plan_only",
+        }],
+        "integration": {"dev_branch": "autonomous/dev"},
+    }))
+
+    monkeypatch.setattr("agent.preflight.run_preflight", lambda *a, **k: None)
+    monkeypatch.setattr("agent.queue_recovery.purge_and_recover", lambda *a, **k: None)
+    monkeypatch.setattr("agent.queue_recovery.resume_paused", lambda: None)
+    monkeypatch.setattr(
+        "agent.workspace_setup.ensure_workspace",
+        lambda p, w: str(tmp_path / "ws"),
+    )
+
+    async def _fake_orchestrate(project, config, run_id, workspaces_dir):
+        return 0, None
+
+    monkeypatch.setattr(
+        "agent.station_orchestrator.orchestrate_project", _fake_orchestrate,
+    )
+    monkeypatch.setattr(
+        "agent.station_orchestrator._read_verdicts_file",
+        lambda *a, **k: {"verdicts": []},
+    )
+    monkeypatch.setattr("agent.digest.write_digest", lambda **kw: "")
+
+    emitted: list[tuple[str, dict]] = []
+    monkeypatch.setattr(
+        "agent.webhook_emitter.emit",
+        lambda event, *, run_id, payload=None: emitted.append(
+            (event, {"run_id": run_id, **(payload or {})}),
+        ),
+    )
+
+    pl.iterate_projects("run-plan-only", str(cfg), str(tmp_path))
+
+    events = [e for e, _ in emitted]
+    assert "plan_review_start" in events, (
+        f"plan_only project must trigger plan_review_start emission; "
+        f"saw events={events}"
+    )
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "Contract from issue #406: iterate_projects must invoke "
+        "agent.plan_review_gate.apply_plan_review_gate for every "
+        "plan_only project after the manager's verdicts file is read. "
+        "The bash run-manager.sh invoked `python -m "
+        "agent.plan_review_gate` between execute_verdicts and the next "
+        "project; the Python port in agent/project_loop.py (PR #405) "
+        "does NOT call it. Without this wiring the APPROVE_PLAN / "
+        "REVISE_PLAN / REJECT_PLAN follow-up paths are dead code. "
+        "Re-pinning the contract here as xfail(strict=True) so it flips "
+        "to pass once a follow-up PR adds the call."
+    ),
+)
+def test_iterate_projects_invokes_plan_review_gate_for_plan_only(
+    tmp_path, monkeypatch,
+):
+    """Pinning #406 contract: a ``plan_only`` project must drive
+    :func:`agent.plan_review_gate.apply_plan_review_gate` after manager
+    verdicts have been read. We patch the gate function and assert it
+    was called with the project mode, the verdicts path, repo, run id,
+    and workspace. Replaces ``test_run_manager_invokes_plan_review_gate``
+    (deleted in PR #405).
+    """
+    import json
+    from agent import project_loop as pl
+
+    cfg = tmp_path / "manager-config.json"
+    cfg.write_text(json.dumps({
+        "projects": [{
+            "repo": "owner/repo",
+            "enabled": True,
+            "branch": "main",
+            "mode": "plan_only",
+        }],
+        "integration": {"dev_branch": "autonomous/dev"},
+    }))
+
+    monkeypatch.setattr("agent.preflight.run_preflight", lambda *a, **k: None)
+    monkeypatch.setattr("agent.queue_recovery.purge_and_recover", lambda *a, **k: None)
+    monkeypatch.setattr("agent.queue_recovery.resume_paused", lambda: None)
+    monkeypatch.setattr(
+        "agent.workspace_setup.ensure_workspace",
+        lambda p, w: str(tmp_path / "ws"),
+    )
+
+    async def _fake_orchestrate(project, config, run_id, workspaces_dir):
+        return 0, None
+
+    monkeypatch.setattr(
+        "agent.station_orchestrator.orchestrate_project", _fake_orchestrate,
+    )
+    # Manager produced an empty (but present) verdicts payload — enough
+    # for the gate to fire even without real verdicts.
+    monkeypatch.setattr(
+        "agent.station_orchestrator._read_verdicts_file",
+        lambda *a, **k: {"verdicts": []},
+    )
+    monkeypatch.setattr("agent.digest.write_digest", lambda **kw: "")
+
+    gate_calls: list[dict] = []
+    monkeypatch.setattr(
+        "agent.plan_review_gate.apply_plan_review_gate",
+        lambda **kwargs: gate_calls.append(kwargs) or [],
+    )
+
+    pl.iterate_projects("run-gate-test", str(cfg), str(tmp_path))
+
+    assert gate_calls, (
+        "apply_plan_review_gate was not invoked for the plan_only project"
+    )
+    call = gate_calls[0]
+    assert call.get("project_mode") == "plan_only", (
+        f"gate must be told the project's mode; got {call.get('project_mode')!r}"
+    )
+    assert call.get("project_repo") == "owner/repo", (
+        f"gate must receive the project repo; got {call.get('project_repo')!r}"
+    )
+    # The gate's run_id arg is the full run id (with the ``run-`` prefix)
+    # so the dashboard webhook handler can correlate. iterate_projects's
+    # caller passes the bare id, so wiring must add the prefix back —
+    # this is the same contract enforced by #432/#433.
+    rid = call.get("run_id", "")
+    assert "gate-test" in rid, (
+        f"gate must receive the run id; got {rid!r}"
+    )
 
 
 # --- Plan-review gate live wiring (issue #266 review feedback) -------------
