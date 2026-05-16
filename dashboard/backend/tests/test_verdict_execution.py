@@ -12,6 +12,8 @@ integration branch with auto-merge armed, CI gates the merge.
 
 from __future__ import annotations
 
+import pytest
+
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
@@ -505,5 +507,49 @@ def test_execute_dispatcher_forwards_dev_branch_kwarg(tmp_path):
         execute(verdict, workspace=workspace, dev_branch="dev")
     _, kwargs = mock_fn.call_args
     assert kwargs.get("dev_branch") == "dev"
+
+
+@pytest.mark.parametrize("verdict_kind", ["APPROVE", "PR", "REJECT", "SKIP"])
+def test_every_executor_accepts_dev_branch_kwarg(verdict_kind, tmp_path, monkeypatch):
+    """Regression: ``execute()`` dispatches via blind ``**kwargs``, so
+    EVERY executor must accept ``dev_branch`` (only execute_approve_integration
+    actually consumes it). Without this, an APPROVE verdict raises
+    TypeError('execute_approve() got an unexpected keyword argument
+    "dev_branch"'), the verdict-execution wrapper catches and bumps
+    exit_code, the run is marked failed, and no PR ever opens.
+
+    Live evidence: run-20260516T090429Z, digest line:
+        execute_verdict: TypeError: execute_approve() got an
+        unexpected keyword argument 'dev_branch'
+
+    Caller (agent/project_loop.py) passes dev_branch to every verdict
+    uniformly because the dispatcher demands it for APPROVE_INTEGRATION;
+    making every executor accept-and-ignore is the kw-symmetry approach.
+    """
+    from unittest.mock import patch
+    from agent.verdict_execution import execute, Verdict
+    # Stub out the per-executor side effects so we just exercise signatures.
+    monkeypatch.setattr("agent.verdict_execution.subprocess.run",
+                        lambda *a, **kw: type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})())
+    monkeypatch.setattr("agent.verdict_execution.gh_run",
+                        lambda *a, **kw: type("R", (), {"ok": True, "stdout": "", "stderr": ""})())
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    verdict = Verdict(
+        project="owner/repo",
+        issue_number=42,
+        verdict=verdict_kind,
+        branch="autonomous/issue-42",
+    )
+    # MUST NOT raise TypeError
+    result = execute(
+        verdict,
+        workspace=workspace,
+        run_id="run-test",
+        env={"GH_TOKEN": "test"},
+        dev_branch="autonomous/dev",
+    )
+    # Whatever the executor returns, the call itself was valid.
+    assert result is not None, f"{verdict_kind} executor returned None"
 
 
