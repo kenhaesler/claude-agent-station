@@ -28,9 +28,9 @@ def test_iterate_projects_calls_each_phase_when_manager_produces_verdicts(
 
     async def _fake_orchestrate(project, config, run_id, workspaces_dir):
         call_log.append("orchestrate_project")
-        # orchestrate_project returns (exit_code, stream_state) — None state
-        # is the documented value when the orchestrator session never ran.
-        return 0, None
+        # orchestrate_project returns (exit_code, stream_state, work_attempted).
+        # None stream_state is the documented value when the session never ran.
+        return 0, None, True
 
     monkeypatch.setattr("agent.station_orchestrator.orchestrate_project", _fake_orchestrate)
     # Happy-path mock: manager produced a verdicts file with no verdicts.
@@ -82,7 +82,7 @@ def test_iterate_projects_flags_missing_verdicts_file(tmp_path, monkeypatch):
     monkeypatch.setattr("agent.workspace_setup.ensure_workspace", lambda p, w: str(tmp_path))
 
     async def _fake_orchestrate(project, config, run_id, workspaces_dir):
-        return 0, None
+        return 0, None, True
 
     monkeypatch.setattr("agent.station_orchestrator.orchestrate_project", _fake_orchestrate)
     # No verdicts file: simulate manager crash / max-turns / never-spawned.
@@ -154,7 +154,7 @@ def test_iterate_projects_passes_workspace_and_dev_branch_to_executor(
     )
 
     async def _fake_orchestrate(project, config, run_id, workspaces_dir):
-        return 0, None
+        return 0, None, True
 
     monkeypatch.setattr("agent.station_orchestrator.orchestrate_project", _fake_orchestrate)
     monkeypatch.setattr(
@@ -237,7 +237,7 @@ def test_iterate_projects_emits_manager_no_verdicts_with_kwargs(
     )
 
     async def _fake_orchestrate(*a, **k):
-        return 0, None
+        return 0, None, True
 
     monkeypatch.setattr("agent.station_orchestrator.orchestrate_project", _fake_orchestrate)
     # Missing verdicts file → manager_no_verdicts branch fires.
@@ -323,7 +323,7 @@ def test_iterate_projects_skips_downstream_phases_when_no_verdicts(
     )
 
     async def _fake_orchestrate(*a, **k):
-        return 0, None
+        return 0, None, True
 
     monkeypatch.setattr("agent.station_orchestrator.orchestrate_project", _fake_orchestrate)
     # No verdicts file → no-verdicts branch must fire.
@@ -394,7 +394,7 @@ def test_iterate_projects_emits_plan_review_start_with_kwargs(
     )
 
     async def _fake_orchestrate(*a, **k):
-        return 0, None
+        return 0, None, True
 
     monkeypatch.setattr("agent.station_orchestrator.orchestrate_project", _fake_orchestrate)
     monkeypatch.setattr(
@@ -456,7 +456,7 @@ def test_iterate_projects_swallows_executor_exceptions_per_verdict(
     )
 
     async def _fake_orchestrate(*a, **k):
-        return 0, None
+        return 0, None, True
 
     monkeypatch.setattr("agent.station_orchestrator.orchestrate_project", _fake_orchestrate)
     monkeypatch.setattr(

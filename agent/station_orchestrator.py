@@ -2010,13 +2010,19 @@ def _read_verdicts_file(path: Path) -> dict | None:
 
 async def orchestrate_project(
     project: dict, config: dict, run_id: str, workspaces_dir: str,
-) -> tuple[int, "_StreamState | None"]:
+) -> tuple[int, "_StreamState | None", bool]:
     """Run the Agent Teams session for a single project.
 
-    Returns ``(exit_code, stream_state)``. ``stream_state`` is ``None`` if
-    the project short-circuited before the orchestrator session began
-    (no eligible issues, workspace error, etc.). Callers use the returned
-    state for telemetry aggregation — see :class:`RunDriver._finalize_telemetry`.
+    Returns ``(exit_code, stream_state, work_attempted)``.
+
+    - ``stream_state`` is ``None`` if the project short-circuited before
+      the SDK session began (no eligible issues).
+    - ``work_attempted`` is ``False`` only when the picker returned no
+      eligible issues and the SDK session was never opened. ``True`` for
+      all other paths (session opened, errored, etc.) so that downstream
+      failure signals (manager_no_verdicts, exit_code bumps) are preserved.
+      Idle-run-semantics discriminator — see #446 / #447 / spec
+      ``docs/superpowers/specs/2026-05-17-idle-run-semantics-design.md``.
 
     Extracted from orchestrate() in #383 so iterate_projects (Python-only)
     can drive per-project work directly without delegating the outer loop
@@ -2162,7 +2168,7 @@ async def orchestrate_project(
             # No issues: clean exit. ``stream_state`` is uninitialised here
             # because the orchestrator session never started — return None so
             # telemetry aggregation in the caller can skip this project.
-            return exit_code, None
+            return exit_code, None, False
 
         # Hook 1: vision-aware prioritisation
         vision = load_vision(workspace)
@@ -2668,7 +2674,7 @@ async def orchestrate_project(
                         repo, exc,
                     )
 
-    return exit_code, stream_state
+    return exit_code, stream_state, True
 
 
 async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
@@ -2695,10 +2701,10 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
 
     exit_code = 0
     for project in enabled_projects:
-        # orchestrate_project now returns (exit_code, stream_state); the
-        # legacy `orchestrate()` driver only cares about the exit code,
-        # discards the state.
-        proj_rc, _state = await orchestrate_project(
+        # orchestrate_project now returns (exit_code, stream_state, work_attempted);
+        # the legacy `orchestrate()` driver only cares about the exit code,
+        # discards the state and work_attempted flag.
+        proj_rc, _state, _work_attempted = await orchestrate_project(
             project, config, run_id, workspaces_dir,
         )
         if proj_rc != 0:

@@ -216,7 +216,7 @@ def iterate_projects(
                 logger.exception("plan_review_start webhook emit failed")
 
         try:
-            proj_rc, proj_state = asyncio.run(
+            proj_rc, proj_state, _work_attempted = asyncio.run(
                 orchestrate_project(project, config, run_id, workspaces_dir)
             )
             if proj_state is not None:
