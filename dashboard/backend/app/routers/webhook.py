@@ -53,15 +53,17 @@ _MESSAGE_EVENTS = {"conflict_detected", "guidance_sent"}
 _DAG_EVENTS = {"dag_created", "dag_completed"}
 _TEAM_SPAWN_EVENTS = {"teammate_spawned", "team_created"}
 
-# Issue #450: events that are *scoped to a teammate or to a non-terminal
-# progress signal* and therefore MUST NOT flow through ``handle_unknown``.
-# That handler unconditionally propagates ``event.status`` onto
-# ``runs.status`` — which conflates the teammate's lifecycle with the
-# parent run's lifecycle. The orchestrator emits ``teammate_completed`` with
+# Issue #450 / #453: events that are *scoped to a teammate or to a
+# non-terminal progress signal*, routed through dedicated post-dispatch
+# handlers rather than the ``handle_unknown`` fallback. Historically the
+# motivation was that ``handle_unknown`` mirrored ``event.status`` onto
+# ``runs.status``, conflating the teammate's lifecycle with the parent
+# run's (the orchestrator emits ``teammate_completed`` with
 # ``status="completed"`` to mean "this teammate's task is done", but the
-# `run` row still has live work (other teammates, manager review,
-# verdicts, …). Routing these through the dedicated post-dispatch handlers
-# below (``handle_teammate_completed``, ``handle_progress_update``, etc.)
+# ``run`` row still has live work). #453 removed that mirror so the
+# fallback is now inert on ``status``, but these events still belong in
+# the dedicated post-dispatch handlers below (``handle_teammate_completed``,
+# ``handle_progress_update``, etc.)
 # is sufficient — they only mutate the fields they own (team_members,
 # token counters) without touching status or finished_at.
 _TEAM_PROGRESS_EVENTS = {
@@ -120,8 +122,9 @@ async def receive_run_event(
     # stale-run reaper doesn't mark a healthy run as ``interrupted``
     # during legitimate long-Sonnet-turn quiet windows. No state
     # transition; explicit branch so future devs don't accidentally
-    # route it through ``handle_unknown`` (which mutates ``run.status``
-    # if the event happens to carry one).
+    # route it through ``handle_unknown`` (which is intentionally
+    # minimal — it does NOT mutate ``run.status`` after #453, but
+    # heartbeats still don't need to bounce off it).
     if event_name == "heartbeat":
         pass
 
@@ -155,15 +158,18 @@ async def receive_run_event(
         ))
 
     elif event_name in _TEAM_PROGRESS_EVENTS:
-        # Issue #450: these events have dedicated post-dispatch handlers
-        # (below) that mutate only the fields they own. They MUST NOT fall
-        # through to ``handle_unknown``, which would propagate the
-        # teammate-scoped ``event.status`` onto ``runs.status`` and
-        # prematurely flip the parent run terminal while it's still alive.
-        # ``teammate_spawned`` and ``team_created`` are already explicitly
-        # branched via ``_TEAM_SPAWN_EVENTS`` post-dispatch — they don't
-        # carry a misleading ``status`` field so they were safe, but the
-        # other members of this surface area weren't.
+        # Issue #450 / #453: these events have dedicated post-dispatch
+        # handlers (below) that mutate only the fields they own.
+        # Historically the danger was that falling through to
+        # ``handle_unknown`` would propagate the teammate-scoped
+        # ``event.status`` onto ``runs.status`` and prematurely flip the
+        # parent run terminal while it's still alive. #453 removed that
+        # status mirror from ``handle_unknown``, but these events still
+        # belong in their dedicated handlers because they own teammate-
+        # scoped fields (token deltas, team_members JSON, etc.) that the
+        # generic fallback wouldn't touch. ``teammate_spawned`` and
+        # ``team_created`` are already explicitly branched via
+        # ``_TEAM_SPAWN_EVENTS`` post-dispatch.
         pass
 
     elif event_name in ("conflict_resolution_started",
