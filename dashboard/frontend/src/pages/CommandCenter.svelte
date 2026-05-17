@@ -136,6 +136,7 @@
     if (s === 'interrupted') return { label: 'STOP', cls: 'stop', tick: false };
     if (s === 'failed' || s === 'error') return { label: 'FAIL', cls: 'planx', tick: false };
     if (s === 'completed' || s === 'finished' || s === 'success') return { label: 'DONE', cls: 'done', tick: false };
+    if (s === 'skipped') return { label: 'SKIP', cls: 'idle', tick: false };
     if (!r.status && !r.finished_at) return { label: 'IDLE', cls: 'idle', tick: false };
     return { label: (r.status ?? 'IDLE').toUpperCase().slice(0, 6), cls: 'idle', tick: false };
   }

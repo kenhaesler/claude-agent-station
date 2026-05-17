@@ -713,7 +713,7 @@
               <div class="key-row"><span class="k">Autonomy</span><span class="v">{run.autonomy_level ?? 'assisted'}</span></div>
               <div class="key-row">
                 <span class="k">Status</span>
-                <span class="v" style="color: {isLive ? 'var(--go)' : run.status === 'failed' ? 'var(--abort)' : 'var(--ink)'}">{run.status}</span>
+                <span class="v" style="color: {isLive ? 'var(--go)' : run.status === 'failed' ? 'var(--abort)' : run.status === 'skipped' ? 'var(--graphite)' : 'var(--ink)'}">{run.status}</span>
               </div>
               <div class="key-row">
                 <span class="k">Verdict</span>

@@ -361,6 +361,7 @@ code, .font-mono {
 .badge-pending { background: rgba(176,96,48,0.10); color: #B06030; }
 .badge-completed { background: rgba(46,125,50,0.12); color: #2E7D32; }
 .badge-failed { background: rgba(208,96,80,0.12); color: #D06050; }
+.badge-skipped { background: rgba(92,84,74,0.10); color: #5C544A; }
 
 /* Mode badges */
 .badge-full { background: rgba(176,96,48,0.10); color: #B06030; }
@@ -784,6 +785,7 @@ code, .font-mono {
 [data-theme="cyberpunk"] .badge-plan,
 [data-theme="cyberpunk"] .badge-triage,
 [data-theme="cyberpunk"] .badge-vision-bootstrap { color: #FCEE0A; }
+[data-theme="cyberpunk"] .badge-skipped { color: #8FB7C8; }
 
 /* --- Buttons --- */
 [data-theme="cyberpunk"] .btn {
