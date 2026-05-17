@@ -591,7 +591,14 @@ async def test_guidance_sent_creates_message(project_client: AsyncClient):
 
 @pytest.mark.asyncio
 async def test_unknown_event_creates_run(project_client: AsyncClient):
-    """Unknown event name should still create a Run record gracefully."""
+    """Unknown event name should still create a Run record gracefully.
+
+    Contract (#453): the unknown-event fallback does NOT mirror
+    ``event.status`` onto ``run.status`` — events that should set run
+    state must have explicit ``_RUN_HANDLERS`` entries. A new run
+    materialised by ``handle_unknown`` therefore defaults to
+    ``status='running'`` regardless of the event payload.
+    """
     resp = await project_client.post("/api/webhook/run-event", json={
         "run_id": "run-unknown-001",
         "event": "some_new_event",
@@ -605,7 +612,8 @@ async def test_unknown_event_creates_run(project_client: AsyncClient):
         result = await db.execute(select(Run).where(Run.run_id == "run-unknown-001"))
         run = result.scalar_one_or_none()
         assert run is not None
-        assert run.status == "special"
+        # NEW behaviour per #453: handle_unknown ignores event.status.
+        assert run.status == "running"
         assert run.mode == "employee"
 
 
