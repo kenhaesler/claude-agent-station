@@ -201,6 +201,83 @@ async def test_stats_returns_kind_distribution_and_error_rate(client):
     assert body["avg_duration_ms"] > 0
 
 
+# --- GET /api/audit/stats avg-duration dialect portability (#449) ----------
+
+
+@pytest.mark.asyncio
+async def test_stats_avg_duration_none_on_empty_window(client):
+    """No finished rows in the window -> ``avg_duration_ms is None``,
+    handler must not raise. Regression for #449: previously
+    ``julianday()`` raised on Postgres even for empty result sets because
+    the function itself does not exist on that dialect.
+    """
+    resp = await client.get("/api/audit/stats", params={"days": 7})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["total"] == 0
+    assert body["avg_duration_ms"] is None
+
+
+@pytest.mark.asyncio
+async def test_stats_avg_duration_matches_expected_ms(client):
+    """Two finished rows (10s + 30s) -> avg = 20_000 ms.
+
+    Pins the dialect-aware unit math: postgres uses
+    ``EXTRACT(EPOCH FROM finished_at - started_at) * 1000``; sqlite uses
+    ``(julianday(b) - julianday(a)) * 86_400_000``. Both must agree on ms.
+    """
+    base = datetime.now(timezone.utc) - timedelta(hours=1)
+    async with async_session() as db:
+        db.add(_entry(
+            key="dur-10s", status="ok",
+            started_at=base, finished_at=base + timedelta(seconds=10),
+        ))
+        db.add(_entry(
+            key="dur-30s", status="ok",
+            started_at=base, finished_at=base + timedelta(seconds=30),
+        ))
+        # A 'started' row (finished_at is NULL) must be excluded — its
+        # presence used to crash julianday() on Postgres anyway.
+        db.add(_entry(
+            key="dur-pending", status="started",
+            started_at=base, finished_at=None,
+        ))
+        await db.commit()
+
+    resp = await client.get("/api/audit/stats", params={"days": 7})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["avg_duration_ms"] is not None
+    # 20 s = 20_000 ms; allow a 1 ms slop for float rounding across
+    # dialects (rounded server-side to 2 decimals already).
+    assert abs(body["avg_duration_ms"] - 20_000.0) < 1.0
+
+
+@pytest.mark.asyncio
+async def test_stats_sqlite_branch_uses_julianday_not_extract(client):
+    """Regression guard for the SQLite branch: on SQLite the handler
+    must use ``julianday()`` because ``extract('epoch', ...)`` is
+    silently nonsense there (returns ~ -2.1e11 for a 10s gap). If a
+    future refactor swaps the SQLite branch to ``extract``, this test
+    catches the wrong-by-1e10 result.
+    """
+    base = datetime.now(timezone.utc) - timedelta(hours=1)
+    async with async_session() as db:
+        db.add(_entry(
+            key="dur-sqlite-pin", status="ok",
+            started_at=base, finished_at=base + timedelta(seconds=10),
+        ))
+        await db.commit()
+
+    resp = await client.get("/api/audit/stats", params={"days": 7})
+    assert resp.status_code == 200
+    body = resp.json()
+    # Expected ~10_000 ms; if extract(epoch) were used on SQLite the
+    # value would be in the e13 ms range (clearly wrong).
+    assert body["avg_duration_ms"] is not None
+    assert abs(body["avg_duration_ms"] - 10_000.0) < 1.0
+
+
 # --- retention -------------------------------------------------------------
 
 

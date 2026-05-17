@@ -94,12 +94,30 @@ async def audit_stats(
     error_rate = (errored / counted) if counted else 0.0
 
     # Average duration in ms for finished rows only.
-    dur_q = select(
-        func.avg(
-            (func.julianday(AuditEntry.finished_at) - func.julianday(AuditEntry.started_at))
-            * 86_400_000.0
+    #
+    # The original expression used SQLite's ``julianday()`` which does not
+    # exist on Postgres (see issue #449 — every call to /api/audit/stats
+    # was raising ``function julianday(timestamp with time zone) does not
+    # exist`` after the Postgres migration in PR #393). Same fix pattern
+    # as ``app/routers/queue.py::queue_stats``: branch on the bound
+    # engine's dialect because ``func.extract('epoch', ...)`` compiles to
+    # nonsense on SQLite. Both branches end in milliseconds so the
+    # ``avg_duration_ms`` wire format is unchanged.
+    dialect_name = db.bind.dialect.name if db.bind is not None else "sqlite"
+    if dialect_name == "postgresql":
+        # extract(epoch from interval) -> seconds; *1000 -> ms.
+        duration_ms_expr = (
+            func.extract("epoch", AuditEntry.finished_at - AuditEntry.started_at)
+            * 1_000.0
         )
-    ).where(
+    else:
+        # julianday(a) - julianday(b) -> fractional days; *86_400_000 -> ms.
+        duration_ms_expr = (
+            func.julianday(AuditEntry.finished_at)
+            - func.julianday(AuditEntry.started_at)
+        ) * 86_400_000.0
+
+    dur_q = select(func.avg(duration_ms_expr)).where(
         AuditEntry.started_at >= since,
         AuditEntry.finished_at.is_not(None),
     )
