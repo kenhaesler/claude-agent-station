@@ -614,3 +614,135 @@ def test_iterate_projects_returns_3tuple_on_preflight_failure(tmp_path, monkeypa
     exit_code, _last_state, terminal_status_hint = result
     assert exit_code == 2
     assert terminal_status_hint is None
+
+
+def test_iterate_projects_returns_skipped_hint_when_all_projects_idle(
+    tmp_path, monkeypatch
+):
+    """Run-level: all projects idle, no failures → terminal_status_hint='skipped'."""
+    from agent import project_loop
+
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        '{"projects":['
+        '{"repo":"a/a","enabled":true,"mode":"full"},'
+        '{"repo":"b/b","enabled":true,"mode":"full"}'
+        ']}'
+    )
+
+    async def fake_orchestrate(*a, **kw):
+        return (0, None, False)  # both projects idle
+
+    monkeypatch.setattr(
+        "agent.station_orchestrator.orchestrate_project", fake_orchestrate
+    )
+    # Match the monkeypatch targets used in pre-existing tests in this file
+    # (Task 2 implementer found that the plan's lazy-import targets don't
+    # exist as module attributes; use the canonical module paths instead).
+    monkeypatch.setattr(
+        "agent.workspace_setup.ensure_workspace", lambda *a, **kw: str(tmp_path / "ws")
+    )
+    monkeypatch.setattr("agent.webhook_emitter.emit", lambda *a, **kw: None)
+    monkeypatch.setattr("agent.preflight.run_preflight", lambda *a, **kw: None)
+    monkeypatch.setattr("agent.queue_recovery.purge_and_recover", lambda *a, **kw: None)
+    monkeypatch.setattr("agent.queue_recovery.resume_paused", lambda: None)
+    monkeypatch.setattr("agent.digest.write_digest", lambda **kw: "")
+
+    exit_code, _last_state, terminal_status_hint = project_loop.iterate_projects(
+        "test-run", str(config_path), str(tmp_path / "workspaces")
+    )
+
+    assert exit_code == 0
+    assert terminal_status_hint == "skipped"
+
+
+def test_iterate_projects_no_skipped_hint_when_any_project_did_work(
+    tmp_path, monkeypatch
+):
+    """Mixed: one idle, one did work → no skipped hint (run is completed)."""
+    from agent import project_loop
+
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        '{"projects":['
+        '{"repo":"a/a","enabled":true,"mode":"full"},'
+        '{"repo":"b/b","enabled":true,"mode":"full"}'
+        ']}'
+    )
+
+    call_count = {"n": 0}
+
+    async def fake_orchestrate(*a, **kw):
+        call_count["n"] += 1
+        # First call: idle; second: did work
+        return (0, None, call_count["n"] != 1)
+
+    monkeypatch.setattr(
+        "agent.station_orchestrator.orchestrate_project", fake_orchestrate
+    )
+    monkeypatch.setattr(
+        "agent.workspace_setup.ensure_workspace", lambda *a, **kw: str(tmp_path / "ws")
+    )
+    # Second project's verdicts file present, empty verdicts (happy minimal).
+    monkeypatch.setattr(
+        "agent.station_orchestrator._read_verdicts_file",
+        lambda p: {"verdicts": []},
+    )
+    monkeypatch.setattr("agent.webhook_emitter.emit", lambda *a, **kw: None)
+    monkeypatch.setattr("agent.preflight.run_preflight", lambda *a, **kw: None)
+    monkeypatch.setattr("agent.queue_recovery.purge_and_recover", lambda *a, **kw: None)
+    monkeypatch.setattr("agent.queue_recovery.resume_paused", lambda: None)
+    monkeypatch.setattr("agent.digest.write_digest", lambda **kw: "")
+
+    exit_code, _last_state, terminal_status_hint = project_loop.iterate_projects(
+        "test-run", str(config_path), str(tmp_path / "workspaces")
+    )
+
+    assert exit_code == 0
+    assert terminal_status_hint is None, (
+        "Mixed idle+work runs must NOT be marked skipped"
+    )
+
+
+def test_iterate_projects_no_skipped_hint_when_any_real_failure(
+    tmp_path, monkeypatch
+):
+    """Mixed: one idle, one fails → no skipped hint (run is failed)."""
+    from agent import project_loop
+
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        '{"projects":['
+        '{"repo":"a/a","enabled":true,"mode":"full"},'
+        '{"repo":"b/b","enabled":true,"mode":"full"}'
+        ']}'
+    )
+
+    call_count = {"n": 0}
+
+    async def fake_orchestrate(*a, **kw):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            return (0, None, False)   # idle
+        raise RuntimeError("simulated project failure")
+
+    monkeypatch.setattr(
+        "agent.station_orchestrator.orchestrate_project", fake_orchestrate
+    )
+    monkeypatch.setattr(
+        "agent.workspace_setup.ensure_workspace", lambda *a, **kw: str(tmp_path / "ws")
+    )
+    monkeypatch.setattr("agent.webhook_emitter.emit", lambda *a, **kw: None)
+    monkeypatch.setattr("agent.preflight.run_preflight", lambda *a, **kw: None)
+    monkeypatch.setattr("agent.queue_recovery.purge_and_recover", lambda *a, **kw: None)
+    monkeypatch.setattr("agent.queue_recovery.resume_paused", lambda: None)
+    monkeypatch.setattr("agent.digest.write_digest", lambda **kw: "")
+
+    exit_code, _last_state, terminal_status_hint = project_loop.iterate_projects(
+        "test-run", str(config_path), str(tmp_path / "workspaces")
+    )
+
+    assert exit_code != 0
+    assert terminal_status_hint is None, (
+        "Run with a real failure must NOT be marked skipped"
+    )
