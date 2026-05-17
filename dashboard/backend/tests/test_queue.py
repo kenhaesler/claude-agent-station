@@ -220,6 +220,88 @@ class TestDeleteCompleted:
 
 
 # ---------------------------------------------------------------------------
+# Test: /api/queue/stats avg-latency expression is dialect-portable (#449)
+# ---------------------------------------------------------------------------
+
+class TestQueueStatsAvgLatency:
+    """``queue_stats`` previously used SQLite-only ``julianday()`` which
+    raised ``function julianday(timestamp with time zone) does not exist``
+    on Postgres (issue #449). The handler now picks a dialect-appropriate
+    expression. These tests pin both behaviours.
+    """
+
+    async def test_stats_returns_none_avg_on_empty_queue(self, db):
+        """No completed rows -> ``avg_time_to_complete_ms`` is None, no raise."""
+        from app.routers.queue import queue_stats
+
+        result = await queue_stats(db=db)
+        assert result.avg_time_to_complete_ms is None
+        assert result.total == 0
+
+    async def test_stats_avg_matches_expected_ms(self, db):
+        """Two completed rows with known durations -> avg matches the math.
+
+        Row A: 10 s end-to-end. Row B: 30 s end-to-end. Avg = 20 s = 20_000 ms.
+        """
+        base = _utcnow()
+        _make_queue_item(
+            db,
+            state="completed",
+            created_at=base,
+            completed_at=base + timedelta(seconds=10),
+        )
+        _make_queue_item(
+            db,
+            issue_number=2,
+            state="completed",
+            created_at=base,
+            completed_at=base + timedelta(seconds=30),
+        )
+        # A non-completed row must be ignored even if it has timestamps.
+        _make_queue_item(
+            db,
+            issue_number=3,
+            state="in_progress",
+            created_at=base,
+            completed_at=base + timedelta(seconds=9999),
+        )
+        await db.commit()
+
+        from app.routers.queue import queue_stats
+
+        result = await queue_stats(db=db)
+        assert result.avg_time_to_complete_ms is not None
+        # 20 s = 20_000 ms; allow a 1 ms slop for float rounding across
+        # dialects (postgres extract(epoch) returns a numeric; sqlite
+        # julianday returns a float with ~us precision).
+        assert abs(result.avg_time_to_complete_ms - 20_000.0) < 1.0
+
+    async def test_stats_sqlite_branch_uses_julianday_not_extract(self, db):
+        """Regression guard for the SQLite branch: on SQLite the handler
+        must use ``julianday()`` because ``extract('epoch', ...)`` is
+        silently nonsense there (returns ~ -2.1e11 for a 10 s gap). If a
+        future refactor swaps the SQLite branch to ``extract``, this test
+        catches the wrong-by-1e10 result.
+        """
+        base = _utcnow()
+        _make_queue_item(
+            db,
+            state="completed",
+            created_at=base,
+            completed_at=base + timedelta(seconds=10),
+        )
+        await db.commit()
+
+        from app.routers.queue import queue_stats
+
+        result = await queue_stats(db=db)
+        # Expected 10_000 ms; if extract(epoch) were used on SQLite the
+        # value would be in the e13 ms range (clearly wrong).
+        assert result.avg_time_to_complete_ms is not None
+        assert abs(result.avg_time_to_complete_ms - 10_000.0) < 1.0
+
+
+# ---------------------------------------------------------------------------
 # Test: Update with explicit null clears fields
 # ---------------------------------------------------------------------------
 

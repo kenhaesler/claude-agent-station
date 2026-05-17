@@ -81,19 +81,42 @@ async def queue_stats(db: AsyncSession = Depends(get_db)):
     by_state = {row[0]: row[1] for row in result.all()}
     total = sum(by_state.values())
 
-    # Average time to complete (completed items with both timestamps)
+    # Average time to complete (completed items with both timestamps).
+    #
+    # The original expression used SQLite's ``julianday()`` which does not
+    # exist on Postgres (see issue #449 — every call to /api/queue/stats
+    # was raising ``function julianday(timestamp with time zone) does not
+    # exist`` after the Postgres migration in PR #393).
+    #
+    # ``func.extract('epoch', a - b)`` is the portable Postgres expression
+    # (it returns the interval in seconds), but SQLAlchemy silently
+    # compiles ``extract('epoch', ...)`` to nonsense on SQLite — a quick
+    # repro with two rows 10 s apart returns ``-2.1e11``. So we pick the
+    # expression based on the bound engine's dialect. Wire format stays
+    # ``avg_time_to_complete_ms``; the frontend (``QueueStatsBar.svelte``
+    # -> ``formatDuration``) was never updated for a unit change, so we
+    # keep ms.
+    dialect_name = db.bind.dialect.name if db.bind is not None else "sqlite"
+    if dialect_name == "postgresql":
+        latency_expr = func.extract(
+            "epoch", QueueItem.completed_at - QueueItem.created_at
+        )
+        scale = 1_000.0  # seconds -> ms
+    else:
+        latency_expr = (
+            func.julianday(QueueItem.completed_at)
+            - func.julianday(QueueItem.created_at)
+        )
+        scale = 86_400_000.0  # fractional days -> ms
+
     avg_result = await db.execute(
-        select(
-            func.avg(
-                func.julianday(QueueItem.completed_at) - func.julianday(QueueItem.created_at)
-            )
-        ).where(
+        select(func.avg(latency_expr)).where(
             QueueItem.state == "completed",
             QueueItem.completed_at.isnot(None),
         )
     )
-    avg_days = avg_result.scalar()
-    avg_ms = avg_days * 86_400_000 if avg_days else None
+    avg_value = avg_result.scalar()
+    avg_ms = avg_value * scale if avg_value is not None else None
 
     return QueueStats(by_state=by_state, total=total, avg_time_to_complete_ms=avg_ms)
 
