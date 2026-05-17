@@ -384,6 +384,49 @@ surfaces every gate state via banners on Mission Control and the Agent
 Teams canvas. See `docs/configuration.md#plan-review-gate-plan_only-only`
 for the full env-var matrix and verdict-action table.
 
+### Run status values (`runs.status`)
+
+Terminal states written to the `runs` table and mapped by `app/services/run_lifecycle.py`:
+
+| Status | Meaning |
+|---|---|
+| `running` | Run is active; orchestrator in progress. |
+| `completed` | Run finished with work attempted and all projects resolved (agent-side values `success`, `finished`, `no_reports`, `completed`, `rate_limited` all map here). |
+| `skipped` | Run finished cleanly with no eligible work to do in any configured project. Distinct from `failed`. Introduced 2026-05-17 (#446 / #447). |
+| `failed` | Run encountered a genuine error (e.g. manager produced no verdicts after work was attempted, orchestrator exception). |
+| `interrupted` | Run was stopped externally via a `run_controls` signal. |
+| `plan_reviewing` | `plan_only` run: manager is reviewing the plan. |
+| `awaiting_plan_review` | `plan_only` run: gate is open, waiting for human approval. |
+| `plan_approved` | `plan_only` run: plan approved; follow-up `full` run enqueued. Terminal. |
+| `plan_rejected` | `plan_only` run: plan rejected or revision budget exhausted. Terminal. |
+
+### Webhook events (agent → dashboard)
+
+Events posted to `POST /api/webhook` by `agent/webhook_emitter.py` and routed in `dashboard/backend/app/routers/webhook.py`:
+
+| Event | Description |
+|---|---|
+| `run_start` | Run has begun; creates or reactivates the `runs` row. |
+| `run_complete` | Run has finished; sets terminal status and `finished_at`. |
+| `manager_no_verdicts` | Manager was spawned but produced no verdicts file (genuine failure). Payload includes `exit_code=6`. Distinct from `project_skipped_no_work`. |
+| `project_skipped_no_work` | Emitted per-project when the orchestrator found no eligible work and did not open the SDK session. Payload: `{project, reason}` where `reason` is `"no_eligible_work"`. Run-level analogue: `runs.status="skipped"`. Introduced 2026-05-17 (#447). |
+| `plan_review_start` | `plan_only`: teammates have written a plan; manager review begins. |
+| `awaiting_plan_review` | `plan_only`: gate is open; waiting for human decision. |
+| `plan_approved` | `plan_only`: human approved the plan. |
+| `plan_rejected` | `plan_only`: plan rejected or revision budget exhausted. |
+
+### Per-project digest decision values
+
+Each project entry in the run digest carries a `decision` field written by `iterate_projects`:
+
+| Decision | Meaning |
+|---|---|
+| `APPROVE` | Manager approved the implementation; branch ready for merge. |
+| `PR` | Manager opened a pull request. |
+| `REJECT` | Manager rejected the implementation; no PR opened. |
+| `SKIP` | Project had no eligible work; no SDK session was opened. Paired with the `project_skipped_no_work` webhook. |
+| `ERROR` | Orchestrator or manager encountered an error while processing the project. |
+
 ---
 
 ## Deployment Model
