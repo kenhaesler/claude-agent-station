@@ -483,6 +483,15 @@ async def handle_unknown(
         run.mode = event.mode
     if event.model:
         run.model = event.model
+    # NOTE: This blind status mirror is a latent foot-gun — any unmapped
+    # event carrying a ``status`` field will mutate ``run.status``, even
+    # if that status is teammate-scoped or task-scoped rather than
+    # run-scoped. See issue #453 for the design follow-up (reviewer
+    # recommends removing this mirror entirely and requiring explicit
+    # ``_RUN_HANDLERS`` entries for any event that wants to set a
+    # run-level status). PR #452 (issue #450) closed the only known
+    # offender (``teammate_completed``) by adding a dispatcher
+    # pass-through, but the underlying foot-gun remains.
     if event.status:
         run.status = event.status
     if project_id:
