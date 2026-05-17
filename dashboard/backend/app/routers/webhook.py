@@ -53,6 +53,24 @@ _MESSAGE_EVENTS = {"conflict_detected", "guidance_sent"}
 _DAG_EVENTS = {"dag_created", "dag_completed"}
 _TEAM_SPAWN_EVENTS = {"teammate_spawned", "team_created"}
 
+# Issue #450: events that are *scoped to a teammate or to a non-terminal
+# progress signal* and therefore MUST NOT flow through ``handle_unknown``.
+# That handler unconditionally propagates ``event.status`` onto
+# ``runs.status`` — which conflates the teammate's lifecycle with the
+# parent run's lifecycle. The orchestrator emits ``teammate_completed`` with
+# ``status="completed"`` to mean "this teammate's task is done", but the
+# `run` row still has live work (other teammates, manager review,
+# verdicts, …). Routing these through the dedicated post-dispatch handlers
+# below (``handle_teammate_completed``, ``handle_progress_update``, etc.)
+# is sufficient — they only mutate the fields they own (team_members,
+# token counters) without touching status or finished_at.
+_TEAM_PROGRESS_EVENTS = {
+    "teammate_completed",
+    "teammate_progress",
+    "progress_update",
+    "narration",
+}
+
 
 @router.post("/run-event")
 async def receive_run_event(
@@ -135,6 +153,18 @@ async def receive_run_event(
                 "plan_excerpt": event.plan_excerpt,
             }),
         ))
+
+    elif event_name in _TEAM_PROGRESS_EVENTS:
+        # Issue #450: these events have dedicated post-dispatch handlers
+        # (below) that mutate only the fields they own. They MUST NOT fall
+        # through to ``handle_unknown``, which would propagate the
+        # teammate-scoped ``event.status`` onto ``runs.status`` and
+        # prematurely flip the parent run terminal while it's still alive.
+        # ``teammate_spawned`` and ``team_created`` are already explicitly
+        # branched via ``_TEAM_SPAWN_EVENTS`` post-dispatch — they don't
+        # carry a misleading ``status`` field so they were safe, but the
+        # other members of this surface area weren't.
+        pass
 
     elif event_name in ("conflict_resolution_started",
                         "conflict_resolution_phase",
