@@ -26,6 +26,7 @@
     running: { bg: 'color-mix(in oklch, var(--color-warning) 15%, var(--color-surface))', border: 'var(--color-warning)', text: 'var(--color-warning)' },
     completed: { bg: 'color-mix(in oklch, var(--color-approve) 15%, var(--color-surface))', border: 'var(--color-approve)', text: 'var(--color-approve)' },
     failed: { bg: 'color-mix(in oklch, var(--color-reject) 15%, var(--color-surface))', border: 'var(--color-reject)', text: 'var(--color-reject)' },
+    skipped: { bg: 'var(--color-surface)', border: 'var(--color-text-muted)', text: 'var(--color-text-muted)' },
     blocked: { bg: 'var(--color-surface)', border: 'var(--color-text-muted)', text: 'var(--color-text-muted)' },
   };
 

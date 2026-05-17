@@ -88,3 +88,46 @@ async def test_handle_finished_orphans_running_coordinator_tasks(setup_db):
         assert by_id["t-zombie-claim"].status == "orphaned"
         assert by_id["t-zombie-claim"].claimed_at is None
         assert by_id["t-other-run"].status == "running"
+
+
+@pytest.mark.asyncio
+async def test_handle_finished_maps_skipped_to_skipped(setup_db):
+    """Agent-side status='skipped' must persist as row status='skipped',
+    not fall through to default mapping. #446 #447."""
+    event = WebhookRunEvent(
+        event="finished",
+        event_id="evt-test-skipped",
+        run_id="run-test-skipped",
+        status="skipped",
+    )
+
+    async with async_session() as db:
+        run = await handle_finished(db, event, project_id=None, run=None)
+        await db.commit()
+        await db.refresh(run)
+
+    assert run.status == "skipped", (
+        f"Expected status='skipped', got '{run.status}'. "
+        "If 'skipped' is missing from the status_map, this regresses."
+    )
+
+
+@pytest.mark.asyncio
+async def test_handle_finished_does_not_remap_skipped_to_failed(setup_db):
+    """Regression pin: future map changes must not collapse skipped → failed."""
+    event = WebhookRunEvent(
+        event="finished",
+        event_id="evt-test-skipped-2",
+        run_id="run-test-skipped-2",
+        status="skipped",
+    )
+
+    async with async_session() as db:
+        run = await handle_finished(db, event, project_id=None, run=None)
+        await db.commit()
+        await db.refresh(run)
+
+    assert run.status != "failed", (
+        "Map drift: 'skipped' must not be remapped to 'failed'. "
+        "See spec docs/superpowers/specs/2026-05-17-idle-run-semantics-design.md"
+    )

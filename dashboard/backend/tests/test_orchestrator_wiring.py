@@ -950,7 +950,7 @@ def test_iterate_projects_emits_plan_review_start_for_plan_only(
     )
 
     async def _fake_orchestrate(project, config, run_id, workspaces_dir):
-        return 0, None
+        return 0, None, True
 
     monkeypatch.setattr(
         "agent.station_orchestrator.orchestrate_project", _fake_orchestrate,
@@ -1011,7 +1011,7 @@ def test_iterate_projects_invokes_plan_review_gate_for_plan_only(
     )
 
     async def _fake_orchestrate(project, config, run_id, workspaces_dir):
-        return 0, None
+        return 0, None, True
 
     monkeypatch.setattr(
         "agent.station_orchestrator.orchestrate_project", _fake_orchestrate,

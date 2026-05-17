@@ -158,6 +158,7 @@ async def handle_finished(
         "no_reports": "completed",
         "completed": "completed",
         "rate_limited": "completed",
+        "skipped": "skipped",       # #446 #447: idle runs (no eligible work)
         "error": "failed",
         "interrupted": "interrupted",
     }
