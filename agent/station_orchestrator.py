@@ -2896,13 +2896,18 @@ class RunDriver:
             # ``run-`` to its input. Pass the BARE id so we don't end up with
             # ``run-run-<ts>`` query params on /webhook-tick, which 404 at the
             # launcher and let the reaper kill the run at 120s.
-            exit_code, last_state = iterate_projects(
+            exit_code, last_state, terminal_status_hint = iterate_projects(
                 self._clean_id, self.config_path, self.workspaces_dir,
             )
             if exit_code == 130:
                 status = "interrupted"
             elif exit_code != 0:
                 status = "failed"
+            elif terminal_status_hint == "skipped":
+                # #446 / #447: idle run — every enabled project was idle
+                # and nothing failed. Distinct terminal status so the
+                # dashboard can render this as "skipped" not "failed".
+                status = "skipped"
         except KeyboardInterrupt:
             logger.warning("RunDriver: KeyboardInterrupt — marking run interrupted")
             status = "interrupted"

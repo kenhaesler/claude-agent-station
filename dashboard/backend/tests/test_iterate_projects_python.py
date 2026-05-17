@@ -43,7 +43,7 @@ def test_iterate_projects_calls_each_phase_when_manager_produces_verdicts(
     )
     monkeypatch.setattr("agent.digest.write_digest", lambda **kw: call_log.append("digest") or "")
 
-    rc, last_state = pl.iterate_projects("run-test", str(cfg), str(tmp_path))
+    rc, last_state, _hint = pl.iterate_projects("run-test", str(cfg), str(tmp_path))
 
     assert rc == 0
     assert last_state is None
@@ -92,7 +92,7 @@ def test_iterate_projects_flags_missing_verdicts_file(tmp_path, monkeypatch):
     )
     monkeypatch.setattr("agent.digest.write_digest", lambda **kw: "")
 
-    rc, _ = pl.iterate_projects("run-test", str(cfg), str(tmp_path))
+    rc, _, _hint = pl.iterate_projects("run-test", str(cfg), str(tmp_path))
     assert rc == 6, "missing verdicts file must bump exit_code to 6"
 
 
@@ -187,7 +187,7 @@ def test_iterate_projects_passes_workspace_and_dev_branch_to_executor(
 
     monkeypatch.setattr("agent.verdict_execution.execute", _fake_execute)
 
-    rc, _ = pl.iterate_projects("run-tested", str(cfg), str(tmp_path))
+    rc, _, _hint = pl.iterate_projects("run-tested", str(cfg), str(tmp_path))
 
     assert rc == 0, "happy-path verdict execution must not bump exit_code"
     assert captured, "execute_verdict was never invoked"
@@ -257,7 +257,7 @@ def test_iterate_projects_emits_manager_no_verdicts_with_kwargs(
 
     monkeypatch.setattr("agent.webhook_emitter.emit", _fake_emit)
 
-    rc, _ = pl.iterate_projects("test-run", str(cfg), str(tmp_path))
+    rc, _, _hint = pl.iterate_projects("test-run", str(cfg), str(tmp_path))
 
     assert rc == 6, "missing verdicts file must bump exit_code to 6"
     assert captured, (
@@ -350,7 +350,7 @@ def test_iterate_projects_skips_downstream_phases_when_no_verdicts(
 
     monkeypatch.setattr("agent.verdict_execution.execute", _spy_execute)
 
-    rc, _ = pl.iterate_projects("run-skip", str(cfg), str(tmp_path))
+    rc, _, _hint = pl.iterate_projects("run-skip", str(cfg), str(tmp_path))
 
     assert rc == 6, "missing verdicts file must bump exit_code to 6"
     assert gate_calls == [], (
@@ -482,9 +482,135 @@ def test_iterate_projects_swallows_executor_exceptions_per_verdict(
 
     monkeypatch.setattr("agent.verdict_execution.execute", _flaky_execute)
 
-    rc, _ = pl.iterate_projects("run-flaky", str(cfg), str(tmp_path))
+    rc, _, _hint = pl.iterate_projects("run-flaky", str(cfg), str(tmp_path))
 
     assert seen == [1, 2], (
         f"loop must continue past the crash; saw issue numbers {seen}"
     )
     assert rc != 0, "executor failure should bump exit_code"
+
+
+def test_iterate_projects_emits_project_skipped_no_work_when_no_work_attempted(
+    tmp_path, monkeypatch
+):
+    """Idle case: orchestrate_project returns work_attempted=False →
+    iterate_projects emits project_skipped_no_work, NOT
+    manager_no_verdicts, and does not bump exit_code.
+
+    Spec: docs/superpowers/specs/2026-05-17-idle-run-semantics-design.md
+    Issues: #446 #447
+    """
+    from agent import project_loop
+
+    config_path = tmp_path / "config.json"
+    config_path.write_text('{"projects":[{"repo":"test/repo","enabled":true,"mode":"full"}]}')
+    workspaces_dir = str(tmp_path / "workspaces")
+
+    captured_emits: list[tuple] = []
+
+    def fake_emit(event, *, run_id, payload=None):
+        captured_emits.append((event, run_id, payload))
+
+    async def fake_orchestrate_async(*args, **kwargs):
+        return (0, None, False)
+
+    monkeypatch.setattr(
+        "agent.station_orchestrator.orchestrate_project", fake_orchestrate_async
+    )
+    monkeypatch.setattr(
+        "agent.workspace_setup.ensure_workspace", lambda *a, **kw: str(tmp_path / "ws")
+    )
+    monkeypatch.setattr("agent.webhook_emitter.emit", fake_emit)
+    monkeypatch.setattr("agent.preflight.run_preflight", lambda *a, **kw: None)
+    monkeypatch.setattr("agent.queue_recovery.purge_and_recover", lambda *a, **kw: None)
+    monkeypatch.setattr("agent.queue_recovery.resume_paused", lambda: None)
+    monkeypatch.setattr("agent.digest.write_digest", lambda **kw: "")
+
+    exit_code, _last_state, _terminal_hint = project_loop.iterate_projects(
+        "test-run", str(config_path), workspaces_dir
+    )
+
+    emit_names = [e[0] for e in captured_emits]
+    assert "project_skipped_no_work" in emit_names, (
+        f"Expected project_skipped_no_work emit, got: {emit_names}"
+    )
+    assert "manager_no_verdicts" not in emit_names, (
+        f"manager_no_verdicts must NOT fire in idle case, got: {emit_names}"
+    )
+
+    skip_event = next(e for e in captured_emits if e[0] == "project_skipped_no_work")
+    assert skip_event[1] == "run-test-run", f"run_id wrong: {skip_event[1]}"
+    assert skip_event[2] is not None
+    assert skip_event[2].get("project") == "test/repo"
+    assert skip_event[2].get("reason") == "no_eligible_work"
+
+    assert exit_code == 0
+
+
+def test_iterate_projects_still_emits_manager_no_verdicts_for_real_failure(
+    tmp_path, monkeypatch
+):
+    """Regression pin: work_attempted=True + verdicts file missing must
+    still trigger the existing manager_no_verdicts path (exit_code=6).
+    The work_attempted discriminator must not suppress real failures.
+    """
+    from agent import project_loop
+
+    config_path = tmp_path / "config.json"
+    config_path.write_text('{"projects":[{"repo":"test/repo","enabled":true,"mode":"full"}]}')
+    workspaces_dir = str(tmp_path / "workspaces")
+
+    captured_emits: list[tuple] = []
+
+    def fake_emit(event, *, run_id, payload=None):
+        captured_emits.append((event, run_id, payload))
+
+    async def fake_orchestrate(*a, **kw):
+        return (0, None, True)
+
+    monkeypatch.setattr(
+        "agent.station_orchestrator.orchestrate_project", fake_orchestrate
+    )
+    monkeypatch.setattr(
+        "agent.workspace_setup.ensure_workspace", lambda *a, **kw: str(tmp_path / "ws")
+    )
+    monkeypatch.setattr(
+        "agent.station_orchestrator._read_verdicts_file", lambda p: None
+    )
+    monkeypatch.setattr("agent.webhook_emitter.emit", fake_emit)
+    monkeypatch.setattr("agent.preflight.run_preflight", lambda *a, **kw: None)
+    monkeypatch.setattr("agent.queue_recovery.purge_and_recover", lambda *a, **kw: None)
+    monkeypatch.setattr("agent.queue_recovery.resume_paused", lambda: None)
+    monkeypatch.setattr("agent.digest.write_digest", lambda **kw: "")
+
+    exit_code, _last_state, _terminal_hint = project_loop.iterate_projects(
+        "test-run", str(config_path), workspaces_dir
+    )
+
+    emit_names = [e[0] for e in captured_emits]
+    assert "manager_no_verdicts" in emit_names
+    assert "project_skipped_no_work" not in emit_names
+    assert exit_code == 6
+
+
+def test_iterate_projects_returns_3tuple_on_preflight_failure(tmp_path, monkeypatch):
+    """Regression: preflight failure path must return a 3-tuple so
+    RunDriver.run's unpack doesn't crash. #446 #447."""
+    from agent import project_loop
+    from agent.preflight import PreflightError
+
+    config_path = tmp_path / "config.json"
+    config_path.write_text('{"projects":[{"repo":"x/x","enabled":true}]}')
+
+    def boom(*a, **kw):
+        raise PreflightError("simulated")
+
+    monkeypatch.setattr("agent.preflight.run_preflight", boom)
+
+    result = project_loop.iterate_projects(
+        "test-run", str(config_path), str(tmp_path / "ws")
+    )
+    assert len(result) == 3, f"expected 3-tuple, got {len(result)}-tuple"
+    exit_code, _last_state, terminal_status_hint = result
+    assert exit_code == 2
+    assert terminal_status_hint is None

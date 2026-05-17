@@ -111,19 +111,27 @@ def pick_issue(
 
 def iterate_projects(
     run_id: str, config_path: str, workspaces_dir: str,
-) -> tuple[int, "Any | None"]:
+) -> "tuple[int, Any | None, str | None]":
     """Drive a full run in-process: preflight → recovery → per-project → digest.
 
     Each former bash phase is a Python module; this function composes them
     (issue #383 bash deletion).
 
-    Returns ``(exit_code, last_stream_state)``. ``last_stream_state`` is the
-    most recent per-project stream state produced by
-    :func:`agent.station_orchestrator.orchestrate_project`, or ``None`` if
-    no project ran successfully far enough to initialise one. RunDriver's
-    ``_finalize_telemetry`` consumes it. Threading state via the return
-    value (rather than a module global) is correct under any concurrent
-    invocation pattern.
+    Returns ``(exit_code, last_stream_state, terminal_status_hint)``.
+
+    - ``exit_code``: process-level exit code (0 = clean, non-zero = failure).
+    - ``last_stream_state``: the most recent per-project stream state produced
+      by :func:`agent.station_orchestrator.orchestrate_project`, or ``None``
+      if no project ran successfully far enough to initialise one. RunDriver's
+      ``_finalize_telemetry`` consumes it. Threading state via the return
+      value (rather than a module global) is correct under any concurrent
+      invocation pattern.
+    - ``terminal_status_hint``: optional string hint for RunDriver. Currently
+      ``"skipped"`` when every enabled project was idle (no eligible issues,
+      ``work_attempted=False`` for all) and nothing failed; ``None`` otherwise.
+      RunDriver maps ``"skipped"`` to ``status="skipped"`` on run_complete so
+      the dashboard can render idle runs distinctly from real failures
+      (issues #446 #447).
 
     Exception policy: ``OrchestratorStopRequested`` and
     ``KeyboardInterrupt`` always propagate up so the driver's finally
@@ -149,7 +157,7 @@ def iterate_projects(
         run_preflight(config_path)
     except PreflightError as exc:
         logger.error("preflight: %s", exc)
-        return 2, None
+        return 2, None, None
 
     # Queue recovery errors are surfaced (dashboard returning 4xx/5xx is a
     # real problem); transient connect failures already degrade to a no-op
@@ -160,7 +168,7 @@ def iterate_projects(
         resume_paused()
     except QueueRecoveryError as exc:
         logger.error("queue_recovery: %s", exc)
-        return 5, None
+        return 5, None, None
 
     config = json.loads(Path(config_path).read_text())
     enabled = [p for p in config.get("projects", []) if p.get("enabled", True)]
@@ -175,12 +183,16 @@ def iterate_projects(
     # is global to the run; capture it once.
     dev_branch = config.get("integration", {}).get("dev_branch", "autonomous/dev")
 
+    any_work_attempted = False
+    any_real_failure = False
+
     for project in enabled:
         try:
             workspace_path = ensure_workspace(project, workspaces_dir)
         except WorkspaceError as exc:
             logger.error("workspace: %s", exc)
             exit_code = 3
+            any_real_failure = True
             results.append({"project": project["repo"], "decision": "ERROR", "error": str(exc)})
             continue
 
@@ -216,13 +228,14 @@ def iterate_projects(
                 logger.exception("plan_review_start webhook emit failed")
 
         try:
-            proj_rc, proj_state, _work_attempted = asyncio.run(
+            proj_rc, proj_state, work_attempted = asyncio.run(
                 orchestrate_project(project, config, run_id, workspaces_dir)
             )
             if proj_state is not None:
                 last_state = proj_state
             if proj_rc != 0:
                 exit_code = proj_rc
+                any_real_failure = True
         except (KeyboardInterrupt, OrchestratorStopRequested):
             # Operator stop / SIGTERM-mapped interrupt — propagate so the
             # RunDriver's finally block can write the interrupted-run
@@ -231,7 +244,37 @@ def iterate_projects(
         except Exception as exc:  # noqa: BLE001
             logger.exception("orchestrate_project failed for %s", project["repo"])
             exit_code = 4
+            any_real_failure = True
             results.append({"project": project["repo"], "decision": "ERROR", "error": str(exc)})
+            continue
+
+        if work_attempted:
+            any_work_attempted = True
+
+        # #446 / #447: idle case — the project had no eligible issues
+        # and the SDK session was never opened. This is NOT a failure;
+        # don't read verdicts, don't emit manager_no_verdicts, don't
+        # bump exit_code. Emit project_skipped_no_work so the dashboard
+        # can render it distinctly from a real failure.
+        if not work_attempted:
+            try:
+                from agent.webhook_emitter import emit as _emit_skip
+                _emit_skip(
+                    "project_skipped_no_work",
+                    run_id=f"run-{run_id}",
+                    payload={
+                        "project": project.get("repo", ""),
+                        "reason": "no_eligible_work",
+                    },
+                )
+            except Exception:  # noqa: BLE001 — best-effort signal
+                logger.exception("project_skipped_no_work webhook emit failed")
+
+            results.append({
+                "project": project.get("repo", ""),
+                "decision": "SKIP",
+                "reason": "no_eligible_work",
+            })
             continue
 
         # #390: the manager is now a sibling agent inside the lead's SDK
@@ -266,6 +309,7 @@ def iterate_projects(
             except Exception:  # noqa: BLE001 — best-effort signal
                 logger.exception("manager_no_verdicts webhook emit failed")
             exit_code = max(exit_code, 6)
+            any_real_failure = True
             results.append({
                 "project": project.get("repo", ""),
                 "decision": "ERROR",
@@ -334,6 +378,7 @@ def iterate_projects(
                     verdict.project, verdict.issue_number, verdict.verdict,
                 )
                 exit_code = max(exit_code, 7)
+                any_real_failure = True
                 results.append({
                     "project": verdict.project,
                     "issue_number": verdict.issue_number,
@@ -368,4 +413,17 @@ def iterate_projects(
                     })
 
     write_digest(run_id=run_id, results=results, log_dir=log_dir)
-    return exit_code, last_state
+
+    # #446 / #447: idle-run terminal status hint for RunDriver.
+    # Only emit "skipped" if EVERY enabled project was idle AND
+    # nothing genuinely failed. Conservative: anything ambiguous
+    # falls through to existing completed/failed mapping in RunDriver.run().
+    # Note: an empty ``enabled`` list (no enabled projects at all) is a
+    # misconfiguration, not an idle run; fall through to "completed" so
+    # the operator sees the run completed rather than masking the config
+    # gap behind a "skipped" status.
+    if enabled and not any_work_attempted and not any_real_failure and exit_code == 0:
+        terminal_status_hint = "skipped"
+    else:
+        terminal_status_hint = None
+    return exit_code, last_state, terminal_status_hint
