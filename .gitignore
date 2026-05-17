@@ -56,3 +56,6 @@ api-key
 *.pem
 *.key
 .secrets/
+
+# Local worktrees for parallel task execution
+.worktrees/
