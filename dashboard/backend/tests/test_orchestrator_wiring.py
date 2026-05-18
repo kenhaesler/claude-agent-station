@@ -949,7 +949,7 @@ def test_iterate_projects_emits_plan_review_start_for_plan_only(
         lambda p, w: str(tmp_path / "ws"),
     )
 
-    async def _fake_orchestrate(project, config, run_id, workspaces_dir):
+    async def _fake_orchestrate(project, config, run_id, workspaces_dir, **kwargs):
         return 0, None, True
 
     monkeypatch.setattr(
@@ -1010,7 +1010,7 @@ def test_iterate_projects_invokes_plan_review_gate_for_plan_only(
         lambda p, w: str(tmp_path / "ws"),
     )
 
-    async def _fake_orchestrate(project, config, run_id, workspaces_dir):
+    async def _fake_orchestrate(project, config, run_id, workspaces_dir, **kwargs):
         return 0, None, True
 
     monkeypatch.setattr(

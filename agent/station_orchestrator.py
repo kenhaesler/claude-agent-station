@@ -2075,6 +2075,8 @@ def _read_verdicts_file(path: Path) -> dict | None:
 
 async def orchestrate_project(
     project: dict, config: dict, run_id: str, workspaces_dir: str,
+    *,
+    prior_verdicts_summary: str | None = None,
 ) -> tuple[int, "_StreamState | None", bool]:
     """Run the Agent Teams session for a single project.
 
@@ -2549,6 +2551,7 @@ async def orchestrate_project(
                                 # ``maxTurns: 60`` in agent/agents/manager.md
                                 # is the SDK's enforcement ceiling.
                                 manager_max_turns=manager_turns,
+                                prior_verdicts_summary=prior_verdicts_summary,
                             )
 
                         await client.query(prompt)
@@ -2771,6 +2774,7 @@ async def orchestrate(config: dict, run_id: str, workspaces_dir: str) -> int:
         # discards the state and work_attempted flag.
         proj_rc, _state, _work_attempted = await orchestrate_project(
             project, config, run_id, workspaces_dir,
+            prior_verdicts_summary=None,
         )
         if proj_rc != 0:
             exit_code = proj_rc

@@ -18,6 +18,52 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+def _summarize_prior_verdicts(log_dir: str, project_repo: str) -> str | None:
+    """Find the most-recent prior verdicts file mentioning this project
+    and return a short prose summary, or None if no such file exists.
+
+    Fail-soft: any IO/parse error returns None. The summary is purely
+    advisory context for the lead's next-run prompt.
+
+    #456 — sibling-coordination feedback loop.
+    """
+    import glob as _glob
+    import json as _json
+
+    try:
+        candidates = sorted(
+            _glob.glob(str(Path(log_dir) / "run-*-verdicts.json")),
+            key=lambda p: Path(p).stat().st_mtime,
+            reverse=True,
+        )
+    except OSError:
+        return None
+
+    for candidate in candidates:
+        try:
+            data = _json.loads(Path(candidate).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        verdicts = data.get("verdicts") or []
+        matching = [
+            v for v in verdicts
+            if v.get("project") == project_repo
+        ]
+        if not matching:
+            continue
+        lines = [f"From {Path(candidate).name}:"]
+        for v in matching:
+            branch = v.get("branch", "?")
+            verdict = v.get("verdict", "?")
+            reasoning = (v.get("reasoning") or "").strip()
+            # Trim reasoning to ~300 chars to keep prompt size bounded.
+            if len(reasoning) > 300:
+                reasoning = reasoning[:297] + "..."
+            lines.append(f"- {verdict} `{branch}`: {reasoning}")
+        return "\n".join(lines)
+
+    return None
+
 
 # Labels that exclude an issue from the analyzable set. Mirrors the
 # These labels are kept in sync with the bash picker that was removed in
@@ -228,8 +274,12 @@ def iterate_projects(
                 logger.exception("plan_review_start webhook emit failed")
 
         try:
+            prior_summary = _summarize_prior_verdicts(log_dir, project["repo"])
             proj_rc, proj_state, work_attempted = asyncio.run(
-                orchestrate_project(project, config, run_id, workspaces_dir)
+                orchestrate_project(
+                    project, config, run_id, workspaces_dir,
+                    prior_verdicts_summary=prior_summary,
+                )
             )
             if proj_state is not None:
                 last_state = proj_state
@@ -326,6 +376,39 @@ def iterate_projects(
             continue
         raw_verdicts = (verdicts_payload or {}).get("verdicts", [])
 
+        from agent.verdict_execution import Verdict as _Verdict
+
+        # #456: advisory contract-violation check. Parse contracts.md
+        # from the workspace; for each verdict, log any contract
+        # violations the manager's reasoning suggests. Does NOT
+        # auto-flip verdicts — manager has final say.
+        try:
+            from agent.team_contracts import (
+                parse_contracts, validate_verdict_against_contracts,
+            )
+            workspace_path_obj = Path(workspace_path)
+            contracts = parse_contracts(workspace_path_obj)
+            if contracts is not None and raw_verdicts:
+                for raw_v in raw_verdicts:
+                    try:
+                        v_obj = _Verdict.from_dict(raw_v)
+                    except Exception:  # noqa: BLE001 — parse-tolerant
+                        continue
+                    violations = validate_verdict_against_contracts(
+                        v_obj, contracts, workspace_path_obj
+                    )
+                    if violations:
+                        logger.warning(
+                            "contract violations on verdict %s: %s",
+                            v_obj.branch,
+                            [
+                                f"{vi.section}: {vi.context}"
+                                for vi in violations
+                            ],
+                        )
+        except Exception:  # noqa: BLE001 — best-effort, never crash run
+            logger.exception("contract validator failed (non-fatal)")
+
         # #442: plan_only projects fan out into APPROVE_PLAN /
         # REVISE_PLAN / REJECT_PLAN follow-up actions that the manager-sibling
         # writes alongside (or instead of) the regular ``verdicts`` array.
@@ -351,7 +434,6 @@ def iterate_projects(
                     project.get("repo", ""),
                 )
 
-        from agent.verdict_execution import Verdict as _Verdict
         verdicts = [_Verdict.from_dict(v) for v in raw_verdicts]
 
         for verdict in verdicts:
