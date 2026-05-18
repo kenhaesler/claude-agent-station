@@ -116,3 +116,93 @@ def test_parse_contracts_empty_file_returns_empty_contracts(tmp_path):
     assert contracts is not None
     assert contracts.routes == []
     assert contracts.field_names == {}
+
+
+def _make_verdict(reasoning: str, branch: str = "feat/test"):
+    """Tiny verdict factory — only fields the validator inspects."""
+    from agent.verdict_execution import Verdict
+    return Verdict(
+        project="org/repo",
+        issue_number=None,
+        verdict="REJECT",
+        branch=branch,
+        reasoning=reasoning,
+    )
+
+
+def test_validator_returns_empty_when_verdict_matches_all_contracts(tmp_path):
+    """Verdict whose reasoning doesn't conflict with any contract → no violations."""
+    from agent.team_contracts import (
+        parse_contracts, validate_verdict_against_contracts, CONTRACTS_FILENAME,
+    )
+    (tmp_path / CONTRACTS_FILENAME).write_text(SAMPLE_CONTRACTS)
+    contracts = parse_contracts(tmp_path)
+    v = _make_verdict("Backend implements depreciation correctly with purchaseCost field.")
+    violations = validate_verdict_against_contracts(v, contracts, tmp_path)
+    assert violations == []
+
+
+def test_validator_flags_field_name_conflict(tmp_path):
+    """The manager's reasoning names BOTH the contracted name and a conflicting one."""
+    from agent.team_contracts import (
+        parse_contracts, validate_verdict_against_contracts, CONTRACTS_FILENAME,
+    )
+    (tmp_path / CONTRACTS_FILENAME).write_text(SAMPLE_CONTRACTS)
+    contracts = parse_contracts(tmp_path)
+    # Real-world style reasoning from run-20260517T191757Z:
+    v = _make_verdict(
+        "Backend returns purchasePrice while QA expects purchaseCost"
+    )
+    violations = validate_verdict_against_contracts(v, contracts, tmp_path)
+    assert any(
+        vi.section == "field_names" and "purchaseCost" in vi.expected
+        for vi in violations
+    )
+
+
+def test_validator_flags_route_ownership_conflict(tmp_path):
+    """Reasoning names two siblings owning the same route."""
+    from agent.team_contracts import (
+        parse_contracts, validate_verdict_against_contracts, CONTRACTS_FILENAME,
+    )
+    (tmp_path / CONTRACTS_FILENAME).write_text(SAMPLE_CONTRACTS)
+    contracts = parse_contracts(tmp_path)
+    v = _make_verdict(
+        "Frontend created /api/depreciation route but backend owns it per contract."
+    )
+    violations = validate_verdict_against_contracts(v, contracts, tmp_path)
+    assert any(vi.section == "route_ownership" for vi in violations)
+
+
+def test_validator_flags_enum_value_conflict(tmp_path):
+    """Reasoning names an enum value not in the contracted list."""
+    from agent.team_contracts import (
+        parse_contracts, validate_verdict_against_contracts, CONTRACTS_FILENAME,
+    )
+    (tmp_path / CONTRACTS_FILENAME).write_text(SAMPLE_CONTRACTS)
+    contracts = parse_contracts(tmp_path)
+    v = _make_verdict(
+        "QA changed license status from 'expiring' to 'expiring_soon'."
+    )
+    violations = validate_verdict_against_contracts(v, contracts, tmp_path)
+    assert any(
+        vi.section == "enum_values" and "expiring_soon" in vi.found
+        for vi in violations
+    )
+
+
+def test_violation_message_format(tmp_path):
+    """Violation includes section + expected + found + context strings."""
+    from agent.team_contracts import (
+        parse_contracts, validate_verdict_against_contracts, CONTRACTS_FILENAME,
+    )
+    (tmp_path / CONTRACTS_FILENAME).write_text(SAMPLE_CONTRACTS)
+    contracts = parse_contracts(tmp_path)
+    v = _make_verdict("Backend used purchasePrice instead of the agreed purchaseCost.")
+    violations = validate_verdict_against_contracts(v, contracts, tmp_path)
+    assert violations  # at least one
+    vi = violations[0]
+    assert vi.section
+    assert vi.expected
+    assert vi.found
+    assert vi.context

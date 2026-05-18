@@ -150,3 +150,149 @@ def _parse_text(text: str) -> TeamContracts:
         enum_values=_parse_enums(sections.get("Enum Values", [])),
         route_ownership=_parse_kv(sections.get("Route Ownership", [])),
     )
+
+
+def validate_verdict_against_contracts(
+    verdict, contracts: TeamContracts, workspace_path: Path,
+) -> list[Violation]:
+    """Inspect ``verdict.reasoning`` and return contract violations.
+
+    Heuristic by design. The validator scans the manager's prose for:
+      1. **Field-name conflicts**: any contracted field-name value
+         (the right-hand side of ``- key: value``) that appears in the
+         reasoning alongside a non-contract alternative also referenced
+         in the reasoning. Captures the run-20260517T191757Z pattern
+         ("backend returns purchasePrice while QA expects purchaseCost").
+      2. **Route-ownership conflicts**: any contracted route path that
+         appears in the reasoning with a sibling role name (backend /
+         frontend / qa) other than its contracted owner.
+      3. **Enum-value conflicts**: any quoted token in the reasoning
+         that isn't in the contracted allowed list for any enum named
+         in the reasoning.
+
+    Branch-checkout / diff inspection is intentionally NOT done here —
+    the heuristic on manager prose is sufficient for the observed
+    real-world conflicts and avoids a worktree dependency. The
+    ``workspace_path`` argument is reserved for future expansion.
+
+    Returns an empty list on no violations.
+    """
+    violations: list[Violation] = []
+    if contracts is None or verdict is None:
+        return violations
+
+    reasoning = getattr(verdict, "reasoning", "") or ""
+
+    # 1. Field-name conflicts. Look for any "alt vs contracted" pattern
+    #    or any non-contracted name appearing where a contracted one
+    #    should ("returns X instead of Y" / "uses X while expects Y").
+    for canonical, chosen in contracts.field_names.items():
+        if not chosen:
+            continue
+        if chosen in reasoning:
+            # The chosen (canonical contracted) name is mentioned —
+            # scan for any nearby substring that looks like a sibling
+            # field name. Heuristic: any token of length >= 6 that is
+            # NOT the chosen one and IS in the reasoning is suspicious
+            # IF the reasoning also names the sibling roles.
+            for token in _candidate_field_names(reasoning):
+                if token == chosen:
+                    continue
+                if _looks_like_field_name_conflict(reasoning, chosen, token):
+                    violations.append(Violation(
+                        section="field_names",
+                        expected=chosen,
+                        found=token,
+                        context=f"Contract field '{canonical}' chose '{chosen}'; "
+                                f"reasoning also references '{token}'.",
+                    ))
+
+    # 2. Route ownership conflicts.
+    for route_path, owner in contracts.route_ownership.items():
+        if not route_path or route_path not in reasoning:
+            continue
+        for role in ("backend", "frontend", "qa"):
+            if role == owner:
+                continue
+            if role in reasoning.lower() and _route_implicated(reasoning, route_path, role):
+                violations.append(Violation(
+                    section="route_ownership",
+                    expected=owner,
+                    found=role,
+                    context=f"Route '{route_path}' is owned by '{owner}' per "
+                            f"contract; reasoning implicates '{role}'.",
+                ))
+
+    # 3. Enum value conflicts. Look for quoted tokens that are not in
+    #    the contracted allowed list for an enum named in the reasoning.
+    for enum_name, allowed in contracts.enum_values.items():
+        if not enum_name or enum_name.lower() not in reasoning.lower():
+            # The enum's name itself isn't mentioned — skip to avoid
+            # over-matching on common words.
+            pass  # Continue; we still scan for the values.
+        for token in _quoted_tokens(reasoning):
+            if token in allowed:
+                continue
+            # Only flag if the reasoning suggests a status/state change
+            # and the token resembles the contracted family.
+            if _is_enum_family_member(token, allowed):
+                violations.append(Violation(
+                    section="enum_values",
+                    expected=", ".join(allowed),
+                    found=token,
+                    context=f"Enum '{enum_name}' allows {allowed}; "
+                            f"reasoning references '{token}'.",
+                ))
+
+    return violations
+
+
+# ----- helpers (private) ----------------------------------------------------
+
+_FIELD_NAME_TOKEN_RE = re.compile(r"\b[a-z][A-Za-z]{5,}\b")
+_QUOTED_TOKEN_RE = re.compile(r"['\"]([A-Za-z_][\w]*)['\"]")
+
+
+def _candidate_field_names(text: str) -> list[str]:
+    """camelCase identifiers >= 6 chars. Heuristic for field-name detection."""
+    return list(set(_FIELD_NAME_TOKEN_RE.findall(text)))
+
+
+def _looks_like_field_name_conflict(text: str, chosen: str, candidate: str) -> bool:
+    """True iff text references both names AND uses conflict-signaling words."""
+    if chosen not in text or candidate not in text:
+        return False
+    signals = ("while", "vs", "instead of", "rather than", "expects", "but", "conflicts")
+    lower = text.lower()
+    return any(sig in lower for sig in signals)
+
+
+def _route_implicated(text: str, route_path: str, role: str) -> bool:
+    """True iff text suggests the named role is doing something with this route."""
+    lower = text.lower()
+    # Require the route path and the role name to appear within ~120 chars.
+    try:
+        ridx = lower.index(role)
+    except ValueError:
+        return False
+    pidx = lower.find(route_path.lower())
+    if pidx < 0:
+        return False
+    return abs(ridx - pidx) < 120
+
+
+def _quoted_tokens(text: str) -> list[str]:
+    """Tokens appearing in single or double quotes in the text."""
+    return _QUOTED_TOKEN_RE.findall(text)
+
+
+def _is_enum_family_member(candidate: str, allowed: list[str]) -> bool:
+    """Loose: shares prefix or shares root with at least one allowed value."""
+    if not allowed:
+        return False
+    for a in allowed:
+        if not a:
+            continue
+        if candidate.startswith(a[:4]) or a.startswith(candidate[:4]):
+            return True
+    return False
