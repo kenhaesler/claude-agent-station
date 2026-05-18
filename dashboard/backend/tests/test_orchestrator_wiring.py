@@ -1940,3 +1940,78 @@ async def test_control_poll_loop_heartbeat_is_best_effort(tmp_path, monkeypatch)
             await asyncio.wait_for(task, timeout=1.0)
         except asyncio.TimeoutError:
             task.cancel()
+
+
+# --- #456: contract-coordination prompt additions ---
+
+
+def test_build_team_prompt_includes_recent_verdicts_when_summary_provided():
+    """When prior_verdicts_summary is non-None, the prompt has the section."""
+    from agent.station_orchestrator import build_team_prompt
+    prompt = build_team_prompt(
+        repo="org/repo",
+        issues=[{"number": 29, "title": "Test"}],
+        config={"projects": []},
+        run_id="run-test",
+        prior_verdicts_summary="Last run: backend REJECT — purchasePrice conflict.",
+    )
+    assert "Recent verdicts (last run on this project)" in prompt
+    assert "purchasePrice conflict" in prompt
+
+
+def test_build_team_prompt_omits_recent_verdicts_when_summary_none():
+    """No summary → no section. Default behavior unchanged."""
+    from agent.station_orchestrator import build_team_prompt
+    prompt = build_team_prompt(
+        repo="org/repo",
+        issues=[{"number": 29, "title": "Test"}],
+        config={"projects": []},
+        run_id="run-test",
+    )
+    assert "Recent verdicts" not in prompt
+
+
+def test_build_team_prompt_instructs_lead_to_write_contracts():
+    """Non-plan_only modes include the contract-write instruction."""
+    from agent.station_orchestrator import build_team_prompt
+    prompt = build_team_prompt(
+        repo="org/repo",
+        issues=[{"number": 29, "title": "Test"}],
+        config={"projects": []},
+        run_id="run-test",
+        project_mode="full",
+    )
+    assert ".claude-team-contracts.md" in prompt
+    # Schema-example sections should be in the instruction:
+    for section in ("API Routes", "Field Names", "Response Shapes",
+                    "Enum Values", "Route Ownership"):
+        assert section in prompt
+
+
+def test_build_team_prompt_omits_contract_instruction_in_plan_only_mode():
+    """plan_only mode doesn't spawn siblings; contract instruction skipped."""
+    from agent.station_orchestrator import build_team_prompt
+    prompt = build_team_prompt(
+        repo="org/repo",
+        issues=[{"number": 29, "title": "Test"}],
+        config={"projects": []},
+        run_id="run-test",
+        project_mode="plan_only",
+    )
+    assert "Required: write team contracts" not in prompt
+
+
+def test_build_team_prompt_teammates_get_read_first_instruction():
+    """Each teammate spawn instruction references the contracts file."""
+    from agent.station_orchestrator import build_team_prompt
+    prompt = build_team_prompt(
+        repo="org/repo",
+        issues=[{"number": 29, "title": "Test"}],
+        config={"projects": []},
+        run_id="run-test",
+        project_mode="full",
+    )
+    # At minimum the instruction appears in the spawn-prompt template.
+    assert "READ FIRST" in prompt or "Read first" in prompt
+    # And it names the file:
+    assert ".claude-team-contracts.md" in prompt

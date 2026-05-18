@@ -759,6 +759,7 @@ def build_team_prompt(
     review_package_path: str | None = None,
     verdicts_file_path: str | None = None,
     manager_max_turns: int = 60,
+    prior_verdicts_summary: str | None = None,
 ) -> str:
     """Build the lead agent prompt that creates and manages the team.
 
@@ -856,6 +857,65 @@ approach, and only deviate when an explicit issue requirement contradicts
 it (raise on the team chat first). When you decompose tasks, route each
 issue to the teammate that wrote its plan when possible — they have the
 most context.
+"""
+
+    # #456: cross-run feedback injection. The orchestrator passes a
+    # short prose summary of the most recent prior verdicts for this
+    # project. Surfacing it gives the lead context about what was
+    # rejected last run so contracts.md can resolve those conflicts.
+    recent_verdicts_section = ""
+    if prior_verdicts_summary:
+        recent_verdicts_section = f"""
+## Recent verdicts (last run on this project)
+
+The previous run on this project produced verdicts the manager has
+already evaluated. Read them so you don't re-introduce the same
+conflicts. When you write ``.claude-team-contracts.md`` below,
+resolve any disagreement these verdicts flagged.
+
+{prior_verdicts_summary}
+"""
+
+    # #456: contract-coordination instruction. Skipped for plan_only mode
+    # (no siblings spawned). Each teammate's spawn prompt will include a
+    # "READ FIRST" instruction (built below in the workflow section).
+    contracts_instruction = ""
+    if project_mode != "plan_only":
+        contracts_instruction = """
+## Required: write team contracts BEFORE spawning siblings
+
+Before spawning the three role-specialized teammates, write
+``.claude-team-contracts.md`` to the workspace root. Use this exact
+markdown structure (omit sections that don't apply, but use these
+section names verbatim — the orchestrator parses them):
+
+```markdown
+# Team Contracts
+
+## API Routes
+
+- GET /api/<path> (owner: backend) — { field: type, ... }
+
+## Field Names
+
+- canonical_key: chosenName
+
+## Response Shapes
+
+- /api/<path>: { wrapped: [items] }   # or "raw array" / etc.
+
+## Enum Values
+
+- EnumName: value1, value2, value3
+
+## Route Ownership
+
+- /api/<path>: backend
+```
+
+Each role-specialized teammate MUST read this file as their FIRST
+action and treat its contents as binding. Manager review will reject
+any verdict that conflicts with the contract.
 """
 
     repo_short = repo.split("/")[-1]
@@ -1002,6 +1062,8 @@ judgement call, not a violation.
     return f"""You are the lead of an agent team implementing GitHub issues for **{repo}**.
 {mode_instruction}
 {approved_plan_section}
+{recent_verdicts_section}
+{contracts_instruction}
 {workflow_section}
 
 ## Narration (MANDATORY — ends operator silence)
@@ -1032,7 +1094,10 @@ Each teammate MUST work in their assigned worktree. Tell each teammate their pat
 {wt_section}
 
 When spawning a teammate, include in their prompt:
-"Your worktree is at <path>. Run `cd <path>` as your FIRST action before doing anything else."
+"Your worktree is at <path>. Run `cd <path>` as your FIRST action before doing anything else.
+READ FIRST: `.claude-team-contracts.md` in your worktree root. It documents the cross-team
+contracts (field names, route ownership, response shapes, enum values) you MUST follow.
+Manager review will reject any branch that violates the contract."
 
 ## Teammate Configuration
 
