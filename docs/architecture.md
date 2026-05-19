@@ -489,6 +489,16 @@ This is necessary because per-teammate PRs target the
 auto-close on `Closes #N` PR footers only fires when the PR merges
 into the default branch.
 
+**Stale-branch pruning (#462):** At workspace setup, local branches
+whose referenced GitHub issues are all CLOSED are automatically
+deleted. The integration branch (`claude-agent-station`) and the
+project's base branch are always preserved. Failures (network,
+permission) are logged at WARNING and never block the run — and the
+pruner is conservative: if any issue's state can't be determined,
+the referencing branch is preserved. Issue numbers are parsed from
+branch names via the same regex used by the auto-close path
+(`_BRANCH_ISSUES_RE` in `agent/verdict_execution.py`).
+
 ---
 
 ## Deployment Model
