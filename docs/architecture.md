@@ -472,6 +472,23 @@ Each project entry in the run digest carries a `decision` field written by `iter
 | `SKIP` | Project had no eligible work; no SDK session was opened. Paired with the `project_skipped_no_work` webhook. |
 | `ERROR` | Orchestrator or manager encountered an error while processing the project. |
 
+### Verdict execution
+
+**Auto-close on APPROVE (#460):** After `execute_approve` /
+`execute_approve_integration` successfully push the branch + create
+the PR, the executor closes the GitHub issue(s) addressed by the
+verdict via `gh issue close --reason completed`. Close targets are
+the union of `verdict.issue_number` AND issue numbers extracted from
+the branch name (handles multi-issue branches like
+`feature/backend-issues-29-30-...`). Best-effort: `gh issue close`
+failures are logged at WARNING and ignored. REJECT, SKIP, and PR
+verdicts leave issues open by design.
+
+This is necessary because per-teammate PRs target the
+`claude-agent-station` integration branch, not `main` — GitHub's
+auto-close on `Closes #N` PR footers only fires when the PR merges
+into the default branch.
+
 ---
 
 ## Deployment Model
