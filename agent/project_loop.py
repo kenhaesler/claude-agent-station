@@ -11,6 +11,7 @@ Each former bash phase is a dedicated Python module under ``agent/``
 from __future__ import annotations
 
 import logging
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -408,6 +409,44 @@ def iterate_projects(
                         )
         except Exception:  # noqa: BLE001 — best-effort, never crash run
             logger.exception("contract validator failed (non-fatal)")
+
+        # #464: missing-test-coverage advisory check. Fetches each unique
+        # issue body once, scans for test-file paths, and flags any path
+        # not acknowledged by an APPROVE verdict. Advisory only; logged
+        # at WARNING. Fail-soft: errors never block the run.
+        try:
+            from agent.team_contracts import _looks_like_missing_test_coverage
+
+            unique_issues = {
+                v.get("issue_number") for v in raw_verdicts
+                if v.get("issue_number") is not None
+            }
+            issue_bodies: dict[int, str] = {}
+            for n in unique_issues:
+                result = subprocess.run(
+                    ["gh", "issue", "view", str(n),
+                     "--repo", project["repo"],
+                     "--json", "body", "-q", ".body"],
+                    capture_output=True, text=True,
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    issue_bodies[n] = result.stdout
+
+            for n, body in issue_bodies.items():
+                coverage_violations = _looks_like_missing_test_coverage(
+                    body, raw_verdicts, project["repo"]
+                )
+                if coverage_violations:
+                    logger.warning(
+                        "missing test coverage on issue #%s: %s",
+                        n,
+                        [
+                            f"{vi.section}: {vi.context}"
+                            for vi in coverage_violations
+                        ],
+                    )
+        except Exception:  # noqa: BLE001 — best-effort, never crash run
+            logger.exception("test-coverage validator failed (non-fatal)")
 
         # #442: plan_only projects fan out into APPROVE_PLAN /
         # REVISE_PLAN / REJECT_PLAN follow-up actions that the manager-sibling
