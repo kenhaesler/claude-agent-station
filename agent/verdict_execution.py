@@ -448,6 +448,28 @@ def execute(verdict: Verdict, **kwargs) -> ExecutionResult:
 _BRANCH_ISSUES_RE = re.compile(r"\bissues?-(\d+(?:-\d+)*)\b|/issue-(\d+)\b")
 
 
+def _issue_numbers_from_branch(branch: str) -> list[int]:
+    """Parse issue numbers from a branch name. Returns sorted deduplicated list.
+
+    Handles both branch-naming conventions:
+    - 'feature/{role}-issues-29-30-...' (multi-issue)
+    - 'autonomous/issue-31' (single-issue)
+
+    Used by _resolve_issue_numbers and by agent.workspace_setup's prune helper.
+    """
+    numbers: set[int] = set()
+    for match in _BRANCH_ISSUES_RE.finditer(branch or ""):
+        multi = match.group(1)
+        single = match.group(2)
+        if multi:
+            for chunk in multi.split("-"):
+                if chunk.isdigit():
+                    numbers.add(int(chunk))
+        elif single and single.isdigit():
+            numbers.add(int(single))
+    return sorted(numbers)
+
+
 def _resolve_issue_numbers(verdict: Verdict) -> list[int]:
     """Return the union of branch-name-extracted issue numbers and
     verdict.issue_number, deduplicated and sorted ascending.
@@ -460,15 +482,7 @@ def _resolve_issue_numbers(verdict: Verdict) -> list[int]:
     numbers: set[int] = set()
     if verdict.issue_number is not None:
         numbers.add(verdict.issue_number)
-    for match in _BRANCH_ISSUES_RE.finditer(verdict.branch or ""):
-        multi = match.group(1)
-        single = match.group(2)
-        if multi:
-            for chunk in multi.split("-"):
-                if chunk.isdigit():
-                    numbers.add(int(chunk))
-        elif single and single.isdigit():
-            numbers.add(int(single))
+    numbers.update(_issue_numbers_from_branch(verdict.branch or ""))
     return sorted(numbers)
 
 
