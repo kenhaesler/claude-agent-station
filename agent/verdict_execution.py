@@ -36,6 +36,7 @@ What's intentionally NOT in this module:
 from __future__ import annotations
 
 import logging
+import re
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -426,6 +427,35 @@ def execute(verdict: Verdict, **kwargs) -> ExecutionResult:
 
 
 # ── Helpers ───────────────────────────────────────────────────────────
+
+# #460: extract issue numbers from branch names. Supports both
+# 'feature/{role}-issues-29-30-...' (multi-issue, group 1 captures '29-30')
+# and 'autonomous/issue-31' (single-issue, group 2 captures '31').
+_BRANCH_ISSUES_RE = re.compile(r"\bissues?-(\d+(?:-\d+)*)\b|/issue-(\d+)\b")
+
+
+def _resolve_issue_numbers(verdict: Verdict) -> list[int]:
+    """Return the union of branch-name-extracted issue numbers and
+    verdict.issue_number, deduplicated and sorted ascending.
+
+    Real-world data shows ``verdict.issue_number`` is unreliable —
+    multi-issue branches like ``feature/backend-issues-29-30-...`` are
+    routinely emitted with only one of the numbers in the field, or
+    None. The branch name is a more reliable source. #460.
+    """
+    numbers: set[int] = set()
+    if verdict.issue_number is not None:
+        numbers.add(verdict.issue_number)
+    for match in _BRANCH_ISSUES_RE.finditer(verdict.branch or ""):
+        multi = match.group(1)
+        single = match.group(2)
+        if multi:
+            for chunk in multi.split("-"):
+                if chunk.isdigit():
+                    numbers.add(int(chunk))
+        elif single and single.isdigit():
+            numbers.add(int(single))
+    return sorted(numbers)
 
 
 def _pr_title(verdict: Verdict) -> str:

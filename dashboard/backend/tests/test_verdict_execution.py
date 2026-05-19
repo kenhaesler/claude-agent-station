@@ -553,3 +553,46 @@ def test_every_executor_accepts_dev_branch_kwarg(verdict_kind, tmp_path, monkeyp
     assert result is not None, f"{verdict_kind} executor returned None"
 
 
+# --- #460: auto-close issue resolution ---
+
+
+def test_resolve_issue_numbers_from_multi_issue_branch():
+    """Branch like 'feature/backend-issues-29-30-...' yields [29, 30],
+    deduplicated and sorted. Verdict.issue_number is unioned."""
+    from agent.verdict_execution import _resolve_issue_numbers
+    v = _verdict(
+        branch="feature/backend-issues-29-30-20260519T080446Z",
+        issue_number=30,
+    )
+    assert _resolve_issue_numbers(v) == [29, 30]
+
+
+def test_resolve_issue_numbers_from_old_convention():
+    """Branch like 'autonomous/issue-31' with matching verdict number
+    yields [31] (deduped)."""
+    from agent.verdict_execution import _resolve_issue_numbers
+    v = _verdict(
+        branch="autonomous/issue-31",
+        issue_number=31,
+    )
+    assert _resolve_issue_numbers(v) == [31]
+
+
+def test_resolve_issue_numbers_falls_back_to_verdict_only():
+    """Branch with no number pattern yields just verdict.issue_number."""
+    from agent.verdict_execution import _resolve_issue_numbers
+    v = _verdict(
+        branch="feature/no-numbers-here",
+        issue_number=42,
+    )
+    assert _resolve_issue_numbers(v) == [42]
+
+
+def test_resolve_issue_numbers_empty_when_no_source():
+    """No branch match AND verdict.issue_number is None → []."""
+    from agent.verdict_execution import _resolve_issue_numbers
+    v = _verdict(
+        branch="feature/no-numbers-here",
+        issue_number=None,
+    )
+    assert _resolve_issue_numbers(v) == []
