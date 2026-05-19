@@ -14,7 +14,7 @@ def test_iterate_projects_calls_each_phase_when_manager_produces_verdicts(
 
     cfg = tmp_path / "manager-config.json"
     cfg.write_text(json.dumps({
-        "projects": [{"name": "owner/repo", "enabled": True, "base_branch": "main"}],
+        "projects": [{"repo": "owner/repo", "enabled": True, "base_branch": "main"}],
         "limits": {"max_concurrent_employees": 1},
         "models": {"manager": "claude-sonnet-4-6"},
     }))
@@ -26,7 +26,7 @@ def test_iterate_projects_calls_each_phase_when_manager_produces_verdicts(
     monkeypatch.setattr("agent.queue_recovery.resume_paused", lambda: call_log.append("resume"))
     monkeypatch.setattr("agent.workspace_setup.ensure_workspace", lambda p, w: (call_log.append("workspace"), str(tmp_path))[1])
 
-    async def _fake_orchestrate(project, config, run_id, workspaces_dir):
+    async def _fake_orchestrate(project, config, run_id, workspaces_dir, **kwargs):
         call_log.append("orchestrate_project")
         # orchestrate_project returns (exit_code, stream_state, work_attempted).
         # None stream_state is the documented value when the session never ran.
@@ -71,7 +71,7 @@ def test_iterate_projects_flags_missing_verdicts_file(tmp_path, monkeypatch):
 
     cfg = tmp_path / "manager-config.json"
     cfg.write_text(json.dumps({
-        "projects": [{"name": "owner/repo", "enabled": True, "base_branch": "main"}],
+        "projects": [{"repo": "owner/repo", "enabled": True, "base_branch": "main"}],
         "limits": {"max_concurrent_employees": 1},
         "models": {"manager": "claude-sonnet-4-6"},
     }))
@@ -81,7 +81,7 @@ def test_iterate_projects_flags_missing_verdicts_file(tmp_path, monkeypatch):
     monkeypatch.setattr("agent.queue_recovery.resume_paused", lambda: None)
     monkeypatch.setattr("agent.workspace_setup.ensure_workspace", lambda p, w: str(tmp_path))
 
-    async def _fake_orchestrate(project, config, run_id, workspaces_dir):
+    async def _fake_orchestrate(project, config, run_id, workspaces_dir, **kwargs):
         return 0, None, True
 
     monkeypatch.setattr("agent.station_orchestrator.orchestrate_project", _fake_orchestrate)
@@ -153,7 +153,7 @@ def test_iterate_projects_passes_workspace_and_dev_branch_to_executor(
         lambda p, w: str(tmp_path / "ws"),
     )
 
-    async def _fake_orchestrate(project, config, run_id, workspaces_dir):
+    async def _fake_orchestrate(project, config, run_id, workspaces_dir, **kwargs):
         return 0, None, True
 
     monkeypatch.setattr("agent.station_orchestrator.orchestrate_project", _fake_orchestrate)
@@ -746,3 +746,208 @@ def test_iterate_projects_no_skipped_hint_when_any_real_failure(
     assert terminal_status_hint is None, (
         "Run with a real failure must NOT be marked skipped"
     )
+
+
+# --- #456: sibling-coordination integration ---
+
+
+def test_iterate_projects_passes_prior_verdicts_summary_when_file_exists(
+    tmp_path, monkeypatch
+):
+    """When a prior verdicts file matches the project repo, its summary
+    is threaded through to orchestrate_project."""
+    import json
+    from agent import project_loop
+
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+    monkeypatch.setenv("STATION_LOG_DIR", str(log_dir))
+
+    # Seed a prior verdicts file for the same project.
+    (log_dir / "run-20260101T000000Z-verdicts.json").write_text(json.dumps({
+        "verdicts": [{
+            "project": "org/repo", "verdict": "REJECT", "branch": "feat/x",
+            "reasoning": "purchasePrice vs purchaseCost conflict.",
+        }]
+    }))
+
+    config_path = tmp_path / "config.json"
+    config_path.write_text('{"projects":[{"repo":"org/repo","enabled":true,"mode":"full"}]}')
+
+    captured = {}
+
+    async def fake_orchestrate(project, config, run_id, workspaces_dir, **kwargs):
+        captured["prior_verdicts_summary"] = kwargs.get("prior_verdicts_summary")
+        return (0, None, True)
+
+    monkeypatch.setattr(
+        "agent.station_orchestrator.orchestrate_project", fake_orchestrate
+    )
+    monkeypatch.setattr("agent.workspace_setup.ensure_workspace",
+                        lambda *a, **kw: str(tmp_path / "ws"))
+    monkeypatch.setattr("agent.station_orchestrator._read_verdicts_file",
+                        lambda p: {"verdicts": []})
+    monkeypatch.setattr("agent.webhook_emitter.emit", lambda *a, **kw: None)
+    monkeypatch.setattr("agent.preflight.run_preflight", lambda *a, **kw: None)
+    monkeypatch.setattr("agent.queue_recovery.purge_and_recover", lambda *a, **kw: None)
+    monkeypatch.setattr("agent.queue_recovery.resume_paused", lambda: None)
+    monkeypatch.setattr("agent.digest.write_digest", lambda **kw: "")
+
+    project_loop.iterate_projects("test-run", str(config_path), str(tmp_path / "ws"))
+
+    summary = captured.get("prior_verdicts_summary")
+    assert summary is not None
+    assert "REJECT" in summary
+    assert "purchasePrice" in summary
+
+
+def test_iterate_projects_no_prior_verdicts_summary_when_no_file(
+    tmp_path, monkeypatch
+):
+    """No prior verdicts file → kwarg passes through as None. No crash."""
+    from agent import project_loop
+
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+    monkeypatch.setenv("STATION_LOG_DIR", str(log_dir))
+
+    config_path = tmp_path / "config.json"
+    config_path.write_text('{"projects":[{"repo":"org/repo","enabled":true,"mode":"full"}]}')
+
+    captured = {}
+
+    async def fake_orchestrate(project, config, run_id, workspaces_dir, **kwargs):
+        captured["prior_verdicts_summary"] = kwargs.get("prior_verdicts_summary", "MISSING")
+        return (0, None, True)
+
+    monkeypatch.setattr(
+        "agent.station_orchestrator.orchestrate_project", fake_orchestrate
+    )
+    monkeypatch.setattr("agent.workspace_setup.ensure_workspace",
+                        lambda *a, **kw: str(tmp_path / "ws"))
+    monkeypatch.setattr("agent.station_orchestrator._read_verdicts_file",
+                        lambda p: {"verdicts": []})
+    monkeypatch.setattr("agent.webhook_emitter.emit", lambda *a, **kw: None)
+    monkeypatch.setattr("agent.preflight.run_preflight", lambda *a, **kw: None)
+    monkeypatch.setattr("agent.queue_recovery.purge_and_recover", lambda *a, **kw: None)
+    monkeypatch.setattr("agent.queue_recovery.resume_paused", lambda: None)
+    monkeypatch.setattr("agent.digest.write_digest", lambda **kw: "")
+
+    project_loop.iterate_projects("test-run", str(config_path), str(tmp_path / "ws"))
+    assert captured["prior_verdicts_summary"] is None
+
+
+def test_iterate_projects_logs_contract_violations_after_verdicts_read(
+    tmp_path, monkeypatch, caplog
+):
+    """contracts.md present + verdict with conflict prose → WARNING log fires."""
+    import json
+    from agent import project_loop
+    from agent.team_contracts import CONTRACTS_FILENAME
+
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+    monkeypatch.setenv("STATION_LOG_DIR", str(log_dir))
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    (workspace / CONTRACTS_FILENAME).write_text("""\
+## Field Names
+- purchase_cost: purchaseCost
+""")
+
+    config_path = tmp_path / "config.json"
+    config_path.write_text('{"projects":[{"repo":"org/repo","enabled":true,"mode":"full"}]}')
+
+    async def fake_orchestrate(*a, **kw):
+        return (0, None, True)
+
+    monkeypatch.setattr(
+        "agent.station_orchestrator.orchestrate_project", fake_orchestrate
+    )
+    monkeypatch.setattr("agent.workspace_setup.ensure_workspace",
+                        lambda *a, **kw: str(workspace))
+    monkeypatch.setattr("agent.station_orchestrator._read_verdicts_file",
+                        lambda p: {"verdicts": [{
+                            "project": "org/repo", "verdict": "REJECT",
+                            "branch": "feat/x",
+                            "reasoning": "Backend used purchasePrice instead of purchaseCost.",
+                        }]})
+    monkeypatch.setattr("agent.webhook_emitter.emit", lambda *a, **kw: None)
+    monkeypatch.setattr("agent.preflight.run_preflight", lambda *a, **kw: None)
+    monkeypatch.setattr("agent.queue_recovery.purge_and_recover", lambda *a, **kw: None)
+    monkeypatch.setattr("agent.queue_recovery.resume_paused", lambda: None)
+    monkeypatch.setattr("agent.digest.write_digest", lambda **kw: "")
+    monkeypatch.setattr("agent.verdict_execution.execute",
+                        lambda *a, **kw: None)
+
+    import logging
+    caplog.set_level(logging.WARNING, logger="agent.project_loop")
+    project_loop.iterate_projects("test-run", str(config_path), str(tmp_path / "ws"))
+
+    assert any(
+        "contract violations" in record.message.lower()
+        for record in caplog.records
+    )
+
+
+def test_iterate_projects_no_crash_when_contracts_md_missing(
+    tmp_path, monkeypatch
+):
+    """No contracts.md in workspace → pipeline continues, no exception."""
+    from agent import project_loop
+
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+    monkeypatch.setenv("STATION_LOG_DIR", str(log_dir))
+
+    config_path = tmp_path / "config.json"
+    config_path.write_text('{"projects":[{"repo":"org/repo","enabled":true,"mode":"full"}]}')
+
+    async def fake_orchestrate(*a, **kw):
+        return (0, None, True)
+
+    monkeypatch.setattr(
+        "agent.station_orchestrator.orchestrate_project", fake_orchestrate
+    )
+    monkeypatch.setattr("agent.workspace_setup.ensure_workspace",
+                        lambda *a, **kw: str(tmp_path / "ws"))
+    monkeypatch.setattr("agent.station_orchestrator._read_verdicts_file",
+                        lambda p: {"verdicts": []})
+    monkeypatch.setattr("agent.webhook_emitter.emit", lambda *a, **kw: None)
+    monkeypatch.setattr("agent.preflight.run_preflight", lambda *a, **kw: None)
+    monkeypatch.setattr("agent.queue_recovery.purge_and_recover", lambda *a, **kw: None)
+    monkeypatch.setattr("agent.queue_recovery.resume_paused", lambda: None)
+    monkeypatch.setattr("agent.digest.write_digest", lambda **kw: "")
+
+    # Should not raise.
+    rc, _, _ = project_loop.iterate_projects(
+        "test-run", str(config_path), str(tmp_path / "ws")
+    )
+    assert rc == 0
+
+
+def test_summarize_prior_verdicts_picks_most_recent_matching_file(tmp_path):
+    """Helper directly: glob picks newest file referencing the project."""
+    import json, os, time
+    from agent.project_loop import _summarize_prior_verdicts
+
+    # Older file: matching project.
+    older = tmp_path / "run-20260101T000000Z-verdicts.json"
+    older.write_text(json.dumps({
+        "verdicts": [{"project": "org/repo", "verdict": "REJECT", "branch": "old",
+                      "reasoning": "old reasoning"}]
+    }))
+    os.utime(older, (time.time() - 100, time.time() - 100))
+
+    # Newer file: matching project.
+    newer = tmp_path / "run-20260102T000000Z-verdicts.json"
+    newer.write_text(json.dumps({
+        "verdicts": [{"project": "org/repo", "verdict": "APPROVE", "branch": "new",
+                      "reasoning": "new reasoning"}]
+    }))
+
+    summary = _summarize_prior_verdicts(str(tmp_path), "org/repo")
+    assert summary is not None
+    assert "new reasoning" in summary
+    assert "old reasoning" not in summary

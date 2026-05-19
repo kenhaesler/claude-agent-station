@@ -343,6 +343,47 @@ See `_write_manager_paths_sidecar` in `agent/station_orchestrator.py` and
 the `# --- #411` test block in
 `dashboard/backend/tests/test_manager_sibling.py`.
 
+### Sibling-teammate coordination (#456)
+
+The lead agent writes `.claude-team-contracts.md` to the workspace
+root before spawning the three role-specialized teammates
+(backend / frontend / qa). The file documents cross-team contracts:
+
+| Section | Purpose |
+|---|---|
+| API Routes | Method, path, owning role, response shape per route |
+| Field Names | canonical_key → chosenName mappings |
+| Response Shapes | route_path → response shape description |
+| Enum Values | enum_name → allowed value list |
+| Route Ownership | route_path → owning role |
+
+Each teammate's spawn prompt includes a READ-FIRST instruction
+pointing at this file. Manager review treats the contract as binding;
+verdicts that violate it should be REJECT.
+
+**Cross-run feedback (#456):** Before building the lead's prompt,
+`iterate_projects` globs `/var/log/claude-agent/run-*-verdicts.json`
+for the most recent file containing verdicts whose `project` field
+matches the current project's repo. If found, a short prose summary
+is folded into the lead's prompt as a "Recent verdicts (last run on
+this project)" section. The lead resolves the prior conflicts in
+the new contracts file.
+
+**Advisory validator:** `agent/team_contracts.py::validate_verdict_against_contracts`
+scans each manager verdict's `reasoning` text for contract violations
+(field-name mismatch, route-ownership conflict, enum-value drift).
+Violations are logged at WARNING; verdicts are NOT auto-flipped —
+the manager has final say. The validator is heuristic by design
+(string matching against the manager's prose), not a full code parser.
+
+Failure modes:
+- No `contracts.md` written → degrades to pre-#456 behavior with a
+  WARNING log.
+- Malformed file → parser returns `None`; same fallback as missing.
+- No prior verdicts file → no injection; first-ever run behavior.
+- `plan_only` mode → no siblings spawned, contracts instruction
+  omitted from the lead's prompt.
+
 ### Plan-review gate
 
 The `plan_only` mode adds a manual checkpoint between plan-writing and
