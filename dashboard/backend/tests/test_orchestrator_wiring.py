@@ -2015,3 +2015,22 @@ def test_build_team_prompt_teammates_get_read_first_instruction():
     assert "READ FIRST" in prompt or "Read first" in prompt
     # And it names the file:
     assert ".claude-team-contracts.md" in prompt
+
+
+def test_build_team_prompt_qa_instruction_in_read_first_block():
+    """The QA-specific test-fixture instruction must appear in the
+    teammate-spawn block for non-plan_only modes. #458."""
+    from agent.station_orchestrator import build_team_prompt
+    prompt = build_team_prompt(
+        repo="org/repo",
+        issues=[{"number": 29, "title": "Test"}],
+        config={"projects": []},
+        run_id="run-test",
+        project_mode="full",
+    )
+    assert "For the QA teammate specifically" in prompt
+    # The instruction must name the contract section it points at:
+    assert "Response Shapes" in prompt
+    # And state the rule plainly:
+    assert "fix the test to match the contract" in prompt.lower() or \
+           "fix the test" in prompt.lower()
