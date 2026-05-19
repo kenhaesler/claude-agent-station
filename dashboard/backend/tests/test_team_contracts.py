@@ -374,3 +374,109 @@ def test_validator_drift_does_not_fire_on_technical_rationale(tmp_path):
     assert not drift, (
         f"Technical 'instead of' rationale fired drift: {drift}"
     )
+
+
+# --- #464: missing_test_coverage validator pass ---
+
+
+def test_test_file_ref_regex_matches_strict_paths():
+    """Regex captures file-path-shaped test references, in both bare
+    and backticked forms. Rejects bare prose."""
+    from agent.team_contracts import _TEST_FILE_REF_RE
+
+    # Should match — file paths ending in .test.X or .spec.X
+    assert _TEST_FILE_REF_RE.findall(
+        "Unit tests in src/app/api/health/route.test.ts covering both branches"
+    ) == ["src/app/api/health/route.test.ts"]
+
+    assert _TEST_FILE_REF_RE.findall(
+        "Tests in `lib/utils.spec.ts` cover the helpers."
+    ) == ["lib/utils.spec.ts"]
+
+    # Should match — paths inside /tests/ segment
+    assert _TEST_FILE_REF_RE.findall(
+        "See dashboard/backend/tests/test_foo.py for examples"
+    ) == ["dashboard/backend/tests/test_foo.py"]
+
+    # Should NOT match — bare prose
+    assert _TEST_FILE_REF_RE.findall("Write unit tests for the auth module") == []
+    assert _TEST_FILE_REF_RE.findall("All tests pass on the QA branch") == []
+    assert _TEST_FILE_REF_RE.findall("the test for purchaseCost is wrong") == []
+
+
+def test_validator_flags_missing_test_coverage_when_no_verdict_addresses_path(tmp_path):
+    """When issue body references a test path and no APPROVE verdict
+    acknowledges it, fire a missing_test_coverage violation."""
+    from agent.team_contracts import _looks_like_missing_test_coverage
+
+    issue_body = (
+        "## Acceptance\n"
+        "- Unit tests in src/app/api/health/route.test.ts covering both branches"
+    )
+    verdicts = [
+        {
+            "verdict": "APPROVE",
+            "branch": "feature/backend-issue-61",
+            "reasoning": "Route implements all functional requirements correctly.",
+            "feedback_to_employee": "Good route implementation.",
+            "requirements_met": [
+                "GET /api/health returns 200 + success shape",
+                "Returns 503 + failure shape when Prisma throws",
+            ],
+        }
+    ]
+    violations = _looks_like_missing_test_coverage(
+        issue_body, verdicts, "owner/repo"
+    )
+    assert len(violations) == 1
+    assert violations[0].section == "missing_test_coverage"
+    assert violations[0].expected == "src/app/api/health/route.test.ts"
+    assert "QA teammate likely did not create the file" in violations[0].context
+
+
+def test_validator_passes_when_verdict_acknowledges_test_path():
+    """When an APPROVE verdict's requirements_met includes the test path,
+    no violation fires."""
+    from agent.team_contracts import _looks_like_missing_test_coverage
+
+    issue_body = (
+        "## Acceptance\n"
+        "- Unit tests in src/app/api/health/route.test.ts covering both branches"
+    )
+    verdicts = [
+        {
+            "verdict": "APPROVE",
+            "branch": "feature/qa-issue-61",
+            "reasoning": "Tests cover both branches.",
+            "feedback_to_employee": "Good test coverage.",
+            "requirements_met": [
+                "Unit tests in src/app/api/health/route.test.ts",
+            ],
+        }
+    ]
+    violations = _looks_like_missing_test_coverage(
+        issue_body, verdicts, "owner/repo"
+    )
+    assert violations == []
+
+
+def test_validator_does_not_fire_when_no_test_paths_in_body():
+    """Body has no file-path test references → no violation regardless of verdicts."""
+    from agent.team_contracts import _looks_like_missing_test_coverage
+
+    issue_body = "Add the depreciation route. Should support all CRUD ops."
+    verdicts = [{"verdict": "APPROVE", "branch": "feature/x", "reasoning": "Done."}]
+    assert _looks_like_missing_test_coverage(issue_body, verdicts, "owner/repo") == []
+
+
+def test_validator_does_not_fire_when_no_approve_verdicts_exist():
+    """When ALL verdicts are REJECT, no missing_test_coverage violation
+    fires (REJECTs already capture the underlying gap)."""
+    from agent.team_contracts import _looks_like_missing_test_coverage
+
+    issue_body = "Unit tests in src/app/api/health/route.test.ts covering both branches"
+    verdicts = [
+        {"verdict": "REJECT", "branch": "feature/backend", "reasoning": "..."},
+        {"verdict": "REJECT", "branch": "feature/qa", "reasoning": "..."},
+    ]
+    assert _looks_like_missing_test_coverage(issue_body, verdicts, "owner/repo") == []

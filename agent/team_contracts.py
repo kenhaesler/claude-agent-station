@@ -302,6 +302,18 @@ _DIVERGENCE_SIGNALS = (
 # Used only inside `_looks_like_test_drift` for contracted-name lookup.
 _RESPONSE_SHAPE_TOKEN_RE = re.compile(r"\b[a-z_][\w]{2,}\b")
 
+# #464: strict test-file path matcher. Captures file paths with `/` and
+# either `.test.X` / `.spec.X` infix OR inside a `/tests/` segment.
+# Handles both bare and backticked forms. Rejects bare prose like
+# "unit tests" or "test pass".
+_TEST_FILE_REF_RE = re.compile(
+    r"(?:\b|`)("
+    r"(?:[\w.-]+/)+[\w.-]+\.(?:test|spec)\.[a-zA-Z]+"  # foo/bar.test.ts
+    r"|"
+    r"(?:[\w.-]+/)*tests/[\w./-]+\.\w+"                # tests/foo.py or path/tests/foo.py
+    r")(?:\b|`)"
+)
+
 
 def _candidate_field_names(text: str) -> list[str]:
     """True camelCase identifiers (lowercase start, at least one inner uppercase).
@@ -424,4 +436,65 @@ def _looks_like_test_drift(reasoning: str, contracts: TeamContracts) -> list[Vio
                 f"this field. Tests must follow the contracted response shape."
             ),
         ))
+    return violations
+
+
+def _looks_like_missing_test_coverage(
+    issue_body: str,
+    verdicts: list,
+    project_repo: str,
+) -> list[Violation]:
+    """Detect test-file paths in the issue body that no approved verdict
+    acknowledges. Heuristic; advisory.
+
+    Strict file-path matching only — bare prose like 'write unit tests'
+    is NOT flagged because the manager's existing acceptance-criteria
+    checks already surface those cases.
+
+    Skips when no APPROVE / APPROVE_INTEGRATION verdicts exist (the
+    REJECTs already capture the underlying gap).
+
+    Issue: #464.
+    """
+    if not issue_body:
+        return []
+    test_paths = list(dict.fromkeys(_TEST_FILE_REF_RE.findall(issue_body)))
+    if not test_paths:
+        return []
+
+    approved_verdicts = [
+        v for v in verdicts
+        if (v.get("verdict") or "") in ("APPROVE", "APPROVE_INTEGRATION")
+    ]
+    if not approved_verdicts:
+        # No APPROVEs at all — the REJECTs already capture the issue.
+        return []
+
+    violations: list[Violation] = []
+    for path in test_paths:
+        # Check whether any approved verdict's reasoning/feedback/requirements_met
+        # acknowledges this path.
+        acknowledged = False
+        for v in approved_verdicts:
+            blob_parts = [
+                v.get("reasoning", "") or "",
+                v.get("feedback_to_employee", "") or "",
+                " ".join(v.get("requirements_met", []) or []),
+            ]
+            blob = " ".join(blob_parts)
+            if path in blob:
+                acknowledged = True
+                break
+        if not acknowledged:
+            violations.append(Violation(
+                section="missing_test_coverage",
+                expected=path,
+                found="(no approved verdict acknowledges this path)",
+                context=(
+                    f"Issue body references test path '{path}', but no "
+                    f"APPROVE/APPROVE_INTEGRATION verdict's "
+                    f"requirements_met or feedback acknowledges it. "
+                    f"QA teammate likely did not create the file."
+                ),
+            ))
     return violations
