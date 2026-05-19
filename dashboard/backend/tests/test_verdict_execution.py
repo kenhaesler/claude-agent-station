@@ -74,7 +74,8 @@ def test_approve_pushes_branch_then_creates_pr_then_comments(tmp_path):
                return_value=_ok_subprocess()) as mock_sp, \
          patch("agent.verdict_execution.gh_run") as mock_gh:
         mock_gh.side_effect = [_ok_gh_result(stdout=pr_url),
-                               _ok_gh_result(stdout="")]
+                               _ok_gh_result(stdout=""),   # issue comment
+                               _ok_gh_result(stdout="")]   # gh issue close (#460)
         result = execute(_verdict("APPROVE"), workspace=tmp_path, run_id="run-1")
 
     assert result.success
@@ -131,7 +132,8 @@ def test_approve_body_includes_closes_keyword_when_issue_present(tmp_path):
                return_value=_ok_subprocess()), \
          patch("agent.verdict_execution.gh_run",
                side_effect=[_ok_gh_result(stdout=pr_url),
-                            _ok_gh_result()]) as mock_gh:
+                            _ok_gh_result(),   # issue comment
+                            _ok_gh_result()]) as mock_gh:  # gh issue close (#460)
         execute(_verdict("APPROVE"), workspace=tmp_path, run_id="run-1")
 
     pr_args = mock_gh.call_args_list[0].args[0]
@@ -553,3 +555,169 @@ def test_every_executor_accepts_dev_branch_kwarg(verdict_kind, tmp_path, monkeyp
     assert result is not None, f"{verdict_kind} executor returned None"
 
 
+# --- #460: auto-close issue resolution ---
+
+
+def test_resolve_issue_numbers_from_multi_issue_branch():
+    """Branch like 'feature/backend-issues-29-30-...' yields [29, 30],
+    deduplicated and sorted. Verdict.issue_number is unioned."""
+    from agent.verdict_execution import _resolve_issue_numbers
+    v = _verdict(
+        branch="feature/backend-issues-29-30-20260519T080446Z",
+        issue_number=30,
+    )
+    assert _resolve_issue_numbers(v) == [29, 30]
+
+
+def test_resolve_issue_numbers_from_old_convention():
+    """Branch like 'autonomous/issue-31' with matching verdict number
+    yields [31] (deduped)."""
+    from agent.verdict_execution import _resolve_issue_numbers
+    v = _verdict(
+        branch="autonomous/issue-31",
+        issue_number=31,
+    )
+    assert _resolve_issue_numbers(v) == [31]
+
+
+def test_resolve_issue_numbers_falls_back_to_verdict_only():
+    """Branch with no number pattern yields just verdict.issue_number."""
+    from agent.verdict_execution import _resolve_issue_numbers
+    v = _verdict(
+        branch="feature/no-numbers-here",
+        issue_number=42,
+    )
+    assert _resolve_issue_numbers(v) == [42]
+
+
+def test_resolve_issue_numbers_empty_when_no_source():
+    """No branch match AND verdict.issue_number is None → []."""
+    from agent.verdict_execution import _resolve_issue_numbers
+    v = _verdict(
+        branch="feature/no-numbers-here",
+        issue_number=None,
+    )
+    assert _resolve_issue_numbers(v) == []
+
+
+# --- #460: _close_issues integration ---
+
+
+def test_execute_approve_closes_issue_after_pr_created(tmp_path):
+    """APPROVE verdict triggers `gh issue close` after PR creation."""
+    from agent.verdict_execution import execute
+    v = _verdict(verdict_kind="APPROVE",
+                 branch="autonomous/issue-42",
+                 issue_number=42)
+    with patch("agent.verdict_execution.subprocess.run",
+               return_value=_ok_subprocess()), \
+         patch("agent.verdict_execution.gh_run") as mock_gh:
+        mock_gh.return_value = _ok_gh_result(stdout="https://github.com/x/y/pull/1")
+        result = execute(v, workspace=tmp_path, run_id="run-test")
+    close_calls = [
+        call for call in mock_gh.call_args_list
+        if call.args and call.args[0][:3] == ["issue", "close", "42"]
+    ]
+    assert close_calls, f"Expected `gh issue close 42`, got: {[c.args[0] for c in mock_gh.call_args_list]}"
+    assert result.success is True
+
+
+def test_execute_approve_integration_closes_after_merge_armed(tmp_path):
+    """APPROVE_INTEGRATION verdict also triggers `gh issue close`."""
+    from agent.verdict_execution import execute
+    v = _verdict(verdict_kind="APPROVE_INTEGRATION",
+                 branch="autonomous/issue-42",
+                 issue_number=42)
+    with patch("agent.verdict_execution.subprocess.run",
+               return_value=_ok_subprocess()), \
+         patch("agent.verdict_execution.gh_run") as mock_gh:
+        mock_gh.return_value = _ok_gh_result(stdout="https://github.com/x/y/pull/1")
+        result = execute(v, workspace=tmp_path, run_id="run-test",
+                         dev_branch="autonomous/dev")
+    close_calls = [
+        call for call in mock_gh.call_args_list
+        if call.args and call.args[0][:3] == ["issue", "close", "42"]
+    ]
+    assert close_calls, "Expected `gh issue close 42` on APPROVE_INTEGRATION"
+    assert result.success is True
+
+
+def test_close_issues_handles_multi_issue_branch(tmp_path):
+    """A branch addressing multiple issues closes ALL of them."""
+    from agent.verdict_execution import execute
+    v = _verdict(verdict_kind="APPROVE",
+                 branch="feature/backend-issues-29-30-20260519T080446Z",
+                 issue_number=30)
+    with patch("agent.verdict_execution.subprocess.run",
+               return_value=_ok_subprocess()), \
+         patch("agent.verdict_execution.gh_run") as mock_gh:
+        mock_gh.return_value = _ok_gh_result(stdout="https://github.com/x/y/pull/1")
+        execute(v, workspace=tmp_path, run_id="run-test")
+    issue_numbers_closed = sorted({
+        call.args[0][2]
+        for call in mock_gh.call_args_list
+        if call.args and call.args[0][:2] == ["issue", "close"]
+    })
+    assert issue_numbers_closed == ["29", "30"], (
+        f"Expected both 29 and 30 closed, got: {issue_numbers_closed}"
+    )
+
+
+def test_execute_reject_does_not_close_issue(tmp_path):
+    """REJECT verdict must NOT close the issue."""
+    from agent.verdict_execution import execute
+    v = _verdict(verdict_kind="REJECT",
+                 branch="autonomous/issue-42",
+                 issue_number=42)
+    with patch("agent.verdict_execution.subprocess.run",
+               return_value=_ok_subprocess()), \
+         patch("agent.verdict_execution.gh_run",
+               return_value=_ok_gh_result()) as mock_gh:
+        execute(v, workspace=tmp_path, run_id="run-test")
+    close_calls = [
+        call for call in mock_gh.call_args_list
+        if call.args and call.args[0][:2] == ["issue", "close"]
+    ]
+    assert not close_calls, (
+        f"REJECT must not close issues, got close calls: {close_calls}"
+    )
+
+
+def test_execute_skip_does_not_close_issue(tmp_path):
+    """SKIP verdict must NOT close the issue."""
+    from agent.verdict_execution import execute
+    v = _verdict(verdict_kind="SKIP",
+                 branch="autonomous/issue-42",
+                 issue_number=42)
+    with patch("agent.verdict_execution.subprocess.run",
+               return_value=_ok_subprocess()), \
+         patch("agent.verdict_execution.gh_run",
+               return_value=_ok_gh_result()) as mock_gh:
+        execute(v, workspace=tmp_path, run_id="run-test")
+    close_calls = [
+        call for call in mock_gh.call_args_list
+        if call.args and call.args[0][:2] == ["issue", "close"]
+    ]
+    assert not close_calls, "SKIP must not close issues"
+
+
+def test_close_issues_swallows_gh_failure(tmp_path):
+    """If `gh issue close` fails (e.g. already-closed), verdict still
+    succeeds and a WARNING is logged."""
+    from agent.verdict_execution import execute
+    v = _verdict(verdict_kind="APPROVE",
+                 branch="autonomous/issue-42",
+                 issue_number=42)
+
+    def gh_side_effect(args, env=None):
+        if args[:2] == ["issue", "close"]:
+            return _fail_gh_result(stderr="error: issue is already closed")
+        return _ok_gh_result(stdout="https://github.com/x/y/pull/1")
+
+    with patch("agent.verdict_execution.subprocess.run",
+               return_value=_ok_subprocess()), \
+         patch("agent.verdict_execution.gh_run",
+               side_effect=gh_side_effect):
+        result = execute(v, workspace=tmp_path, run_id="run-test")
+
+    assert result.success is True
