@@ -1097,7 +1097,14 @@ When spawning a teammate, include in their prompt:
 "Your worktree is at <path>. Run `cd <path>` as your FIRST action before doing anything else.
 READ FIRST: `.claude-team-contracts.md` in your worktree root. It documents the cross-team
 contracts (field names, route ownership, response shapes, enum values) you MUST follow.
-Manager review will reject any branch that violates the contract."
+Manager review will reject any branch that violates the contract.
+
+For the QA teammate specifically: when writing or modifying tests,
+every assertion on an API response field MUST match the contract's
+Response Shapes section. If your test expects a field name that
+isn't in the contract, the test is wrong — fix the test to match
+the contract. Never change source files (routes, services, models)
+to match what your test happened to assert."
 
 ## Teammate Configuration
 

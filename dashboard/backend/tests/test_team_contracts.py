@@ -253,3 +253,124 @@ def test_validator_does_not_flag_two_contracted_field_names_together(tmp_path):
     assert violations == [], (
         f"Two contracted names together produced violations: {violations}"
     )
+
+
+# --- #458: test_assertion_drift violation type ---
+
+
+def test_validator_flags_test_assertion_drift(tmp_path):
+    """QA verdict reasoning matching the run-20260519T070352Z pattern:
+    'test expects body/newValue fields which will break when the backend
+    branch merges (backend now returns content/author)' must flag a
+    test_assertion_drift violation with found='body'."""
+    from agent.team_contracts import (
+        parse_contracts, validate_verdict_against_contracts, CONTRACTS_FILENAME,
+    )
+    # Contract uses 'content' and 'author' in the response shape; QA tests
+    # asserting on 'body' / 'newValue' is the drift case.
+    contracts_text = """\
+## Field Names
+- comment_body: content
+- comment_author: author
+
+## Response Shapes
+- /api/tickets/[id]/activity: { id, type, author, content, createdAt }
+"""
+    (tmp_path / CONTRACTS_FILENAME).write_text(contracts_text)
+    contracts = parse_contracts(tmp_path)
+    v = _make_verdict(
+        "QA branch test expects body fields which will break when the "
+        "backend branch merges (backend now returns content/author)."
+    )
+    violations = validate_verdict_against_contracts(v, contracts, tmp_path)
+    drift = [vi for vi in violations if vi.section == "test_assertion_drift"]
+    assert drift, f"Expected test_assertion_drift violation, got: {violations}"
+    # The found identifier should be 'body' (the non-contracted field the
+    # test asserts on).
+    assert any(vi.found == "body" for vi in drift), (
+        f"Expected found='body' in violations: {drift}"
+    )
+
+
+def test_validator_does_not_flag_benign_test_mentions(tmp_path):
+    """A reasoning that mentions 'tests' in a non-drift way must not fire."""
+    from agent.team_contracts import (
+        parse_contracts, validate_verdict_against_contracts, CONTRACTS_FILENAME,
+    )
+    (tmp_path / CONTRACTS_FILENAME).write_text(SAMPLE_CONTRACTS)
+    contracts = parse_contracts(tmp_path)
+    v = _make_verdict("All tests pass on the QA branch.")
+    violations = validate_verdict_against_contracts(v, contracts, tmp_path)
+    assert not any(vi.section == "test_assertion_drift" for vi in violations), (
+        f"Benign 'tests pass' produced drift violations: {violations}"
+    )
+
+
+def test_validator_does_not_flag_contracted_field_in_test_phrase(tmp_path):
+    """When the test expects a CONTRACTED field name (no real drift),
+    the test_assertion_drift check must NOT fire. Both defenses apply:
+    the identifier is in the contracted set, AND no divergence signal
+    follows the trigger."""
+    from agent.team_contracts import (
+        parse_contracts, validate_verdict_against_contracts, CONTRACTS_FILENAME,
+    )
+    (tmp_path / CONTRACTS_FILENAME).write_text(SAMPLE_CONTRACTS)
+    contracts = parse_contracts(tmp_path)
+    v = _make_verdict("Test expects purchaseCost as documented in the contract.")
+    violations = validate_verdict_against_contracts(v, contracts, tmp_path)
+    assert not any(vi.section == "test_assertion_drift" for vi in violations), (
+        f"Test for contracted field produced drift violation: {violations}"
+    )
+
+
+def test_validator_does_not_flag_divergence_without_test_trigger(tmp_path):
+    """A divergence signal alone (without 'test expects') must NOT trigger
+    test_assertion_drift. The field-name validator may catch this case
+    separately; this test only asserts the drift check stays silent."""
+    from agent.team_contracts import (
+        parse_contracts, validate_verdict_against_contracts, CONTRACTS_FILENAME,
+    )
+    (tmp_path / CONTRACTS_FILENAME).write_text(SAMPLE_CONTRACTS)
+    contracts = parse_contracts(tmp_path)
+    v = _make_verdict("Backend returns content but frontend wants body.")
+    violations = validate_verdict_against_contracts(v, contracts, tmp_path)
+    assert not any(vi.section == "test_assertion_drift" for vi in violations), (
+        f"Divergence without test trigger produced drift violation: {violations}"
+    )
+
+
+def test_validator_drift_does_not_fire_on_stopword_identifier(tmp_path):
+    """Regex must not capture English stopwords as the test-expects identifier."""
+    from agent.team_contracts import (
+        parse_contracts, validate_verdict_against_contracts, CONTRACTS_FILENAME,
+    )
+    (tmp_path / CONTRACTS_FILENAME).write_text(SAMPLE_CONTRACTS)
+    contracts = parse_contracts(tmp_path)
+    for stopword_reasoning in [
+        "test expects the response to include data after merge",
+        "test expects a valid token which will break after deployment",
+        "test expects an error after merge",
+    ]:
+        v = _make_verdict(stopword_reasoning)
+        drift = [vi for vi in validate_verdict_against_contracts(v, contracts, tmp_path)
+                 if vi.section == "test_assertion_drift"]
+        assert not drift, (
+            f"Stopword reasoning fired drift: {stopword_reasoning!r} -> {drift}"
+        )
+
+
+def test_validator_drift_does_not_fire_on_technical_rationale(tmp_path):
+    """'instead of' must not be a divergence signal — too common in benign prose."""
+    from agent.team_contracts import (
+        parse_contracts, validate_verdict_against_contracts, CONTRACTS_FILENAME,
+    )
+    (tmp_path / CONTRACTS_FILENAME).write_text(SAMPLE_CONTRACTS)
+    contracts = parse_contracts(tmp_path)
+    v = _make_verdict(
+        "test expects legacyName using fieldA instead of fieldB to avoid duplication"
+    )
+    drift = [vi for vi in validate_verdict_against_contracts(v, contracts, tmp_path)
+             if vi.section == "test_assertion_drift"]
+    assert not drift, (
+        f"Technical 'instead of' rationale fired drift: {drift}"
+    )

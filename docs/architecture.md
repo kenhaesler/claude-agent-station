@@ -371,7 +371,11 @@ the new contracts file.
 
 **Advisory validator:** `agent/team_contracts.py::validate_verdict_against_contracts`
 scans each manager verdict's `reasoning` text for contract violations
-(field-name mismatch, route-ownership conflict, enum-value drift).
+(field-name mismatch, route-ownership conflict, enum-value drift,
+test-assertion drift).
+The test-assertion drift check (#458) flags `"test expects X"`
+patterns where X isn't in the contract's Response Shapes section AND
+a divergence signal (`will break`, `after merge`, etc.) follows.
 Violations are logged at WARNING; verdicts are NOT auto-flipped —
 the manager has final say. The validator is heuristic by design
 (string matching against the manager's prose), not a full code parser.

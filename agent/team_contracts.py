@@ -250,6 +250,10 @@ def validate_verdict_against_contracts(
                             f"reasoning references '{token}'.",
                 ))
 
+    # 4. Test-assertion drift (#458). Look for "test expects FIELD" patterns
+    #    where FIELD is not contracted AND a divergence signal follows.
+    violations.extend(_looks_like_test_drift(reasoning, contracts))
+
     return violations
 
 
@@ -259,6 +263,44 @@ def validate_verdict_against_contracts(
 # Excludes 'should', 'correctly', 'previously', etc.
 _FIELD_NAME_TOKEN_RE = re.compile(r"\b[a-z][a-z]*[A-Z][A-Za-z]+\b")
 _QUOTED_TOKEN_RE = re.compile(r"['\"]([A-Za-z_][\w]*)['\"]")
+# Require ≥3 chars starting with at least 2 letters — excludes very short
+# captures like 'a', 'an' which the looser pattern would match as the
+# `id` group (review feedback on PR #458). The regex alone cannot reject
+# longer English stopwords like 'the' / 'that' / 'valid'; those are
+# filtered by `_TEST_DRIFT_STOPWORDS` below.
+_TEST_TRIGGER_RE = re.compile(
+    r"\b(?:test|tests)\s+(?:expects?|asserts?)\s+(?P<id>[a-zA-Z][a-zA-Z]\w+)",
+    flags=re.IGNORECASE,
+)
+
+# Common English determiners / stopwords that the trigger regex could
+# capture as the `id` group. Compared case-insensitively below.
+_TEST_DRIFT_STOPWORDS = frozenset({
+    "the", "that", "this", "these", "those",
+    "valid", "invalid", "any", "all", "some", "none",
+    "true", "false", "null", "undefined",
+    "error", "errors", "data", "response", "request",
+    "field", "fields", "value", "values", "token", "tokens",
+    "result", "results", "type", "types", "list", "array",
+    "object", "string", "number", "boolean",
+    "it", "its", "their", "his", "her",
+    "a", "an",
+})
+
+# 'instead of' was dropped — too common in benign technical rationale
+# (e.g. "uses fieldA instead of fieldB"). The remaining signals are
+# specific to actual cross-branch breakage.
+_DIVERGENCE_SIGNALS = (
+    "will break",
+    "but backend returns",
+    "after merge",
+    "cross-branch",
+)
+
+# Broader token matcher for response-shape contents — covers snake_case
+# identifiers (e.g. `created_at`) that `_FIELD_NAME_TOKEN_RE` would skip.
+# Used only inside `_looks_like_test_drift` for contracted-name lookup.
+_RESPONSE_SHAPE_TOKEN_RE = re.compile(r"\b[a-z_][\w]{2,}\b")
 
 
 def _candidate_field_names(text: str) -> list[str]:
@@ -323,3 +365,63 @@ def _is_enum_family_member(candidate: str, allowed: list[str]) -> bool:
         if candidate.startswith(a[:4]) or a.startswith(candidate[:4]):
             return True
     return False
+
+
+def _looks_like_test_drift(reasoning: str, contracts: TeamContracts) -> list[Violation]:
+    """Detect 'test expects X' patterns where X is not contracted AND a
+    divergence signal appears AFTER the trigger phrase.
+
+    Heuristic by design — same approach as the other validator passes.
+    False-positive defenses:
+      1. Both the trigger phrase (``test expects X`` / ``tests assert X``)
+         AND a divergence signal (``will break``, ``after merge``, etc.)
+         must be present. Neither alone fires.
+      2. The identifier ``X`` must NOT be in any contracted name set
+         (field_names values, response_shapes tokens). Mentioning a
+         contracted name in a test phrase is benign.
+      3. The divergence signal must appear AFTER the trigger phrase in
+         the text (positional check), not anywhere.
+
+    Issue: #458.
+    """
+    violations: list[Violation] = []
+    if not reasoning:
+        return violations
+
+    # Build the set of every name the contract considers valid.
+    contracted_names = set(contracts.field_names.values())
+    # Response-shape values are free-form strings; extract identifier-like
+    # tokens from them so the validator knows they're contract-blessed.
+    # Uses the broader response-shape regex (snake_case + camelCase) so
+    # contract names like `created_at` aren't missed (review feedback #458).
+    for shape in contracts.response_shapes.values():
+        for token in _RESPONSE_SHAPE_TOKEN_RE.findall(shape):
+            contracted_names.add(token)
+
+    lower = reasoning.lower()
+    for match in _TEST_TRIGGER_RE.finditer(reasoning):
+        identifier = match.group("id")
+        if identifier.lower() in _TEST_DRIFT_STOPWORDS:
+            continue
+        if identifier in contracted_names:
+            continue
+        # match is over `reasoning` (raw); `lower` has same length so the index is safe.
+        # The divergence signal must appear AFTER the trigger phrase.
+        trigger_end = match.end()
+        suffix = lower[trigger_end:]
+        if not any(sig in suffix for sig in _DIVERGENCE_SIGNALS):
+            continue
+        contracted_list = sorted(contracted_names)
+        expected_str = ", ".join(contracted_list[:5])
+        if len(contracted_list) > 5:
+            expected_str += ", ..."
+        violations.append(Violation(
+            section="test_assertion_drift",
+            expected=expected_str,
+            found=identifier,
+            context=(
+                f"QA test expects '{identifier}' but contract doesn't include "
+                f"this field. Tests must follow the contracted response shape."
+            ),
+        ))
+    return violations
