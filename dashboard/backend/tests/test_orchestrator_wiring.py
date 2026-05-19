@@ -2034,3 +2034,18 @@ def test_build_team_prompt_qa_instruction_in_read_first_block():
     # And state the rule plainly:
     assert "fix the test to match the contract" in prompt.lower() or \
            "fix the test" in prompt.lower()
+
+
+def test_build_team_prompt_includes_picker_rules():
+    """The picker-rules section (#462) must appear in the prompt for
+    non-plan_only modes."""
+    from agent.station_orchestrator import build_team_prompt
+    prompt = build_team_prompt(
+        repo="org/repo",
+        issues=[{"number": 99, "title": "Test"}],
+        config={"projects": []},
+        run_id="run-test",
+        project_mode="full",
+    )
+    assert "BEFORE assigning any work" in prompt
+    assert "workspace_setup automatically prunes" in prompt

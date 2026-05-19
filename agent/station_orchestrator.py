@@ -1106,6 +1106,15 @@ isn't in the contract, the test is wrong — fix the test to match
 the contract. Never change source files (routes, services, models)
 to match what your test happened to assert."
 
+## Picker rules (#462)
+
+BEFORE assigning any work, you MUST call pick_issue against fresh
+GitHub state. If you find local branches in the workspace, IGNORE
+them — workspace_setup automatically prunes branches whose issues
+have been closed. Any remaining local branches are for currently-OPEN
+issues only, and even those you should NOT resume unless pick_issue
+explicitly selected the corresponding issue this run.
+
 ## Teammate Configuration
 
 - Agent type: `issue-worker`
