@@ -186,17 +186,22 @@ def validate_verdict_against_contracts(
     # 1. Field-name conflicts. Look for any "alt vs contracted" pattern
     #    or any non-contracted name appearing where a contracted one
     #    should ("returns X instead of Y" / "uses X while expects Y").
+    contracted_names = set(contracts.field_names.values())
     for canonical, chosen in contracts.field_names.items():
         if not chosen:
             continue
         if chosen in reasoning:
             # The chosen (canonical contracted) name is mentioned —
             # scan for any nearby substring that looks like a sibling
-            # field name. Heuristic: any token of length >= 6 that is
-            # NOT the chosen one and IS in the reasoning is suspicious
-            # IF the reasoning also names the sibling roles.
+            # field name. Heuristic: a true camelCase token that is
+            # NOT itself a contracted name and IS in the reasoning is
+            # suspicious IF a conflict-signal word appears between them.
             for token in _candidate_field_names(reasoning):
                 if token == chosen:
+                    continue
+                if token in contracted_names:
+                    # Another contracted name appearing alongside is not
+                    # itself a conflict — both are legitimate references.
                     continue
                 if _looks_like_field_name_conflict(reasoning, chosen, token):
                     violations.append(Violation(
@@ -226,10 +231,11 @@ def validate_verdict_against_contracts(
     # 3. Enum value conflicts. Look for quoted tokens that are not in
     #    the contracted allowed list for an enum named in the reasoning.
     for enum_name, allowed in contracts.enum_values.items():
-        if not enum_name or enum_name.lower() not in reasoning.lower():
-            # The enum's name itself isn't mentioned — skip to avoid
-            # over-matching on common words.
-            pass  # Continue; we still scan for the values.
+        if not enum_name:
+            continue
+        # We scan quoted tokens regardless of whether the enum name is
+        # mentioned, because the heuristic relies on family-member
+        # matching (_is_enum_family_member) for precision.
         for token in _quoted_tokens(reasoning):
             if token in allowed:
                 continue
@@ -249,36 +255,57 @@ def validate_verdict_against_contracts(
 
 # ----- helpers (private) ----------------------------------------------------
 
-_FIELD_NAME_TOKEN_RE = re.compile(r"\b[a-z][A-Za-z]{5,}\b")
+# Require at least one uppercase in positions 1+ — true camelCase.
+# Excludes 'should', 'correctly', 'previously', etc.
+_FIELD_NAME_TOKEN_RE = re.compile(r"\b[a-z][a-z]*[A-Z][A-Za-z]+\b")
 _QUOTED_TOKEN_RE = re.compile(r"['\"]([A-Za-z_][\w]*)['\"]")
 
 
 def _candidate_field_names(text: str) -> list[str]:
-    """camelCase identifiers >= 6 chars. Heuristic for field-name detection."""
+    """True camelCase identifiers (lowercase start, at least one inner uppercase).
+
+    Heuristic for field-name detection. The uppercase requirement excludes
+    common English words like ``should`` / ``correctly`` that previously
+    matched the looser length-only rule.
+    """
     return list(set(_FIELD_NAME_TOKEN_RE.findall(text)))
 
 
 def _looks_like_field_name_conflict(text: str, chosen: str, candidate: str) -> bool:
-    """True iff text references both names AND uses conflict-signaling words."""
+    """True iff text references both names AND a conflict signal word
+    appears in the text span BETWEEN them (not anywhere)."""
     if chosen not in text or candidate not in text:
         return False
-    signals = ("while", "vs", "instead of", "rather than", "expects", "but", "conflicts")
     lower = text.lower()
-    return any(sig in lower for sig in signals)
+    chosen_idx = lower.find(chosen.lower())
+    cand_idx = lower.find(candidate.lower())
+    if chosen_idx < 0 or cand_idx < 0:
+        return False
+    # Span between them (in either order).
+    lo = min(chosen_idx, cand_idx)
+    hi = max(chosen_idx, cand_idx)
+    span = lower[lo:hi]
+    signals = ("while", "vs", "instead of", "rather than", "expects", "conflicts")
+    # Note: dropped 'but' — too common in benign prose. The signals
+    # left all imply an actual contrast/disagreement.
+    return any(sig in span for sig in signals)
 
 
 def _route_implicated(text: str, route_path: str, role: str) -> bool:
-    """True iff text suggests the named role is doing something with this route."""
+    """True iff text suggests the named role is doing something to this route.
+
+    Heuristic: the role name must appear within 30 chars BEFORE the route
+    path (verb-position, e.g. 'frontend created /api/...'). Roles AFTER the
+    route path are typically consumers (e.g. 'frontend consumes it'), not
+    owners, and should not flag.
+    """
     lower = text.lower()
-    # Require the route path and the role name to appear within ~120 chars.
-    try:
-        ridx = lower.index(role)
-    except ValueError:
-        return False
     pidx = lower.find(route_path.lower())
     if pidx < 0:
         return False
-    return abs(ridx - pidx) < 120
+    # Look backwards from the route path for the role name.
+    window_start = max(0, pidx - 30)
+    return role in lower[window_start:pidx]
 
 
 def _quoted_tokens(text: str) -> list[str]:

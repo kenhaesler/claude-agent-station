@@ -206,3 +206,50 @@ def test_violation_message_format(tmp_path):
     assert vi.expected
     assert vi.found
     assert vi.context
+
+
+def test_validator_no_false_positive_on_benign_approve_reasoning(tmp_path):
+    """Common APPROVE-style prose that names contracted fields must not fire."""
+    from agent.team_contracts import (
+        parse_contracts, validate_verdict_against_contracts, CONTRACTS_FILENAME,
+    )
+    (tmp_path / CONTRACTS_FILENAME).write_text(SAMPLE_CONTRACTS)
+    contracts = parse_contracts(tmp_path)
+    v = _make_verdict(
+        "Backend implemented purchaseCost correctly, but should add tests for salvageValue."
+    )
+    violations = validate_verdict_against_contracts(v, contracts, tmp_path)
+    assert violations == [], (
+        f"Benign reasoning produced violations: {violations}"
+    )
+
+
+def test_validator_does_not_flag_frontend_as_route_consumer(tmp_path):
+    """Frontend consuming a backend-owned route is NOT a violation."""
+    from agent.team_contracts import (
+        parse_contracts, validate_verdict_against_contracts, CONTRACTS_FILENAME,
+    )
+    (tmp_path / CONTRACTS_FILENAME).write_text(SAMPLE_CONTRACTS)
+    contracts = parse_contracts(tmp_path)
+    v = _make_verdict(
+        "Backend implemented /api/depreciation correctly. Frontend consumes it."
+    )
+    violations = validate_verdict_against_contracts(v, contracts, tmp_path)
+    # No route-ownership violation: frontend as consumer is fine.
+    assert not any(vi.section == "route_ownership" for vi in violations)
+
+
+def test_validator_does_not_flag_two_contracted_field_names_together(tmp_path):
+    """Mentioning TWO contracted field names in one sentence is benign."""
+    from agent.team_contracts import (
+        parse_contracts, validate_verdict_against_contracts, CONTRACTS_FILENAME,
+    )
+    (tmp_path / CONTRACTS_FILENAME).write_text(SAMPLE_CONTRACTS)
+    contracts = parse_contracts(tmp_path)
+    v = _make_verdict(
+        "Reviewed: no issues with purchaseCost or salvageValue. Both look fine."
+    )
+    violations = validate_verdict_against_contracts(v, contracts, tmp_path)
+    assert violations == [], (
+        f"Two contracted names together produced violations: {violations}"
+    )
