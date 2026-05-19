@@ -180,6 +180,14 @@ def execute_approve(
     if verdict.issue_number is not None:
         _post_issue_comment(verdict, body_prefix="## Manager verdict: APPROVED",
                             run_id=run_id, env=env, into=result)
+
+    # 4. issue close (best-effort; #460). Gated on pr_url so we only
+    # close when there's a PR to point at — guards against degraded
+    # paths where gh pr create succeeded silently with no output.
+    if result.pr_url:
+        _close_issues(verdict, pr_url=result.pr_url, run_id=run_id,
+                      env=env, into=result)
+
     result.success = True
     return result
 
@@ -403,6 +411,12 @@ def execute_approve_integration(
             ),
             run_id=run_id, env=env, into=result,
         )
+
+    # 5. Issue close (best-effort; #460).
+    if result.pr_url:
+        _close_issues(verdict, pr_url=result.pr_url, run_id=run_id,
+                      env=env, into=result)
+
     result.success = True
     return result
 
@@ -456,6 +470,56 @@ def _resolve_issue_numbers(verdict: Verdict) -> list[int]:
         elif single and single.isdigit():
             numbers.add(int(single))
     return sorted(numbers)
+
+
+def _close_issues(
+    verdict: Verdict,
+    *,
+    pr_url: str,
+    run_id: str | None,
+    env: dict[str, str] | None,
+    into: ExecutionResult,
+) -> None:
+    """Close every issue addressed by this verdict via ``gh issue close``.
+
+    Best-effort. Each failure is logged at WARNING and the helper
+    continues to the next issue. The verdict's success state is
+    never affected.
+
+    Closes the union of branch-name-extracted issue numbers and
+    ``verdict.issue_number`` (see :func:`_resolve_issue_numbers`).
+    Idempotent via ``gh`` — already-closed issues return an error
+    that we swallow.
+
+    #460.
+    """
+    issue_numbers = _resolve_issue_numbers(verdict)
+    if not issue_numbers:
+        return
+
+    body_parts = ["Closed by autonomous agent"]
+    if run_id:
+        body_parts.append(run_id)
+    body_parts.append(f"via PR {pr_url}")
+    body = " ".join(body_parts) + "."
+
+    for issue_number in issue_numbers:
+        result = gh_run(
+            [
+                "issue", "close", str(issue_number),
+                "--repo", verdict.project,
+                "--reason", "completed",
+                "--comment", body,
+            ],
+            env=env,
+        )
+        if result.ok:
+            into.with_action(f"gh issue close #{issue_number}")
+        else:
+            logger.warning(
+                "verdict_execution: gh issue close failed for %s#%s: %s",
+                verdict.project, issue_number, result.stderr.strip()[:200],
+            )
 
 
 def _pr_title(verdict: Verdict) -> str:
