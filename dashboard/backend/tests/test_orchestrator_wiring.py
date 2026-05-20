@@ -2049,3 +2049,25 @@ def test_build_team_prompt_includes_picker_rules():
     )
     assert "BEFORE assigning any work" in prompt
     assert "workspace_setup automatically prunes" in prompt
+
+
+def test_build_team_prompt_includes_acceptance_decomposition_and_qa_test_ownership():
+    """Both the lead's acceptance-criteria decomposition block and the
+    QA spawn-prompt test-ownership addendum must appear in the prompt
+    for non-plan_only modes. #464."""
+    from agent.station_orchestrator import build_team_prompt
+    prompt = build_team_prompt(
+        repo="org/repo",
+        issues=[{"number": 99, "title": "Test"}],
+        config={"projects": []},
+        run_id="run-test",
+        project_mode="full",
+    )
+    # A — Lead workflow tightening
+    assert "Acceptance-criteria decomposition" in prompt
+    assert "test files (`*.test.ts`" in prompt.lower() or \
+           "test files (*.test.ts" in prompt.lower() or \
+           "test files" in prompt.lower()
+    # B — QA spawn-prompt addendum
+    assert "you are responsible for creating those test files" in prompt.lower()
+    assert "never skip a run just because" in prompt.lower()
