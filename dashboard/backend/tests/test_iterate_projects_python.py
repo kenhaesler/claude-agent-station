@@ -951,3 +951,79 @@ def test_summarize_prior_verdicts_picks_most_recent_matching_file(tmp_path):
     assert summary is not None
     assert "new reasoning" in summary
     assert "old reasoning" not in summary
+
+
+def test_iterate_projects_logs_missing_test_coverage_warning(
+    tmp_path, monkeypatch, caplog
+):
+    """When the issue body references a test path that no APPROVE verdict
+    acknowledges, iterate_projects logs a WARNING with the missing
+    test path. #464."""
+    import logging
+    from agent import project_loop
+
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+    monkeypatch.setenv("STATION_LOG_DIR", str(log_dir))
+
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        '{"projects":[{"repo":"org/repo","enabled":true,"mode":"full"}]}'
+    )
+
+    async def fake_orchestrate(*a, **kw):
+        return (0, None, True)
+
+    monkeypatch.setattr(
+        "agent.station_orchestrator.orchestrate_project", fake_orchestrate
+    )
+    monkeypatch.setattr(
+        "agent.workspace_setup.ensure_workspace",
+        lambda *a, **kw: str(tmp_path / "ws"),
+    )
+    monkeypatch.setattr(
+        "agent.station_orchestrator._read_verdicts_file",
+        lambda p: {"verdicts": [{
+            "project": "org/repo",
+            "verdict": "APPROVE",
+            "issue_number": 99,
+            "branch": "feature/backend-issue-99",
+            "base_branch": "claude-agent-station",
+            "reasoning": "Route implementation is correct.",
+            "feedback_to_employee": "Looks good.",
+            "requirements_met": ["Route returns 200"],
+        }]},
+    )
+    monkeypatch.setattr("agent.webhook_emitter.emit", lambda *a, **kw: None)
+    monkeypatch.setattr("agent.preflight.run_preflight", lambda *a, **kw: None)
+    monkeypatch.setattr("agent.queue_recovery.purge_and_recover", lambda *a, **kw: None)
+    monkeypatch.setattr("agent.queue_recovery.resume_paused", lambda: None)
+    monkeypatch.setattr("agent.digest.write_digest", lambda **kw: "")
+    monkeypatch.setattr("agent.verdict_execution.execute",
+                        lambda *a, **kw: None)
+
+    import subprocess
+    def fake_subprocess(cmd, *args, **kwargs):
+        if isinstance(cmd, list) and cmd[:3] == ["gh", "issue", "view"]:
+            body = (
+                "## Acceptance\n"
+                "- Unit tests in src/app/api/health/route.test.ts "
+                "covering both branches"
+            )
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0, stdout=body, stderr=""
+            )
+        return subprocess.CompletedProcess(
+            args=cmd, returncode=0, stdout="", stderr=""
+        )
+    monkeypatch.setattr("agent.project_loop.subprocess.run", fake_subprocess)
+
+    caplog.set_level(logging.WARNING, logger="agent.project_loop")
+    project_loop.iterate_projects(
+        "test-run", str(config_path), str(tmp_path / "ws")
+    )
+
+    assert any(
+        "missing test coverage" in record.message.lower()
+        for record in caplog.records
+    ), f"Expected 'missing test coverage' WARNING; got: {[r.message for r in caplog.records]}"

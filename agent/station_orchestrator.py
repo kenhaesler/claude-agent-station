@@ -934,6 +934,22 @@ any verdict that conflicts with the contract.
 5. **Actively monitor** teammates until each has written
    `.claude-employee-report-<index>.json` or 20 minutes elapse (see monitoring rules below).
 6. After teammates finish, **synthesize a final JSON summary**.
+
+### Acceptance-criteria decomposition (#464)
+
+Read each issue's body carefully. For EVERY item in the acceptance
+criteria, the approved plan should map to the right role:
+
+  - Source code (routes, services, models, components) → backend or
+    frontend per location.
+  - Test files (`*.test.ts`, `*.spec.ts`, `Unit tests in ...`,
+    `tests/test_*.py`) → ALWAYS QA, even when the file path lives
+    inside backend/frontend territory.
+  - Docs / configuration → assign to whoever owns the adjacent code.
+
+If the issue body explicitly names a test file path, the QA teammate
+MUST create that file. The manager will reject any APPROVE that
+doesn't satisfy every acceptance item.
 """
     else:
         workflow_section = f"""## Your Workflow
@@ -949,6 +965,22 @@ any verdict that conflicts with the contract.
 6. Review plans — reject if they conflict with another teammate's work
 7. **Actively monitor** teammates until ALL tasks are completed (see monitoring rules)
 8. After all work is done, **synthesize a final JSON summary**
+
+### Acceptance-criteria decomposition (#464)
+
+Read each issue's body carefully. For EVERY item in the acceptance
+criteria, the approved plan should map to the right role:
+
+  - Source code (routes, services, models, components) → backend or
+    frontend per location.
+  - Test files (`*.test.ts`, `*.spec.ts`, `Unit tests in ...`,
+    `tests/test_*.py`) → ALWAYS QA, even when the file path lives
+    inside backend/frontend territory.
+  - Docs / configuration → assign to whoever owns the adjacent code.
+
+If the issue body explicitly names a test file path, the QA teammate
+MUST create that file. The manager will reject any APPROVE that
+doesn't satisfy every acceptance item.
 """
 
     # Build the manager-spawn section (#390): inject only when the caller
@@ -1104,7 +1136,12 @@ every assertion on an API response field MUST match the contract's
 Response Shapes section. If your test expects a field name that
 isn't in the contract, the test is wrong — fix the test to match
 the contract. Never change source files (routes, services, models)
-to match what your test happened to assert."
+to match what your test happened to assert.
+
+Additionally: when the issue's acceptance criteria reference unit
+tests, integration tests, or specific test files, YOU are responsible for creating those test files.
+NEVER skip a run just because the issue is backend-scoped — your scope is testing, which exists for
+backend issues too. If the lead didn't create a coordinator task for you, claim the test work yourself."
 
 ## Picker rules (#462)
 
