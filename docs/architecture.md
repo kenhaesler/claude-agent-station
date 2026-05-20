@@ -372,10 +372,16 @@ the new contracts file.
 **Advisory validator:** `agent/team_contracts.py::validate_verdict_against_contracts`
 scans each manager verdict's `reasoning` text for contract violations
 (field-name mismatch, route-ownership conflict, enum-value drift,
-test-assertion drift).
+test-assertion drift, test-file coverage).
 The test-assertion drift check (#458) flags `"test expects X"`
 patterns where X isn't in the contract's Response Shapes section AND
 a divergence signal (`will break`, `after merge`, etc.) follows.
+The test-file coverage check (#464) fires when an issue body
+references a specific test file path (e.g.
+`src/app/api/health/route.test.ts`) but no APPROVE verdict's
+requirements_met or feedback acknowledges that path. Surfaces the
+case where QA produced no verdict OR produced one without creating
+the requested test file.
 Violations are logged at WARNING; verdicts are NOT auto-flipped —
 the manager has final say. The validator is heuristic by design
 (string matching against the manager's prose), not a full code parser.
