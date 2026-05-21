@@ -162,16 +162,25 @@ def execute_approve(
     env: dict[str, str] | None = None,
     dev_branch: str | None = None,  # noqa: ARG001 — kept for dispatcher symmetry
 ) -> ExecutionResult:
-    """Push the branch, open a PR, comment on the issue.
+    """Push the branch, open a non-draft PR, arm auto-merge, close the issue.
 
-    ``dev_branch`` is accepted but ignored — the dispatcher passes the
-    same kwargs to every executor, and only ``execute_approve_integration``
-    consumes it. Without the parameter here, the dispatcher's blind
-    ``**kwargs`` passthrough raises TypeError and every APPROVE silently
-    failed before this fix.
+    APPROVE = "ready to land." The executor opens a PR and arms
+    ``gh pr merge --auto --squash``. Branch protection on the base ref
+    decides whether the merge happens immediately (no required checks)
+    or waits on CI/required reviews. Either way the operator's branch
+    protection rules — not the verdict logic — gate the merge.
 
-    Does NOT auto-merge, does NOT close the issue — those decisions live
-    in the bash path that consumes this module (deferred follow-up).
+    Before 2026-05-21 there was a separate ``APPROVE_INTEGRATION`` verdict
+    that did the auto-merge while ``APPROVE`` only opened the PR. The
+    manager prompt's decision tree, verdict description, and confidence
+    table all conspired to pick ``APPROVE`` for routine completed work,
+    which meant PRs piled up open with no one to merge them. The two
+    verdicts have been collapsed: APPROVE_INTEGRATION is now an alias
+    that delegates to this function (preserved for backward compat with
+    stored verdicts and the executor dispatch table).
+
+    ``dev_branch`` is accepted but ignored — kept for dispatcher symmetry.
+    Missing-kwarg failures here used to crash the loop (#470).
     """
     result = ExecutionResult(
         verdict="APPROVE",
@@ -195,7 +204,9 @@ def execute_approve(
         return result
     result.with_action("git push")
 
-    # 2. gh pr create
+    # 2. gh pr create — non-draft, base from the verdict (the manager has
+    # already chosen integration vs. trunk via the employee's base_branch
+    # report).
     pr = gh_run(
         [
             "pr", "create",
@@ -213,7 +224,27 @@ def execute_approve(
     result.pr_url = pr.stdout.strip()
     result.with_action(f"gh pr create → {result.pr_url}")
 
-    # 3. issue comment (best-effort; do not fail the verdict on this)
+    # 3. gh pr merge --auto --squash. Best-effort: a failure to arm
+    # auto-merge (branch protection misconfigured, repo doesn't allow
+    # squash, etc.) does not invalidate the PR. The operator's branch
+    # protection rules are the merge gate; --auto just means "merge
+    # when those rules allow."
+    merge = gh_run(
+        ["pr", "merge", "--auto", "--squash", result.pr_url],
+        env=env,
+    )
+    if merge.ok:
+        result.with_action("gh pr merge --auto --squash")
+    else:
+        logger.warning(
+            "verdict_execution: auto-merge arm failed for %s: %s",
+            result.pr_url, merge.stderr.strip()[:200],
+        )
+        result.with_action(
+            f"gh pr merge --auto failed: {merge.stderr.strip()[:80]}"
+        )
+
+    # 4. issue comment (best-effort; do not fail the verdict on this)
     if verdict.issue_number is not None:
         _post_issue_comment(verdict, body_prefix="## Manager verdict: APPROVED",
                             run_id=run_id, env=env, into=result)
@@ -365,104 +396,33 @@ def execute_approve_integration(
     workspace: Path,
     run_id: str | None = None,
     env: dict[str, str] | None = None,
-    dev_branch: str | None = None,
+    dev_branch: str | None = None,  # noqa: ARG001 — retained for caller-API stability
 ) -> ExecutionResult:
-    """Push the branch, open a non-draft PR against the integration/dev
-    branch, then arm GitHub auto-merge (``gh pr merge --auto --squash``).
+    """**Deprecated.** Alias for :func:`execute_approve`.
 
-    If ``dev_branch`` is None or empty, the executor degrades to
-    :func:`execute_approve` with a warning — the manager should not have
-    emitted this verdict against a project without integration enabled,
-    but we accept rather than fail the run.
+    APPROVE and APPROVE_INTEGRATION used to be distinct verdicts: the
+    former opened a PR without arming auto-merge, the latter armed it.
+    The manager prompt's decision tree + verdict description + confidence
+    table all conspired to pick APPROVE for routine work, leaving PRs
+    open with no one to merge them (run-20260521T210606Z produced #6
+    and #7 in laboef1900/LCM that sat untouched). The two verdicts have
+    been collapsed: APPROVE now always arms auto-merge, branch
+    protection on the base ref gates the actual merge.
+
+    This shim preserves the old verdict name for backward compatibility
+    with stored verdicts, the executor dispatch table, and any tooling
+    that still emits APPROVE_INTEGRATION. The returned
+    ``ExecutionResult.verdict`` is patched back to ``"APPROVE_INTEGRATION"``
+    so telemetry consumers can still distinguish them.
     """
-    if not dev_branch:
-        logger.warning(
-            "APPROVE_INTEGRATION emitted without dev_branch for %s — "
-            "degrading to APPROVE",
-            verdict.project,
-        )
-        # Intentionally re-passes only the kwargs execute_approve accepts.
-        # If the dispatcher gains new kwargs in the future, they are not
-        # forwarded here — degradation drops them on purpose so we don't
-        # surface APPROVE_INTEGRATION-specific options through APPROVE.
-        return execute_approve(
-            verdict, workspace=workspace, run_id=run_id, env=env,
-        )
-
-    result = ExecutionResult(
-        verdict="APPROVE_INTEGRATION",
-        project=verdict.project,
-        issue_number=verdict.issue_number,
-        success=False,
-    )
-
-    if _is_worktree_isolation_branch(verdict.branch):
-        result.error = _WORKTREE_BRANCH_ERROR.format(branch=verdict.branch)
-        return result
-
-    # 1. git push -u origin <branch>
-    push = subprocess.run(
-        ["git", "push", "-u", "origin", verdict.branch],
-        cwd=str(workspace), capture_output=True, text=True, env=env,
-    )
-    if push.returncode != 0:
-        result.error = f"git push failed: {push.stderr.strip()[:200]}"
-        return result
-    result.with_action("git push")
-
-    # 2. gh pr create — NO --draft; base = integration/dev branch.
-    pr = gh_run(
-        [
-            "pr", "create",
-            "--repo", verdict.project,
-            "--head", verdict.branch,
-            "--base", dev_branch,
-            "--title", _pr_title(verdict),
-            "--body", _build_pr_body(verdict, run_id=run_id),
-        ],
+    result = execute_approve(
+        verdict,
+        workspace=workspace,
+        run_id=run_id,
         env=env,
+        dev_branch=dev_branch,
     )
-    if not pr.ok:
-        result.error = f"gh pr create failed: {pr.stderr.strip()[:200]}"
-        return result
-    result.pr_url = pr.stdout.strip()
-    result.with_action(f"gh pr create (non-draft) → {result.pr_url}")
-
-    # 3. gh pr merge --auto --squash <pr_url>. Best-effort: a failure to
-    # arm auto-merge (e.g. branch protection misconfigured) does not
-    # invalidate the PR itself.
-    merge = gh_run(
-        [
-            "pr", "merge", "--auto", "--squash", result.pr_url,
-        ],
-        env=env,
-    )
-    if merge.ok:
-        result.with_action("gh pr merge --auto --squash")
-    else:
-        logger.warning(
-            "verdict_execution: auto-merge arm failed for %s: %s",
-            result.pr_url, merge.stderr.strip()[:200],
-        )
-        result.with_action(f"gh pr merge --auto failed: {merge.stderr.strip()[:80]}")
-
-    # 4. Issue comment (best-effort).
-    if verdict.issue_number is not None:
-        _post_issue_comment(
-            verdict,
-            body_prefix=(
-                f"## Manager verdict: APPROVE_INTEGRATION — "
-                f"auto-merge armed against `{dev_branch}`. CI gates merge."
-            ),
-            run_id=run_id, env=env, into=result,
-        )
-
-    # 5. Issue close (best-effort; #460).
-    if result.pr_url:
-        _close_issues(verdict, pr_url=result.pr_url, run_id=run_id,
-                      env=env, into=result)
-
-    result.success = True
+    result.verdict = "APPROVE_INTEGRATION"
     return result
 
 

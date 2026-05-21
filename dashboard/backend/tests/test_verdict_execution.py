@@ -65,7 +65,11 @@ def _fail_subprocess(stderr: str = "permission denied"):
 # ── APPROVE ────────────────────────────────────────────────────────────
 
 
-def test_approve_pushes_branch_then_creates_pr_then_comments(tmp_path):
+def test_approve_pushes_branch_then_creates_pr_then_arms_auto_merge_then_comments(tmp_path):
+    """APPROVE collapsed with APPROVE_INTEGRATION (2026-05-21 follow-up):
+    every approve now arms ``gh pr merge --auto --squash`` so branch
+    protection on the base ref decides when the PR actually lands.
+    Pin the four gh calls in order."""
     from agent.verdict_execution import execute
 
     pr_url = "https://github.com/owner/repo/pull/100"
@@ -74,6 +78,7 @@ def test_approve_pushes_branch_then_creates_pr_then_comments(tmp_path):
                return_value=_ok_subprocess()) as mock_sp, \
          patch("agent.verdict_execution.gh_run") as mock_gh:
         mock_gh.side_effect = [_ok_gh_result(stdout=pr_url),
+                               _ok_gh_result(stdout=""),   # gh pr merge --auto
                                _ok_gh_result(stdout=""),   # issue comment
                                _ok_gh_result(stdout="")]   # gh issue close (#460)
         result = execute(_verdict("APPROVE"), workspace=tmp_path, run_id="run-1")
@@ -90,10 +95,17 @@ def test_approve_pushes_branch_then_creates_pr_then_comments(tmp_path):
     assert pr_args[pr_args.index("--repo") + 1] == "owner/repo"
     assert pr_args[pr_args.index("--head") + 1] == "autonomous/issue-42"
     assert pr_args[pr_args.index("--base") + 1] == "main"
-    # gh issue comment second
-    comment_args = mock_gh.call_args_list[1].args[0]
+    # gh pr merge --auto --squash second
+    merge_args = mock_gh.call_args_list[1].args[0]
+    assert merge_args[:2] == ["pr", "merge"]
+    assert "--auto" in merge_args and "--squash" in merge_args
+    assert pr_url in merge_args
+    # gh issue comment third
+    comment_args = mock_gh.call_args_list[2].args[0]
     assert comment_args[:2] == ["issue", "comment"]
     assert "42" in comment_args
+    # Result records the auto-merge action so the digest reflects it
+    assert any("gh pr merge --auto --squash" in a for a in result.actions)
 
 
 def test_approve_records_failure_when_git_push_fails(tmp_path):
@@ -132,6 +144,7 @@ def test_approve_body_includes_closes_keyword_when_issue_present(tmp_path):
                return_value=_ok_subprocess()), \
          patch("agent.verdict_execution.gh_run",
                side_effect=[_ok_gh_result(stdout=pr_url),
+                            _ok_gh_result(),   # gh pr merge --auto (collapse #475)
                             _ok_gh_result(),   # issue comment
                             _ok_gh_result()]) as mock_gh:  # gh issue close (#460)
         execute(_verdict("APPROVE"), workspace=tmp_path, run_id="run-1")
@@ -313,7 +326,12 @@ def _stub_gh_ok(stdout: str = "https://github.com/owner/repo/pull/99") -> MagicM
 
 
 def test_execute_approve_integration_happy_path(tmp_path: Path):
-    """Push, non-draft PR against dev branch, auto-merge armed, comment posted."""
+    """APPROVE_INTEGRATION is now an alias for APPROVE (collapse #475).
+    The behavior is the four-call APPROVE sequence; only the result's
+    ``verdict`` field is patched back to ``APPROVE_INTEGRATION`` for
+    telemetry. The PR base comes from ``verdict.base_branch``, not the
+    ``dev_branch`` kwarg, since the manager already chose integration
+    via the employee's reported base."""
     from agent.verdict_execution import execute_approve_integration, Verdict
 
     workspace = tmp_path / "ws"
@@ -323,7 +341,7 @@ def test_execute_approve_integration_happy_path(tmp_path: Path):
         issue_number=42,
         verdict="APPROVE_INTEGRATION",
         branch="autonomous/issue-42",
-        base_branch="main",
+        base_branch="dev",  # employee reported the dev branch as base
         reasoning="Auth change; tests pass; CI gates merge.",
     )
 
@@ -334,10 +352,6 @@ def test_execute_approve_integration_happy_path(tmp_path: Path):
         call_log.append(("gh", tuple(args)))
         if args[:2] == ["pr", "create"]:
             return _stub_gh_ok(pr_url)
-        if args[:3] == ["pr", "merge", "--auto"]:
-            return _stub_gh_ok("")
-        if args[:2] == ["issue", "comment"]:
-            return _stub_gh_ok("")
         return _stub_gh_ok("")
 
     def subprocess_run_spy(args, **kwargs):  # noqa: ARG001
@@ -359,16 +373,17 @@ def test_execute_approve_integration_happy_path(tmp_path: Path):
 
     assert result.success is True
     assert result.pr_url == pr_url
+    # Telemetry: alias preserves the verdict label
     assert result.verdict == "APPROVE_INTEGRATION"
 
-    # Order: git push, gh pr create (no --draft), gh pr merge --auto --squash, issue comment.
+    # Order: git push, gh pr create (no --draft), gh pr merge --auto --squash, issue comment, issue close.
     kinds = [c[0] for c in call_log]
     assert kinds[:4] == ["sub", "gh", "gh", "gh"], call_log
 
     # 1) git push -u origin <branch>
     assert call_log[0][1][:5] == ("git", "push", "-u", "origin", "autonomous/issue-42")
 
-    # 2) gh pr create — base = dev, no --draft anywhere
+    # 2) gh pr create — base = verdict.base_branch ("dev"), no --draft
     create_args = call_log[1][1]
     assert create_args[:2] == ("pr", "create")
     assert "--base" in create_args
@@ -388,9 +403,13 @@ def test_execute_approve_integration_happy_path(tmp_path: Path):
     assert "42" in comment_args
 
 
-def test_execute_approve_integration_degrades_when_dev_branch_missing(tmp_path, caplog):
-    """No dev_branch → degrade to execute_approve and emit a warning."""
-    from agent.verdict_execution import execute_approve_integration, Verdict, ExecutionResult
+def test_execute_approve_integration_is_alias_for_approve(tmp_path):
+    """Collapse #475: the alias must produce the same actions as APPROVE
+    and only patch the verdict label. No more "degrade to APPROVE on
+    missing dev_branch" branch — APPROVE itself is now the single path."""
+    from agent.verdict_execution import (
+        execute_approve_integration, Verdict, ExecutionResult,
+    )
 
     workspace = tmp_path / "ws"
     workspace.mkdir()
@@ -399,26 +418,35 @@ def test_execute_approve_integration_degrades_when_dev_branch_missing(tmp_path, 
         issue_number=7,
         verdict="APPROVE_INTEGRATION",
         branch="autonomous/issue-7",
-        base_branch="main",
-        reasoning="Manager misemitted; integration disabled.",
+        base_branch="claude-agent-station",
+        reasoning="ok",
     )
 
-    with patch("agent.verdict_execution.execute_approve") as approve_mock, \
-         caplog.at_level("WARNING", logger="agent.verdict_execution"):
-        approve_mock.return_value = ExecutionResult(
-            verdict="APPROVE",
-            project=verdict.project,
-            issue_number=7,
-            success=True,
-            pr_url="https://github.com/owner/repo/pull/12",
-        )
+    base_result = ExecutionResult(
+        verdict="APPROVE",
+        project=verdict.project,
+        issue_number=7,
+        success=True,
+        pr_url="https://github.com/owner/repo/pull/12",
+        actions=["git push", "gh pr create", "gh pr merge --auto --squash"],
+    )
+
+    with patch(
+        "agent.verdict_execution.execute_approve",
+        return_value=base_result,
+    ) as approve_mock:
         result = execute_approve_integration(
             verdict, workspace=workspace, run_id="r1", dev_branch=None,
         )
 
-    assert approve_mock.called
+    # Delegated to execute_approve once.
+    approve_mock.assert_called_once()
+    # All other fields preserved from the delegate's return.
     assert result.success is True
-    assert any("degrading to APPROVE" in rec.message for rec in caplog.records)
+    assert result.pr_url == "https://github.com/owner/repo/pull/12"
+    assert "gh pr merge --auto --squash" in result.actions
+    # Only the verdict label is patched.
+    assert result.verdict == "APPROVE_INTEGRATION"
 
 
 def test_execute_approve_integration_push_failure_short_circuits(tmp_path):

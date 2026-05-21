@@ -190,19 +190,18 @@ Evaluate:
 
 ### APPROVE
 - All requirements fully implemented, tests pass, code quality acceptable.
-- Action: Push branch, merge to integration branch (autonomous/dev) if enabled, or merge to base branch. Issue is labeled, NOT closed immediately -- it closes when promoted to main.
+- Action: Push branch, open a non-draft PR against the employee's reported `base_branch` (integration/dev branch when integration is enabled, otherwise the project's trunk), and arm `gh pr merge --auto --squash`. Branch protection on the base ref decides when the PR lands — required checks + reviewers + status gates all behave normally; the auto-merge just means "merge the moment those gates pass." Issue is commented + closed via the PR.
 
 ### APPROVE_INTEGRATION
-- Work is complete and tested, but touches sensitive code (auth, payments, config) or is large enough to want CI-as-gate before landing.
-- Action: Push branch, open non-draft PR against the integration/dev branch, enable auto-merge (`gh pr merge --auto --squash`). CI gates the merge; no human review required.
-- Use this in preference to PR whenever tests pass and the only reason for human review would be "sensitivity". Reserve PR for cases where a human must actually look.
+- **Deprecated alias for APPROVE.** Behaves identically — kept only so stored verdicts and external tooling that still emit it keep working. Prefer `APPROVE` for new verdicts.
 
 ### PR
-- Work is solid but needs human review:
-  - Large scope (>10 files)
-  - Tests pass but coverage is uncertain
-  - Requirements are ambiguous
-- Action: Push branch, create PR for human review (do NOT close issue).
+- Work is solid but needs *human* review (not just CI):
+  - Large scope (>30 files) where a human should eyeball the shape
+  - Tests pass but coverage is uncertain enough that you want a human read
+  - Requirements are ambiguous and you want a human to confirm the interpretation
+- Action: Push branch, create draft PR for human review (do NOT close issue, do NOT arm auto-merge).
+- Reserve PR for cases where a human must actually look. If CI is sufficient gating, prefer APPROVE.
 
 ### REJECT
 - Requirements partially or not implemented, tests fail, code quality issues (bugs, security problems), scope creep.
@@ -215,14 +214,13 @@ Evaluate:
 
 **Decision tree:**
 - Work incomplete? → **REJECT**
-- Work complete + normal scope + non-sensitive? → **APPROVE**
-- Work complete + sensitive (auth/payments/config) + tests pass? → **APPROVE_INTEGRATION**
-- Work complete + ambiguous requirements OR tests skipped OR scope > 30 files? → **PR**
+- Work complete + tests pass? → **APPROVE** (auto-merge armed; branch protection gates)
+- Work complete + needs human eyes (scope > 30 files, ambiguous requirements, uncertain coverage)? → **PR**
 - No work to do? → **SKIP**
 
 Use **SKIP** instead of REJECT when the employee did nothing wrong — there was simply nothing to do.
 
-Use **APPROVE_INTEGRATION** instead of **PR** whenever tests pass: a human-review PR that nobody clicks merges nothing; an auto-merge PR lands the moment CI passes.
+Use **APPROVE** in preference to **PR** whenever tests pass: a human-review PR that nobody clicks merges nothing; an APPROVE arms auto-merge and lands the moment CI passes. The only reason to prefer PR is "a human really must look."
 
 ### Confidence-Based Verdict Modifiers
 
@@ -230,9 +228,8 @@ When the employee report includes a `confidence` score, use it as an additional 
 
 | Confidence | Tests Pass? | Guidance |
 |-----------|------------|---------|
-| >= 0.9 | Yes | Strong candidate for APPROVE |
-| 0.7-0.9 | Yes | APPROVE_INTEGRATION (auto-merge to dev once CI passes) |
-| 0.5-0.7 | Any | Lean toward REJECT or PR |
+| >= 0.7 | Yes | APPROVE (auto-merge armed; branch protection gates) |
+| 0.5-0.7 | Any | Lean toward REJECT or PR (human read warranted) |
 | < 0.5 | Any | Lean toward REJECT |
 
 **Important**: Confidence is an input, not a decision override. A high-confidence report with failing tests should still be REJECTED. A low-confidence report with passing tests and complete requirements might still be APPROVED. Use your judgment.
