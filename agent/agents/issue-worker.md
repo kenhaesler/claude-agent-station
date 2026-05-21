@@ -50,10 +50,16 @@ This narration is streamed to the operator's Bridge in real time. Never skip it.
 ### Step 0: Set Up Your Worktree
 1. `cd` into the worktree path provided in your spawn prompt. This is MANDATORY.
 2. Check if `CLAUDE.md` or `.claude/CLAUDE.md` exists. If so, **read it fully** and follow all conventions.
-3. Set up the base branch:
-   - `git fetch origin`
-   - If `autonomous/dev` exists on remote: `git checkout autonomous/dev && git pull`
-   - If not: `git checkout -b autonomous/dev`
+3. Verify the worktree's pre-set branch (do NOT change it):
+   - The orchestrator has already created this worktree on a private isolation branch
+     named `worktree/<role>-<run_id_prefix>` (e.g. `worktree/backend-20260521`), branched
+     from the project's integration branch. Do **NOT** `git checkout` a different branch
+     here — that defeats the worktree isolation and may conflict with another teammate.
+   - Confirm with `git branch --show-current`. The output MUST start with `worktree/`.
+     If it does not, STOP and message the lead — your worktree was set up incorrectly
+     and pushing later will fail.
+   - Do **NOT** run `git pull`, `git fetch`, or any branch-switching command here. The
+     orchestrator already fetched origin and pinned the worktree to the right base.
 
 ### Step 1: Claim and Understand Your Tasks
 1. Review the shared task list for tasks matching your specialization.
@@ -127,11 +133,30 @@ any source file was modified — you may produce a plan-quality output but
 must stay read-only.
 
 ### Step 4: Implement
-1. Create feature branch: `git checkout -b autonomous/issue-<number>`
+
+**Precondition:** you are currently on the worktree-private branch
+`worktree/<role>-<run_id_prefix>` (verified in Step 0.3). That branch is an
+isolation primitive, **not the deliverable**. Before any code change, branch off
+it onto a real feature branch.
+
+1. **Create the feature branch on top of the worktree branch** — pick the name
+   from CLAUDE.md's convention, falling back to `autonomous/issue-<number>`:
+   ```bash
+   git checkout -b autonomous/issue-<number>
+   # or, if CLAUDE.md prefers feature/<description>:
+   # git checkout -b feature/issue-<number>-<slug>
+   ```
 2. Implement changes following your plan.
 3. Write or update tests as appropriate.
 4. Run the project's linter and test suite.
 5. Fix any failures before committing.
+
+**HARD RULE — never commit on a `worktree/...` branch.** If you forgot Step 4.1
+and made a commit already, do not push. Instead: `git checkout -b
+autonomous/issue-<number>` (which carries your commits onto the new branch),
+verify with `git log --oneline -3`, then continue. The manager will reject any
+verdict whose branch matches `worktree/<role>-<run_id_prefix>` because such a
+ref exists only inside this worktree and cannot be pushed to origin.
 
 ### Step 5: Commit, Push & Report
 1. Stage and commit with conventional format: `feat|fix|refactor(scope): description`
