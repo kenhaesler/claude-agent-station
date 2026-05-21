@@ -314,6 +314,15 @@ async def get_chat_session(project_id: int, db: AsyncSession = Depends(get_db)):
     session = await get_active_session(db, project_id)
     if not session:
         raise HTTPException(status_code=404, detail="no active session")
+
+    from app.models import VisionChatAttachment as _VCA
+    pending_q = await db.execute(
+        select(_VCA).where(_VCA.session_id == session.id, _VCA.sent_at.is_(None))
+    )
+    pending = [
+        VisionAttachmentOut(id=a.id, filename=a.filename, mime_type=a.mime_type, size_bytes=a.size_bytes)
+        for a in pending_q.scalars().all()
+    ]
     return VisionChatSessionOut(
         id=session.id,
         project_id=session.project_id,
@@ -324,6 +333,7 @@ async def get_chat_session(project_id: int, db: AsyncSession = Depends(get_db)):
         assembled=json.loads(session.assembled) if session.assembled else None,
         created_at=session.created_at.isoformat() if session.created_at else "",
         updated_at=session.updated_at.isoformat() if session.updated_at else "",
+        pending_attachments=pending,
     )
 
 
@@ -333,8 +343,13 @@ async def delete_chat_session(project_id: int, db: AsyncSession = Depends(get_db
     session = await get_active_session(db, project_id)
     if not session:
         raise HTTPException(status_code=404, detail="no active session")
-    await mark_cancelled(db, session.id)
+    sid = session.id
+    await mark_cancelled(db, sid)
     await db.commit()
+    try:
+        va.cleanup_session_dir(sid)
+    except Exception:
+        logger.warning("cleanup_session_dir failed for session %s", sid, exc_info=True)
 
 
 # ---------------------------------------------------------------------------

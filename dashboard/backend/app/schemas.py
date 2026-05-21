@@ -1003,6 +1003,7 @@ class VisionChatSessionOut(BaseModel):
     assembled: dict | None
     created_at: str
     updated_at: str
+    pending_attachments: list[VisionAttachmentOut] = []
 
 
 class VisionAttachmentOut(BaseModel):
