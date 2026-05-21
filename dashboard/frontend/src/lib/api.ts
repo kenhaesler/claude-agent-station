@@ -14,7 +14,7 @@ import type {
   PromptInfo, StationConfig, TokenUsage,
   AgentEvent, Notification,
   TelemetrySummary,
-  VisionRead, VisionDoc, VisionCommitOut, VisionChatSession, VisionProposals,
+  VisionRead, VisionDoc, VisionCommitOut, VisionChatSession, VisionProposals, VisionAttachment,
   ProviderKeyStatus, ProviderKeysOut, ProviderName,
 } from './types';
 
@@ -590,3 +590,44 @@ export const findVisionGaps = (projectId: number) =>
 
 export const getVisionProposals = (projectId: number): Promise<VisionProposals> =>
   request<VisionProposals>(`/api/projects/${projectId}/vision/proposals`);
+
+export async function uploadVisionAttachment(
+  projectId: number,
+  file: File,
+): Promise<VisionAttachment> {
+  const apiKey = getStoredApiKey();
+  const headers: Record<string, string> = {};
+  if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+  const form = new FormData();
+  form.append('file', file);
+  const res = await fetch(
+    `${BASE}/api/projects/${projectId}/vision/chat/attachments`,
+    { method: 'POST', headers, body: form },
+  );
+  if (!res.ok) {
+    const body = await res.text();
+    let msg = body;
+    try { msg = JSON.parse(body).detail || body; } catch {}
+    throw new Error(`${res.status}: ${msg}`);
+  }
+  return res.json();
+}
+
+export async function deleteVisionAttachment(
+  projectId: number,
+  attachmentId: string,
+): Promise<void> {
+  const apiKey = getStoredApiKey();
+  const headers: Record<string, string> = {};
+  if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+  const res = await fetch(
+    `${BASE}/api/projects/${projectId}/vision/chat/attachments/${attachmentId}`,
+    { method: 'DELETE', headers },
+  );
+  if (!res.ok && res.status !== 204) {
+    const body = await res.text();
+    let msg = body;
+    try { msg = JSON.parse(body).detail || body; } catch {}
+    throw new Error(`${res.status}: ${msg}`);
+  }
+}
