@@ -55,3 +55,31 @@ def test_vision_doc_optional_fields():
     dumped = doc.model_dump()
     assert dumped["tech_stack"] == ""
     assert dumped["runtime_target"] == ""
+
+
+def test_render_includes_references_when_present():
+    from datetime import datetime, timezone
+    from app.services.vision_render import render_vision_doc
+
+    md = render_vision_doc(
+        {"problem": "x"}, repo="owner/x",
+        refined_at=datetime(2026, 5, 21, tzinfo=timezone.utc),
+        references=[
+            {"filename": "data.xlsx", "size_bytes": 12_345},
+            {"filename": "brand.pdf", "size_bytes": 480_000},
+        ],
+    )
+    assert "## References" in md
+    assert "[`data.xlsx`](vision-refs/data.xlsx)" in md
+    assert "12 KB" in md
+    assert "469 KB" in md or "480 KB" in md
+
+
+def test_render_omits_references_when_empty_or_none():
+    from datetime import datetime, timezone
+    from app.services.vision_render import render_vision_doc
+
+    md1 = render_vision_doc({}, repo="x/y", refined_at=datetime(2026, 5, 21, tzinfo=timezone.utc))
+    md2 = render_vision_doc({}, repo="x/y", refined_at=datetime(2026, 5, 21, tzinfo=timezone.utc), references=[])
+    assert "## References" not in md1
+    assert "## References" not in md2

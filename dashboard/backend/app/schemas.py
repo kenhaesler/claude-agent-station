@@ -971,11 +971,18 @@ class VisionCommitIn(BaseModel):
     vision_doc: VisionDoc
 
 
+class VisionRefFailure(BaseModel):
+    filename: str
+    error: str
+
+
 class VisionCommitOut(BaseModel):
     """Response for POST /api/projects/{id}/vision."""
     sha: str
     html_url: str
     analyst_dispatched: bool = False  # True when the SHA-gated dispatch fired (or 409'd)
+    refs_committed: list[str] = []
+    refs_failed: list[VisionRefFailure] = []
 
 
 class VisionStaleSha(BaseModel):

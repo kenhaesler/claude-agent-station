@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db
 from app.models import Project, Run, VisionChatAttachment, VisionChatSession
-from app.schemas import VisionRead, VisionCommitIn, VisionCommitOut, VisionStaleSha, VisionChatTurnIn, VisionChatSessionOut, VisionProposalsRead, VisionAttachmentOut
+from app.schemas import VisionRead, VisionCommitIn, VisionCommitOut, VisionStaleSha, VisionChatTurnIn, VisionChatSessionOut, VisionProposalsRead, VisionAttachmentOut, VisionRefFailure
 from app.services import github_contents
 from app.services.vision_render import render_vision_doc
 from app.services import vision_chat as vc_service
@@ -85,12 +85,50 @@ async def commit_vision(
         raise HTTPException(status_code=404, detail="project not found")
 
     now = datetime.now(timezone.utc)
+
+    # Find session + attachments to commit (those with sent_at IS NOT NULL)
+    active = await vc_service.get_active_session(db, project_id)
+    references_for_render: list[dict] = []
+    refs_committed: list[str] = []
+    refs_failed: list[dict] = []
+    attachments_to_commit: list[VisionChatAttachment] = []
+    if active:
+        result = await db.execute(
+            select(VisionChatAttachment).where(
+                VisionChatAttachment.session_id == active.id,
+                VisionChatAttachment.sent_at.is_not(None),
+            )
+        )
+        attachments_to_commit = list(result.scalars().all())
+
+    # 1. Upload reference files to docs/vision-refs/<filename>
+    from pathlib import Path as _Path
+    for att in attachments_to_commit:
+        try:
+            raw = _Path(att.disk_path).read_bytes()
+            await github_contents.write_file(
+                repo=project.repo,
+                path=f"docs/vision-refs/{att.filename}",
+                branch=project.branch or "main",
+                body_bytes=raw,
+                message=f"docs(vision-refs): add {att.filename}",
+                current_sha=None,
+            )
+            refs_committed.append(att.filename)
+            references_for_render.append({"filename": att.filename, "size_bytes": att.size_bytes})
+        except Exception as exc:
+            logger.warning("vision ref upload failed for %s: %s", att.filename, exc)
+            refs_failed.append({"filename": att.filename, "error": str(exc)})
+
+    # 2. Render vision.md WITH references (reflects what was actually committed)
     md = render_vision_doc(
         body.vision_doc.model_dump(),
         repo=project.repo,
         refined_at=now,
+        references=references_for_render,
     )
 
+    # 3. Write vision.md to GitHub
     try:
         new_sha = await github_contents.write_file(
             repo=project.repo,
@@ -109,7 +147,7 @@ async def commit_vision(
             ).model_dump(),
         )
 
-    # Re-fetch to get html_url; also updates the cache
+    # 4. Re-fetch to get html_url; also updates the cache
     fresh = await github_contents.read_file(
         repo=project.repo, path="docs/vision.md", branch=project.branch or "main",
     )
@@ -117,7 +155,7 @@ async def commit_vision(
     project.vision_cached_body = fresh.body
     project.vision_cached_at = now
 
-    # Trigger B (spec 2026-05-08-vision-issue-bootstrap-design.md):
+    # 5. Trigger B (spec 2026-05-08-vision-issue-bootstrap-design.md):
     # fire the analyst when the vision SHA actually changed. We set
     # last_vision_analyzed_sha at *dispatch* time (not on completion) so a
     # failed analyst doesn't loop on identical re-commits.
@@ -137,13 +175,23 @@ async def commit_vision(
         except Exception as exc:
             logger.warning("vision commit B-trigger dispatch exception: %s", exc)
 
-    # Mark any active chat session as approved with the assembled doc
-    active = await vc_service.get_active_session(db, project_id)
+    # 6. Mark any active chat session as approved with the assembled doc
     if active:
         await vc_service.mark_approved(db, active.id, assembled=body.vision_doc.model_dump())
 
     await db.commit()
-    return VisionCommitOut(sha=new_sha, html_url=fresh.html_url, analyst_dispatched=dispatched)
+
+    # 7. Cleanup disk only when all refs uploaded successfully
+    if active and not refs_failed:
+        va.cleanup_session_dir(active.id)
+
+    return VisionCommitOut(
+        sha=new_sha,
+        html_url=fresh.html_url,
+        analyst_dispatched=dispatched,
+        refs_committed=refs_committed,
+        refs_failed=[VisionRefFailure(**rf) for rf in refs_failed],
+    )
 
 
 # ---------------------------------------------------------------------------
