@@ -300,7 +300,7 @@ These keys live under `integration.*` and apply to every project:
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `enabled` | boolean | `false` | Turns on the integration-branch flow. |
-| `dev_branch` | string | `"autonomous/dev"` | Branch name created in each target repo (e.g. `claude-agent-station`). |
+| `dev_branch` | string | `"autonomous/dev"` | Branch name created in each target repo (e.g. `claude-agent-station`). The orchestrator pushes this branch to `origin` on first use so `gh pr create --base <dev_branch>` resolves; a push failure (branch protection / perms) is logged at WARNING and subsequent verdict execution surfaces the resulting PR-creation failure as ERROR instead of silently recording APPROVE. |
 | `promotion_strategy` | string | `"batch"` | `batch` opens one meta-PR with N commits; `individual` opens one PR per cherry-picked commit. |
 | `auto_validate` | boolean | `true` | Run the project's test suite on the integration branch after each merge (`agent/scripts/integration-branch.sh::validate_dev`). |
 | `auto_promote` | boolean | `false` | When validation passes, open the meta-PR automatically. |
