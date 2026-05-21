@@ -366,6 +366,16 @@ def iterate_projects(
                 orchestrate_project(
                     project, config, run_id, workspaces_dir,
                     prior_verdicts_summary=prior_summary,
+                    # Single source of truth for the workspace path:
+                    # ``ensure_workspace`` already resolved it above via
+                    # ``_slug(repo)`` and cloned/refreshed the tree.
+                    # Without passing it through, ``orchestrate_project``
+                    # falls back to a bare-repo-name derivation
+                    # (``LCM`` vs ``laboef1900__LCM``) and the SDK
+                    # session, its worktrees, and verdict execution end
+                    # up on different filesystem clones. See
+                    # run-20260521T192218Z post-mortem.
+                    workspace_path=workspace_path,
                 )
             )
             if proj_state is not None:

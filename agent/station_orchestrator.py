@@ -2213,6 +2213,7 @@ async def orchestrate_project(
     project: dict, config: dict, run_id: str, workspaces_dir: str,
     *,
     prior_verdicts_summary: str | None = None,
+    workspace_path: str | None = None,
 ) -> tuple[int, "_StreamState | None", bool]:
     """Run the Agent Teams session for a single project.
 
@@ -2226,6 +2227,19 @@ async def orchestrate_project(
       failure signals (manager_no_verdicts, exit_code bumps) are preserved.
       Idle-run-semantics discriminator — see #446 / #447 / spec
       ``docs/superpowers/specs/2026-05-17-idle-run-semantics-design.md``.
+
+    ``workspace_path`` is the absolute path to the per-project working tree.
+    Callers — ``iterate_projects`` in particular — compute this via
+    ``ensure_workspace`` (which uses ``_slug(repo)``) and pass it in so the
+    SDK session, the worktrees it creates, and the post-session verdict
+    executor all operate on the same filesystem path. If ``None``, the path
+    falls back to a deprecated bare-repo-name derivation kept only for
+    direct callers that still drive this function without first invoking
+    ``ensure_workspace``; mixing the two paths produced the 2026-05-21
+    run-20260521T192218Z failure where teammates committed in
+    ``workspaces/LCM/<role>`` worktrees while verdict execution pushed
+    from a separate ``workspaces/laboef1900__LCM`` clone, hence
+    ``src refspec does not match any``.
 
     Extracted from orchestrate() in #383 so iterate_projects (Python-only)
     can drive per-project work directly without delegating the outer loop
@@ -2287,7 +2301,28 @@ async def orchestrate_project(
     if True:  # single-project body (formerly the `for project in enabled_projects:` loop body) noqa
         repo = project["repo"]
         repo_name = repo.split("/")[-1] if "/" in repo else repo
-        workspace = os.path.join(workspaces_dir, repo_name)
+        if workspace_path is not None:
+            # Caller (iterate_projects) already resolved the path via
+            # ensure_workspace → _slug(repo). Use it verbatim so the SDK
+            # session, the worktrees, and verdict execution all share one
+            # working tree on disk.
+            workspace = workspace_path
+        else:
+            # Deprecated fallback for direct callers that don't first
+            # invoke ensure_workspace. Kept only so external tooling that
+            # imports orchestrate_project directly doesn't break — the
+            # production driver always supplies workspace_path. Mixing
+            # this fallback with ensure_workspace produced the
+            # workspaces/LCM vs workspaces/laboef1900__LCM split that
+            # caused run-20260521T192218Z to ERROR on every push.
+            logger.warning(
+                "orchestrate_project called without workspace_path; "
+                "falling back to bare repo_name derivation for %s. "
+                "Production callers should pass workspace_path from "
+                "ensure_workspace.",
+                repo,
+            )
+            workspace = os.path.join(workspaces_dir, repo_name)
         project_branch = project.get("branch") or "main"
 
         # Refresh the workspace to the tip of the project's default branch
