@@ -18,7 +18,7 @@ from httpx import ASGITransport, AsyncClient
 
 from app.database import Base, async_session, engine
 from app.main import app
-from app.models import Plan, Project, Run
+from app.models import BrainstormSession, Plan, Project, Run, VisionChatSession
 
 
 @pytest_asyncio.fixture
@@ -289,6 +289,62 @@ async def test_delete_project_nullifies_run_project_id(mock_sync, client, sample
         )
         run = result.scalar_one()
         assert run.project_id is None
+
+
+@pytest.mark.asyncio
+@patch("app.routers.projects.sync_db_to_config", new_callable=AsyncMock)
+async def test_delete_project_with_vision_chat_session(mock_sync, client, sample_project):
+    """DELETE /api/projects/{id} must succeed even when vision_chat_sessions
+    reference the project. The FK lacks ON DELETE CASCADE so the handler
+    must clean up explicitly.
+    """
+    import uuid
+    async with async_session() as session:
+        vcs = VisionChatSession(
+            id=str(uuid.uuid4()),
+            project_id=sample_project.id,
+            state="cancelled",
+            phase="freeform",
+            coverage="{}",
+            messages="[]",
+        )
+        session.add(vcs)
+        await session.commit()
+        vcs_id = vcs.id
+
+    resp = await client.delete(f"/api/projects/{sample_project.id}")
+    assert resp.status_code == 204
+
+    from sqlalchemy import select as _sel
+    async with async_session() as session:
+        result = await session.execute(
+            _sel(VisionChatSession).where(VisionChatSession.id == vcs_id)
+        )
+        assert result.scalar_one_or_none() is None
+
+
+@pytest.mark.asyncio
+@patch("app.routers.projects.sync_db_to_config", new_callable=AsyncMock)
+async def test_delete_project_with_brainstorm_session(mock_sync, client, sample_project):
+    """DELETE /api/projects/{id} must succeed even when brainstorm_sessions
+    reference the project.
+    """
+    import uuid
+    bs_id = str(uuid.uuid4())
+    async with async_session() as session:
+        bs = BrainstormSession(id=bs_id, project_id=sample_project.id)
+        session.add(bs)
+        await session.commit()
+
+    resp = await client.delete(f"/api/projects/{sample_project.id}")
+    assert resp.status_code == 204
+
+    from sqlalchemy import select as _sel
+    async with async_session() as session:
+        result = await session.execute(
+            _sel(BrainstormSession).where(BrainstormSession.id == bs_id)
+        )
+        assert result.scalar_one_or_none() is None
 
 
 @pytest.mark.asyncio

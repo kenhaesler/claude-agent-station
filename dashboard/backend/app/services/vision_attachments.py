@@ -256,8 +256,14 @@ async def delete_attachment(db: AsyncSession, *, attachment_id: str) -> None:
 
 
 def cleanup_session_dir(session_id: str) -> None:
-    """Remove the session's upload dir on disk (no-op if absent)."""
-    d = _upload_root() / session_id
+    """Remove the session's upload dir on disk (no-op if absent or unreadable).
+
+    Reads the upload root directly rather than calling ``_upload_root()`` so
+    cleanup never accidentally creates the parent directory — important when
+    invoked from environments (tests, restricted users) that can't write to
+    the default ``/var/lib/...`` path.
+    """
+    d = Path(_settings.vision_upload_dir) / session_id
     if d.exists():
         shutil.rmtree(d, ignore_errors=True)
 
