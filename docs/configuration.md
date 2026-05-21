@@ -384,16 +384,16 @@ The manager produces one of four verdicts per project/issue:
 
 | Verdict | Action | When |
 |---|---|---|
-| `APPROVE` | Direct merge to base branch (or to integration's dev branch when enabled) | Tests pass, scope is normal, no sensitive code touched. |
-| `APPROVE_INTEGRATION` | Non-draft PR against the integration/dev branch with `gh pr merge --auto --squash` armed | Work is complete and tested but touches sensitive code (auth, payments, config), or scope is large enough to want CI as the gate before landing. CI passes → PR auto-merges with no human click. |
-| `PR` | Draft PR for human review | Ambiguous requirements, tests skipped, or scope > 30 files. A human must look. |
+| `APPROVE` | Push branch, open non-draft PR against the employee-reported base (integration/dev branch when enabled, otherwise trunk), arm `gh pr merge --auto --squash`. Branch protection on the base ref gates the merge. | Tests pass, requirements complete, code quality acceptable. **Default verdict for completed work** — branch protection (not the verdict) decides when the PR lands. |
+| `APPROVE_INTEGRATION` | **Deprecated alias for `APPROVE`** — kept only so stored verdicts and external tooling that still emit it keep working. Identical behavior. | Prefer `APPROVE` for new verdicts. |
+| `PR` | Push branch, open draft PR. No auto-merge. Issue stays open. | A human really must look — large scope (>30 files), ambiguous requirements, or coverage uncertain enough that CI alone isn't sufficient gating. |
 | `REJECT` / `SKIP` | No merge | Work incomplete (`REJECT`) or no eligible work (`SKIP`). |
 
-### Prerequisite for `APPROVE_INTEGRATION`
+### Auto-merge prerequisites
 
-`APPROVE_INTEGRATION` arms GitHub's auto-merge feature. Auto-merge only meaningfully gates when the integration/dev branch has **at least one required check** in its branch protection rules. If no checks are required, `gh pr merge --auto --squash` will merge immediately. Configure required checks at `Settings → Branches → Branch protection rules → <dev_branch>` on each project before relying on this verdict.
+`APPROVE` arms GitHub's auto-merge feature. Auto-merge only meaningfully *gates* when the base branch has **at least one required check** in its branch protection rules. If no checks are required, `gh pr merge --auto --squash` will merge immediately. Configure required checks at `Settings → Branches → Branch protection rules → <branch>` on each project before relying on this verdict for sensitive paths.
 
-If the project does not have integration enabled (`integration.enabled = false`), the verdict degrades to `APPROVE` and a warning is logged — the manager should not have emitted `APPROVE_INTEGRATION` in that case, but the system accepts rather than failing the run.
+The collapse of `APPROVE` and `APPROVE_INTEGRATION` shipped after run-20260521T210606Z, where the manager picked `APPROVE` for completed work and the PRs sat open with no merge path. The previous prompt's decision tree, verdict description, and confidence table all pushed the manager toward `APPROVE` for routine work; now both verdicts produce the same auto-merge-armed PR.
 
 ## SQLite → Postgres migration playbook
 
