@@ -76,7 +76,7 @@ On **Approve & commit**, the vision commit flow writes `docs/vision.md` and each
 | `filename` | TEXT NOT NULL | sanitised, collision-suffixed at upload |
 | `mime_type` | TEXT NOT NULL | sniffed |
 | `size_bytes` | INTEGER NOT NULL | |
-| `disk_path` | TEXT NOT NULL | absolute path under `VISION_UPLOAD_DIR` |
+| `disk_path` | TEXT NOT NULL | absolute path under `STATION_VISION_UPLOAD_DIR` |
 | `extracted_text` | TEXT | nullable; non-null only for non-native types |
 | `sent_at` | TIMESTAMP | nullable; set when first included in a chat turn — DELETE refused once non-null |
 | `created_at` | TIMESTAMP NOT NULL | default now() |
@@ -99,7 +99,7 @@ Existing rows have no `attachments` key — forward-compatible, no backfill.
     <uuid>-<sanitized-filename>
 ```
 
-Configurable via env `VISION_UPLOAD_DIR` (default as above). The `<uuid>-` prefix guarantees uniqueness on disk independent of the user-visible filename (which can be collision-suffixed).
+Configurable via env `STATION_VISION_UPLOAD_DIR` (default as above). The `<uuid>-` prefix guarantees uniqueness on disk independent of the user-visible filename (which can be collision-suffixed).
 
 ### New / changed endpoints
 
@@ -196,7 +196,7 @@ The commit handler passes the session's attachments into `render_vision_doc` bef
 - **Session cancel** — `DELETE .../vision/chat` removes disk files.
 - **Successful commit** — disk files removed after all refs uploaded.
 - **Partial commit failure** — failed-ref disk files retained; succeed-on-retry or are removed on cancel.
-- **Orphan cleanup** — startup task scans `VISION_UPLOAD_DIR` and removes directories whose `session_id` has no corresponding row, or whose corresponding session is `cancelled` / `approved` and older than 24h.
+- **Orphan cleanup** — startup task scans `STATION_VISION_UPLOAD_DIR` and removes directories whose `session_id` has no corresponding row, or whose corresponding session is `cancelled` / `approved` and older than 24h.
 
 ## Migration
 
@@ -207,7 +207,7 @@ One Alembic migration:
 No backfill: existing sessions have no attachments; `vision_chat_sessions.messages` JSON shape is forward-compatible.
 
 New env var documented in `docs/configuration.md`:
-- `VISION_UPLOAD_DIR` (default `/var/lib/claude-agent-station/vision-chat-uploads`).
+- `STATION_VISION_UPLOAD_DIR` (default `/var/lib/claude-agent-station/vision-chat-uploads`).
 
 New dependencies in `dashboard/backend/requirements.txt`:
 - `openpyxl` (xlsx extraction)

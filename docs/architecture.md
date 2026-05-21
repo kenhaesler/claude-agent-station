@@ -223,6 +223,7 @@ claude-agent-station/
 | `run_controls` | Run pause/resume/stop signals | run_id, action, payload |
 | `station_control` | Singleton row holding global intervention flags | global_pause, updated_at, updated_by |
 | `vision_chat_sessions` | Vision pipeline chat sessions | project_id, session state |
+| `vision_chat_attachments` | Reference files attached to a vision chat session | session_id (FK→vision_chat_sessions, cascade delete), filename, mime_type, size_bytes, disk_path, extracted_text, sent_at |
 
 ---
 
@@ -309,6 +310,20 @@ review-criteria branching.
 
 - **Agent Teams flow** (the default for `full`/`analyze`/`plan`/`plan_only`) — lead decomposes eligible issues into tasks, spawns three teammates in isolated worktrees, then spawns a fourth `manager` sibling after teammates finish. The manager reviews each implementation and writes verdicts (APPROVE/PR/REJECT for `full`; APPROVE_PLAN/REVISE_PLAN/REJECT_PLAN for `plan_only`). Both `issue-worker.md` and `manager.md` live under `agent/agents/` and are loaded by the orchestrator at startup. Manager tokens flow through `handle_stream_event` via `AssistantMessage.usage` in the same session as lead + teammates (#390).
 - **`vision-bootstrap`** — single-shot run that dispatches `agent/vision_analyst.py` to propose new issues from `docs/vision.md`. Triggered automatically (orchestrator empty backlog, or vision commit with content-hash change) or manually from the Vision tab. Never spawns teammates, never opens PRs.
+
+### Vision reference files
+
+During a vision chat, users may attach PDFs / images / xlsx / csv / docx / txt
+/ md files (≤ 10 MB each, ≤ 40 MB total per session). Uploads land on disk
+under `STATION_VISION_UPLOAD_DIR/<session_id>/` and are mirrored in the
+`vision_chat_attachments` table. PDFs and images are sent to Claude as native
+blocks; other types are extracted server-side (openpyxl, python-docx) and sent
+as text. On commit, the files are PUT to `docs/vision-refs/` in the target
+repo and listed in a `## References` section of `docs/vision.md`. Teammates
+pick them up automatically via `git clone`.
+
+See spec: `docs/superpowers/specs/2026-05-21-vision-reference-files-design.md`.
+
 - **`fix`** — single-issue repair mode for regressions and urgent bugs (legacy; not exposed in the project mode dropdown).
 - **`triage`** — issue classification and labeling without implementation (legacy).
 - **`review`** — security or code review mode for pull requests (legacy).
