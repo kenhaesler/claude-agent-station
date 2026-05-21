@@ -383,6 +383,40 @@ See `_write_manager_paths_sidecar` in `agent/station_orchestrator.py` and
 the `# --- #411` test block in
 `dashboard/backend/tests/test_manager_sibling.py`.
 
+#### Branch hygiene (worktree-isolation safety net)
+
+The orchestrator creates each per-role worktree on a private isolation
+branch named `worktree/<role>-<run_id_prefix>` (e.g.
+`worktree/backend-20260521`) via `git worktree add -b`. That branch is
+an isolation primitive — it lives only inside the worktree's checkout
+and cannot be pushed to origin from the base workspace. Teammates are
+expected to `git checkout -b autonomous/issue-<n>` (or
+`feature/issue-<n>` per the project's `CLAUDE.md`) before committing,
+so the verdict carries a real feature branch name.
+
+Three layers enforce this:
+
+1. **`agent/agents/issue-worker.md` Step 0/Step 4** — teammates verify the
+   pre-set worktree branch with `git branch --show-current`, then
+   create a feature branch on top before any commit. The prompt also
+   carries an explicit "HARD RULE — never commit on a `worktree/...`
+   branch" with the recovery path.
+2. **`agent/agents/manager.md` §6 Branch hygiene** — manager hard-rejects
+   any verdict whose `branch` matches `worktree/<role>-<run_id_prefix>`
+   with reason `BRANCH_ISOLATION_LEAK`.
+3. **`agent/verdict_execution._is_worktree_isolation_branch`** — the
+   `execute_approve`, `execute_pr`, and `execute_approve_integration`
+   executors refuse to push such branches and return
+   `ExecutionResult(success=False)` with a structured error. Pairs with
+   the silent-failure surfacing in `_execute_one_verdict` so the run
+   row flips to `failed` with the cause instead of the opaque
+   `src refspec does not match any` git error.
+
+The 2026-05-21 run-20260521T175359Z hit this without the safety net:
+teammates committed straight on `worktree/<role>-20260521`, the manager
+echoed those branches into the verdict, and three pushes failed at
+verdict execution time.
+
 ### Sibling-teammate coordination (#456)
 
 The lead agent writes `.claude-team-contracts.md` to the workspace

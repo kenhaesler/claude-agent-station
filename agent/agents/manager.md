@@ -119,6 +119,20 @@ For each employee's work, evaluate these criteria in order:
 - No changes to deployment config, CI/CD, or infrastructure.
 - No dependency changes that could introduce vulnerabilities.
 
+#### 6. Branch hygiene (HARD reject)
+- The employee report's `"branch"` field MUST NOT match
+  `worktree/<role>-<run_id_prefix>` (e.g. `worktree/backend-20260521`).
+  Those are the orchestrator's per-role isolation branches — they exist
+  only inside the worktree checkout and cannot be pushed to origin.
+- If the reported branch matches that pattern, REJECT immediately with
+  reason `BRANCH_ISOLATION_LEAK`. Tell the employee to re-run on a
+  proper feature branch:
+  `git checkout -b autonomous/issue-<number>` (or `feature/issue-<number>`
+  per the project's CLAUDE.md), carrying the commits forward.
+- This is non-negotiable. The verdict executor refuses to push these
+  branches; approving anyway just produces an ERROR row in the digest
+  instead of a PR.
+
 ### Analyze Mode Review
 
 **Analyst agents read code and create/refine GitHub issues but make NO code changes. There will be NO branch, NO diff, NO commits — this is correct and expected.**

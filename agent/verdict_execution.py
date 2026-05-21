@@ -55,6 +55,38 @@ VerdictKind = Literal[
 ]
 
 
+# The orchestrator creates one worktree per role on a private branch named
+# ``worktree/<role>-<run_id_prefix>`` (see
+# ``station_orchestrator.py`` ``git worktree add -b``). These branches are
+# isolation primitives — teammates are expected to ``git checkout -b`` a
+# feature branch on top before committing. When teammates skip that step
+# the manager echoes the worktree branch into the verdict, and pushing it
+# from the base workspace fails with a confusing "src refspec does not
+# match any" because the branch lives only inside the worktree's checkout.
+#
+# Reject such verdicts up-front with a clear cause so operators don't
+# have to decode the push stderr to understand what happened. The check
+# is conservative: it only catches the orchestrator's own naming
+# convention, which matches ``worktree/<role>-<8 hex chars>``.
+_WORKTREE_BRANCH_RE = re.compile(r"^worktree/[a-z]+-[0-9a-fA-F]{4,}$")
+
+
+def _is_worktree_isolation_branch(branch: str) -> bool:
+    """Return True iff ``branch`` matches the orchestrator's per-role
+    worktree-isolation naming. Used by every push-capable executor to
+    refuse pushes that would 404 against origin."""
+    return bool(_WORKTREE_BRANCH_RE.match(branch or ""))
+
+
+_WORKTREE_BRANCH_ERROR = (
+    "branch '{branch}' is the worktree's private isolation ref "
+    "(orchestrator-created via ``git worktree add -b``). Teammates must "
+    "``git checkout -b <feature-branch>`` before committing; pushing this "
+    "ref from the base workspace would 404. Reject the verdict so the "
+    "teammate re-runs on a proper feature branch."
+)
+
+
 @dataclass
 class Verdict:
     """Parsed verdict from the manager's verdicts JSON. Mirrors the
@@ -148,6 +180,11 @@ def execute_approve(
         success=False,
     )
 
+    # 0. Safety net: refuse to push worktree-isolation branches.
+    if _is_worktree_isolation_branch(verdict.branch):
+        result.error = _WORKTREE_BRANCH_ERROR.format(branch=verdict.branch)
+        return result
+
     # 1. git push origin <branch>
     push = subprocess.run(
         ["git", "push", "-u", "origin", verdict.branch],
@@ -210,6 +247,10 @@ def execute_pr(
         issue_number=verdict.issue_number,
         success=False,
     )
+
+    if _is_worktree_isolation_branch(verdict.branch):
+        result.error = _WORKTREE_BRANCH_ERROR.format(branch=verdict.branch)
+        return result
 
     push = subprocess.run(
         ["git", "push", "-u", "origin", verdict.branch],
@@ -354,6 +395,10 @@ def execute_approve_integration(
         issue_number=verdict.issue_number,
         success=False,
     )
+
+    if _is_worktree_isolation_branch(verdict.branch):
+        result.error = _WORKTREE_BRANCH_ERROR.format(branch=verdict.branch)
+        return result
 
     # 1. git push -u origin <branch>
     push = subprocess.run(
