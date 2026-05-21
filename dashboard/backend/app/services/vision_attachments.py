@@ -7,9 +7,18 @@ from __future__ import annotations
 import io
 import os
 import re
+import shutil
+import uuid as _uuid
+from datetime import datetime, timezone
+from pathlib import Path
 
 import magic
 from openpyxl import load_workbook
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.config import settings as _settings
+from app.models import VisionChatAttachment
 
 # Anthropic's forbidden-character set plus path separators
 _FORBIDDEN = re.compile(r'[<>:"|?*\\/]')
@@ -141,3 +150,112 @@ def extract_text(data: bytes, *, mime: str) -> str | None:
         return None
     raw = extractor(data)
     return _truncate(raw)
+
+
+# ---------------------------------------------------------------------------
+# Storage service — disk I/O + DB row creation
+# ---------------------------------------------------------------------------
+
+MAX_FILE_BYTES = 10 * 1024 * 1024   # 10 MB per file
+MAX_SESSION_BYTES = 40 * 1024 * 1024  # 40 MB per session
+
+
+def _upload_root() -> Path:
+    root = Path(_settings.vision_upload_dir)
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def _session_dir(session_id: str) -> Path:
+    d = _upload_root() / session_id
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _unique_in_session(db_filenames: set[str], filename: str) -> str:
+    if filename not in db_filenames:
+        return filename
+    root, ext = filename.rsplit(".", 1) if "." in filename else (filename, "")
+    suffix_ext = f".{ext}" if ext else ""
+    for n in range(2, 1000):
+        candidate = f"{root}-{n}{suffix_ext}"
+        if candidate not in db_filenames:
+            return candidate
+    raise AttachmentRejected("too many duplicate filenames in session")
+
+
+async def store_attachment(
+    db: AsyncSession,
+    *,
+    session_id: str,
+    raw: bytes,
+    declared_filename: str,
+) -> VisionChatAttachment:
+    """Validate, sniff, extract, write to disk, insert row. Commit is caller's job."""
+    # Size check FIRST — before hitting libmagic or disk.
+    if len(raw) > MAX_FILE_BYTES:
+        raise AttachmentRejected(
+            f"{declared_filename} is {len(raw) // (1024 * 1024)} MB — max 10 MB per file."
+        )
+
+    result = await db.execute(
+        select(func.coalesce(func.sum(VisionChatAttachment.size_bytes), 0))
+        .where(VisionChatAttachment.session_id == session_id)
+    )
+    current_total = int(result.scalar_one())
+    if current_total + len(raw) > MAX_SESSION_BYTES:
+        raise AttachmentRejected(
+            "Adding this would exceed the 40 MB per-session attachment limit."
+        )
+
+    safe_name = sanitize_filename(declared_filename)
+    mime = sniff_and_validate_mime(raw, declared_filename=safe_name)
+
+    existing = await db.execute(
+        select(VisionChatAttachment.filename).where(
+            VisionChatAttachment.session_id == session_id
+        )
+    )
+    used = {row[0] for row in existing.all()}
+    final_name = _unique_in_session(used, safe_name)
+
+    disk_id = _uuid.uuid4().hex
+    disk_path = _session_dir(session_id) / f"{disk_id}-{final_name}"
+    disk_path.write_bytes(raw)
+
+    extracted = extract_text(raw, mime=mime)
+
+    att = VisionChatAttachment(
+        id=str(_uuid.uuid4()),
+        session_id=session_id,
+        filename=final_name,
+        mime_type=mime,
+        size_bytes=len(raw),
+        disk_path=str(disk_path),
+        extracted_text=extracted,
+    )
+    db.add(att)
+    return att
+
+
+async def delete_attachment(db: AsyncSession, *, attachment_id: str) -> None:
+    """Delete an attachment IFF it has not yet been sent in a chat turn."""
+    att = await db.get(VisionChatAttachment, attachment_id)
+    if att is None:
+        raise AttachmentRejected("attachment not found")
+    if att.sent_at is not None:
+        raise AttachmentRejected("cannot delete an attachment already sent in a chat turn")
+    path = Path(att.disk_path)
+    if path.exists():
+        try:
+            path.unlink()
+        except OSError:
+            pass
+    await db.delete(att)
+
+
+def cleanup_session_dir(session_id: str) -> None:
+    """Remove the session's upload dir on disk (no-op if absent)."""
+    d = _upload_root() / session_id
+    if d.exists():
+        shutil.rmtree(d, ignore_errors=True)
