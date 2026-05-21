@@ -216,7 +216,7 @@ async def test_find_gaps_calls_service_control(project):
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
-        with patch("app.routers.vision._check_gh_auth", return_value=True), \
+        with patch("app.routers.vision._check_github_auth", new=AsyncMock(return_value=True)), \
              patch("app.services.service_control.start_vision_analyst",
                    new=AsyncMock(return_value={"success": True, "status_code": 200, "pid": 99})):
             r = await c.post(f"/api/projects/{project.id}/vision/find-gaps")
@@ -225,8 +225,12 @@ async def test_find_gaps_calls_service_control(project):
 
 
 @pytest.mark.asyncio
-async def test_find_gaps_409_when_gh_auth_broken(project):
-    """Preflight: invalid gh auth → 409 before dispatch (issue #272)."""
+async def test_find_gaps_409_when_github_app_unavailable(project):
+    """Preflight: App-token mint fails → 409 before dispatch (issue #272).
+
+    Replaces the old `gh auth status` probe — the analyst's runtime auth is
+    the App installation token, so the preflight now mirrors that.
+    """
     async with async_session() as db:
         proj = await db.get(Project, project.id)
         proj.vision_cached_body = "# Vision — o/r\n\n## Problem\nP\n"
@@ -236,12 +240,52 @@ async def test_find_gaps_409_when_gh_auth_broken(project):
     dispatch_mock = AsyncMock(return_value={"success": True, "status_code": 200, "pid": 1})
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
-        with patch("app.routers.vision._check_gh_auth", return_value=False), \
+        with patch("app.routers.vision._check_github_auth", new=AsyncMock(return_value=False)), \
              patch("app.services.service_control.start_vision_analyst", new=dispatch_mock):
             r = await c.post(f"/api/projects/{project.id}/vision/find-gaps")
     assert r.status_code == 409
-    assert "GitHub CLI" in r.json()["detail"]
+    assert "GitHub App" in r.json()["detail"]
     dispatch_mock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_check_github_auth_returns_true_when_token_minted(project):
+    """_check_github_auth delegates to get_installation_token and returns True
+    when a token is minted — proving the preflight tracks the same auth path
+    as the dashboard's GitHub Settings green chip."""
+    from app.routers import vision as vision_router
+    with patch(
+        "app.routers.vision.get_installation_token",
+        new=AsyncMock(return_value="ghs_FAKE"),
+    ):
+        assert await vision_router._check_github_auth() is True
+
+
+@pytest.mark.asyncio
+async def test_check_github_auth_returns_false_when_mint_returns_none(project):
+    """When the App is unconfigured, get_installation_token returns None;
+    _check_github_auth must surface that as False rather than truthy."""
+    from app.routers import vision as vision_router
+    with patch(
+        "app.routers.vision.get_installation_token",
+        new=AsyncMock(return_value=None),
+    ):
+        assert await vision_router._check_github_auth() is False
+
+
+@pytest.mark.asyncio
+async def test_check_github_auth_returns_false_when_mint_raises(project, caplog):
+    """A network blip or malformed credentials must not propagate as a 500;
+    the probe swallows the exception, logs a warning, and returns False so
+    the preflight raises a clean 409."""
+    from app.routers import vision as vision_router
+    with patch(
+        "app.routers.vision.get_installation_token",
+        new=AsyncMock(side_effect=RuntimeError("network down")),
+    ):
+        with caplog.at_level("WARNING"):
+            assert await vision_router._check_github_auth() is False
+    assert any("preflight" in rec.message.lower() for rec in caplog.records)
 
 
 @pytest.mark.asyncio
@@ -265,7 +309,7 @@ async def test_find_gaps_409_when_recent_failure_for_current_sha(project):
     dispatch_mock = AsyncMock(return_value={"success": True, "status_code": 200, "pid": 1})
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
-        with patch("app.routers.vision._check_gh_auth", return_value=True), \
+        with patch("app.routers.vision._check_github_auth", new=AsyncMock(return_value=True)), \
              patch("app.services.service_control.start_vision_analyst", new=dispatch_mock):
             r = await c.post(f"/api/projects/{project.id}/vision/find-gaps")
     assert r.status_code == 409
@@ -305,7 +349,7 @@ async def test_find_gaps_recovers_when_success_follows_failure(project):
     dispatch_mock = AsyncMock(return_value={"success": True, "status_code": 200, "pid": 1})
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
-        with patch("app.routers.vision._check_gh_auth", return_value=True), \
+        with patch("app.routers.vision._check_github_auth", new=AsyncMock(return_value=True)), \
              patch("app.services.service_control.start_vision_analyst", new=dispatch_mock):
             r = await c.post(f"/api/projects/{project.id}/vision/find-gaps")
     assert r.status_code == 200
