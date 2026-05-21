@@ -10,7 +10,8 @@ from sqlalchemy import update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db
-from app.models import Plan, Project, Run
+from app.models import BrainstormSession, Plan, Project, Run, VisionChatSession
+from app.services import vision_attachments as va
 from app.schemas import ProjectCreate, ProjectOut, ProjectUpdate
 from app.services.config_sync import sync_db_to_config
 
@@ -123,6 +124,20 @@ async def delete_project(project_id: int, db: AsyncSession = Depends(get_db)):
     await db.execute(
         sa_delete(Plan).where(Plan.project_id == project_id)
     )
+    # Brainstorm sessions: project_id FK lacks CASCADE; clean up explicitly.
+    await db.execute(
+        sa_delete(BrainstormSession).where(BrainstormSession.project_id == project_id)
+    )
+    # Vision chat sessions: project_id FK lacks CASCADE. Capture session ids
+    # first so we can scrub their on-disk upload dirs after the rows go away
+    # (attachment rows cascade-delete via vision_chat_attachments.session_id
+    # FK; the binary files on disk do not).
+    vc_sessions = (await db.execute(
+        select(VisionChatSession.id).where(VisionChatSession.project_id == project_id)
+    )).scalars().all()
+    await db.execute(
+        sa_delete(VisionChatSession).where(VisionChatSession.project_id == project_id)
+    )
 
     await db.delete(project)
     try:
@@ -132,3 +147,8 @@ async def delete_project(project_id: int, db: AsyncSession = Depends(get_db)):
     except Exception:
         await db.rollback()
         raise
+
+    # Disk cleanup is best-effort and runs after the commit so a permission
+    # error here never rolls back a successful project deletion.
+    for sid in vc_sessions:
+        va.cleanup_session_dir(sid)
