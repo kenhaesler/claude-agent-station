@@ -4,10 +4,12 @@ Spec: docs/superpowers/specs/2026-05-21-vision-reference-files-design.md.
 """
 from __future__ import annotations
 
+import io
 import os
 import re
 
 import magic
+from openpyxl import load_workbook
 
 # Anthropic's forbidden-character set plus path separators
 _FORBIDDEN = re.compile(r'[<>:"|?*\\/]')
@@ -77,3 +79,65 @@ def sniff_and_validate_mime(data: bytes, *, declared_filename: str) -> str:
             "Word (docx), CSV, txt, md."
         )
     return sniffed
+
+
+EXTRACTION_MAX_BYTES = 200_000  # 200 KB cap on per-file extracted text
+
+
+def _truncate(text: str) -> str:
+    if len(text.encode("utf-8")) <= EXTRACTION_MAX_BYTES:
+        return text
+    encoded = text.encode("utf-8")[:EXTRACTION_MAX_BYTES]
+    truncated = encoded.decode("utf-8", errors="ignore")
+    remaining = len(text.encode("utf-8")) - len(encoded)
+    return truncated + f"\n\n[truncated — {remaining} more bytes]"
+
+
+def _xlsx_to_markdown(data: bytes) -> str:
+    wb = load_workbook(io.BytesIO(data), data_only=True, read_only=True)
+    out: list[str] = []
+    for ws in wb.worksheets:
+        out.append(f"### Sheet: {ws.title}\n")
+        first_row = True
+        for row in ws.iter_rows(values_only=True):
+            if all(c is None for c in row):
+                continue
+            cells = ["" if c is None else str(c) for c in row]
+            out.append("| " + " | ".join(cells) + " |")
+            if first_row:
+                out.append("| " + " | ".join("---" for _ in cells) + " |")
+                first_row = False
+        out.append("")
+    return "\n".join(out)
+
+
+def _csv_to_text(data: bytes) -> str:
+    return data.decode("utf-8", errors="replace")
+
+
+def _docx_to_text(data: bytes) -> str:
+    from docx import Document  # local import: python-docx is a heavier dependency
+    doc = Document(io.BytesIO(data))
+    return "\n".join(p.text for p in doc.paragraphs if p.text)
+
+
+_EXTRACTORS = {
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": _xlsx_to_markdown,
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": _docx_to_text,
+    "text/csv": _csv_to_text,
+    "text/markdown": _csv_to_text,  # pass-through; markdown is already text
+    # text/plain is also passthrough but Claude takes it natively as a document block.
+}
+
+
+def extract_text(data: bytes, *, mime: str) -> str | None:
+    """Return extracted text for non-native types, or None for native types.
+
+    Output is capped at EXTRACTION_MAX_BYTES; oversize results get a
+    ``[truncated — N more bytes]`` suffix.
+    """
+    extractor = _EXTRACTORS.get(mime)
+    if extractor is None:
+        return None
+    raw = extractor(data)
+    return _truncate(raw)
