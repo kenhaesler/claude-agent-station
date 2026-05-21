@@ -3,7 +3,7 @@ import type { VisionSseEvent } from './types';
 interface StreamArgs {
   url: string;
   headers: Record<string, string>;
-  payload: { session_id: string | null; message: string };
+  payload: { session_id: string | null; message: string; attachment_ids?: string[] };
   signal?: AbortSignal;
   fetchImpl?: typeof fetch;
 }

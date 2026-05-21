@@ -127,7 +127,7 @@ async def test_post_vision_409_on_stale_sha_returns_envelope(project):
 @pytest.mark.asyncio
 async def test_post_vision_chat_streams_sse_events(project):
     """SSE endpoint yields events for assistant text, coverage, done."""
-    async def fake_run_chat_turn(db, *, session_id, user_message, system_prompt, model, sdk_session_id):
+    async def fake_run_chat_turn(db, *, session_id, user_message, system_prompt, model, sdk_session_id, attachment_blocks=None, user_attachments=None):
         yield {"type": "assistant_text", "delta": "hi"}
         yield {"type": "coverage_update", "covered": ["problem"], "remaining": []}
         yield {"type": "done"}

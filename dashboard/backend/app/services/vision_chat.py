@@ -83,6 +83,7 @@ async def append_turn(
     coverage: dict | None = None,
     phase: str | None = None,
     sdk_session_id: str | None = None,
+    user_attachments: list[dict] | None = None,
 ) -> VisionChatSession:
     """Append a user→assistant turn and update coverage/phase if provided."""
     session = await db.get(VisionChatSession, session_id)
@@ -90,7 +91,10 @@ async def append_turn(
         raise SessionNotFound(session_id)
 
     msgs = json.loads(session.messages)
-    msgs.append({"role": "user", "content": user_message})
+    user_msg: dict = {"role": "user", "content": user_message}
+    if user_attachments:
+        user_msg["attachments"] = user_attachments
+    msgs.append(user_msg)
     msgs.append({"role": "assistant", "content": assistant_message})
     session.messages = json.dumps(msgs)
 
@@ -151,8 +155,8 @@ _SECTIONS = [
 ]
 
 
-async def _user_prompt_stream(text: str):
-    """One-shot async iterable wrapping a user message.
+async def _user_prompt_stream(content):
+    """Yield one user message. ``content`` may be a str or a list of blocks.
 
     Same pattern as agent/station_orchestrator.py — required when using
     can_use_tool, but harmless and simpler than maintaining two paths.
@@ -160,7 +164,7 @@ async def _user_prompt_stream(text: str):
     yield {
         "type": "user",
         "session_id": "",
-        "message": {"role": "user", "content": text},
+        "message": {"role": "user", "content": content},
         "parent_tool_use_id": None,
     }
 
@@ -173,6 +177,8 @@ async def run_chat_turn(
     system_prompt: str,
     model: str,
     sdk_session_id: str | None = None,
+    attachment_blocks: list[dict] | None = None,
+    user_attachments: list[dict] | None = None,
 ) -> AsyncIterator[dict]:
     """Run one chat turn against the bundled CLI; yield SSE-shaped chunks.
 
@@ -197,13 +203,17 @@ async def run_chat_turn(
         options.resume = sdk_session_id
         options.continue_conversation = True
 
+    # When attachment blocks are present, send the full multi-block list;
+    # otherwise fall back to a plain string (backward-compatible).
+    prompt_content = attachment_blocks if attachment_blocks else user_message
+
     full_text = ""
     new_sdk_sid: str | None = None
     last_meta: dict | None = None
     final_doc: dict | None = None
 
     try:
-        async for message in query(prompt=_user_prompt_stream(user_message), options=options):
+        async for message in query(prompt=_user_prompt_stream(prompt_content), options=options):
             sid = getattr(message, "session_id", None)
             if sid:
                 new_sdk_sid = sid
@@ -255,6 +265,7 @@ async def run_chat_turn(
         coverage=coverage_dict,
         phase=(last_meta.get("phase") if last_meta else None),
         sdk_session_id=new_sdk_sid,
+        user_attachments=user_attachments,
     )
 
     yield {"type": "done"}

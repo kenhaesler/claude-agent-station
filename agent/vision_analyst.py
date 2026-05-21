@@ -15,6 +15,7 @@ import os
 import subprocess
 import sys
 import uuid
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -147,6 +148,7 @@ the gap between today's state and the vision.
 ## Anti-patterns
 {anti_patterns}
 
+{refs_section}
 # Repo state
 
 ## File tree (sample)
@@ -217,6 +219,7 @@ def propose_gaps(workspace: str, vision: dict, repo: str, model: str) -> list[di
     open_titles = [f"#{i['number']}: {i['title']}" for i in state["open_issues"]][:50]
     closed_titles = [f"#{i['number']}: {i['title']}" for i in state["closed_issues"]][:50]
 
+    refs_section = _list_vision_refs(Path(workspace))
     prompt = _PROMPT.format(
         max=MAX_PROPOSALS,
         problem=vision["problem"], users=vision["users"], end_state=vision["end_state"],
@@ -224,6 +227,7 @@ def propose_gaps(workspace: str, vision: dict, repo: str, model: str) -> list[di
         runtime_target=vision.get("runtime_target", ""),
         non_goals=vision["non_goals"], principles=vision["principles"],
         horizons=vision["horizons"], anti_patterns=vision["anti_patterns"],
+        refs_section=refs_section,
         tree="\n".join(state["tree"][:80]),
         readme=state["readme"][:3000],
         commits="\n".join(state["commits"][:30]),
@@ -258,6 +262,19 @@ def propose_gaps(workspace: str, vision: dict, repo: str, model: str) -> list[di
             f"model returned non-list JSON: {type(proposals).__name__}"
         )
     return proposals[:MAX_PROPOSALS]
+
+
+def _list_vision_refs(repo_root: Path) -> str:
+    """Return a markdown bullet list of files under docs/vision-refs/, or empty string."""
+    refs_dir = repo_root / "docs" / "vision-refs"
+    if not refs_dir.exists():
+        return ""
+    files = sorted(p for p in refs_dir.iterdir() if p.is_file())
+    if not files:
+        return ""
+    lines = ["## Reference files", ""]
+    lines += [f"- `docs/vision-refs/{p.name}` ({p.stat().st_size // 1024 or 1} KB)" for p in files]
+    return "\n".join(lines) + "\n"
 
 
 def _parse_proposal_list(raw: str) -> list:

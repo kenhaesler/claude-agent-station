@@ -971,11 +971,18 @@ class VisionCommitIn(BaseModel):
     vision_doc: VisionDoc
 
 
+class VisionRefFailure(BaseModel):
+    filename: str
+    error: str
+
+
 class VisionCommitOut(BaseModel):
     """Response for POST /api/projects/{id}/vision."""
     sha: str
     html_url: str
     analyst_dispatched: bool = False  # True when the SHA-gated dispatch fired (or 409'd)
+    refs_committed: list[str] = []
+    refs_failed: list[VisionRefFailure] = []
 
 
 class VisionStaleSha(BaseModel):
@@ -996,12 +1003,22 @@ class VisionChatSessionOut(BaseModel):
     assembled: dict | None
     created_at: str
     updated_at: str
+    pending_attachments: list[VisionAttachmentOut] = []
+
+
+class VisionAttachmentOut(BaseModel):
+    """Response for POST /api/projects/{id}/vision/chat/attachments and on session resume."""
+    id: str
+    filename: str
+    mime_type: str
+    size_bytes: int
 
 
 class VisionChatTurnIn(BaseModel):
     """Body for POST /api/projects/{id}/vision/chat (turn)."""
     session_id: str | None = None  # None on first turn
     message: str
+    attachment_ids: list[str] | None = None
 
 
 class VisionProposalsRead(BaseModel):

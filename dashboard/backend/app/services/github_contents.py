@@ -85,18 +85,24 @@ async def write_file(
     repo: str,
     path: str,
     branch: str,
-    body: str,
+    *,
+    body: str | None = None,
+    body_bytes: bytes | None = None,
     message: str,
     current_sha: str | None,
 ) -> str:
     """PUT a file to a branch.
 
+    Pass exactly one of ``body`` (utf-8 str) or ``body_bytes`` (raw binary).
     Pass current_sha=None for first-create. Pass the previously-fetched
     sha to update; on conflict, re-fetches the live state and raises
     StaleSha so callers can surface a 409 envelope.
 
     Returns the new blob sha on success.
     """
+    if (body is None) == (body_bytes is None):
+        raise ValueError("write_file: pass exactly one of body or body_bytes")
+
     token = await _get_token()
     url = f"{GITHUB_API}/repos/{repo}/contents/{path}"
     headers = {
@@ -104,9 +110,10 @@ async def write_file(
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
     }
+    raw = body.encode("utf-8") if body is not None else body_bytes
     payload = {
         "message": message,
-        "content": base64.b64encode(body.encode("utf-8")).decode("ascii"),
+        "content": base64.b64encode(raw).decode("ascii"),
         "branch": branch,
         "committer": COMMIT_AUTHOR,
     }

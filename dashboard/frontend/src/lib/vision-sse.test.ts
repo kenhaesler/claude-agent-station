@@ -48,6 +48,25 @@ describe('streamVisionChat', () => {
     expect(events).toEqual([{ type: 'error', code: 'http_500', message: 'fail' }]);
   });
 
+  it('passes attachment_ids in the request body', async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      body: new ReadableStream({ start(c) { c.close(); } }),
+    }) as any);
+
+    const iter = streamVisionChat({
+      url: '/test',
+      headers: {},
+      payload: { session_id: null, message: 'hi', attachment_ids: ['a1', 'a2'] },
+      fetchImpl: fetchMock,
+    });
+    for await (const _ of iter) {}
+
+    const call = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const body = JSON.parse(call[1].body as string);
+    expect(body.attachment_ids).toEqual(['a1', 'a2']);
+  });
+
   it('aborts via AbortController and ends gracefully', async () => {
     const ctrl = new AbortController();
     const fakeFetch = vi.fn(async (_input: URL | RequestInfo, _init?: RequestInit) => {

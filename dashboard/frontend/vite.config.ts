@@ -4,11 +4,18 @@ import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig({
   plugins: [tailwindcss(), svelte()],
+  resolve: {
+    conditions: ['browser'],
+  },
   test: {
     environment: 'node',
     // Only run vitest specs under src/. e2e/*.spec.ts files are
     // Playwright tests and use a different runner.
     include: ['src/**/*.{test,spec}.{ts,tsx,js}'],
+    environmentMatchGlobs: [
+      // Component tests need a DOM environment
+      ['src/components/**/*.test.ts', 'jsdom'],
+    ],
   },
   server: {
     port: 5173,

@@ -10,17 +10,18 @@ import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db
-from app.models import Project, Run, VisionChatSession
-from app.schemas import VisionRead, VisionCommitIn, VisionCommitOut, VisionStaleSha, VisionChatTurnIn, VisionChatSessionOut, VisionProposalsRead
+from app.models import Project, Run, VisionChatAttachment, VisionChatSession
+from app.schemas import VisionRead, VisionCommitIn, VisionCommitOut, VisionStaleSha, VisionChatTurnIn, VisionChatSessionOut, VisionProposalsRead, VisionAttachmentOut, VisionRefFailure
 from app.services import github_contents
 from app.services.vision_render import render_vision_doc
 from app.services import vision_chat as vc_service
+from app.services import vision_attachments as va
 from app.services import service_control
 from app.services.vision_chat import (
     create_session, get_active_session, mark_cancelled,
@@ -84,12 +85,50 @@ async def commit_vision(
         raise HTTPException(status_code=404, detail="project not found")
 
     now = datetime.now(timezone.utc)
+
+    # Find session + attachments to commit (those with sent_at IS NOT NULL)
+    active = await vc_service.get_active_session(db, project_id)
+    references_for_render: list[dict] = []
+    refs_committed: list[str] = []
+    refs_failed: list[dict] = []
+    attachments_to_commit: list[VisionChatAttachment] = []
+    if active:
+        result = await db.execute(
+            select(VisionChatAttachment).where(
+                VisionChatAttachment.session_id == active.id,
+                VisionChatAttachment.sent_at.is_not(None),
+            )
+        )
+        attachments_to_commit = list(result.scalars().all())
+
+    # 1. Upload reference files to docs/vision-refs/<filename>
+    from pathlib import Path as _Path
+    for att in attachments_to_commit:
+        try:
+            raw = _Path(att.disk_path).read_bytes()
+            await github_contents.write_file(
+                repo=project.repo,
+                path=f"docs/vision-refs/{att.filename}",
+                branch=project.branch or "main",
+                body_bytes=raw,
+                message=f"docs(vision-refs): add {att.filename}",
+                current_sha=None,
+            )
+            refs_committed.append(att.filename)
+            references_for_render.append({"filename": att.filename, "size_bytes": att.size_bytes})
+        except Exception as exc:
+            logger.warning("vision ref upload failed for %s: %s", att.filename, exc)
+            refs_failed.append({"filename": att.filename, "error": str(exc)})
+
+    # 2. Render vision.md WITH references (reflects what was actually committed)
     md = render_vision_doc(
         body.vision_doc.model_dump(),
         repo=project.repo,
         refined_at=now,
+        references=references_for_render,
     )
 
+    # 3. Write vision.md to GitHub
     try:
         new_sha = await github_contents.write_file(
             repo=project.repo,
@@ -108,7 +147,7 @@ async def commit_vision(
             ).model_dump(),
         )
 
-    # Re-fetch to get html_url; also updates the cache
+    # 4. Re-fetch to get html_url; also updates the cache
     fresh = await github_contents.read_file(
         repo=project.repo, path="docs/vision.md", branch=project.branch or "main",
     )
@@ -116,7 +155,7 @@ async def commit_vision(
     project.vision_cached_body = fresh.body
     project.vision_cached_at = now
 
-    # Trigger B (spec 2026-05-08-vision-issue-bootstrap-design.md):
+    # 5. Trigger B (spec 2026-05-08-vision-issue-bootstrap-design.md):
     # fire the analyst when the vision SHA actually changed. We set
     # last_vision_analyzed_sha at *dispatch* time (not on completion) so a
     # failed analyst doesn't loop on identical re-commits.
@@ -136,13 +175,23 @@ async def commit_vision(
         except Exception as exc:
             logger.warning("vision commit B-trigger dispatch exception: %s", exc)
 
-    # Mark any active chat session as approved with the assembled doc
-    active = await vc_service.get_active_session(db, project_id)
+    # 6. Mark any active chat session as approved with the assembled doc
     if active:
         await vc_service.mark_approved(db, active.id, assembled=body.vision_doc.model_dump())
 
     await db.commit()
-    return VisionCommitOut(sha=new_sha, html_url=fresh.html_url, analyst_dispatched=dispatched)
+
+    # 7. Cleanup disk only when all refs uploaded successfully
+    if active and not refs_failed:
+        va.cleanup_session_dir(active.id)
+
+    return VisionCommitOut(
+        sha=new_sha,
+        html_url=fresh.html_url,
+        analyst_dispatched=dispatched,
+        refs_committed=refs_committed,
+        refs_failed=[VisionRefFailure(**rf) for rf in refs_failed],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -200,6 +249,32 @@ async def chat_turn(
     config = await asyncio.to_thread(_read_config_json)
     model = (config.get("models") or {}).get("planner") or "claude-sonnet-4-6"
 
+    # Build attachment blocks if any IDs supplied
+    attachment_blocks: list[dict] | None = None
+    user_attachments_dict: list[dict] | None = None
+    if body.attachment_ids:
+        result = await db.execute(
+            select(VisionChatAttachment).where(
+                VisionChatAttachment.id.in_(body.attachment_ids),
+                VisionChatAttachment.session_id == session.id,
+                VisionChatAttachment.sent_at.is_(None),
+            )
+        )
+        rows = list(result.scalars().all())
+        if len(rows) != len(body.attachment_ids):
+            raise HTTPException(
+                status_code=400,
+                detail="one or more attachment_ids are invalid, already sent, or from a different session",
+            )
+        attachment_blocks = await va.build_chat_blocks(
+            db, user_text=body.message, attachment_ids=body.attachment_ids,
+        )
+        user_attachments_dict = [
+            {"id": a.id, "filename": a.filename, "mime_type": a.mime_type, "size_bytes": a.size_bytes}
+            for a in rows
+        ]
+        await db.commit()
+
     async def event_stream():
         from app.services.vision_chat import run_chat_turn
         async for chunk in run_chat_turn(
@@ -209,6 +284,8 @@ async def chat_turn(
             system_prompt=system_prompt,
             model=model,
             sdk_session_id=session.sdk_session_id,
+            attachment_blocks=attachment_blocks,
+            user_attachments=user_attachments_dict,
         ):
             kind = chunk.pop("type")
             yield _sse_format(kind, chunk)
@@ -237,6 +314,15 @@ async def get_chat_session(project_id: int, db: AsyncSession = Depends(get_db)):
     session = await get_active_session(db, project_id)
     if not session:
         raise HTTPException(status_code=404, detail="no active session")
+
+    from app.models import VisionChatAttachment as _VCA
+    pending_q = await db.execute(
+        select(_VCA).where(_VCA.session_id == session.id, _VCA.sent_at.is_(None))
+    )
+    pending = [
+        VisionAttachmentOut(id=a.id, filename=a.filename, mime_type=a.mime_type, size_bytes=a.size_bytes)
+        for a in pending_q.scalars().all()
+    ]
     return VisionChatSessionOut(
         id=session.id,
         project_id=session.project_id,
@@ -247,6 +333,7 @@ async def get_chat_session(project_id: int, db: AsyncSession = Depends(get_db)):
         assembled=json.loads(session.assembled) if session.assembled else None,
         created_at=session.created_at.isoformat() if session.created_at else "",
         updated_at=session.updated_at.isoformat() if session.updated_at else "",
+        pending_attachments=pending,
     )
 
 
@@ -256,7 +343,88 @@ async def delete_chat_session(project_id: int, db: AsyncSession = Depends(get_db
     session = await get_active_session(db, project_id)
     if not session:
         raise HTTPException(status_code=404, detail="no active session")
-    await mark_cancelled(db, session.id)
+    sid = session.id
+    await mark_cancelled(db, sid)
+    await db.commit()
+    try:
+        va.cleanup_session_dir(sid)
+    except Exception:
+        logger.warning("cleanup_session_dir failed for session %s", sid, exc_info=True)
+
+
+# ---------------------------------------------------------------------------
+# Attachment upload / delete endpoints
+# ---------------------------------------------------------------------------
+
+@router.post(
+    "/{project_id}/vision/chat/attachments",
+    response_model=VisionAttachmentOut,
+)
+async def upload_chat_attachment(
+    project_id: int,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+) -> VisionAttachmentOut:
+    """Upload a reference file for the active vision chat session.
+
+    Lazily creates an active session if one doesn't exist (mirrors chat_turn).
+    """
+    project = await db.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="project not found")
+
+    session = await get_active_session(db, project_id)
+    if session is None:
+        try:
+            session = await create_session(db, project_id)
+        except SessionAlreadyActive as exc:
+            session = await db.get(VisionChatSession, exc.existing_session_id)
+
+    raw = await file.read()
+    try:
+        att = await va.store_attachment(
+            db, session_id=session.id, raw=raw,
+            declared_filename=file.filename or "upload.bin",
+        )
+    except va.AttachmentRejected as exc:
+        msg = str(exc)
+        lower = msg.lower()
+        if "max 10 mb" in lower or ("session" in lower and "limit" in lower):
+            raise HTTPException(status_code=413, detail=msg)
+        if "not a supported" in lower:
+            raise HTTPException(status_code=415, detail=msg)
+        raise HTTPException(status_code=400, detail=msg)
+    await db.commit()
+    return VisionAttachmentOut(
+        id=att.id, filename=att.filename,
+        mime_type=att.mime_type, size_bytes=att.size_bytes,
+    )
+
+
+@router.delete(
+    "/{project_id}/vision/chat/attachments/{attachment_id}",
+    status_code=http_status.HTTP_204_NO_CONTENT,
+)
+async def delete_chat_attachment(
+    project_id: int,
+    attachment_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete an attachment before it's been sent in a chat turn."""
+    from app.models import VisionChatAttachment
+    att = await db.get(VisionChatAttachment, attachment_id)
+    if att is None:
+        raise HTTPException(status_code=404, detail="attachment not found")
+    sess = await db.get(VisionChatSession, att.session_id)
+    if sess is None or sess.project_id != project_id:
+        raise HTTPException(status_code=404, detail="attachment not found")
+    try:
+        await va.delete_attachment(db, attachment_id=attachment_id)
+    except va.AttachmentRejected as exc:
+        msg_lower = str(exc).lower()
+        if "already sent" in msg_lower:
+            raise HTTPException(status_code=409, detail=str(exc))
+        raise HTTPException(status_code=400, detail=str(exc))
     await db.commit()
 
 

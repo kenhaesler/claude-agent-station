@@ -16,6 +16,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app/dashboard/backend
 
+# libmagic1 — required by python-magic for vision attachment MIME sniffing.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends libmagic1 \
+ && rm -rf /var/lib/apt/lists/*
+
 COPY dashboard/backend/requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 

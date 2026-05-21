@@ -53,6 +53,9 @@ class Settings(BaseSettings):
     # Employee report base directory
     workspaces_dir: str = "/home/claude-agent/workspaces"
 
+    # Upload directory for vision chat reference file attachments
+    vision_upload_dir: str = "/var/lib/claude-agent-station/vision-chat-uploads"
+
     # Path to Claude CLI credentials file
     credentials_path: str = "/home/claude-agent/.claude/.credentials.json"
 

@@ -30,6 +30,7 @@ Every variable below is prefixed with `STATION_`. They can also be placed in a `
 | ~~`STATION_LAUNCHER_USE_BASH`~~ | _(removed)_ | Removed in #383. The launcher always spawns `python3 -m agent.station_orchestrator --driver`. `agent/scripts/run-manager.sh` was deleted in the same PR. |
 | `STATION_RUN_STALE_THRESHOLD_S` | `60` | Seconds of webhook silence after which the dashboard's reactive recovery path (triggered on a user-initiated `/api/runs/trigger` that gets a 409) considers the orchestrator's run row stale enough to justify a force-stop. Half the launcher's reaper threshold because reactive recovery fires only on explicit user retries. |
 | `STATION_PROVIDER_KEYS_PATH` | `~/.claude-agent-station/provider_keys.json` | Path to the bring-your-own-key store for third-party LLM providers (OpenAI Codex, Google Gemini). Compose mounts this on `station-data` so saved keys survive container rebuilds. The file is chmod 0600 from creation; raw keys are never returned over the API. |
+| `STATION_VISION_UPLOAD_DIR` | `/var/lib/claude-agent-station/vision-chat-uploads` | Directory where vision chat attachments live before commit. The directory must be writable by the backend process; entries are cleaned up on session approve/cancel and by the periodic vision-cleanup sweep. |
 
 ## Launcher entry point (#361, updated #383)
 
@@ -267,6 +268,21 @@ When a project has `docs/vision.md`, two automatic triggers fire the vision anal
 - **Trigger B (vision commit):** committing a new vision via the dashboard fires the analyst when the document SHA changes. Idempotent on identical re-commits via `Project.last_vision_analyzed_sha`.
 
 Both produce `Run.mode = vision-bootstrap` rows that surface in the Runs list and Mission Control. Issues land with the `vision-suggested` label; remove the label to accept (the orchestrator's `SKIP_LABELS` blocks autonomous implementation until then).
+
+### Vision reference files
+
+Users may attach reference files (PDFs, images, xlsx, csv, docx, txt, md — up to 10 MB each, 40 MB total per session) to the vision chat. Uploads are staged on disk under `STATION_VISION_UPLOAD_DIR/<session_id>/` and tracked in the database.
+
+**New database table:**
+
+- `vision_chat_attachments` — reference files attached to a vision chat. One row per upload, scoped to a `vision_chat_sessions.id` (cascade delete).
+
+**Python dependencies** (in `dashboard/backend/requirements.txt`):
+
+- `openpyxl`, `python-docx` — text extraction for non-native attachment types.
+- `python-magic` — MIME sniffing (requires system `libmagic`; on Rocky/RHEL install with `dnf install file-libs file-devel`).
+
+On **Approve & commit**, reference files that were included in at least one chat turn are written to `docs/vision-refs/` in the target repo and listed in a `## References` section of `docs/vision.md`. Teammates pick them up automatically via `git clone`.
 
 ## Integration branch
 

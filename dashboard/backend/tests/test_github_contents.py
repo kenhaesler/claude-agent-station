@@ -74,6 +74,42 @@ async def test_write_file_updates_when_sha_matches():
 
 
 @pytest.mark.asyncio
+async def test_write_file_accepts_body_bytes():
+    """write_file with body_bytes= encodes binary content correctly."""
+    captured = {}
+    async def fake_put(self, url, headers=None, json=None):
+        captured["body"] = json
+        return httpx.Response(
+            201,
+            json={"content": {"sha": "bytes-sha"}, "commit": {"sha": "commit-sha"}},
+            request=httpx.Request("PUT", url),
+        )
+    with patch("app.services.github_contents._get_token", return_value="ghi"):
+        with patch.object(httpx.AsyncClient, "put", new=fake_put):
+            from app.services.github_contents import write_file
+            new_sha = await write_file(
+                repo="o/r", path="docs/vision-refs/data.xlsx", branch="main",
+                body_bytes=b"\x50\x4b\x03\x04", message="docs(vision-refs): add data.xlsx",
+                current_sha=None,
+            )
+    assert new_sha == "bytes-sha"
+    import base64 as _b64
+    assert captured["body"]["content"] == _b64.b64encode(b"\x50\x4b\x03\x04").decode("ascii")
+
+
+@pytest.mark.asyncio
+async def test_write_file_raises_on_ambiguous_body():
+    """Passing both body and body_bytes raises ValueError."""
+    from app.services.github_contents import write_file
+    with pytest.raises(ValueError, match="exactly one"):
+        await write_file(
+            repo="o/r", path="x", branch="main",
+            body="text", body_bytes=b"bytes",
+            message="msg", current_sha=None,
+        )
+
+
+@pytest.mark.asyncio
 async def test_write_file_409_on_stale_sha_raises_StaleSha():
     """When GitHub returns 409 on PUT, we re-fetch and raise StaleSha with current state."""
     async def fake_put(self, url, headers=None, json=None):

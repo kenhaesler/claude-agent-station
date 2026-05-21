@@ -516,3 +516,31 @@ class VisionChatSession(Base):
     assembled = Column(Text, nullable=True, default=None)  # JSON
     created_at = Column(DateTime(timezone=True), default=_utcnow)
     updated_at = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
+
+
+class VisionChatAttachment(Base):
+    """Reference file attached to a vision chat session.
+
+    Spec: docs/superpowers/specs/2026-05-21-vision-reference-files-design.md.
+
+    Files live on disk under VISION_UPLOAD_DIR/<session_id>/; this row is the
+    metadata + extraction cache. ``sent_at`` is set when the attachment is
+    first included in a chat turn — once set, DELETE is refused (the file is
+    part of the conversation history).
+    """
+    __tablename__ = "vision_chat_attachments"
+
+    id = Column(Text, primary_key=True)  # UUID
+    session_id = Column(
+        Text,
+        ForeignKey("vision_chat_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    filename = Column(Text, nullable=False)
+    mime_type = Column(Text, nullable=False)
+    size_bytes = Column(Integer, nullable=False)
+    disk_path = Column(Text, nullable=False)
+    extracted_text = Column(Text, nullable=True)  # populated for non-native types
+    sent_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=_utcnow, nullable=False)

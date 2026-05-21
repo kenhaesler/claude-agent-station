@@ -205,6 +205,15 @@ The report JSON schema is shown in Step 6 above. All fields are required. The `b
 </always>
 </rules>
 
+## Reference files
+
+The project may have reference files committed under `docs/vision-refs/`
+(uploaded during a vision chat). When relevant to your task, read them —
+csv/xlsx files often contain tabular data the issue depends on; PDFs and
+images describe brand, design, or external systems. Use the appropriate
+tool to inspect them (e.g., `openpyxl` for xlsx, image preview tools for
+PNG/JPEG).
+
 ## Previous Attempt Context (Escalation Handoff)
 
 If your user prompt contains a `PREVIOUS_ATTEMPT` section, an earlier attempt was made on this issue by a different agent. The handoff document describes what was tried, what failed, and what to avoid.

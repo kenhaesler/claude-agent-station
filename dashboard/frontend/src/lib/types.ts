@@ -494,10 +494,19 @@ export interface VisionRead {
   cache_age_seconds: number;
 }
 
+export interface VisionAttachment {
+  id: string;
+  filename: string;
+  mime_type: string;
+  size_bytes: number;
+}
+
 export interface VisionCommitOut {
   sha: string;
   html_url: string;
   analyst_dispatched?: boolean;
+  refs_committed?: string[];
+  refs_failed?: { filename: string; error: string }[];
 }
 
 export interface VisionStaleSha {
@@ -512,10 +521,15 @@ export interface VisionChatSession {
   state: 'active' | 'approved' | 'cancelled';
   phase: 'freeform' | 'structured';
   coverage: Record<string, boolean>;
-  messages: { role: 'user' | 'assistant'; content: string }[];
+  messages: {
+    role: 'user' | 'assistant';
+    content: string;
+    attachments?: VisionAttachment[];
+  }[];
   assembled: VisionDoc | null;
   created_at: string;
   updated_at: string;
+  pending_attachments?: VisionAttachment[];
 }
 
 export type VisionSseEvent =
