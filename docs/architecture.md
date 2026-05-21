@@ -417,6 +417,28 @@ teammates committed straight on `worktree/<role>-20260521`, the manager
 echoed those branches into the verdict, and three pushes failed at
 verdict execution time.
 
+#### Workspace path unification
+
+`iterate_projects` resolves the per-project workspace via
+`ensure_workspace` (which uses `_slug(repo)` → e.g.
+`laboef1900__LCM`) and threads the resolved absolute path through to
+`orchestrate_project` as the `workspace_path` kwarg. The SDK session,
+the per-role worktrees it creates, and the post-session
+`execute_verdict` push all use this single path.
+
+Before this fix, `orchestrate_project` independently derived the
+workspace via `repo.split("/")[-1]` (e.g. `LCM`). The two halves of
+the run ended up on *different clones on disk* — teammates committed
+feature branches in the bare-name clone's worktrees, while
+`execute_verdict` ran `git push` from the slug-name clone where those
+branches didn't exist, producing `src refspec does not match any`.
+The 2026-05-21 run-20260521T192218Z hit this on every verdict.
+
+`orchestrate_project` accepts `workspace_path=None` as a deprecated
+fallback so external tooling and tests that don't first invoke
+`ensure_workspace` keep working, but it emits a WARNING when used so
+the drift is visible in logs.
+
 ### Sibling-teammate coordination (#456)
 
 The lead agent writes `.claude-team-contracts.md` to the workspace
