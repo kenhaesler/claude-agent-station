@@ -998,6 +998,14 @@ class VisionChatSessionOut(BaseModel):
     updated_at: str
 
 
+class VisionAttachmentOut(BaseModel):
+    """Response for POST /api/projects/{id}/vision/chat/attachments and on session resume."""
+    id: str
+    filename: str
+    mime_type: str
+    size_bytes: int
+
+
 class VisionChatTurnIn(BaseModel):
     """Body for POST /api/projects/{id}/vision/chat (turn)."""
     session_id: str | None = None  # None on first turn

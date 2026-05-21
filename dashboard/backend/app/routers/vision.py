@@ -10,17 +10,18 @@ import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db
 from app.models import Project, Run, VisionChatSession
-from app.schemas import VisionRead, VisionCommitIn, VisionCommitOut, VisionStaleSha, VisionChatTurnIn, VisionChatSessionOut, VisionProposalsRead
+from app.schemas import VisionRead, VisionCommitIn, VisionCommitOut, VisionStaleSha, VisionChatTurnIn, VisionChatSessionOut, VisionProposalsRead, VisionAttachmentOut
 from app.services import github_contents
 from app.services.vision_render import render_vision_doc
 from app.services import vision_chat as vc_service
+from app.services import vision_attachments as va
 from app.services import service_control
 from app.services.vision_chat import (
     create_session, get_active_session, mark_cancelled,
@@ -257,6 +258,82 @@ async def delete_chat_session(project_id: int, db: AsyncSession = Depends(get_db
     if not session:
         raise HTTPException(status_code=404, detail="no active session")
     await mark_cancelled(db, session.id)
+    await db.commit()
+
+
+# ---------------------------------------------------------------------------
+# Attachment upload / delete endpoints
+# ---------------------------------------------------------------------------
+
+@router.post(
+    "/{project_id}/vision/chat/attachments",
+    response_model=VisionAttachmentOut,
+)
+async def upload_chat_attachment(
+    project_id: int,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+) -> VisionAttachmentOut:
+    """Upload a reference file for the active vision chat session.
+
+    Lazily creates an active session if one doesn't exist (mirrors chat_turn).
+    """
+    project = await db.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="project not found")
+
+    session = await get_active_session(db, project_id)
+    if session is None:
+        try:
+            session = await create_session(db, project_id)
+        except SessionAlreadyActive as exc:
+            session = await db.get(VisionChatSession, exc.existing_session_id)
+
+    raw = await file.read()
+    try:
+        att = await va.store_attachment(
+            db, session_id=session.id, raw=raw,
+            declared_filename=file.filename or "upload.bin",
+        )
+    except va.AttachmentRejected as exc:
+        msg = str(exc)
+        lower = msg.lower()
+        if "max 10 mb" in lower or ("session" in lower and "limit" in lower):
+            raise HTTPException(status_code=413, detail=msg)
+        if "not a supported" in lower:
+            raise HTTPException(status_code=415, detail=msg)
+        raise HTTPException(status_code=400, detail=msg)
+    await db.commit()
+    return VisionAttachmentOut(
+        id=att.id, filename=att.filename,
+        mime_type=att.mime_type, size_bytes=att.size_bytes,
+    )
+
+
+@router.delete(
+    "/{project_id}/vision/chat/attachments/{attachment_id}",
+    status_code=http_status.HTTP_204_NO_CONTENT,
+)
+async def delete_chat_attachment(
+    project_id: int,
+    attachment_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete an attachment before it's been sent in a chat turn."""
+    from app.models import VisionChatAttachment
+    att = await db.get(VisionChatAttachment, attachment_id)
+    if att is None:
+        raise HTTPException(status_code=404, detail="attachment not found")
+    sess = await db.get(VisionChatSession, att.session_id)
+    if sess is None or sess.project_id != project_id:
+        raise HTTPException(status_code=404, detail="attachment not found")
+    try:
+        await va.delete_attachment(db, attachment_id=attachment_id)
+    except va.AttachmentRejected as exc:
+        msg_lower = str(exc).lower()
+        if "already sent" in msg_lower:
+            raise HTTPException(status_code=409, detail=str(exc))
+        raise HTTPException(status_code=400, detail=str(exc))
     await db.commit()
 
 
