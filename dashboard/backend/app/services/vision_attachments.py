@@ -4,6 +4,7 @@ Spec: docs/superpowers/specs/2026-05-21-vision-reference-files-design.md.
 """
 from __future__ import annotations
 
+import base64
 import io
 import os
 import re
@@ -259,3 +260,64 @@ def cleanup_session_dir(session_id: str) -> None:
     d = _upload_root() / session_id
     if d.exists():
         shutil.rmtree(d, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------
+# Multi-block message builder
+# ---------------------------------------------------------------------------
+
+_IMAGE_MIMES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
+
+
+async def build_chat_blocks(
+    db: AsyncSession,
+    *,
+    user_text: str,
+    attachment_ids: list[str] | None,
+) -> list[dict]:
+    """Assemble a multi-block user message: text + attachments.
+
+    Side effect: marks the included attachments as ``sent_at = now()``.
+    Caller is responsible for committing.
+    """
+    blocks: list[dict] = [{"type": "text", "text": user_text}]
+    if not attachment_ids:
+        return blocks
+
+    now = datetime.now(timezone.utc)
+    for aid in attachment_ids:
+        att = await db.get(VisionChatAttachment, aid)
+        if att is None:
+            continue
+        raw = Path(att.disk_path).read_bytes()
+        b64 = base64.b64encode(raw).decode("ascii")
+
+        if att.mime_type == "application/pdf":
+            blocks.append({
+                "type": "document",
+                "source": {"type": "base64", "media_type": "application/pdf", "data": b64},
+                "title": att.filename,
+            })
+        elif att.mime_type == "text/plain":
+            blocks.append({
+                "type": "document",
+                "source": {
+                    "type": "text",
+                    "media_type": "text/plain",
+                    "data": raw.decode("utf-8", errors="replace"),
+                },
+                "title": att.filename,
+            })
+        elif att.mime_type in _IMAGE_MIMES:
+            blocks.append({
+                "type": "image",
+                "source": {"type": "base64", "media_type": att.mime_type, "data": b64},
+            })
+        else:
+            prefix = f"--- Attached file: {att.filename} ({att.mime_type}) ---\n"
+            body = att.extracted_text or "(no extractable text)"
+            blocks.append({"type": "text", "text": prefix + body})
+
+        att.sent_at = now
+
+    return blocks

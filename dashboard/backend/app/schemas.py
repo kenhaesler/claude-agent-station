@@ -1010,6 +1010,7 @@ class VisionChatTurnIn(BaseModel):
     """Body for POST /api/projects/{id}/vision/chat (turn)."""
     session_id: str | None = None  # None on first turn
     message: str
+    attachment_ids: list[str] | None = None
 
 
 class VisionProposalsRead(BaseModel):

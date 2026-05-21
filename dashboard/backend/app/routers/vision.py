@@ -16,7 +16,7 @@ from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db
-from app.models import Project, Run, VisionChatSession
+from app.models import Project, Run, VisionChatAttachment, VisionChatSession
 from app.schemas import VisionRead, VisionCommitIn, VisionCommitOut, VisionStaleSha, VisionChatTurnIn, VisionChatSessionOut, VisionProposalsRead, VisionAttachmentOut
 from app.services import github_contents
 from app.services.vision_render import render_vision_doc
@@ -201,6 +201,32 @@ async def chat_turn(
     config = await asyncio.to_thread(_read_config_json)
     model = (config.get("models") or {}).get("planner") or "claude-sonnet-4-6"
 
+    # Build attachment blocks if any IDs supplied
+    attachment_blocks: list[dict] | None = None
+    user_attachments_dict: list[dict] | None = None
+    if body.attachment_ids:
+        result = await db.execute(
+            select(VisionChatAttachment).where(
+                VisionChatAttachment.id.in_(body.attachment_ids),
+                VisionChatAttachment.session_id == session.id,
+                VisionChatAttachment.sent_at.is_(None),
+            )
+        )
+        rows = list(result.scalars().all())
+        if len(rows) != len(body.attachment_ids):
+            raise HTTPException(
+                status_code=400,
+                detail="one or more attachment_ids are invalid, already sent, or from a different session",
+            )
+        attachment_blocks = await va.build_chat_blocks(
+            db, user_text=body.message, attachment_ids=body.attachment_ids,
+        )
+        user_attachments_dict = [
+            {"id": a.id, "filename": a.filename, "mime_type": a.mime_type, "size_bytes": a.size_bytes}
+            for a in rows
+        ]
+        await db.commit()
+
     async def event_stream():
         from app.services.vision_chat import run_chat_turn
         async for chunk in run_chat_turn(
@@ -210,6 +236,8 @@ async def chat_turn(
             system_prompt=system_prompt,
             model=model,
             sdk_session_id=session.sdk_session_id,
+            attachment_blocks=attachment_blocks,
+            user_attachments=user_attachments_dict,
         ):
             kind = chunk.pop("type")
             yield _sse_format(kind, chunk)
