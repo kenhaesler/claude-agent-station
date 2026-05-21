@@ -60,6 +60,28 @@ class ResolverOutcome:
     error: str | None              # set when SDK errored
 
 
+async def _single_user_message_stream(prompt: str):
+    """Wrap a single user prompt as the streaming-mode async iterable the
+    SDK requires when ``can_use_tool`` is set.
+
+    The SDK refuses a plain string prompt + ``can_use_tool`` callback with::
+
+        can_use_tool callback requires streaming mode. Please provide
+        prompt as an AsyncIterable instead of a string.
+
+    (see ``claude_agent_sdk/_internal/client.py`` ~line 55). The shape the
+    SDK expects per its docstring at ``claude_agent_sdk/query.py:46-53`` is
+    ``{"type": "user", "message": {"role": "user", "content": ...}}``.
+
+    Wrapping at the runner seam keeps the public ``run_resolver`` API
+    string-only — callers still pass a rendered prompt string.
+    """
+    yield {
+        "type": "user",
+        "message": {"role": "user", "content": prompt},
+    }
+
+
 async def run_resolver(
     *,
     prompt: str,
@@ -104,7 +126,14 @@ async def run_resolver(
         # model that produced the work — review finding #5. To fix, capture
         # `getattr(message, "model", None)` on each assistant message and
         # plumb the most-recent value back to record_attempt_finish.
-        async for message in query(prompt=prompt, options=options):
+        #
+        # Stream the prompt as an AsyncIterable because ``can_use_tool``
+        # above pins us into streaming mode — see
+        # :func:`_single_user_message_stream` for the shape.
+        async for message in query(
+            prompt=_single_user_message_stream(prompt),
+            options=options,
+        ):
             mtype = getattr(message, "type", None)
             if mtype == "assistant":
                 usage = getattr(message, "usage", None) or {}
