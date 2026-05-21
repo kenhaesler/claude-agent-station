@@ -23,6 +23,7 @@ from app.services.vision_render import render_vision_doc
 from app.services import vision_chat as vc_service
 from app.services import vision_attachments as va
 from app.services import service_control
+from app.services.github_app import get_installation_token
 from app.services.vision_chat import (
     create_session, get_active_session, mark_cancelled,
     SessionAlreadyActive, SessionNotFound,
@@ -428,25 +429,31 @@ async def delete_chat_attachment(
     await db.commit()
 
 
-def _check_gh_auth() -> bool:
-    """Return True iff `gh auth status` exits cleanly.
+async def _check_github_auth() -> bool:
+    """Return True iff the dashboard can mint a fresh GitHub App installation
+    token.
 
-    Best-effort probe: a non-zero exit means the agent's gh token is
-    invalid/expired and a vision-analyst dispatch will spin up only to
-    crash on the first GitHub API call. Cheap to run (a few hundred ms)
-    and infinitely cheaper than a doomed analyst run.
+    This is the same auth path the analyst itself relies on at runtime:
+    ``agent.vision_analyst._fetch_gh_token`` calls
+    ``GET /api/github/app/token``, which in turn calls
+    :func:`get_installation_token`. Probing the mint here lets the
+    preflight short-circuit a doomed analyst dispatch and lines the check
+    up with the GitHub Settings page (the green chip there reflects the
+    same call).
+
+    Replaces the previous ``gh auth status`` shell-out, which was broken
+    in compose deploys because ``gh`` isn't installed in the dashboard
+    image (the subprocess raised ``FileNotFoundError``, was caught by a
+    bare ``except``, and unconditionally returned False — so every
+    dispatch hit a 409 regardless of actual App auth state).
     """
     try:
-        result = subprocess.run(
-            ["gh", "auth", "status"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        return result.returncode == 0
-    except Exception:
-        # Treat any subprocess failure (gh not installed, OS error, timeout)
-        # as auth-broken — the agent can't dispatch anyway.
+        return bool(await get_installation_token())
+    except Exception as exc:
+        # Network blip, malformed credentials on disk, etc. We log so
+        # operators can spot a flapping mint, but the preflight return
+        # stays binary — caller raises a single 409 either way.
+        logger.warning("preflight GitHub App auth probe failed: %s", exc)
         return False
 
 
@@ -459,18 +466,20 @@ async def _vision_preflight(
     may dispatch; when False, raise HTTPException(status_code, detail).
 
     Two layers (issue #272):
-    1. ``gh`` CLI auth health — short-circuits invalid-token dispatches.
+    1. GitHub App auth health — probes the same installation-token mint
+       the analyst uses at runtime, so a green chip in Settings and a
+       passing preflight refer to the same thing.
     2. Last vision-bootstrap run failed for the *current* vision SHA AND
        no later success exists → block re-runs until the operator either
        fixes auth or commits a new vision.
     """
-    # Layer A: gh auth health — run in a thread so we don't block the loop
-    auth_ok = await asyncio.to_thread(_check_gh_auth)
+    # Layer A: can the dashboard mint an App installation token?
+    auth_ok = await _check_github_auth()
     if not auth_ok:
         return (
             False,
             409,
-            "GitHub CLI is not authenticated — visit Settings → GitHub to reconnect.",
+            "GitHub App is not installed or unreachable — visit Settings → GitHub to reconnect.",
         )
 
     # Layer B: stale-failure guard. Find the most-recent vision-bootstrap
