@@ -204,6 +204,78 @@ def test_create_proposed_issues_calls_ensure_labels_first():
     assert call_log.index("issue:create") > call_log.index("label:critical")
 
 
+def test_propose_gaps_repairs_malformed_json_via_retry():
+    """Mirrors run-vb-49a7ff80ae91: first call returns a JSON array whose
+    string bodies contain an unescaped quote (``Expecting ',' delimiter``).
+    A repair retry must be issued and its valid output used."""
+    # Unescaped quote inside body breaks the JSON at column ~30 of line 3.
+    bad = '[\n  {\n    "title": "Scaffold monorepo",\n    "body": "use "fastify" here",\n    "labels": [],\n    "priority": "medium"\n  }\n]'
+    good = json.dumps([
+        {"title": "Scaffold monorepo", "body": 'use "fastify" here',
+         "labels": [], "priority": "medium"},
+    ])
+    calls: list[str] = []
+
+    def fake_call(prompt: str, model: str) -> str:
+        calls.append(prompt)
+        # First call: malformed. Second call (repair): valid.
+        return bad if len(calls) == 1 else good
+
+    with patch("agent.vision_analyst._gather_repo_state", return_value={"tree": [], "readme": "", "commits": [], "open_issues": [], "closed_issues": []}):
+        with patch("agent.vision_analyst._call_model", side_effect=fake_call):
+            proposals = propose_gaps(workspace="/x", vision=VISION, repo="o/r", model="m")
+
+    assert len(calls) == 2, "repair retry must invoke the model a second time"
+    assert "previous response" in calls[1].lower() and "strict json" in calls[1].lower(), (
+        "repair prompt must reference the previous response and require strict JSON"
+    )
+    assert len(proposals) == 1
+    assert proposals[0]["title"] == "Scaffold monorepo"
+
+
+def test_propose_gaps_surfaces_original_error_when_repair_also_fails():
+    """If both the first call AND the repair retry produce malformed JSON,
+    the operator-visible error must be the ORIGINAL parse error (which
+    describes what the model produced first), not the repair-call error."""
+    bad_first = '[{"title": "A", "body": "x" "y", "labels": [], "priority": "low"}]'
+    bad_repair = "still not json"
+    calls: list[str] = []
+
+    def fake_call(prompt: str, model: str) -> str:
+        calls.append(prompt)
+        return bad_first if len(calls) == 1 else bad_repair
+
+    with patch("agent.vision_analyst._gather_repo_state", return_value={"tree": [], "readme": "", "commits": [], "open_issues": [], "closed_issues": []}):
+        with patch("agent.vision_analyst._call_model", side_effect=fake_call):
+            with pytest.raises(VisionAnalystError, match="not JSON") as exc_info:
+                propose_gaps(workspace="/x", vision=VISION, repo="o/r", model="m")
+
+    assert len(calls) == 2, "repair retry must still be attempted before giving up"
+    # The chained __cause__ is the FIRST parse error, not the repair's.
+    assert isinstance(exc_info.value.__cause__, json.JSONDecodeError)
+
+
+def test_propose_gaps_surfaces_original_error_when_repair_call_raises():
+    """If the repair retry's _call_model itself raises (CLI timeout, etc.),
+    the analyst must still surface the original JSON parse error so the
+    operator sees the underlying class of failure, not a secondary CLI
+    error that's unrelated to the root cause."""
+    bad_first = '[{"title": "A", "body": "x" "y", "labels": [], "priority": "low"}]'
+    calls: list[int] = []
+
+    def fake_call(prompt: str, model: str) -> str:
+        calls.append(1)
+        if len(calls) == 1:
+            return bad_first
+        raise RuntimeError("claude CLI: timeout after 300s")
+
+    with patch("agent.vision_analyst._gather_repo_state", return_value={"tree": [], "readme": "", "commits": [], "open_issues": [], "closed_issues": []}):
+        with patch("agent.vision_analyst._call_model", side_effect=fake_call):
+            with pytest.raises(VisionAnalystError, match="not JSON"):
+                propose_gaps(workspace="/x", vision=VISION, repo="o/r", model="m")
+    assert len(calls) == 2
+
+
 def test_propose_gaps_raises_when_no_array_present():
     """Pure prose with no JSON array at all must surface as an error."""
     with patch("agent.vision_analyst._gather_repo_state", return_value={"tree": [], "readme": "", "commits": [], "open_issues": [], "closed_issues": []}):
