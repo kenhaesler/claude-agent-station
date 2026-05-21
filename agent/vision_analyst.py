@@ -178,6 +178,29 @@ Output ONLY a JSON array, no prose:
 """
 
 
+_REPAIR_PROMPT = """Your previous response to a vision-analyst prompt was not valid JSON.
+
+Parse error: {error}
+
+Return the SAME proposals as a STRICT JSON array. Output ONLY the array — no
+prose, no markdown fences, no commentary. Make sure every string is properly
+escaped: backslashes as ``\\\\``, double quotes inside strings as ``\\"``,
+newlines as ``\\n``.
+
+Schema:
+[{{"title": "...", "body": "...", "labels": ["..."], "priority": "low|medium|high|critical"}}]
+
+Your previous (malformed) response:
+{raw}
+"""
+
+# Cap the raw output we feed back into the repair prompt. The original
+# response can be a few KB of markdown bodies; we don't need every byte to
+# get the model to reformat, and very large prompts increase the chance the
+# repair itself runs into latency / cost limits.
+_REPAIR_RAW_CAP = 8000
+
+
 def _call_model(prompt: str, model: str) -> str:
     proc = subprocess.run(
         ["claude", "--print", "--model", model, "--no-session-persistence",
@@ -241,27 +264,82 @@ def propose_gaps(workspace: str, vision: dict, repo: str, model: str) -> list[di
         logger.error("vision_analyst model call failed: %s", e)
         raise VisionAnalystError(f"model call failed: {e}") from e
 
-    raw = raw.strip()
-    if raw.startswith("```"):
-        raw = raw.split("\n", 1)[1] if "\n" in raw else raw
-        raw = raw.rstrip("` \n")
-    if not raw:
-        raise VisionAnalystError("model returned empty response")
-    try:
-        proposals = _parse_proposal_list(raw)
-    except json.JSONDecodeError as e:
-        # Log a truncated preview so operators can see what the model
-        # actually produced without dumping kilobytes of prose into the log.
-        logger.error(
-            "vision_analyst response not JSON: %s | preview=%r",
-            e, raw[:300],
-        )
-        raise VisionAnalystError(f"response not JSON: {e}") from e
+    proposals = _parse_or_repair(raw, model)
     if not isinstance(proposals, list):
         raise VisionAnalystError(
             f"model returned non-list JSON: {type(proposals).__name__}"
         )
     return proposals[:MAX_PROPOSALS]
+
+
+def _clean_fences(raw: str) -> str:
+    """Strip surrounding ```...``` markdown fences from a model response.
+
+    The model sometimes wraps its array in a fenced code block despite the
+    'no markdown' instruction. We tolerate it by peeling the fence; if no
+    fence is present this is a no-op.
+    """
+    raw = raw.strip()
+    if raw.startswith("```"):
+        raw = raw.split("\n", 1)[1] if "\n" in raw else raw
+        raw = raw.rstrip("` \n")
+    return raw
+
+
+def _parse_or_repair(raw: str, model: str) -> list:
+    """Parse the model output as a JSON array, with one repair retry.
+
+    Sonnet occasionally emits a valid-looking JSON array whose string bodies
+    contain unescaped quotes or stray control characters (observed in
+    run-vb-49a7ff80ae91: ``Expecting ',' delimiter: line 10 column 778``).
+    A single follow-up call asking the model to re-emit the same proposals
+    as strict JSON recovers from that class of failure cheaply.
+
+    Raises :class:`VisionAnalystError` if either attempt yields no parseable
+    array. The repair attempt's error is logged but the *original* parse
+    error is surfaced — operators care which output the model produced
+    first, not the repaired-and-still-broken second attempt.
+    """
+    raw = _clean_fences(raw)
+    if not raw:
+        raise VisionAnalystError("model returned empty response")
+    first_err: json.JSONDecodeError
+    try:
+        return _parse_proposal_list(raw)
+    except json.JSONDecodeError as exc:
+        # Python 3 unbinds the ``except`` variable when the block exits, so
+        # we copy it into the enclosing scope before falling through to the
+        # repair attempt below.
+        first_err = exc
+        logger.warning(
+            "vision_analyst response not JSON: %s | preview=%r | retrying with repair prompt",
+            first_err, raw[:300],
+        )
+
+    repair_prompt = _REPAIR_PROMPT.format(
+        error=str(first_err),
+        raw=raw[:_REPAIR_RAW_CAP],
+    )
+    try:
+        repaired = _call_model(repair_prompt, model)
+    except Exception as exc:
+        logger.error("vision_analyst repair call failed: %s", exc)
+        # Surface the ORIGINAL parse error, not the repair call's stderr —
+        # the first-attempt failure is what operators need to triage.
+        raise VisionAnalystError(f"response not JSON: {first_err}") from first_err
+
+    repaired = _clean_fences(repaired)
+    if not repaired:
+        logger.error("vision_analyst repair returned empty response")
+        raise VisionAnalystError(f"response not JSON: {first_err}") from first_err
+    try:
+        return _parse_proposal_list(repaired)
+    except json.JSONDecodeError as repair_err:
+        logger.error(
+            "vision_analyst repair also not JSON: %s | preview=%r",
+            repair_err, repaired[:300],
+        )
+        raise VisionAnalystError(f"response not JSON: {first_err}") from first_err
 
 
 def _list_vision_refs(repo_root: Path) -> str:
