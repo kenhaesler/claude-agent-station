@@ -1050,13 +1050,43 @@ doesn't satisfy every acceptance item.
     # the wrong write path.
     manager_section = ""
     if review_package_path and verdicts_file_path:
+        log_dir = os.path.dirname(review_package_path) or "."
+        # Worktree paths the lead must point the builder at. Quoted so
+        # paths with spaces (unlikely but possible) survive the shell.
+        worktree_arg_list = " ".join(
+            f"'{p}'" for p in (worktree_paths or {}).values()
+        )
+        if not worktree_arg_list:
+            # No worktrees → no real teammates. The builder still runs
+            # but produces a header-only file; the manager will see it
+            # and report no work to review rather than hallucinate.
+            worktree_arg_list = f"'{workspace}'"
         manager_section = f"""
 ## Manager review (spawn the manager sibling)
 
 After every teammate has emitted `.claude-employee-report-<index>.json` (or
 the 20-minute timeout elapses with whichever reports exist), you MUST:
 
-1. Spawn a `manager` sibling agent via the Agent tool. The manager is a
+1. **Build the review package first** — before spawning the manager — by
+   running this Bash command exactly once:
+
+   ```bash
+   python3 -m agent.build_review_package \\
+     --run-id '{run_id}' \\
+     --log-dir '{log_dir}' \\
+     --mode '{project_mode}' \\
+     --workspaces {worktree_arg_list}
+   ```
+
+   This concatenates each worktree's `.claude-employee-report-*.json` plus
+   a diff summary into the file the manager will read. The command is
+   idempotent and prints the absolute path on stdout. If you skip this
+   step the manager will find the review file missing, fall back to
+   reading whatever stale reports happen to sit in the workspace, and
+   write verdicts for the wrong run — that exact failure produced two
+   bad LCM runs on 2026-05-21.
+
+2. Spawn a `manager` sibling agent via the Agent tool. The manager is a
    separate Agent Teams sibling — same SDK session, separate role/prompt/model.
    The orchestrator has already written `.claude-manager-paths.json` to
    the workspace; the manager reads it on its first turn to discover where
@@ -1073,10 +1103,6 @@ the 20-minute timeout elapses with whichever reports exist), you MUST:
    on completeness — never approve partial implementations.
    ```
 
-2. The orchestrator (Python) composes the review package contents and
-   writes the sidecar before your turn began. If the sidecar is missing
-   or the manager reports a parse error, surface it in your final summary
-   and end the turn — do not guess paths.
 3. **Do NOT attempt to review the work yourself.** You are the orchestrator;
    the manager is the quality gate. Spawn the manager and wait for it to
    finish — when its turn ends, the verdicts file must exist and contain
