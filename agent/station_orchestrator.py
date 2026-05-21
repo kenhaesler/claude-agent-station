@@ -198,6 +198,63 @@ def _render_vision_for_splitter(vision: dict[str, str] | None) -> str:
 
 # ── Configuration ──────────────────────────────────────────────
 
+def ensure_integration_base_on_origin(workspace: str, base_branch: str) -> None:
+    """Ensure the integration base branch exists *on origin*, not just locally.
+
+    The orchestrator branches every worktree from this ref, and verdict
+    execution opens PRs with ``--base <base_branch>``. If the branch is
+    only local, ``gh pr create`` fails with a 404 on every approve.
+
+    Behavior:
+
+    - ``git fetch origin`` to refresh refs.
+    - If ``origin/<base_branch>`` already exists: checkout, ``git pull``.
+    - Else: create locally from HEAD and ``git push -u origin <base_branch>``.
+      A failed push (branch protection / perms) is logged at WARNING and
+      the function returns — the run continues, but downstream PR
+      creation will surface the failure via ``_execute_one_verdict``.
+
+    Why the bug existed: the previous flow created the local branch but
+    never pushed it. Two live runs against laboef1900/LCM on 2026-05-21
+    produced zero PRs because ``--base claude-agent-station`` resolved
+    only locally; the executor's silent-failure swallow then recorded
+    every verdict as APPROVE. Fixed jointly with that swallow in
+    :func:`agent.project_loop._execute_one_verdict`.
+    """
+    subprocess.run(
+        ["git", "fetch", "origin"],
+        cwd=workspace, capture_output=True, timeout=30,
+    )
+    has_remote = subprocess.run(
+        ["git", "rev-parse", "--verify", f"origin/{base_branch}"],
+        cwd=workspace, capture_output=True,
+    )
+    if has_remote.returncode == 0:
+        subprocess.run(
+            ["git", "checkout", base_branch],
+            cwd=workspace, capture_output=True,
+        )
+        subprocess.run(
+            ["git", "pull", "origin", base_branch],
+            cwd=workspace, capture_output=True,
+        )
+        return
+
+    subprocess.run(
+        ["git", "checkout", "-b", base_branch],
+        cwd=workspace, capture_output=True,
+    )
+    push = subprocess.run(
+        ["git", "push", "-u", "origin", base_branch],
+        cwd=workspace, capture_output=True, text=True,
+    )
+    if push.returncode != 0:
+        logger.warning(
+            "could not push integration base branch %r to origin: %s",
+            base_branch, push.stderr.strip()[:200],
+        )
+
+
 def load_config(config_file: str) -> dict:
     """Load manager-config.json."""
     with open(config_file) as f:
@@ -2395,30 +2452,7 @@ async def orchestrate_project(
         integration = config.get("integration", {})
         base_branch = integration.get("dev_branch", "autonomous/dev")
 
-        # Ensure base branch exists locally
-        subprocess.run(
-            ["git", "fetch", "origin"],
-            cwd=workspace, capture_output=True, timeout=30,
-        )
-        # Try checking out base branch; create if missing
-        result = subprocess.run(
-            ["git", "rev-parse", "--verify", f"origin/{base_branch}"],
-            cwd=workspace, capture_output=True,
-        )
-        if result.returncode != 0:
-            subprocess.run(
-                ["git", "checkout", "-b", base_branch],
-                cwd=workspace, capture_output=True,
-            )
-        else:
-            subprocess.run(
-                ["git", "checkout", base_branch],
-                cwd=workspace, capture_output=True,
-            )
-            subprocess.run(
-                ["git", "pull", "origin", base_branch],
-                cwd=workspace, capture_output=True,
-            )
+        ensure_integration_base_on_origin(workspace, base_branch)
 
         # Create one worktree per teammate role
         worktree_paths: dict[str, str] = {}

@@ -102,6 +102,90 @@ def _eligible(issue: dict[str, Any],
     return not (label_names & skip)
 
 
+def _execute_one_verdict(
+    verdict: Any,
+    *,
+    project_repo: str,
+    workspace_path: str,
+    run_id: str,
+    dev_branch: str,
+    env: dict[str, str],
+) -> dict:
+    """Run one verdict through ``execute_verdict`` and reduce the
+    ``ExecutionResult`` to a digest-shaped dict.
+
+    Two guarantees this helper exists for, both root-causes from the
+    2026-05-21 LCM runs where APPROVE verdicts produced zero PRs:
+
+    1. ``verdict.project`` is overridden with ``project_repo`` *before*
+       dispatch. The manager's free-text output is not a trustworthy
+       source for ``gh --repo`` — live data shows hallucinated slugs
+       like ``claude-agent-station/LCM`` against a real repo of
+       ``laboef1900/LCM``.
+
+    2. A successful return from ``execute_verdict`` is not the same as
+       a successful execution. The executors return
+       ``ExecutionResult(success=False, error=…)`` for git/gh failures
+       without raising. The previous loop discarded that result and
+       recorded APPROVE regardless; this helper surfaces it as ERROR.
+
+    Returns the result dict to append to the digest. Caller is
+    responsible for ``any_real_failure``/``exit_code`` bookkeeping based
+    on the dict's ``"decision"``.
+    """
+    from agent.verdict_execution import execute as execute_verdict
+
+    # Fix #1 of #2: canonicalise the repo slug before the executor sees it.
+    verdict.project = project_repo
+
+    try:
+        result = execute_verdict(
+            verdict,
+            workspace=Path(workspace_path),
+            run_id=run_id,
+            env=env,
+            dev_branch=dev_branch,
+        )
+    except Exception as exc:  # noqa: BLE001 — never crash the loop on one verdict
+        logger.exception(
+            "verdict_execution: %s#%s failed (%s)",
+            verdict.project, verdict.issue_number, verdict.verdict,
+        )
+        return {
+            "project": verdict.project,
+            "issue_number": verdict.issue_number,
+            "decision": "ERROR",
+            "error": f"execute_verdict: {type(exc).__name__}: {exc}",
+        }
+
+    if not getattr(result, "success", False):
+        # Fix #2 of #2: silent-failure mode that produced two APPROVE-but-no-PR
+        # runs on 2026-05-21. Now surfaced as ERROR so the digest, exit code,
+        # and downstream webhook all reflect reality.
+        logger.error(
+            "verdict_execution: %s#%s recorded failure (%s): %s",
+            verdict.project, verdict.issue_number, verdict.verdict,
+            getattr(result, "error", "<no error message>"),
+        )
+        return {
+            "project": verdict.project,
+            "issue_number": verdict.issue_number,
+            "decision": "ERROR",
+            "error": getattr(result, "error", "execute_verdict reported failure"),
+            "intended_decision": verdict.verdict,
+            "branch": getattr(verdict, "branch", ""),
+        }
+
+    return {
+        "project": verdict.project,
+        "issue_number": verdict.issue_number,
+        "decision": verdict.verdict,
+        "branch": getattr(verdict, "branch", ""),
+        "reasoning": getattr(verdict, "reasoning", ""),
+        "pr_url": getattr(result, "pr_url", None),
+    }
+
+
 def pick_issue(
     repo: str,
     *,
@@ -196,7 +280,9 @@ def iterate_projects(
     from agent.run_control import OrchestratorStopRequested
     from agent.workspace_setup import ensure_workspace, WorkspaceError
     from agent.station_orchestrator import orchestrate_project, _read_verdicts_file
-    from agent.verdict_execution import execute as execute_verdict
+    # NOTE: execute_verdict is imported inside _execute_one_verdict (top of
+    # this module) rather than here. Removing the module-scope import
+    # avoids a now-unused symbol after the verdict-handling extraction.
     from agent.integration_branch import merge_to_dev, IntegrationBranchError
     from agent.digest import write_digest
 
@@ -483,37 +569,29 @@ def iterate_projects(
             # silently failing every integration even when the manager
             # approved. (Discovered after live run-20260515T235612Z:
             # verdict file written with 5x APPROVE_INTEGRATION, no PRs
-            # opened, run marked failed.) Catch per-verdict so one bad
-            # executor invocation doesn't cancel the whole queue.
-            try:
-                execute_verdict(
-                    verdict,
-                    workspace=Path(workspace_path),
-                    run_id=run_id,
-                    env=_os.environ.copy(),
-                    dev_branch=dev_branch,
-                )
-            except Exception as exc:  # noqa: BLE001 — must not crash loop
-                logger.exception(
-                    "verdict_execution: %s#%s failed (%s)",
-                    verdict.project, verdict.issue_number, verdict.verdict,
-                )
+            # opened, run marked failed.)
+            #
+            # 2026-05-21 follow-up: a *returned* failure (success=False on
+            # the ExecutionResult) was also being silently swallowed. The
+            # executor catches its own subprocess errors and returns them
+            # in the result; the loop must not discard that. Both the
+            # raise path and the returned-failure path are now handled in
+            # :func:`_execute_one_verdict`. The verdict's ``project`` field
+            # is also coerced to ``project["repo"]`` there to defeat the
+            # manager's free-text hallucination of the GitHub repo slug.
+            result_dict = _execute_one_verdict(
+                verdict,
+                project_repo=project["repo"],
+                workspace_path=workspace_path,
+                run_id=run_id,
+                dev_branch=dev_branch,
+                env=_os.environ.copy(),
+            )
+            results.append(result_dict)
+            if result_dict.get("decision") == "ERROR":
                 exit_code = max(exit_code, 7)
                 any_real_failure = True
-                results.append({
-                    "project": verdict.project,
-                    "issue_number": verdict.issue_number,
-                    "decision": "ERROR",
-                    "error": f"execute_verdict: {type(exc).__name__}: {exc}",
-                })
                 continue
-            results.append({
-                "project": verdict.project,
-                "issue_number": verdict.issue_number,
-                "decision": verdict.verdict,
-                "branch": getattr(verdict, "branch", ""),
-                "reasoning": getattr(verdict, "reasoning", ""),
-            })
             if getattr(verdict, "action", "") == "merge_dev":
                 try:
                     merge_to_dev(
