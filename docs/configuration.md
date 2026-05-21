@@ -395,6 +395,14 @@ The manager produces one of four verdicts per project/issue:
 
 The collapse of `APPROVE` and `APPROVE_INTEGRATION` shipped after run-20260521T210606Z, where the manager picked `APPROVE` for completed work and the PRs sat open with no merge path. The previous prompt's decision tree, verdict description, and confidence table all pushed the manager toward `APPROVE` for routine work; now both verdicts produce the same auto-merge-armed PR.
 
+### Auto-resolve on CONFLICTING PRs (#477)
+
+Between `gh pr create` and arming auto-merge, the executor polls `gh pr view --json mergeable` (up to 2 attempts at 3s spacing) and invokes `agent/scripts/resolve-conflicts.sh` if the PR settles in `CONFLICTING` state. The harness rebases the feature branch on `origin/<base_branch>`, falls back to the LLM resolver if the rebase produces conflicts, then `git push --force-with-lease`. GitHub's auto-merge (armed in the next step) picks up the rewritten branch and lands the PR.
+
+Best-effort: any resolver failure (rebase aborted, LLM rejected, budget exhausted) is logged at WARNING and recorded in the verdict's `actions` list. The verdict itself stays successful — the PR remains open for human takeover.
+
+This matters most for back-to-back APPROVE verdicts in the same run: when PR-A merges into the integration branch, PR-B (which was MERGEABLE at create time) goes CONFLICTING the moment PR-A lands. Without this wiring, PR-B's armed auto-merge sits forever; with it, the executor rebases and re-pushes so auto-merge re-evaluates and lands PR-B too.
+
 ## SQLite → Postgres migration playbook
 
 The persistence layer supports both SQLite (single-writer, file-based) and Postgres (multi-writer, recommended once concurrent runs land in #386). Migration is a one-time data copy.

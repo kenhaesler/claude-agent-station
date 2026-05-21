@@ -60,15 +60,16 @@ def test_approve_arms_auto_merge_squash_against_pr_url(tmp_path: Path):
                return_value=_ok_subprocess()), \
          patch("agent.verdict_execution.gh_run") as mock_gh:
         mock_gh.side_effect = [
-            _gh_ok(stdout=pr_url),  # pr create
-            _gh_ok(""),              # pr merge --auto
-            _gh_ok(""),              # issue comment
-            _gh_ok(""),              # issue close
+            _gh_ok(stdout=pr_url),       # pr create
+            _gh_ok("MERGEABLE"),          # pr view --json mergeable (#477)
+            _gh_ok(""),                   # pr merge --auto
+            _gh_ok(""),                   # issue comment
+            _gh_ok(""),                   # issue close
         ]
         result = execute(_verdict(), workspace=tmp_path)
 
     assert result.success
-    merge_args = mock_gh.call_args_list[1].args[0]
+    merge_args = mock_gh.call_args_list[2].args[0]
     assert merge_args[:4] == ["pr", "merge", "--auto", "--squash"]
     assert pr_url in merge_args
 
@@ -88,6 +89,7 @@ def test_approve_continues_when_auto_merge_arm_fails(tmp_path: Path, caplog):
          caplog.at_level("WARNING", logger="agent.verdict_execution"):
         mock_gh.side_effect = [
             _gh_ok(stdout=pr_url),                          # pr create
+            _gh_ok("MERGEABLE"),                             # pr view (#477)
             _gh_fail("auto-merge is not allowed for this repository"),
             _gh_ok(""),                                      # issue comment
             _gh_ok(""),                                      # issue close
@@ -126,7 +128,9 @@ def test_approve_integration_alias_produces_identical_call_sequence(tmp_path: Pa
                    return_value=_ok_subprocess()), \
              patch("agent.verdict_execution.gh_run") as mock_gh:
             mock_gh.side_effect = [
-                _gh_ok(stdout=pr_url), _gh_ok(""), _gh_ok(""), _gh_ok(""),
+                _gh_ok(stdout=pr_url),
+                _gh_ok("MERGEABLE"),  # pr view (#477)
+                _gh_ok(""), _gh_ok(""), _gh_ok(""),
             ]
             execute(v, workspace=tmp_path)
         log.extend([tuple(c.args[0][:2]) for c in mock_gh.call_args_list])
@@ -152,7 +156,11 @@ def test_approve_integration_alias_patches_result_verdict_label(tmp_path: Path):
     with patch("agent.verdict_execution.subprocess.run",
                return_value=_ok_subprocess()), \
          patch("agent.verdict_execution.gh_run") as mock_gh:
-        mock_gh.side_effect = [_gh_ok(stdout=pr_url), _gh_ok(""), _gh_ok(""), _gh_ok("")]
+        mock_gh.side_effect = [
+            _gh_ok(stdout=pr_url),
+            _gh_ok("MERGEABLE"),  # pr view (#477)
+            _gh_ok(""), _gh_ok(""), _gh_ok(""),
+        ]
         result = execute(v, workspace=tmp_path)
 
     assert result.verdict == "APPROVE_INTEGRATION"

@@ -77,10 +77,13 @@ def test_approve_pushes_branch_then_creates_pr_then_arms_auto_merge_then_comment
     with patch("agent.verdict_execution.subprocess.run",
                return_value=_ok_subprocess()) as mock_sp, \
          patch("agent.verdict_execution.gh_run") as mock_gh:
-        mock_gh.side_effect = [_ok_gh_result(stdout=pr_url),
-                               _ok_gh_result(stdout=""),   # gh pr merge --auto
-                               _ok_gh_result(stdout=""),   # issue comment
-                               _ok_gh_result(stdout="")]   # gh issue close (#460)
+        mock_gh.side_effect = [
+            _ok_gh_result(stdout=pr_url),
+            _ok_gh_result(stdout="MERGEABLE"),  # pr view --json mergeable (#477)
+            _ok_gh_result(stdout=""),           # gh pr merge --auto
+            _ok_gh_result(stdout=""),           # issue comment
+            _ok_gh_result(stdout=""),           # gh issue close (#460)
+        ]
         result = execute(_verdict("APPROVE"), workspace=tmp_path, run_id="run-1")
 
     assert result.success
@@ -95,13 +98,16 @@ def test_approve_pushes_branch_then_creates_pr_then_arms_auto_merge_then_comment
     assert pr_args[pr_args.index("--repo") + 1] == "owner/repo"
     assert pr_args[pr_args.index("--head") + 1] == "autonomous/issue-42"
     assert pr_args[pr_args.index("--base") + 1] == "main"
-    # gh pr merge --auto --squash second
-    merge_args = mock_gh.call_args_list[1].args[0]
+    # gh pr view --json mergeable second (#477 conflict-resolver wiring)
+    view_args = mock_gh.call_args_list[1].args[0]
+    assert view_args[:2] == ["pr", "view"]
+    # gh pr merge --auto --squash third
+    merge_args = mock_gh.call_args_list[2].args[0]
     assert merge_args[:2] == ["pr", "merge"]
     assert "--auto" in merge_args and "--squash" in merge_args
     assert pr_url in merge_args
-    # gh issue comment third
-    comment_args = mock_gh.call_args_list[2].args[0]
+    # gh issue comment fourth
+    comment_args = mock_gh.call_args_list[3].args[0]
     assert comment_args[:2] == ["issue", "comment"]
     assert "42" in comment_args
     # Result records the auto-merge action so the digest reflects it
@@ -144,6 +150,7 @@ def test_approve_body_includes_closes_keyword_when_issue_present(tmp_path):
                return_value=_ok_subprocess()), \
          patch("agent.verdict_execution.gh_run",
                side_effect=[_ok_gh_result(stdout=pr_url),
+                            _ok_gh_result(stdout="MERGEABLE"),  # pr view (#477)
                             _ok_gh_result(),   # gh pr merge --auto (collapse #475)
                             _ok_gh_result(),   # issue comment
                             _ok_gh_result()]) as mock_gh:  # gh issue close (#460)
@@ -352,6 +359,10 @@ def test_execute_approve_integration_happy_path(tmp_path: Path):
         call_log.append(("gh", tuple(args)))
         if args[:2] == ["pr", "create"]:
             return _stub_gh_ok(pr_url)
+        # #477: pr view --json mergeable returns the mergeability state.
+        # Use MERGEABLE so the conflict resolver does NOT fire.
+        if args[:2] == ["pr", "view"] and "mergeable" in args:
+            return _stub_gh_ok("MERGEABLE")
         return _stub_gh_ok("")
 
     def subprocess_run_spy(args, **kwargs):  # noqa: ARG001
@@ -376,9 +387,10 @@ def test_execute_approve_integration_happy_path(tmp_path: Path):
     # Telemetry: alias preserves the verdict label
     assert result.verdict == "APPROVE_INTEGRATION"
 
-    # Order: git push, gh pr create (no --draft), gh pr merge --auto --squash, issue comment, issue close.
+    # Order: git push, gh pr create (no --draft), gh pr view (#477),
+    # gh pr merge --auto --squash, issue comment, issue close.
     kinds = [c[0] for c in call_log]
-    assert kinds[:4] == ["sub", "gh", "gh", "gh"], call_log
+    assert kinds[:5] == ["sub", "gh", "gh", "gh", "gh"], call_log
 
     # 1) git push -u origin <branch>
     assert call_log[0][1][:5] == ("git", "push", "-u", "origin", "autonomous/issue-42")
@@ -392,13 +404,18 @@ def test_execute_approve_integration_happy_path(tmp_path: Path):
     assert "--head" in create_args
     assert create_args[create_args.index("--head") + 1] == "autonomous/issue-42"
 
-    # 3) gh pr merge --auto --squash <pr_url>
-    merge_args = call_log[2][1]
+    # 3) gh pr view --json mergeable -q .mergeable (#477)
+    view_args = call_log[2][1]
+    assert view_args[:2] == ("pr", "view")
+    assert "mergeable" in view_args
+
+    # 4) gh pr merge --auto --squash <pr_url>
+    merge_args = call_log[3][1]
     assert merge_args[:4] == ("pr", "merge", "--auto", "--squash")
     assert pr_url in merge_args
 
-    # 4) issue comment
-    comment_args = call_log[3][1]
+    # 5) issue comment
+    comment_args = call_log[4][1]
     assert comment_args[:2] == ("issue", "comment")
     assert "42" in comment_args
 

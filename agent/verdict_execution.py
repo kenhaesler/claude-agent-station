@@ -38,6 +38,7 @@ from __future__ import annotations
 import logging
 import re
 import subprocess
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -45,6 +46,24 @@ from typing import Any, Literal
 from agent.gh_client import gh_run
 
 logger = logging.getLogger(__name__)
+
+# Path to the conflict-resolution harness (rebase → optional LLM →
+# push). The harness assumes HEAD is on the feature branch already;
+# :func:`_resolve_pr_conflict_if_needed` does the checkout before
+# invoking it.
+_RESOLVE_CONFLICTS_SCRIPT = (
+    Path(__file__).resolve().parent / "scripts" / "resolve-conflicts.sh"
+)
+
+# Polling parameters for the post-PR-create mergeability check. GitHub
+# computes ``mergeable`` asynchronously; freshly-created PRs spend a few
+# seconds in UNKNOWN before settling. Two attempts at 3s spacing means
+# at most 3s of added latency on the happy path (the first response is
+# usually definitive once the PR has commits behind it) and worst-case
+# 6s when the PR genuinely lands in UNKNOWN. Tunable via the module
+# constants for test/operator overrides.
+_PR_MERGEABILITY_POLL_ATTEMPTS = 2
+_PR_MERGEABILITY_POLL_DELAY_S = 3.0
 
 VerdictKind = Literal[
     "APPROVE",              # Direct merge to base (today's APPROVE)
@@ -85,6 +104,138 @@ _WORKTREE_BRANCH_ERROR = (
     "ref from the base workspace would 404. Reject the verdict so the "
     "teammate re-runs on a proper feature branch."
 )
+
+
+def _pr_number_from_url(pr_url: str) -> int | None:
+    """Extract the PR number from a ``gh pr create`` URL.
+
+    Returns ``None`` when the URL doesn't match the canonical
+    ``/pull/<n>`` shape — the harness only needs the number for richer
+    comments, so missing it is non-fatal.
+    """
+    m = re.search(r"/pull/(\d+)\b", pr_url or "")
+    return int(m.group(1)) if m else None
+
+
+def _poll_pr_mergeable(
+    pr_url: str,
+    *,
+    env: dict[str, str] | None,
+    max_attempts: int = _PR_MERGEABILITY_POLL_ATTEMPTS,
+    delay_s: float = _PR_MERGEABILITY_POLL_DELAY_S,
+) -> str | None:
+    """Return the PR's settled ``mergeable`` state, or ``None`` on error.
+
+    GitHub computes ``mergeable`` asynchronously after a PR is opened —
+    the first ``gh pr view`` call against a fresh PR almost always
+    returns ``"UNKNOWN"``. Poll a small number of times with a short
+    delay until the state settles or attempts run out.
+
+    Returns one of ``"MERGEABLE"`` / ``"CONFLICTING"`` / ``"UNKNOWN"``
+    (when polling timed out) or ``None`` when ``gh`` failed. The caller
+    is expected to act only on ``"CONFLICTING"`` — any other value
+    means "leave the PR alone."
+    """
+    state: str | None = None
+    for attempt in range(max_attempts):
+        if attempt > 0:
+            time.sleep(delay_s)
+        res = gh_run(
+            ["pr", "view", pr_url,
+             "--json", "mergeable", "-q", ".mergeable"],
+            env=env,
+        )
+        if not res.ok:
+            return None
+        state = (res.stdout or "").strip() or None
+        if state and state != "UNKNOWN":
+            return state
+    return state
+
+
+def _resolve_pr_conflict_if_needed(
+    verdict: "Verdict",
+    *,
+    pr_url: str,
+    workspace: Path,
+    run_id: str | None,
+    env: dict[str, str] | None,
+    into: "ExecutionResult",
+) -> None:
+    """If the just-opened PR is CONFLICTING, invoke ``resolve-conflicts.sh``
+    to rebase + (optionally) LLM-resolve + push.
+
+    Best-effort: any failure is logged and recorded in
+    ``into.actions`` so operators can see what happened, but the
+    verdict itself stays successful. The PR remains open for manual
+    intervention if the resolver can't recover; auto-merge is armed
+    independently in the caller, so a later operator-driven resolve
+    will re-trigger evaluation.
+
+    The harness assumes ``workspace`` HEAD is already on the feature
+    branch; we run ``git checkout`` first.
+    """
+    mergeable = _poll_pr_mergeable(pr_url, env=env)
+    if mergeable != "CONFLICTING":
+        # MERGEABLE, UNKNOWN (poll timed out), or gh-error — nothing
+        # actionable. Recording the state helps the digest show that
+        # we checked.
+        if mergeable:
+            into.with_action(f"mergeable={mergeable}; resolver not invoked")
+        return
+
+    into.with_action("mergeable=CONFLICTING; invoking conflict resolver")
+
+    # The harness ``cd``s into workspace then ``git rebase origin/<base>``
+    # without checking out the feature branch — see
+    # ``agent/scripts/resolve-conflicts.sh`` and our 2026-05-21 manual
+    # run where rebasing-while-on-main produced a wrong-branch attempt.
+    co = subprocess.run(
+        ["git", "checkout", verdict.branch],
+        cwd=str(workspace), capture_output=True, text=True, env=env,
+    )
+    if co.returncode != 0:
+        logger.warning(
+            "verdict_execution: checkout %s failed before conflict-resolve: %s",
+            verdict.branch, co.stderr.strip()[:200],
+        )
+        into.with_action(
+            f"resolver skipped: checkout {verdict.branch} failed"
+        )
+        return
+
+    args = [
+        "bash", str(_RESOLVE_CONFLICTS_SCRIPT),
+        "--workspace", str(workspace),
+        "--branch", verdict.branch,
+        "--base", verdict.base_branch,
+        "--repo", verdict.project,
+        "--triggered-by", "at_merge",
+    ]
+    if run_id:
+        args.extend(["--run-id", run_id])
+    pr_num = _pr_number_from_url(pr_url)
+    if pr_num is not None:
+        args.extend(["--pr", str(pr_num)])
+
+    proc = subprocess.run(args, capture_output=True, text=True, env=env)
+    if proc.returncode == 0:
+        # The harness pushed the resolved branch; the armed auto-merge
+        # (caller's step 3) will re-evaluate and land the PR once
+        # branch protection is satisfied.
+        into.with_action("conflict resolver: resolved + pushed")
+    else:
+        # Exit codes from the harness: 10=tests-failed, 11=manager-rejected,
+        # 99=budget-exhausted, 1=unrecoverable. None of these invalidate
+        # the verdict — the PR exists and a human can take over.
+        logger.warning(
+            "verdict_execution: conflict resolver exited %d for %s: %s",
+            proc.returncode, pr_url,
+            (proc.stderr or "").strip()[:200],
+        )
+        into.with_action(
+            f"conflict resolver exit={proc.returncode}"
+        )
 
 
 @dataclass
@@ -223,6 +374,23 @@ def execute_approve(
         return result
     result.pr_url = pr.stdout.strip()
     result.with_action(f"gh pr create → {result.pr_url}")
+
+    # 2.5. If the PR is conflicting against the base, invoke the
+    # conflict resolver to rebase + (optionally) LLM-resolve + push.
+    # Done BEFORE arming auto-merge so the auto-merge picks up the
+    # resolved branch on its first re-evaluation rather than stalling
+    # on the original conflict. Best-effort — failures are recorded in
+    # ``result.actions`` but do not invalidate the verdict; a human
+    # can take over via the open PR. See
+    # :func:`_resolve_pr_conflict_if_needed`.
+    _resolve_pr_conflict_if_needed(
+        verdict,
+        pr_url=result.pr_url,
+        workspace=workspace,
+        run_id=run_id,
+        env=env,
+        into=result,
+    )
 
     # 3. gh pr merge --auto --squash. Best-effort: a failure to arm
     # auto-merge (branch protection misconfigured, repo doesn't allow
