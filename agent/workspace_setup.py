@@ -131,6 +131,50 @@ def _prune_stale_branches(
                                branch, del_result.stderr.strip()[:200])
 
 
+def _clean_stale_manager_state(workspace: Path) -> None:
+    """Delete prior-run manager-review state from the base workspace.
+
+    Removes ``.claude-employee-report-*.json`` (synthesized fallback
+    reports left behind by :func:`_synthesize_employee_report`) and
+    ``.claude-manager-paths.json`` (last run's sidecar).
+
+    Why this is load-bearing: the lead's prompt promises that the
+    orchestrator pre-writes the per-run review package, but historically
+    it only wrote the file *post-session*. When the manager spawned
+    mid-session, ``run-<run_id>-review.md`` was missing and the manager
+    fell back to globbing ``.claude-employee-report-*.json`` in CWD —
+    which is the base workspace, and which carries last run's
+    synthesized reports because the per-role worktrees are torn down at
+    run end while the base workspace persists.
+
+    On 2026-05-21 this fallback caused two LCM runs to emit verdicts
+    for the *previous* run's branches (``feature/issue-3-rest-api``,
+    etc.) while the current run worked on entirely different issues.
+
+    Belt-and-braces alongside the in-session ``build_review_package``
+    helper: even if the lead skips the pre-manager build, there is now
+    nothing stale on disk for the manager to mistake for current work.
+    Fresh worktree reports written during the current run live in the
+    worktree paths, not the base workspace, so cleanup here does not
+    touch live data.
+    """
+    patterns = (
+        ".claude-employee-report-*.json",
+        ".claude-employee-report.json",
+        ".claude-manager-paths.json",
+    )
+    for pattern in patterns:
+        for stale in workspace.glob(pattern):
+            try:
+                stale.unlink()
+                logger.info("workspace: removed stale %s", stale.name)
+            except OSError as exc:
+                logger.warning(
+                    "workspace: could not remove stale %s: %s",
+                    stale.name, exc,
+                )
+
+
 def ensure_workspace(project: dict, workspaces_dir: str) -> str:
     """Clone or refresh the project workspace. Returns the absolute path.
 
@@ -188,5 +232,10 @@ def ensure_workspace(project: dict, workspaces_dir: str) -> str:
         _prune_stale_branches(workspace, repo, base, env=None)
     except Exception:  # noqa: BLE001 — best-effort cleanup
         logger.exception("prune: _prune_stale_branches failed (non-fatal)")
+
+    # Cross-run staleness: delete prior-run manager state from the base
+    # workspace so the manager-sibling's mid-session fallback cannot read
+    # last run's reports. See ``_clean_stale_manager_state`` docstring.
+    _clean_stale_manager_state(workspace)
 
     return str(workspace)

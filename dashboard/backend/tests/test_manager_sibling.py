@@ -131,6 +131,65 @@ def test_lead_prompt_instructs_lead_to_spawn_manager(tmp_path):
     )
 
 
+def test_lead_prompt_instructs_lead_to_build_review_package_before_spawn(tmp_path):
+    """The lead prompt MUST tell the lead to invoke
+    ``python -m agent.build_review_package`` before spawning the
+    manager. The previous wording claimed "the orchestrator (Python)
+    composes the review package... before your turn began", which was
+    false — the orchestrator only wrote the package post-session, so
+    the manager read an empty review and fell back to stale CWD globs.
+    Pin the new contract: the lead does the build itself, and the
+    Bash command names each worktree path so reports from this run
+    are what land in the file.
+    """
+    from agent.station_orchestrator import build_team_prompt
+
+    teammates = {
+        "backend": "/var/lib/claude-agent-station/workspaces/repo-backend",
+        "frontend": "/var/lib/claude-agent-station/workspaces/repo-frontend",
+        "qa": "/var/lib/claude-agent-station/workspaces/repo-qa",
+    }
+    prompt = build_team_prompt(
+        repo="owner/repo",
+        issues=[{"number": 1, "title": "t", "body": ""}],
+        config={"projects": []},
+        run_id="20260521T151955Z",
+        workspace="/var/lib/claude-agent-station/workspaces/repo",
+        worktree_paths=teammates,
+        review_package_path="/var/log/claude-agent/run-20260521T151955Z-review.md",
+        verdicts_file_path="/var/log/claude-agent/run-20260521T151955Z-verdicts.json",
+        manager_max_turns=60,
+    )
+
+    # The Bash command must appear before the spawn-prompt block so the
+    # lead runs it first.
+    build_idx = prompt.find("python3 -m agent.build_review_package")
+    spawn_idx = prompt.find("Pass this spawn prompt verbatim:")
+    assert build_idx != -1, "lead prompt missing build_review_package invocation"
+    assert spawn_idx != -1, "lead prompt missing manager spawn block"
+    assert build_idx < spawn_idx, (
+        "build_review_package must be invoked BEFORE the manager is spawned "
+        "or the manager will read an empty review.md and fall back to stale state"
+    )
+
+    # Both run-id and log-dir must be interpolated correctly.
+    assert "--run-id '20260521T151955Z'" in prompt
+    assert "--log-dir '/var/log/claude-agent'" in prompt
+
+    # All three worktree paths must be passed so the package reflects
+    # the *current* run's reports — the bug the fix is preventing.
+    for path in teammates.values():
+        assert f"'{path}'" in prompt, (
+            f"lead prompt must pass worktree {path} to build_review_package"
+        )
+
+    # The deprecated false promise must NOT remain in the prompt.
+    assert "orchestrator (Python) composes the review package" not in prompt, (
+        "old prompt wording lied about orchestrator pre-writing the package; "
+        "remove it so the lead actually runs build_review_package itself"
+    )
+
+
 def test_orchestrator_builds_review_package_before_manager_spawn(tmp_path, monkeypatch):
     """The orchestrator must produce the review package file before the
     lead's session is asked to spawn the manager. We don't run a live

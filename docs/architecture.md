@@ -354,6 +354,31 @@ unparseable the manager refuses to guess paths — the orchestrator's
 `manager_no_verdicts` webhook + `exit_code=6` path then fires and surfaces
 the failure for triage.
 
+#### Review-package build (in-session, before manager spawn)
+
+The lead's prompt instructs it to run
+`python3 -m agent.build_review_package` via Bash **before** spawning the
+manager. The CLI concatenates each worktree's
+`.claude-employee-report-*.json` plus a `git diff --stat` summary into
+the `review_package` path the sidecar names. The same helper
+(`_ensure_review_package`) runs again in the orchestrator's per-project
+`finally` block as a belt-and-braces fallback — it is idempotent, so the
+second invocation is a no-op when the file already exists.
+
+Why the build is now an in-session step instead of an orchestrator
+pre-write: prior to this change the prompt told the lead "the
+orchestrator already wrote the review package", but the orchestrator's
+write only happened post-session. The manager spawned mid-session,
+found the review file missing, and fell back to globbing
+`.claude-employee-report-*.json` in its CWD — the base workspace, which
+carries the previous run's synthesized reports from
+`_synthesize_employee_report`. Two LCM runs on 2026-05-21 produced
+verdicts for the *previous* run's branches as a result. The combined
+fix is the in-session build (this section) plus
+`workspace_setup._clean_stale_manager_state`, which deletes prior-run
+`.claude-employee-report-*.json` and `.claude-manager-paths.json` at
+workspace setup so the fallback path has no stale data to find.
+
 See `_write_manager_paths_sidecar` in `agent/station_orchestrator.py` and
 the `# --- #411` test block in
 `dashboard/backend/tests/test_manager_sibling.py`.
