@@ -1214,6 +1214,21 @@ READ FIRST: `.claude-team-contracts.md` in your worktree root. It documents the 
 contracts (field names, route ownership, response shapes, enum values) you MUST follow.
 Manager review will reject any branch that violates the contract.
 
+BRANCH HYGIENE — non-negotiable: your worktree's current branch is the
+orchestrator's isolation primitive (`worktree/<role>-<run_id_prefix>`).
+That branch is local-only and CANNOT be pushed. Before any code change
+you MUST create a feature branch on top of it:
+
+    git checkout -b autonomous/issue-<number>
+    # or feature/issue-<number>-<slug> if the project's CLAUDE.md prefers it
+
+Never commit on a `worktree/...` branch. The manager hard-rejects any
+verdict whose reported branch matches that pattern with reason
+BRANCH_ISOLATION_LEAK — losing the entire run's work. If you forgot
+this step and a commit already landed: `git checkout -b
+autonomous/issue-<number>` carries it forward, then continue from
+there.
+
 For the QA teammate specifically: when writing or modifying tests,
 every assertion on an API response field MUST match the contract's
 Response Shapes section. If your test expects a field name that

@@ -394,17 +394,23 @@ expected to `git checkout -b autonomous/issue-<n>` (or
 `feature/issue-<n>` per the project's `CLAUDE.md`) before committing,
 so the verdict carries a real feature branch name.
 
-Three layers enforce this:
+Four layers enforce this:
 
 1. **`agent/agents/issue-worker.md` Step 0/Step 4** — teammates verify the
    pre-set worktree branch with `git branch --show-current`, then
    create a feature branch on top before any commit. The prompt also
    carries an explicit "HARD RULE — never commit on a `worktree/...`
-   branch" with the recovery path.
-2. **`agent/agents/manager.md` §6 Branch hygiene** — manager hard-rejects
+   branch" with the recovery path. (Teammate system prompt.)
+2. **`agent/station_orchestrator.build_team_prompt` BRANCH HYGIENE paragraph** —
+   the lead's prompt instructs it to include a branch-hygiene
+   paragraph in every teammate spawn prompt, so the rule appears in
+   the per-spawn *user prompt* as well as the agent system prompt.
+   Added after run-20260521T203532Z confirmed teammates can drift past
+   the system-prompt-only mandate.
+3. **`agent/agents/manager.md` §6 Branch hygiene** — manager hard-rejects
    any verdict whose `branch` matches `worktree/<role>-<run_id_prefix>`
    with reason `BRANCH_ISOLATION_LEAK`.
-3. **`agent/verdict_execution._is_worktree_isolation_branch`** — the
+4. **`agent/verdict_execution._is_worktree_isolation_branch`** — the
    `execute_approve`, `execute_pr`, and `execute_approve_integration`
    executors refuse to push such branches and return
    `ExecutionResult(success=False)` with a structured error. Pairs with
