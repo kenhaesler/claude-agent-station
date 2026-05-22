@@ -142,7 +142,11 @@ def test_iterate_projects_passes_workspace_and_dev_branch_to_executor(
     cfg.write_text(json.dumps({
         "projects": [{"repo": "owner/repo", "enabled": True, "branch": "main"}],
         "limits": {"max_concurrent_employees": 1},
-        "integration": {"dev_branch": "autonomous/dev"},
+        # ``enabled: true`` is required for project_loop to forward
+        # ``dev_branch`` to the executor. Without it the integration-branch
+        # routing is intentionally inert (see commit fixing the regression
+        # where APPROVE silently merged to main on repos without CLAUDE.md).
+        "integration": {"enabled": True, "dev_branch": "autonomous/dev"},
     }))
 
     monkeypatch.setattr("agent.preflight.run_preflight", lambda *a, **k: None)
@@ -203,6 +207,78 @@ def test_iterate_projects_passes_workspace_and_dev_branch_to_executor(
         f"got {kwargs.get('dev_branch')!r}"
     )
     assert kwargs.get("run_id") == "run-tested"
+
+
+def test_iterate_projects_passes_dev_branch_none_when_integration_disabled(
+    tmp_path, monkeypatch,
+):
+    """Regression guard for the integration-branch enforcement fix.
+
+    ``project_loop`` must only forward ``dev_branch`` when
+    ``integration.enabled`` is true. Otherwise the executor would
+    forcibly redirect PRs to a branch the operator hasn't opted into.
+    When integration is missing or disabled, ``dev_branch`` must be
+    ``None`` so :func:`execute_approve` falls back to the verdict's
+    reported base_branch.
+    """
+    from pathlib import Path
+    from agent import project_loop as pl
+
+    cfg = tmp_path / "manager-config.json"
+    cfg.write_text(json.dumps({
+        "projects": [{"repo": "owner/repo", "enabled": True, "branch": "main"}],
+        "limits": {"max_concurrent_employees": 1},
+        # Note: no "integration" key at all — opt-out by omission.
+    }))
+
+    monkeypatch.setattr("agent.preflight.run_preflight", lambda *a, **k: None)
+    monkeypatch.setattr("agent.queue_recovery.purge_and_recover", lambda *a, **k: None)
+    monkeypatch.setattr("agent.queue_recovery.resume_paused", lambda: None)
+    monkeypatch.setattr(
+        "agent.workspace_setup.ensure_workspace",
+        lambda p, w: str(tmp_path / "ws"),
+    )
+
+    async def _fake_orchestrate(project, config, run_id, workspaces_dir, **kwargs):
+        return 0, None, True
+
+    monkeypatch.setattr("agent.station_orchestrator.orchestrate_project", _fake_orchestrate)
+    monkeypatch.setattr(
+        "agent.station_orchestrator._read_verdicts_file",
+        lambda *a, **k: {
+            "verdicts": [
+                {
+                    "project": "owner/repo",
+                    "issue_number": 17,
+                    "verdict": "APPROVE",
+                    "branch": "autonomous/issue-17",
+                    "base_branch": "main",
+                    "reasoning": "tests pass",
+                },
+            ],
+        },
+    )
+    monkeypatch.setattr("agent.digest.write_digest", lambda **kw: "")
+
+    captured: dict = {}
+
+    def _fake_execute(verdict, **kwargs):
+        captured["kwargs"] = kwargs
+        from agent.verdict_execution import ExecutionResult
+        return ExecutionResult(
+            verdict=verdict.verdict, project=verdict.project,
+            issue_number=verdict.issue_number, success=True,
+        )
+
+    monkeypatch.setattr("agent.verdict_execution.execute", _fake_execute)
+
+    pl.iterate_projects("run-no-integ", str(cfg), str(tmp_path))
+
+    assert captured, "execute_verdict was never invoked"
+    assert captured["kwargs"].get("dev_branch") is None, (
+        "without integration.enabled, dev_branch must be None so the "
+        "executor honours the verdict's reported base_branch"
+    )
 
 
 def test_iterate_projects_emits_manager_no_verdicts_with_kwargs(
