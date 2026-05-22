@@ -58,6 +58,22 @@ if ! git fetch origin "$BASE" >&2; then
     log "git fetch failed; aborting"
     exit 1
 fi
+
+# Ensure we're on the feature branch before rebasing. Without this,
+# 'git rebase origin/<base>' silently rebases whatever HEAD happens to
+# be — on 2026-05-21 a manual invocation rebased 'main' by accident
+# because the workspace had been left on main from a prior task.
+# Skip silently when already there; abort if the branch can't be
+# checked out (no caller-side cleanup we can do here).
+current_branch=$(git branch --show-current 2>/dev/null || echo "")
+if [ "$current_branch" != "$BRANCH" ]; then
+    log "checking out $BRANCH (was on '$current_branch')"
+    if ! git checkout "$BRANCH" >&2; then
+        log "git checkout $BRANCH failed; aborting"
+        exit 1
+    fi
+fi
+
 if git rebase "origin/$BASE" >&2; then
     log "Phase 1 clean — pushing"
     git push --force-with-lease origin "$BRANCH" >&2 || { log "push failed"; exit 1; }
