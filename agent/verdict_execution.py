@@ -305,13 +305,94 @@ def _build_pr_body(verdict: Verdict, *, run_id: str | None = None) -> str:
     return body
 
 
+def _resolve_pr_base(verdict: Verdict, dev_branch: str | None) -> str:
+    """Return the branch to target with ``gh pr create --base``.
+
+    When ``integration.enabled`` is true in the manager config,
+    ``project_loop`` passes the configured ``integration.dev_branch`` down
+    as ``dev_branch``. In that mode the integration branch is the SOLE
+    legal base for autonomous PRs — the operator promotes integration to
+    trunk separately. Without this override, the executor would happily
+    open a PR (and arm auto-merge) against whatever ``base_branch`` the
+    employee reported, which on repos without a ``CLAUDE.md`` defaults
+    to ``main``. That regression was introduced when ``APPROVE`` and
+    ``APPROVE_INTEGRATION`` were collapsed (commit 68dca3c / PR #475):
+    the old ``APPROVE_INTEGRATION`` path targeted the integration branch
+    explicitly, and dropping that distinction silently routed every
+    APPROVE to trunk for projects with no per-repo workflow doc.
+
+    ``dev_branch=None`` means integration is disabled (or the caller is
+    test code without the config wired in) — fall back to the verdict's
+    reported base so existing behaviour is preserved.
+    """
+    return dev_branch or verdict.base_branch
+
+
+def _ensure_remote_branch(
+    workspace: Path,
+    repo: str,
+    branch: str,
+    fallback_base: str,
+    env: dict[str, str] | None,
+) -> tuple[bool, str | None]:
+    """Make sure ``branch`` exists on ``origin``; create it from
+    ``fallback_base`` if missing.
+
+    Returns ``(ok, error_message)``. The remote-branch lookup uses
+    ``git ls-remote`` so we don't need extra GitHub-API permissions
+    beyond what the existing push uses. Bootstrap pushes
+    ``refs/remotes/origin/<fallback_base>:refs/heads/<branch>`` so the
+    new branch is anchored at the exact same commit as the trunk tip we
+    know about — no working-tree state involved.
+
+    ``repo`` is unused today (the workspace already has its origin set
+    up by ``ensure_workspace``); kept on the signature for future moves
+    to a pure-API bootstrap that doesn't require a local clone.
+    """
+    del repo  # Reserved — see docstring.
+
+    ls = subprocess.run(
+        ["git", "ls-remote", "--heads", "origin", branch],
+        cwd=str(workspace), capture_output=True, text=True, env=env,
+    )
+    if ls.returncode != 0:
+        return False, f"git ls-remote failed: {ls.stderr.strip()[:200]}"
+    if ls.stdout.strip():
+        return True, None  # branch already exists upstream
+
+    # Make sure we have the base on origin/<fallback_base> before we try
+    # to push it under a new ref name. Without a prior fetch the local
+    # ``refs/remotes/origin/<fallback_base>`` may not exist (e.g. a fresh
+    # shallow workspace), and the push would 404 on a missing src.
+    fetch = subprocess.run(
+        ["git", "fetch", "origin", fallback_base],
+        cwd=str(workspace), capture_output=True, text=True, env=env,
+    )
+    if fetch.returncode != 0:
+        return False, f"git fetch base failed: {fetch.stderr.strip()[:200]}"
+
+    push = subprocess.run(
+        [
+            "git", "push", "origin",
+            f"refs/remotes/origin/{fallback_base}:refs/heads/{branch}",
+        ],
+        cwd=str(workspace), capture_output=True, text=True, env=env,
+    )
+    if push.returncode != 0:
+        return False, (
+            f"bootstrap of integration branch '{branch}' from "
+            f"'{fallback_base}' failed: {push.stderr.strip()[:200]}"
+        )
+    return True, None
+
+
 def execute_approve(
     verdict: Verdict,
     *,
     workspace: Path,
     run_id: str | None = None,
     env: dict[str, str] | None = None,
-    dev_branch: str | None = None,  # noqa: ARG001 — kept for dispatcher symmetry
+    dev_branch: str | None = None,
 ) -> ExecutionResult:
     """Push the branch, open a non-draft PR, arm auto-merge, close the issue.
 
@@ -330,8 +411,11 @@ def execute_approve(
     that delegates to this function (preserved for backward compat with
     stored verdicts and the executor dispatch table).
 
-    ``dev_branch`` is accepted but ignored — kept for dispatcher symmetry.
-    Missing-kwarg failures here used to crash the loop (#470).
+    When ``dev_branch`` is set, the PR is opened against it instead of
+    the verdict's reported ``base_branch`` — see :func:`_resolve_pr_base`.
+    ``project_loop`` passes ``dev_branch`` whenever ``integration.enabled``
+    is true in the manager config. ``None`` preserves the legacy
+    behaviour of trusting the employee-reported base.
     """
     result = ExecutionResult(
         verdict="APPROVE",
@@ -355,15 +439,34 @@ def execute_approve(
         return result
     result.with_action("git push")
 
-    # 2. gh pr create — non-draft, base from the verdict (the manager has
-    # already chosen integration vs. trunk via the employee's base_branch
-    # report).
+    # 1.5. When integration mode is enabled the PR must land on the
+    # configured integration branch (e.g. ``claude-agent-station``), not
+    # whatever the employee reported as ``base_branch`` (typically
+    # ``main``). Ensure the branch exists on origin before pointing the
+    # PR at it; bootstrap from the employee-reported base so the new
+    # integration branch starts at a known-good commit.
+    pr_base = _resolve_pr_base(verdict, dev_branch)
+    if dev_branch is not None and dev_branch != verdict.base_branch:
+        ok, err = _ensure_remote_branch(
+            workspace=workspace,
+            repo=verdict.project,
+            branch=dev_branch,
+            fallback_base=verdict.base_branch,
+            env=env,
+        )
+        if not ok:
+            result.error = err
+            return result
+        result.with_action(f"ensure integration branch {dev_branch!r} on origin")
+
+    # 2. gh pr create — non-draft, base from the resolved integration
+    # branch (when enabled) or the verdict's base_branch (when not).
     pr = gh_run(
         [
             "pr", "create",
             "--repo", verdict.project,
             "--head", verdict.branch,
-            "--base", verdict.base_branch,
+            "--base", pr_base,
             "--title", _pr_title(verdict),
             "--body", _build_pr_body(verdict, run_id=run_id),
         ],
@@ -435,10 +538,14 @@ def execute_pr(
     run_id: str | None = None,
     env: dict[str, str] | None = None,
     draft: bool = True,
-    dev_branch: str | None = None,  # noqa: ARG001 — dispatcher symmetry; see execute_approve
+    dev_branch: str | None = None,
 ) -> ExecutionResult:
     """Open a draft PR (or marked-ready) for manual review. Same path as
     APPROVE but with ``--draft`` and a different issue comment.
+
+    ``dev_branch`` is honored identically to :func:`execute_approve`:
+    when set, the PR opens against the integration branch rather than
+    the employee-reported base. See :func:`_resolve_pr_base`.
     """
     result = ExecutionResult(
         verdict="PR",
@@ -460,11 +567,25 @@ def execute_pr(
         return result
     result.with_action("git push")
 
+    pr_base = _resolve_pr_base(verdict, dev_branch)
+    if dev_branch is not None and dev_branch != verdict.base_branch:
+        ok, err = _ensure_remote_branch(
+            workspace=workspace,
+            repo=verdict.project,
+            branch=dev_branch,
+            fallback_base=verdict.base_branch,
+            env=env,
+        )
+        if not ok:
+            result.error = err
+            return result
+        result.with_action(f"ensure integration branch {dev_branch!r} on origin")
+
     pr_args = [
         "pr", "create",
         "--repo", verdict.project,
         "--head", verdict.branch,
-        "--base", verdict.base_branch,
+        "--base", pr_base,
         "--title", _pr_title(verdict),
         "--body", _build_pr_body(verdict, run_id=run_id),
     ]

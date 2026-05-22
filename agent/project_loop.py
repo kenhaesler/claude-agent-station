@@ -314,7 +314,17 @@ def iterate_projects(
     # APPROVE_INTEGRATION / APPROVE / PR executors require ``workspace`` and
     # ``dev_branch`` kwargs (kw-only, no default for workspace). ``dev_branch``
     # is global to the run; capture it once.
-    dev_branch = config.get("integration", {}).get("dev_branch", "autonomous/dev")
+    #
+    # Only pass ``dev_branch`` down when ``integration.enabled`` is true —
+    # otherwise the executor treats the verdict's reported ``base_branch``
+    # as authoritative (legacy behaviour). Without this gate every
+    # APPROVE/PR verdict would be forcibly redirected even on repos the
+    # operator never opted into integration-branch routing on.
+    integration_cfg = config.get("integration", {}) or {}
+    if integration_cfg.get("enabled"):
+        dev_branch = integration_cfg.get("dev_branch", "autonomous/dev")
+    else:
+        dev_branch = None
 
     any_work_attempted = False
     any_real_failure = False
