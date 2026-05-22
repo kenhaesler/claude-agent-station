@@ -146,7 +146,7 @@ async def handle_started(
             run.employee_index = event.employee_index
         if event.concurrent_group_id:
             run.concurrent_group_id = event.concurrent_group_id
-        if event.autonomy_level:
+        if event.autonomy_level is not None:
             run.autonomy_level = event.autonomy_level
     return run
 

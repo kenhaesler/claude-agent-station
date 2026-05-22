@@ -407,6 +407,18 @@ class WebhookRunEvent(BaseModel):
     # the policy that was in force, not the model column's default.
     autonomy_level: str | None = None
 
+    @field_validator("autonomy_level")
+    @classmethod
+    def _validate_autonomy_level(cls, v: str | None) -> str | None:
+        """Mirror the validator on ``PermissionCreateIn`` — only the three
+        ADR-0001 levels are storable. NULL stays NULL ("not yet resolved")."""
+        if v is None:
+            return None
+        normalized = v.strip().lower()
+        if normalized not in ("manual", "assisted", "auto"):
+            raise ValueError("autonomy_level must be manual/assisted/auto")
+        return normalized
+
 
 # --- Coordinator ---
 

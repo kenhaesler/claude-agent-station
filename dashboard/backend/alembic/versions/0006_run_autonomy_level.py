@@ -10,9 +10,11 @@ This migration adds the column when absent (idempotent), then backfills
 historic rows from the owning project's current setting.
 
 Backfill scope: rows where ``runs.autonomy_level`` is NULL or equals the
-stale server-side default ``'assisted'``. Rows that already carry ``'auto'``
-or ``'manual'`` are left alone — those were set deliberately by a per-run
-override and we don't want to clobber them.
+stale ORM-side default ``'assisted'`` (the column never had a SQL
+``server_default`` — the value was applied by SQLAlchemy at insert time).
+Rows that already carry ``'auto'`` or ``'manual'`` are left alone — those
+were set deliberately by a per-run override and we don't want to clobber
+them.
 
 Caveat: this uses the project's *current* ``autonomy_level``, not the value
 in force when the run ran. The historic value was never recorded anywhere,

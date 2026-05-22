@@ -33,13 +33,26 @@ def _started_event(**kwargs) -> WebhookRunEvent:
 
 
 class _StubSession:
-    """Minimal AsyncSession stand-in — handle_started only calls .add()."""
+    """Minimal AsyncSession stand-in — handle_started only calls ``.add()``.
+
+    ``__getattr__`` raises ``NotImplementedError`` on any other access so a
+    future change that touches the session (``flush``, ``refresh``, …)
+    surfaces here as a clear test failure instead of a confusing
+    ``AttributeError`` from deep inside the handler.
+    """
 
     def __init__(self) -> None:
         self.added: list[Run] = []
 
     def add(self, obj) -> None:
         self.added.append(obj)
+
+    def __getattr__(self, name: str) -> object:
+        raise NotImplementedError(
+            f"_StubSession does not implement {name!r}; if handle_started "
+            "started calling it, update the fixture (consider using a real "
+            "in-memory AsyncSession)."
+        )
 
 
 @pytest.mark.asyncio

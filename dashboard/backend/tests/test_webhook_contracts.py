@@ -192,6 +192,35 @@ class TestReporterEventSchemas:
         with pytest.raises(ValidationError):
             WebhookRunEvent(run_id="run-123")  # type: ignore[call-arg]
 
+    # -- ADR-0001 autonomy_level validation -----------------------------
+
+    @pytest.mark.parametrize("level", ["manual", "assisted", "auto"])
+    def test_autonomy_level_accepts_adr_values(self, level):
+        """All three ADR-0001 levels round-trip through the schema."""
+        evt = WebhookRunEvent(
+            run_id="run-1", event="run_start", autonomy_level=level
+        )
+        assert evt.autonomy_level == level
+
+    def test_autonomy_level_normalizes_case_and_whitespace(self):
+        """Validator lower-cases and strips so storage is canonical."""
+        evt = WebhookRunEvent(
+            run_id="run-1", event="run_start", autonomy_level="  AUTO  "
+        )
+        assert evt.autonomy_level == "auto"
+
+    def test_autonomy_level_rejects_unknown_value(self):
+        """A bogus level must be rejected at the schema boundary, not stored."""
+        with pytest.raises(ValidationError):
+            WebhookRunEvent(
+                run_id="run-1", event="run_start", autonomy_level="god_mode"
+            )
+
+    def test_autonomy_level_null_is_allowed(self):
+        """Legacy payloads without the field stay valid; NULL means 'unknown'."""
+        evt = WebhookRunEvent(run_id="run-1", event="run_start")
+        assert evt.autonomy_level is None
+
     # -- Full lifecycle payload (like run-manager.sh sends) -------------
 
     def test_run_complete_with_metrics(self):
