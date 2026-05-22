@@ -89,8 +89,11 @@ class Run(Base):
     # Agent Teams fields
     team_name = Column(Text, nullable=True)
     team_members = Column(Text, nullable=True)  # JSON: [{agent_id, name, status}]
-    # ADR-0001: autonomy snapshot at trigger time; per-run budget override
-    autonomy_level = Column(Text, nullable=True, default="assisted")
+    # ADR-0001: autonomy snapshot at trigger time; per-run budget override.
+    # No default — NULL means the orchestrator hasn't snapshotted yet (e.g. a
+    # pending placeholder row). Defaulting to "assisted" used to make every
+    # FULL-AUTO run render with an ASSIST badge.
+    autonomy_level = Column(Text, nullable=True)
     max_budget_usd = Column(Float, nullable=True, default=None)
     # Vision-bootstrap (spec 2026-05-08-vision-issue-bootstrap-design.md)
     skip_reason = Column(Text, nullable=True)

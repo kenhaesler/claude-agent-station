@@ -2567,6 +2567,7 @@ async def orchestrate_project(
             "mode": project_mode,
             "employee_count": len(issues),
             "concurrent_group_id": f"group-{run_id}",
+            "autonomy_level": autonomy_level.value,
         })
 
         # Open stream log file
@@ -2580,6 +2581,7 @@ async def orchestrate_project(
             "mode": project_mode,
             "employee_index": 0,
             "concurrent_group_id": f"group-{run_id}",
+            "autonomy_level": autonomy_level.value,
         })
 
         # ---- Retry loop: re-enter the lead session if it exits prematurely ----
