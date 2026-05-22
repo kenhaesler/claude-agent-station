@@ -402,6 +402,10 @@ class WebhookRunEvent(BaseModel):
     vision_bootstrap_count: int | None = None
     vision_bootstrap_proposals: list[dict] | None = None
     skip_reason: str | None = None
+    # ADR-0001 snapshot — autonomy level the orchestrator actually resolved
+    # for this run. Persisted on the Run row so the dashboard badge reflects
+    # the policy that was in force, not the model column's default.
+    autonomy_level: str | None = None
 
 
 # --- Coordinator ---

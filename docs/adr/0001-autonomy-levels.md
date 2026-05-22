@@ -54,8 +54,8 @@ These are not opt-outable via `auto`. The policy engine's `ALWAYS_DENY` list enf
 ### Storage
 
 - `projects.autonomy_level TEXT DEFAULT 'assisted'`, `projects.max_budget_usd REAL`.
-- `runs.autonomy_level TEXT DEFAULT 'assisted'` (snapshot at trigger time), `runs.max_budget_usd REAL`.
-- Migrations via the existing `_migrate_add_columns` pattern in `dashboard/backend/app/database.py` — no Alembic.
+- `runs.autonomy_level TEXT` (nullable, no default — snapshot at trigger time, populated from the orchestrator's `run_start` webhook; NULL means "not yet resolved"), `runs.max_budget_usd REAL`. The column originally carried `DEFAULT 'assisted'`, which silently mislabelled FULL-AUTO runs as ASSIST when the orchestrator never propagated the resolved level into the webhook payload. The default was dropped and the propagation wired through `WebhookRunEvent.autonomy_level` + `handle_started` (alembic `0006_run_autonomy_level`).
+- Migrations via Alembic (`dashboard/backend/alembic/versions/`).
 
 ### Audit
 
